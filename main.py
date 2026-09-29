@@ -76,6 +76,8 @@ class ChatRegistrationMiddleware(BaseMiddleware):
     async def on_pre_process_message(self, message, data):
         if message.chat.type not in ("group", "supergroup"):
             return
+        if getattr(message, "new_chat_members", None):
+            return
 
         chat_id = message.chat.id
         exists = chats.cursor.execute(
