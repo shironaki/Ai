@@ -1,3 +1,4 @@
+import html
 import logging
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
@@ -168,7 +169,8 @@ async def _answer_ai(message: types.Message, prompt: str):
         answer = None
 
     if answer:
-        await message.reply(answer)
+        # Bot uses global HTML parse mode; AI output is untrusted and may contain <...>.
+        await message.reply(html.escape(answer))
         return
 
     await message.reply(
