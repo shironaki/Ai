@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from logging.handlers import RotatingFileHandler
 import random
@@ -303,14 +304,33 @@ async def log_update_error(update, exception):
 
 @dp.message_handler(commands=['logs'])
 async def send_logs(message: types.Message):
-    """Owner-only command: send the latest runtime log as a Telegram document."""
+    """Owner-only command: send the latest runtime log as Telegram text."""
     if message.from_user.id != config.owner:
         return
+
     try:
-        await message.answer_document(types.InputFile(LOG_FILE), caption="Последний bot.log")
-        log.info("LOGS | sent bot.log to owner")
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as log_file:
+            content = log_file.read()
+
+        if not content:
+            await message.answer("bot.log пока пуст.")
+            return
+
+        # Telegram messages are limited to 4096 characters. Send the newest
+        # part first, in safe-sized chunks, so no file download is required.
+        chunks = []
+        while content:
+            chunks.insert(0, content[-3500:])
+            content = content[:-3500]
+            if len(chunks) >= 5:
+                break
+
+        for chunk in reversed(chunks):
+            await message.answer(f"<pre>{html.escape(chunk)}</pre>")
+
+        log.info("LOGS | sent latest bot.log as text to owner")
     except Exception:
-        log.exception("Could not send bot.log to owner")
+        log.exception("Could not send bot.log as text")
 
 
 BOT_COMMANDS = [
@@ -344,6 +364,23 @@ async def on_startup(dispatcher):
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
 
+    # A healthy bot must have the handlers from all modules on THIS dispatcher.
+    # If this number ever unexpectedly drops, it is immediately visible in the
+    # persistent log and in the owner's Telegram diagnostics.
+    handler_count = len(getattr(dp.message_handlers, "handlers", []))
+    if handler_count <= 3:
+        log.error("HANDLER REGISTRATION FAILURE | only %d message handlers loaded", handler_count)
+        if config.owner:
+            try:
+                await bot.send_message(
+                    config.owner,
+                    f"🚨 <b>HANDLER REGISTRATION FAILURE</b>\n"
+                    f"Загружено обработчиков: <code>{handler_count}</code>\n"
+                    "Проверьте bot.log.",
+                )
+            except Exception:
+                log.exception("Could not notify owner about handler registration failure")
+
     bot_info = await bot.get_me()
     try:
         await bot.set_my_commands(BOT_COMMANDS)
@@ -361,6 +398,11 @@ import aboute  # noqa: E402,F401
 import handlers.chat_groups  # noqa: E402,F401
 
 
-if __name__ == "__main__":
+def start_bot():
+    """Start polling after main.py has been imported as the real 'main' module."""
     log.info("Starting the bot...")
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+
+
+if __name__ == "__main__":
+    start_bot()
