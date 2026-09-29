@@ -7,9 +7,15 @@ from main import config, users, chats, random, bot, InlineKeyboardMarkup, dateti
 async def set_status(message: types.Message):
     msg = message
     id = msg.from_user.id
-    stata = msg.get_args()
-    status = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
-    status = (status[0])
+    stata = (msg.get_args() or "").strip()
+    if not msg.reply_to_message:
+        await msg.reply("❗ | Ответьте на сообщение пользователя.")
+        return
+    status_row = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
+    if not status_row:
+        await msg.reply("❗ | Введите /start для регистрации.")
+        return
+    status = status_row[0]
     name_link = users.cursor.execute("SELECT name from users where id = ?", (msg.reply_to_message.from_user.id,)).fetchone()
     name_link = (name_link[0])
     status_rep = users.cursor.execute("SELECT status from users where id = ?", (msg.reply_to_message.from_user.id,)).fetchone()
@@ -45,11 +51,13 @@ async def set_status(message: types.Message):
 @dp.message_handler(commands=['deluser'])
 async def deluser(message: types.Message):
     reply = message.reply_to_message
-    status = (users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone())
+    status_row = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
+    status = status_row[0] if status_row else None
 
-    if str(status == 'Система') or int(id == config.owner):
+    if str(status) == 'Система' or message.from_user.id == config.owner:
         if reply:
             users.cursor.execute("DELETE FROM users WHERE id = ?", (reply.from_user.id,))
+            users.connect.commit()
             await message.reply(
                 f"✅ | <b>{reply.from_user.get_mention(as_html=True)}</b> сгорел.",
                 parse_mode="html"
@@ -133,6 +141,9 @@ async def moder_off(message):
 @dp.message_handler(commands=['мут', 'mute','дебафф'], commands_prefix='!?./', is_chat_admin=True)
 async def mute(message):
     msg = message
+    if not msg.reply_to_message:
+        await msg.reply("❗ | Ответьте на сообщение пользователя.")
+        return
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
@@ -175,6 +186,9 @@ async def mute(message):
 @dp.message_handler(commands=['андебафф', 'размут', 'unmute'], commands_prefix='!?./', is_chat_admin=True)
 async def unmute(message):
     msg = message
+    if not msg.reply_to_message:
+        await msg.reply("❗ | Ответьте на сообщение пользователя.")
+        return
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
@@ -193,6 +207,9 @@ async def unmute(message):
 @dp.message_handler(commands=['аннигилировать', 'ban'], commands_prefix='!?./', is_chat_admin=True)
 async def ban(message):
     msg = message
+    if not msg.reply_to_message:
+        await msg.reply("❗ | Ответьте на сообщение пользователя.")
+        return
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
@@ -235,6 +252,9 @@ async def ban(message):
 @dp.message_handler(commands=['воскресить', 'unban'], commands_prefix='!?./', is_chat_admin=True)
 async def unban(message):
     msg = message
+    if not msg.reply_to_message:
+        await msg.reply("❗ | Ответьте на сообщение пользователя.")
+        return
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
@@ -254,7 +274,13 @@ async def unban(message):
 async def vidat(message: types.Message):
     command_parse = re.compile(r"(^Выдать|выдать) ?(\d+)?")
     parsed = command_parse.match(message.text)
-    suma = parsed.group(2)
+    suma = parsed.group(2) if parsed else None
+    if not message.reply_to_message:
+        await message.reply("❗ | Используйте команду ответом на сообщение.")
+        return
+    if not suma or int(suma) <= 0:
+        await message.reply("❗ | Укажите положительное число.")
+        return
     name1 = message.from_user.get_mention(as_html=True)
     name2 = message.reply_to_message.from_user.get_mention(as_html=True)
     data = {}
@@ -284,7 +310,13 @@ async def vidat(message: types.Message):
 async def zabrat(message: types.Message):
     command_parse = re.compile(r"(^Забрать|забрать) ?(\d+)?")
     parsed = command_parse.match(message.text)
-    suma = parsed.group(2)
+    suma = parsed.group(2) if parsed else None
+    if not message.reply_to_message:
+        await message.reply("❗ | Используйте команду ответом на сообщение.")
+        return
+    if not suma or int(suma) <= 0:
+        await message.reply("❗ | Укажите положительное число.")
+        return
     name1 = message.from_user.get_mention(as_html=True)
     name2 = message.reply_to_message.from_user.get_mention(as_html=True)
     data = {}
@@ -312,7 +344,10 @@ async def zabrat(message: types.Message):
 #Установить баланс
 @dp.message_handler(commands=['setbal'])
 async def setbal(message: types.Message):
-    args = message.get_args()
+    args = (message.get_args() or "").strip()
+    if not args.isdigit():
+        await message.reply("❗ | Укажите число. Пример: /setbal 100")
+        return
     summ = int(args)
     users.cursor.execute("SELECT balance FROM users WHERE id=?", (message.from_user.id,))
     data = users.cursor.fetchone()
