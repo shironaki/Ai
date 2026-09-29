@@ -8,6 +8,8 @@ venv/
 # Bot runtime data
 users.db
 chats.db
+data/*.db
+data/*.log
 
 # Logs
 *.log
