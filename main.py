@@ -34,6 +34,7 @@ from aiogram.utils.markdown import hbold, hcode
 
 from base import config, chats, users
 from core.permissions import (get_user_status, get_role_tag, get_display_role, format_user_tag, has_moderator_role, has_admin_role)
+from database.schema import ensure_schema
 
 LOG_FILE = "bot.log"
 
@@ -54,6 +55,8 @@ _console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(nam
 
 logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler], force=True)
 log = logging.getLogger(__name__)
+
+ensure_schema()
 
 if not config.bot_heart:
     raise RuntimeError("Укажите токен бота в переменной окружения BOT_TOKEN.")
