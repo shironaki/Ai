@@ -6,6 +6,23 @@ DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
 
 
+CHATS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS chats(
+    chat_id INTEGER,
+    title TEXT,
+    username TEXT,
+    status TEXT,
+    users INTEGER,
+    date TEXT,
+    type TEXT,
+    rules TEXT,
+    mod_cmd TEXT,
+    admin TEXT,
+    welcome TEXT
+)
+"""
+
+
 USERS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(
     id INTEGER,
@@ -38,4 +55,7 @@ CREATE TABLE IF NOT EXISTS users(
 def ensure_schema():
     with sqlite3.connect(DATA_DIR / "users.db") as connection:
         connection.execute(USERS_SCHEMA)
+
+    with sqlite3.connect(DATA_DIR / "chats.db") as connection:
+        connection.execute(CHATS_SCHEMA)
         connection.commit()
