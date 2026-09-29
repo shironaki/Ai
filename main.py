@@ -1,13 +1,11 @@
 import asyncio
 import html
-import json
 import logging
 from logging.handlers import RotatingFileHandler
 import random
 import re
 import sqlite3
 import time
-from pathlib import Path
 from random import randint
 from asyncio import sleep
 from datetime import datetime, timedelta
@@ -36,29 +34,16 @@ from aiogram.utils.markdown import hbold, hcode
 from base import config, chats, users
 
 LOG_FILE = "bot.log"
-BOT_STATE_FILE = Path("bot_state.json")
+BOT_PAUSED = False
 
 
 def bot_is_paused() -> bool:
-    """Return the persistent global pause state without ever breaking startup."""
-    try:
-        if not BOT_STATE_FILE.exists():
-            return False
-        data = json.loads(BOT_STATE_FILE.read_text(encoding="utf-8"))
-        return bool(data.get("paused", False))
-    except Exception:
-        log.warning("Could not read bot state; treating bot as active", exc_info=True)
-        return False
+    return BOT_PAUSED
 
 
 def set_bot_paused(value: bool) -> None:
-    """Persist bot pause state atomically so a restart cannot accidentally resume it."""
-    temp_file = BOT_STATE_FILE.with_suffix(".tmp")
-    temp_file.write_text(
-        json.dumps({"paused": bool(value)}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    temp_file.replace(BOT_STATE_FILE)
+    global BOT_PAUSED
+    BOT_PAUSED = bool(value)
 
 
 # Persistent diagnostic log: it survives terminal scrolling and keeps the
