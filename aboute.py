@@ -37,7 +37,7 @@ from handlers.help.help import ChRass, Rass, rate_limit
 async def send_rass(call: types.CallbackQuery):
     status = users.cursor.execute("SELECT status from users where id = ?", (call.from_user.id,)).fetchone()
     status = (status[0])
-    if str(status) == 'Создатель бота':
+    if str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
         await call.message.edit_text(text='🖋 Введите текст/фото для рассылки:')
         await Rass.msg.set()
     else:
@@ -70,7 +70,7 @@ async def rassilka_msgl(message: types.Message, state: FSMContext):
 async def send_rass(call: types.CallbackQuery):
     status = users.cursor.execute("SELECT status from users where id = ?", (call.from_user.id,)).fetchone()
     status = (status[0])
-    if str(status) == 'Создатель бота':
+    if str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
         await call.message.edit_text(text='🖋 Введите текст/фото для рассылки:')
         await ChRass.msg.set()
     else:
@@ -373,14 +373,14 @@ async def setbal(message: types.Message):
         await message.reply("Не найден в базе данных!")
     stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
     status = (stts[0])
-    if str(status) == 'Создатель бота':
+    if str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
         reply = message.reply_to_message
         if reply:
             replyuser = reply.from_user
             users.cursor.execute(f'UPDATE users SET stavka=? WHERE id=?', (summ, replyuser.id,))
             users.connect.commit()
             await message.reply(f"Максимальная ставка для {replyuser.full_name} изменена на {args} 💰")
-    elif str(status) == 'Администратор':
+    elif str(status) in ('Администратор', 'Хелпер') or message.from_user.id == config.owner:
         reply = message.reply_to_message
         if reply:
             replyuser = reply.from_user
@@ -406,14 +406,14 @@ async def setdick(message: types.Message):
         await message.reply("Не найден в базе данных!")
     stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
     status = (stts[0])
-    if str(status) == 'Создатель бота':
+    if str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
         reply = message.reply_to_message
         if reply:
             replyuser = reply.from_user
             users.cursor.execute(f'UPDATE users SET dick=? WHERE id=?', (summ, replyuser.id,))
             users.connect.commit()
             await message.answer(f"Пользователю {replyuser.full_name}\nИзменили размер хуя на {summ} см.")
-    elif str(status) == 'Администратор':
+    elif str(status) in ('Администратор', 'Хелпер') or message.from_user.id == config.owner:
         reply = message.reply_to_message
         if reply:
             replyuser = reply.from_user
@@ -468,7 +468,7 @@ async def setbio(message: types.Message):
     if users.cursor.fetchone() is None:
         await message.reply(f'Вы не зарегистрированы!\nВведите /start')
     else:
-        if str(vip) == 'Создатель бота' or str(vip) == 'Администратор' or str(vip) == 'Пользователь':
+        if str(vip) in ('Создатель бота', 'Администратор', 'Хелпер', 'Пользователь', 'Игрок', 'Система') or message.from_user.id == config.owner:
             if len(args) <= 350:
                 if args:
                     if data is None:
@@ -495,7 +495,7 @@ async def bio_text(message: types.Message):
     if users.cursor.fetchone() is None:
         await message.reply(f'Вы не зарегистрированы!\nВведите /start')
     else:
-        if str(vip) == 'Создатель бота' or str(vip) == 'Администратор' or str(vip) == 'Пользователь':
+        if str(vip) in ('Создатель бота', 'Администратор', 'Хелпер', 'Пользователь', 'Игрок', 'Система') or message.from_user.id == config.owner:
             await message.reply(f'🗓 | Ваше описание профиля:\n{bio}')
         else:
             await message.reply(f'Данная команда доступна лишь пользователям с VIP статусом 💎')
@@ -1984,7 +1984,7 @@ async def games_on(message):
     if users.cursor.fetchone() is None:
         await message.reply(f'Вы не зарегистрированы!\nВведите /start')
     else:
-        if message.from_user.id in admins_list or str(status) == 'Создатель бота':
+        if message.from_user.id in admins_list or str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
             game_rule = chats.cursor.execute("SELECT game_rule from chats where chat_id = ?", (message.chat.id,)).fetchone()
             game_rule = (game_rule[0])
             if str(game_rule) == 'разрешено':
@@ -2010,7 +2010,7 @@ async def games_off(message):
     if users.cursor.fetchone() is None:
         await message.reply(f'Вы не зарегистрированы!\nВведите /start')
     else:
-        if message.from_user.id in admins_list or str(status) == 'Создатель бота':
+        if message.from_user.id in admins_list or str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
             game_rule = chats.cursor.execute("SELECT game_rule from chats where chat_id = ?", (message.chat.id,)).fetchone()
             game_rule = (game_rule[0])
             if str(game_rule) == 'запрещено':
