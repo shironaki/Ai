@@ -288,14 +288,14 @@ async def vidat(message: types.Message):
     data['user_id'] = message.reply_to_message.from_user.id
     stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
     status = (stts[0])
-    if str(status) == 'Администратор':
+    if str(status) in ('Администратор', 'Хелпер', 'Система') or message.from_user.id == config.owner:
         if suma is None:
             await message.reply(f'Введите число!')
         else:
             users.cursor.execute("""UPDATE users SET balance = balance + :suma WHERE id = :user_id;""", data)
             await message.answer(f"Администратор: {name1}\nВыдал: {suma} 💰\nПользователю: {name2}", parse_mode='html')
             await bot.send_message(config.owner, f'{name1} выдал {suma}💰 пользователю {name2}')
-    elif str(status) == 'Создатель бота':
+    elif str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
         if suma is None:
             await message.reply(f'Введите число!')
         else:
@@ -324,14 +324,14 @@ async def zabrat(message: types.Message):
     data['user_id'] = message.reply_to_message.from_user.id
     stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
     status = (stts[0])
-    if str(status) == 'Администратор':
+    if str(status) in ('Администратор', 'Хелпер', 'Система') or message.from_user.id == config.owner:
         if suma is None:
             await message.reply(f'Введите число!')
         else:
             users.cursor.execute("""UPDATE users SET balance = balance - :suma WHERE id = :user_id;""", data)
             await message.answer(f"Администратор: {name1}\nЗабрал: {suma} 💰\nУ пользователя: {name2}", parse_mode='html')
             await bot.send_message(config.owner, f'{name1} забрал {suma}💰 у пользователя {name2}')
-    elif str(status) == 'Создатель бота':
+    elif str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
         if suma is None:
             await message.reply(f'Введите число!')
         else:
@@ -362,7 +362,7 @@ async def setbal(message: types.Message):
             users.cursor.execute(f'UPDATE users SET balance=? WHERE id=?', (summ, replyuser.id,))
             users.connect.commit()
             await message.answer(f"Пользователю: {replyuser.full_name}\nИзменлили баланс на: {summ} 💰")
-    elif str(status) == 'Администратор':
+    elif str(status) in ('Администратор', 'Хелпер', 'Система') or message.from_user.id == config.owner:
         reply = message.reply_to_message
         if reply:
             replyuser = reply.from_user
