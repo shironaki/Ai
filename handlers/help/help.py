@@ -1,3 +1,4 @@
+import logging
 from aiogram import Dispatcher, types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.handler import CancelHandler, current_handler
