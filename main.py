@@ -345,6 +345,7 @@ BOT_COMMANDS = [
     types.BotCommand("setdick", "изменить параметр"),
     types.BotCommand("chatinfo", "информация о чате"),
     types.BotCommand("report", "пожаловаться"),
+    types.BotCommand("ai", "обратиться к Аи"),
     # Privileged/admin/moderation commands are deliberately hidden from the
     # public Telegram command menu. Handlers enforce permissions themselves.
 
