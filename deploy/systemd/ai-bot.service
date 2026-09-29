@@ -1,0 +1,17 @@
+[Unit]
+Description=Ai Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ai-bot
+WorkingDirectory=/opt/ai-bot
+EnvironmentFile=/etc/ai-bot.env
+ExecStart=/opt/ai-bot/.venv/bin/python run.py
+Restart=always
+RestartSec=5
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
