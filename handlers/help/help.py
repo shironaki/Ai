@@ -167,7 +167,7 @@ async def ai_command(message: types.Message):
     await _answer_ai(message, (message.get_args() or "").strip())
 
 
-@dp.message_handler(lambda m: m.text and m.text.lower().startswith(("мила", "аи", "ai")))
+@dp.message_handler(lambda m: bool(m.text and re.match(r"^(?:мила|аи|ai)\\b", m.text, re.IGNORECASE)))
 async def bot_msg(message: types.Message):
     match = re.match(r"^(?:мила|аи|ai)\b[\s,:-]*(.*)$", message.text, re.IGNORECASE)
     prompt = match.group(1).strip() if match else ""
