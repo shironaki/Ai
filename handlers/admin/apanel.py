@@ -1,6 +1,6 @@
 from aiogram import types
 
-from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3
+from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3, has_moderator_role
 
 #user_status
 @dp.message_handler(commands=['setstatus'])
@@ -68,6 +68,9 @@ async def deluser(message: types.Message):
 #chatwelcome
 @dp.message_handler(commands=["welcome"])
 async def rules_cmd(message: types.Message):
+    if not has_moderator_role(message.from_user.id):
+        await message.answer("👮‍♂️ | У вас нет роли для управления этим миром.")
+        return
     if message.chat.type == "supergroup" or message.chat.type == "group":
         user_id = message.from_user.id
         chat_id = message.chat.id
@@ -88,6 +91,9 @@ async def rules_cmd(message: types.Message):
 #+барьер
 @dp.message_handler(lambda msg: msg.text.lower() == 'снять барьер')
 async def moder_on(message):
+    if not has_moderator_role(message.from_user.id):
+        await message.reply("👮‍♂️❎ | Эта команда доступна только Хелперам и администрации.")
+        return
     name = message.from_user.get_mention()
     chat_username = message.chat.username
     admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
@@ -114,6 +120,9 @@ async def moder_on(message):
 #-барьер
 @dp.message_handler(lambda msg: msg.text.lower() == 'установить барьер')
 async def moder_off(message):
+    if not has_moderator_role(message.from_user.id):
+        await message.reply("👮‍♂️❎ | Эта команда доступна только Хелперам и администрации.")
+        return
     name = message.from_user.get_mention()
     chat_username = message.chat.username
     admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
@@ -140,6 +149,9 @@ async def moder_off(message):
 #кляп
 @dp.message_handler(commands=['мут', 'mute','дебафф'], commands_prefix='!?./', is_chat_admin=True)
 async def mute(message):
+    if not has_moderator_role(message.from_user.id):
+        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
+        return
     msg = message
     if not msg.reply_to_message:
         await msg.reply("❗ | Ответьте на сообщение пользователя.")
@@ -185,6 +197,9 @@ async def mute(message):
 #Анмут
 @dp.message_handler(commands=['андебафф', 'размут', 'unmute'], commands_prefix='!?./', is_chat_admin=True)
 async def unmute(message):
+    if not has_moderator_role(message.from_user.id):
+        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
+        return
     msg = message
     if not msg.reply_to_message:
         await msg.reply("❗ | Ответьте на сообщение пользователя.")
@@ -206,6 +221,9 @@ async def unmute(message):
 # Аннигиляция | Пинок Системы
 @dp.message_handler(commands=['аннигилировать', 'ban'], commands_prefix='!?./', is_chat_admin=True)
 async def ban(message):
+    if not has_moderator_role(message.from_user.id):
+        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
+        return
     msg = message
     if not msg.reply_to_message:
         await msg.reply("❗ | Ответьте на сообщение пользователя.")
@@ -251,6 +269,9 @@ async def ban(message):
 #Воскрешение
 @dp.message_handler(commands=['воскресить', 'unban'], commands_prefix='!?./', is_chat_admin=True)
 async def unban(message):
+    if not has_moderator_role(message.from_user.id):
+        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
+        return
     msg = message
     if not msg.reply_to_message:
         await msg.reply("❗ | Ответьте на сообщение пользователя.")
