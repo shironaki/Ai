@@ -29,3 +29,9 @@ Visible role labels:
 - 👮 ХЕЛПЕР
 - 🔨 МОДЕРАТОР
 - 👤 ИГРОК
+
+## Database migration status
+
+The new `database/` layer currently provides safe read access and schema definitions.
+The legacy `base/` modules remain active until all existing write paths are migrated.
+This prevents accidental data loss and keeps the current bot runtime stable during the refactor.
