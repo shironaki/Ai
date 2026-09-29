@@ -99,7 +99,7 @@ async def rassilka_msgl(message: types.Message, state: FSMContext):
     await bot_msg.edit_text(f'📣 Рассылка завершена!\n\n✅ Успешно: {len(confirm)}\n❌ Неуспешно: {len(decline)}\n⌚ Время: {str(uptimestr)}')
 
     #helpui
-@dp.message_handler(commands=['help', 'хелп', 'команды'], commands_prefix='!./')
+@dp.message_handler(commands=['help', 'хелп', 'команды'], commands_prefix='/!.')
 async def help_ui(message):
     help_menu = InlineKeyboardMarkup()
     osnova_bt = InlineKeyboardButton(text = '📖 Основные', callback_data = 'osnova')
@@ -272,7 +272,7 @@ async def send_money(message: types.Message):
 
 
 #work
-@dp.message_handler(commands=['work', 'работа', 'работать'], commands_prefix='+!./')
+@dp.message_handler(commands=['work', 'работа', 'работать'], commands_prefix='/+!.')
 async def work_cmd(message: types.Message):
     emoji = random.choice(["😴", "😶‍🌫️", "🫠", "🥶", "🤥", "🫡", "🤨", "😐", "🗿"])
     user_id = message['from']['id']
@@ -317,7 +317,7 @@ async def chatwelcome_msg(message):
         await message.answer("Эта команда работает только в чатах!")
 
 #Растить хуй
-@dp.message_handler(commands=['хуй', 'член', 'dick'], commands_prefix='+!./')
+@dp.message_handler(commands=['хуй', 'член', 'dick'], commands_prefix='/+!.')
 async def dick_cmd(message: types.Message):
     msg = message
     name = users.cursor.execute("SELECT name from users where id = ?",(msg.from_user.id,)).fetchone()
