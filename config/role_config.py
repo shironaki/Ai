@@ -1,0 +1,3 @@
+ROLE_TAGS = {}
+MODERATOR_ROLES = set()
+ADMIN_ROLES = set()
