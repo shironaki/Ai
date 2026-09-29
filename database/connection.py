@@ -1,9 +1,11 @@
+import os
 import sqlite3
 from pathlib import Path
 
-
-DB_DIR = Path("data")
-DB_DIR.mkdir(exist_ok=True)
+# Keep the database location compatible with the live bot by default.
+# BOT_DATA_DIR can override it for tests or a future managed deployment.
+DB_DIR = Path(os.getenv("BOT_DATA_DIR", "."))
+DB_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def connect_db(filename: str) -> sqlite3.Connection:
