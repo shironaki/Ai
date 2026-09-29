@@ -1,6 +1,7 @@
 import asyncio
 import html
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 import random
 import re
@@ -58,6 +59,35 @@ if not config.bot_heart:
 
 bot = Bot(token=config.bot_heart, parse_mode=types.ParseMode.HTML)
 dp = Dispatcher(bot, storage=MemoryStorage())
+
+# Bot-level roles. Moderation commands are available only to users with one
+# of these roles; Telegram chat-admin status alone is not enough.
+MODERATOR_ROLES = {"Хелпер", "Администратор", "Создатель бота", "Система"}
+ADMIN_ROLES = {"Администратор", "Создатель бота", "Система"}
+
+
+def get_user_status(user_id):
+    row = users.cursor.execute(
+        "SELECT status FROM users WHERE id = ?",
+        (user_id,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def has_moderator_role(user_id):
+    return user_id == config.owner or get_user_status(user_id) in MODERATOR_ROLES
+
+
+def has_admin_role(user_id):
+    return user_id == config.owner or get_user_status(user_id) in ADMIN_ROLES
+
+
+def get_ai_config():
+    """Return optional hosted AI configuration without exposing secrets."""
+    return {
+        "api_key": os.getenv("GROQ_API_KEY"),
+        "model": os.getenv("AI_MODEL", "openai/gpt-oss-20b"),
+    }
 
 
 class MyStatesGroup(StatesGroup):
@@ -349,10 +379,8 @@ BOT_COMMANDS = [
     types.BotCommand("setbal", "установить баланс"),
     types.BotCommand("setstatus", "изменить статус"),
     types.BotCommand("deluser", "удалить пользователя"),
-    types.BotCommand("mute", "замутить пользователя"),
-    types.BotCommand("unmute", "снять мут"),
-    types.BotCommand("ban", "заблокировать пользователя"),
-    types.BotCommand("unban", "разблокировать пользователя"),
+    # Moderation commands are intentionally NOT in the public command menu.
+    # Access is role-checked inside handlers/admin/apanel.py.
     types.BotCommand("system", "режим системы"),
     types.BotCommand("logs", "получить технический лог"),
 ]
