@@ -263,17 +263,7 @@ BOT_COMMANDS = [
 
 
 async def on_startup(dispatcher):
-    # Import handlers only after main.py has finished initializing.
-    # Handler modules import objects from main.py, so importing them earlier
-    # creates a circular-import timing problem and leaves Dispatcher empty.
-    # Register specific handlers first.
-    # chat_groups is deliberately imported last because it contains the
-    # catch-all echo handler; otherwise it would intercept most commands.
-    import handlers.admin  # noqa: F401
-    import handlers.help  # noqa: F401
-    import aboute  # noqa: F401
-    import handlers.chat_groups  # noqa: F401
-
+    # Handler modules are imported before polling starts (see below).
     from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
@@ -285,6 +275,14 @@ async def on_startup(dispatcher):
     except Exception:
         log.exception("Could not update Telegram command menu")
     log.info("Бот @%s подключён и ожидает сообщения", bot_info.username)
+
+
+# Register all handler modules after main.py has finished defining bot/dp.
+# chat_groups contains the final catch-all echo handler, so it must be imported last.
+import handlers.admin  # noqa: E402,F401
+import handlers.help  # noqa: E402,F401
+import aboute  # noqa: E402,F401
+import handlers.chat_groups  # noqa: E402,F401
 
 
 if __name__ == "__main__":
