@@ -184,11 +184,15 @@ async def on_startup(dispatcher):
     # Import handlers only after main.py has finished initializing.
     # Handler modules import objects from main.py, so importing them earlier
     # creates a circular-import timing problem and leaves Dispatcher empty.
-    import handlers.chat_groups  # noqa: F401
+    # Register specific handlers first.
+    # chat_groups is deliberately imported last because it contains the
+    # catch-all echo handler; otherwise it would intercept most commands.
     import handlers.admin  # noqa: F401
     import handlers.help  # noqa: F401
-    from handlers.help.help import ThrottlingMiddleware
+    import aboute  # noqa: F401
+    import handlers.chat_groups  # noqa: F401
 
+    from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
 
