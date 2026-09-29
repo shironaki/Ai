@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import random
 import re
 import sqlite3
@@ -31,11 +32,24 @@ from aiogram.utils.markdown import hbold, hcode
 
 from base import config, chats, users
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    force=True,
+LOG_FILE = "bot.log"
+
+# Persistent diagnostic log: it survives terminal scrolling and keeps the
+# latest runtime history in a small rotating file.  The file is ignored by git.
+_file_handler = RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=2 * 1024 * 1024,
+    backupCount=3,
+    encoding="utf-8",
 )
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+
+_console_handler = logging.StreamHandler()
+_console_handler.setLevel(logging.INFO)
+_console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+
+logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler], force=True)
 log = logging.getLogger(__name__)
 
 if not config.bot_heart:
@@ -53,18 +67,39 @@ class MyStatesGroup(StatesGroup):
 class ActivityLoggingMiddleware(BaseMiddleware):
     async def on_pre_process_update(self, update, data):
         if update.message:
-            log.info("Telegram update received: message, chat_type=%s", update.message.chat.type)
+            message = update.message
+            text = (message.text or message.caption or "").replace("\n", " ")[:300]
+            log.info(
+                "UPDATE message | update_id=%s chat=%s type=%s user=%s text=%r",
+                getattr(update, "update_id", "?"),
+                message.chat.id,
+                message.chat.type,
+                getattr(message.from_user, "id", "?"),
+                text,
+            )
         elif update.callback_query:
-            log.info("Telegram update received: callback_query")
+            log.info(
+                "UPDATE callback | update_id=%s user=%s data=%r",
+                getattr(update, "update_id", "?"),
+                getattr(update.callback_query.from_user, "id", "?"),
+                update.callback_query.data,
+            )
         else:
-            log.info("Telegram update received")
+            log.info("UPDATE other | update_id=%s", getattr(update, "update_id", "?"))
 
     async def on_process_message(self, message, data):
         handler = current_handler.get()
         if handler:
-            log.info("Dispatching message to handler=%s", handler.__name__)
+            log.info("DISPATCH | handler=%s", getattr(handler, "__name__", repr(handler)))
         else:
-            log.warning("No message handler selected")
+            log.info("DISPATCH | handler not selected yet")
+
+    async def on_post_process_message(self, message, results, data):
+        handler = current_handler.get()
+        if handler:
+            log.info("HANDLER DONE | handler=%s", getattr(handler, "__name__", repr(handler)))
+        else:
+            log.warning("HANDLER DONE | no handler reported")
 
 
 dp.middleware.setup(ActivityLoggingMiddleware())
@@ -216,26 +251,66 @@ async def start_dispatch(message: types.Message):
 
 def log_registered_handlers():
     handlers = getattr(dp.message_handlers, "handlers", [])
-    log.info("Registered message handlers: %d", len(handlers))
+    log.info("REGISTERED HANDLERS | total=%d", len(handlers))
     for index, handler in enumerate(handlers):
-        callback = getattr(handler, "callback", None)
-        log.info("Handler[%d]: %s", index, getattr(callback, "__name__", repr(callback)))
+        callback = getattr(handler, "handler", None) or getattr(handler, "callback", None)
+        name = getattr(callback, "__name__", repr(callback))
+        log.info("HANDLER[%d] | %s", index, name)
 
 
 @dp.errors_handler()
 async def log_update_error(update, exception):
+    update_id = getattr(update, "update_id", "unknown")
     log.error(
-        "Unhandled error while processing update_id=%s",
-        getattr(update, "update_id", "unknown"),
+        "EXCEPTION | update_id=%s | %s: %s",
+        update_id,
+        type(exception).__name__,
+        exception,
         exc_info=(type(exception), exception, exception.__traceback__),
     )
+
     message = getattr(update, "message", None)
     if message:
         try:
-            await message.answer("Произошла ошибка при обработке сообщения. Ошибка записана в консоль.")
+            await message.answer(
+                "⚠️ Ошибка обработчика. Диагностика записана в bot.log. "
+                "Владелец бота получит технический отчёт."
+            )
         except Exception:
             log.exception("Could not send error notice to the user")
+
+    # Send the technical error directly to the owner so debugging no longer
+    # depends on screenshots from the Codespaces terminal.
+    if config.owner:
+        try:
+            details = (
+                "🚨 <b>BOT ERROR</b>\n"
+                f"update_id: <code>{update_id}</code>\n"
+                f"type: <code>{type(exception).__name__}</code>\n"
+                f"error: <code>{str(exception)[:1200]}</code>\n"
+            )
+            if message:
+                details += (
+                    f"chat: <code>{message.chat.id}</code>\n"
+                    f"user: <code>{getattr(message.from_user, 'id', '?')}</code>\n"
+                    f"text: <code>{(message.text or message.caption or '')[:500]}</code>"
+                )
+            await bot.send_message(config.owner, details)
+        except Exception:
+            log.exception("Could not notify owner about runtime error")
     return True
+
+
+@dp.message_handler(commands=['logs'])
+async def send_logs(message: types.Message):
+    """Owner-only command: send the latest runtime log as a Telegram document."""
+    if message.from_user.id != config.owner:
+        return
+    try:
+        await message.answer_document(types.InputFile(LOG_FILE), caption="Последний bot.log")
+        log.info("LOGS | sent bot.log to owner")
+    except Exception:
+        log.exception("Could not send bot.log to owner")
 
 
 BOT_COMMANDS = [
@@ -259,6 +334,7 @@ BOT_COMMANDS = [
     types.BotCommand("ban", "заблокировать пользователя"),
     types.BotCommand("unban", "разблокировать пользователя"),
     types.BotCommand("system", "режим системы"),
+    types.BotCommand("logs", "получить технический лог"),
 ]
 
 
