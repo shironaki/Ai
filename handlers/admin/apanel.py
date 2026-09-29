@@ -1,6 +1,7 @@
 from aiogram import types
 
-from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3, has_moderator_role
+from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3
+from core.permissions import has_moderator_role
 
 #user_status
 @dp.message_handler(commands=['setstatus'])
