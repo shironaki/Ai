@@ -1882,6 +1882,74 @@ async def bankminus(message: types.Message):
         await message.answer('📊🎮 | Топ 15 игроков бота:\n'+''.join(table), parse_mode='html', disable_web_page_preview=True)
 
 
+
+# Баланс и рейтинги.
+# В старой версии этот блок находился внутри обработчика "Снять со счёта",
+# поэтому команды "Баланс" и "Топ ..." фактически никогда не запускались.
+@dp.message_handler(lambda msg: msg.text and msg.text.lower() in [
+    "б", "баланс", "💰", "мои 💰", "мой 💰", "топ б", "богачи", "топ 💰",
+    "топ х", "топ хуёв", "топ и", "топ игроков", "топ 🎮",
+])
+async def balance_and_tops(message: types.Message):
+    user_id = message.from_user.id
+    if not users.cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,)).fetchone():
+        await message.reply("Вы не зарегистрированы!\nВведите /start")
+        return
+
+    text = message.text.lower()
+
+    if text in {"б", "баланс", "💰", "мои 💰", "мой 💰"}:
+        target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
+        row = users.cursor.execute(
+            "SELECT balance, bank FROM users WHERE id = ?",
+            (target.id,),
+        ).fetchone()
+        if not row:
+            await message.reply("❗ | Пользователь не зарегистрирован.")
+            return
+        name = target.get_mention(as_html=True)
+        await message.answer(
+            f"👤 | {name}\n💰 | Баланс: <code>{row[0]:,}</code>\n"
+            f"🏦 | Банк: <code>{row[1]:,}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if text in {"топ б", "богачи", "топ 💰"}:
+        rows = users.cursor.execute(
+            "SELECT name, balance FROM users WHERE balance IS NOT NULL "
+            "AND status NOT IN ('Администратор', 'Создатель бота', 'Система') "
+            "ORDER BY balance DESC LIMIT 15"
+        ).fetchall()
+        await message.answer(
+            "📊💰 | Топ 15 богачей бота:\n" +
+            "".join(f"{i}. {name} – {value}💰\n" for i, (name, value) in enumerate(rows, 1)),
+        )
+        return
+
+    if text in {"топ х", "топ хуёв"}:
+        rows = users.cursor.execute(
+            "SELECT name, dick FROM users WHERE dick IS NOT NULL "
+            "AND status NOT IN ('Администратор', 'Создатель бота', 'Система') "
+            "ORDER BY dick DESC LIMIT 15"
+        ).fetchall()
+        await message.answer(
+            "📊🍆 | Топ 15 членов бота:\n" +
+            "".join(f"{i}. {name} – {value} см.\n" for i, (name, value) in enumerate(rows, 1)),
+        )
+        return
+
+    rows = users.cursor.execute(
+        "SELECT name, games FROM users WHERE games IS NOT NULL "
+        "AND status NOT IN ('Администратор', 'Создатель бота', 'Система') "
+        "ORDER BY games DESC LIMIT 15"
+    ).fetchall()
+    await message.answer(
+        "📊🎮 | Топ 15 игроков бота:\n" +
+        "".join(f"{i}. {name} – {value}\n" for i, (name, value) in enumerate(rows, 1)),
+    )
+
+
 #admin_cmd
 @dp.message_handler(commands=[''])
 async def admins_cmd(message: types.Message):
