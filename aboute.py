@@ -1811,6 +1811,7 @@ async def bankplus(message: types.Message):
     if int(balance) >= suma:
         users.cursor.execute("""UPDATE users SET bank = bank + :suma WHERE id = :user_id;""", data1)
         users.cursor.execute("""UPDATE users SET balance = balance - :suma WHERE id = :user_id;""", data1)
+        users.connect.commit()
         await message.reply(f"Вы успешно пополнили свой счёт на <code>{suma}💰</code>", parse_mode='html')
     else:
         await message.reply(f"У вас недостаточно монет для пополнения счёта!", parse_mode='html')
@@ -1835,6 +1836,7 @@ async def bankminus(message: types.Message):
     if int(bank) >= suma:
         users.cursor.execute("""UPDATE users SET balance = balance + :suma WHERE id = :user_id;""", data1)
         users.cursor.execute("""UPDATE users SET bank = bank - :suma WHERE id = :user_id;""", data1)
+        users.connect.commit()
         await message.reply(f"Вы успешно сняли <code>{suma}💰</code> со счёта!", parse_mode='html')
     else:
         await message.reply(f"У вас недостаточно средств на счету!", parse_mode='html')
