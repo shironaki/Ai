@@ -155,6 +155,24 @@ async def start_dispatch(message: types.Message):
     except Exception:
         log.exception("Error during /start registration for user_id=%s", message.from_user.id)
 
+    # Preserve the original referral/deep-link behavior: /start <user_id>.
+    args = (message.get_args() or "").strip()
+    if args.isdigit():
+        try:
+            inviter_id = int(args)
+            if inviter_id != message.from_user.id:
+                users.cursor.execute(
+                    "UPDATE users SET invited_users = invited_users + 1 WHERE id = ?",
+                    (inviter_id,),
+                )
+                users.connect.commit()
+                await bot.send_message(
+                    inviter_id,
+                    "❤️ Кто-то только что зарегистрировался по твоей реферальной ссылке!",
+                )
+        except Exception:
+            log.exception("Could not process /start referral payload=%s", args)
+
 
 def log_registered_handlers():
     handlers = getattr(dp.message_handlers, "handlers", [])
