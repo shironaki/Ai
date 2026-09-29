@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 import time
@@ -9,6 +10,11 @@ log = logging.getLogger(__name__)
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-oss-20b"
+
+
+def escape_for_telegram_html(text: str) -> str:
+    """Escape untrusted AI text before sending it with aiogram HTML parse mode."""
+    return html.escape(text, quote=False)
 
 _HISTORY = {}
 _LAST_REQUEST = {}
