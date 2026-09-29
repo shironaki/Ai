@@ -50,12 +50,16 @@ class MyStatesGroup(StatesGroup):
     SECOND_STATE = State()
 
 
-# Register command handlers before the catch-all message handler.
+# Register the core start/registration handlers first.
+# handlers.chat_groups contains /start and the final catch-all echo handler.
+# It must be imported before other handler modules so /start is never shadowed.
+import handlers.chat_groups  # noqa: E402,F401
+
+# Register the remaining handlers after the core registration handler.
 import handlers.admin  # noqa: E402,F401
 import handlers.help  # noqa: E402,F401
 from handlers.help.help import ThrottlingMiddleware  # noqa: E402
-import aboute  # noqa: E402
-import handlers.chat_groups  # noqa: E402,F401
+import aboute  # noqa: E402,F401
 
 dp.middleware.setup(ThrottlingMiddleware())
 
