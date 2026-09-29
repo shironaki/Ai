@@ -29,6 +29,7 @@ from main import (
     sleep,
 )
 from handlers.help.help import ChRass, Rass, rate_limit
+from core.permissions import get_role_tag
 
 
 #Рассылка
@@ -37,7 +38,7 @@ from handlers.help.help import ChRass, Rass, rate_limit
 async def send_rass(call: types.CallbackQuery):
     status = users.cursor.execute("SELECT status from users where id = ?", (call.from_user.id,)).fetchone()
     status = (status[0])
-    if str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
+    if str(status) in ('Создатель бота', 'Система') or call.from_user.id == config.owner:
         await call.message.edit_text(text='🖋 Введите текст/фото для рассылки:')
         await Rass.msg.set()
     else:
@@ -518,7 +519,7 @@ async def profile_msg(message):
     else:
         await message.reply(f"""📈 | Профиль пользователя
 🏷 Никнейм: {name}
-👤 Статус: {status}
+🏷 Роль: {get_role_tag(message.from_user.id)}
 💰 Баланс: <code>{balance}</code>
 💰 Ставка: <code>{stavka}</code>
 🎮 Всего игр: <b>{games}</b>
@@ -552,7 +553,7 @@ async def stata_msg(message):
     else:
         await msg.reply(f"""📈 | Профиль пользователя
 📎 Никнейм: {name}
-👤 Статус: {status}
+🏷 Роль: {get_role_tag(msg.from_user.id)}
 💰 Баланс: <code>{balance}</code>
 💰 Ставка: <code>{stavka}</code>
 🎮 Всего игр: <b>{games}</b>
@@ -584,7 +585,7 @@ async def info_msg(message):
     else:
         await msg.reply(f"""📈 | Профиль пользователя
 📎 Никнейм: {name}
-👤 Статус: {status}
+🏷 Роль: {get_role_tag(msg.from_user.id)}
 💰 Баланс: <code>{balance}</code>
 💰 Ставка: <code>{stavka}</code>
 🎮 Всего игр: <b>{games}</b>
