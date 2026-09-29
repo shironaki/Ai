@@ -5,5 +5,11 @@
   "forwardPorts": [],
   "remoteEnv": {
     "PYTHONUNBUFFERED": "1"
+  },
+  "secrets": {
+    "BOT_TOKEN": {
+      "description": "Telegram bot token from @BotFather",
+      "documentationUrl": "https://core.telegram.org/bots/tutorial"
+    }
   }
 }
