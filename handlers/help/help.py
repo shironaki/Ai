@@ -5,6 +5,8 @@ from aiogram.dispatcher.handler import CancelHandler, current_handler
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.exceptions import Throttled
 
+from services.ai_service import generate_reply
+
 from main import (
     BaseMiddleware,
     ContentType,
