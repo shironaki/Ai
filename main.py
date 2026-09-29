@@ -352,16 +352,11 @@ BOT_COMMANDS = [
     types.BotCommand("dick", "увеличить параметр"),
     types.BotCommand("setstavka", "изменить ставку"),
     types.BotCommand("setdick", "изменить параметр"),
-    types.BotCommand("dev", "панель разработчика"),
     types.BotCommand("chatinfo", "информация о чате"),
     types.BotCommand("report", "пожаловаться"),
-    types.BotCommand("setbal", "установить баланс"),
-    types.BotCommand("setstatus", "изменить статус"),
-    types.BotCommand("deluser", "удалить пользователя"),
-    # Moderation commands are intentionally NOT in the public command menu.
-    # Access is role-checked inside handlers/admin/apanel.py.
-    types.BotCommand("system", "режим системы"),
-    types.BotCommand("logs", "получить технический лог"),
+    # Privileged/admin/moderation commands are deliberately hidden from the
+    # public Telegram command menu. Handlers enforce permissions themselves.
+
 ]
 
 
