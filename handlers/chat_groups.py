@@ -69,7 +69,8 @@ async def echo_message(message: types.Message):
             answer = None
 
         if answer:
-            await message.answer(answer)
+            # Bot uses global HTML parse mode; AI output is untrusted and may contain <...>.
+            await message.answer(html.escape(answer))
         else:
             await message.answer(
                 "🧠 Интеллектуальный модуль сейчас недоступен. "
