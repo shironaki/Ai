@@ -1,5 +1,5 @@
 from base import config, users
-from config.roles import ADMIN_ROLES, MODERATOR_ROLES, ROLE_TAGS
+from config.role_config import ADMIN_ROLES, MODERATOR_ROLES, ROLE_TAGS
 
 
 def get_user_status(user_id):
