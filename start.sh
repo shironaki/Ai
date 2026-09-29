@@ -6,4 +6,8 @@ if [[ -z "${BOT_TOKEN:-}" ]]; then
   exit 1
 fi
 
+export BOT_ENV="${BOT_ENV:-test}"
+export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"
+
+echo "Starting Ai bot in ${BOT_ENV} environment; data: ${BOT_DATA_DIR}"
 exec python run.py
