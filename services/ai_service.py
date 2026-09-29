@@ -10,10 +10,9 @@ log = logging.getLogger(__name__)
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-oss-20b"
 
-# Short in-memory context. It keeps the bot conversational without writing
-# every user message into the repository or a giant hardcoded response table.
 _HISTORY = {}
 _LAST_REQUEST = {}
+_LAST_ERROR = {"value": ""}
 _MAX_HISTORY_MESSAGES = 8
 _MIN_REQUEST_INTERVAL = 2.0
 
@@ -38,6 +37,16 @@ def _system_prompt(role: str) -> str:
 """.strip()
 
 
+def ai_status() -> dict:
+    """Return safe runtime diagnostics without exposing the API key."""
+    key = os.getenv("GROQ_API_KEY")
+    return {
+        "configured": bool(key and key.strip()),
+        "model": os.getenv("AI_MODEL", DEFAULT_MODEL),
+        "endpoint": GROQ_URL,
+    }
+
+
 def _request_sync(messages, model, api_key):
     response = requests.post(
         GROQ_URL,
@@ -53,24 +62,24 @@ def _request_sync(messages, model, api_key):
         },
         timeout=30,
     )
-    response.raise_for_status()
+    if not response.ok:
+        detail = response.text[:800].replace("\n", " ")
+        raise RuntimeError(f"Groq HTTP {response.status_code}: {detail}")
     data = response.json()
     choices = data.get("choices") or []
     if not choices:
-        raise RuntimeError("AI provider returned no choices")
+        raise RuntimeError("Groq returned no choices")
     content = choices[0].get("message", {}).get("content")
     if not content:
-        raise RuntimeError("AI provider returned an empty response")
+        raise RuntimeError("Groq returned an empty response")
     return content.strip()
 
 
 async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
-    """Generate a reply using Groq when GROQ_API_KEY is configured.
-
-    Returns None when AI is not configured or temporarily unavailable.
-    """
+    """Generate a reply using Groq when GROQ_API_KEY is configured."""
     api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
+    if not api_key or not api_key.strip():
+        _LAST_ERROR["value"] = "GROQ_API_KEY is not present in the running process."
         return None
 
     now = time.monotonic()
@@ -93,10 +102,12 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
             os.getenv("AI_MODEL", DEFAULT_MODEL),
             api_key,
         )
-    except Exception:
+    except Exception as exc:
+        _LAST_ERROR["value"] = f"{type(exc).__name__}: {exc}"
         log.exception("AI provider request failed for user_id=%s", user_id)
         return None
 
+    _LAST_ERROR["value"] = ""
     history.append({"role": "assistant", "content": answer})
     history[:] = history[-_MAX_HISTORY_MESSAGES:]
     return answer
