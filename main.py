@@ -1,11 +1,13 @@
 import asyncio
 import html
+import json
 import logging
 from logging.handlers import RotatingFileHandler
 import random
 import re
 import sqlite3
 import time
+from pathlib import Path
 from random import randint
 from asyncio import sleep
 from datetime import datetime, timedelta
@@ -17,7 +19,7 @@ import requests
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.handler import current_handler
+from aiogram.dispatcher.handler import CancelHandler, current_handler
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.types import (
@@ -34,6 +36,30 @@ from aiogram.utils.markdown import hbold, hcode
 from base import config, chats, users
 
 LOG_FILE = "bot.log"
+BOT_STATE_FILE = Path("bot_state.json")
+
+
+def bot_is_paused() -> bool:
+    """Return the persistent global pause state without ever breaking startup."""
+    try:
+        if not BOT_STATE_FILE.exists():
+            return False
+        data = json.loads(BOT_STATE_FILE.read_text(encoding="utf-8"))
+        return bool(data.get("paused", False))
+    except Exception:
+        log.warning("Could not read bot state; treating bot as active", exc_info=True)
+        return False
+
+
+def set_bot_paused(value: bool) -> None:
+    """Persist bot pause state atomically so a restart cannot accidentally resume it."""
+    temp_file = BOT_STATE_FILE.with_suffix(".tmp")
+    temp_file.write_text(
+        json.dumps({"paused": bool(value)}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    temp_file.replace(BOT_STATE_FILE)
+
 
 # Persistent diagnostic log: it survives terminal scrolling and keeps the
 # latest runtime history in a small rotating file.  The file is ignored by git.
@@ -106,6 +132,28 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 dp.middleware.setup(ActivityLoggingMiddleware())
 
 
+class RuntimeGateMiddleware(BaseMiddleware):
+    """Globally silence the bot while preserving founder control."""
+
+    def _allowed(self, user_id):
+        return user_id == config.owner or not bot_is_paused()
+
+    async def on_pre_process_message(self, message, data):
+        user_id = getattr(message.from_user, "id", None)
+        if not self._allowed(user_id):
+            log.info("RUNTIME GATE | ignored message from user=%s while bot is in STASIS", user_id)
+            raise CancelHandler()
+
+    async def on_pre_process_callback_query(self, callback_query, data):
+        user_id = getattr(callback_query.from_user, "id", None)
+        if not self._allowed(user_id):
+            log.info("RUNTIME GATE | ignored callback from user=%s while bot is in STASIS", user_id)
+            raise CancelHandler()
+
+
+dp.middleware.setup(RuntimeGateMiddleware())
+
+
 class ChatRegistrationMiddleware(BaseMiddleware):
     """Ensure group chats exist in chats.db before command handlers run."""
 
@@ -144,6 +192,48 @@ class ChatRegistrationMiddleware(BaseMiddleware):
 
 
 dp.middleware.setup(ChatRegistrationMiddleware())
+
+
+# Founder-only global runtime controls. The commands are intentionally unusual
+# and are not included in the public Telegram command menu to avoid collisions.
+@dp.message_handler(commands=["stasis"])
+async def enter_stasis(message: types.Message):
+    if message.from_user.id != config.owner:
+        return
+
+    if bot_is_paused():
+        await message.answer(
+            "🛰 <b>РЕЖИМ СТАЗИСА</b> уже активен.\n"
+            "Все сигналы от пользователей подавлены. "
+            "Для возврата используй <code>/awakening</code>."
+        )
+        return
+
+    set_bot_paused(True)
+    log.warning("RUNTIME STATE | BOT ENTERED STASIS by founder id=%s", message.from_user.id)
+    await message.answer(
+        "🛰 <b>СТАЗИС АКТИВИРОВАН.</b>\n"
+        "Все внешние сигналы подавлены. Бот переходит в режим полной тишины.\n\n"
+        "👑 Контур Основателя остаётся активен.\n"
+        "Для возвращения в строй: <code>/awakening</code>"
+    )
+
+
+@dp.message_handler(commands=["awakening"])
+async def leave_stasis(message: types.Message):
+    if message.from_user.id != config.owner:
+        return
+
+    if not bot_is_paused():
+        await message.answer("⚡ <b>СИСТЕМА УЖЕ В АКТИВНОМ РЕЖИМЕ.</b>")
+        return
+
+    set_bot_paused(False)
+    log.warning("RUNTIME STATE | BOT AWAKENED by founder id=%s", message.from_user.id)
+    await message.answer(
+        "⚡ <b>ПРОБУЖДЕНИЕ ЗАВЕРШЕНО.</b>\n"
+        "Контуры связи восстановлены. Бот снова принимает сигналы."
+    )
 
 
 # Diagnostic handler: proves that aiogram is dispatching /debug and /start.
@@ -231,7 +321,6 @@ async def start_dispatch(message: types.Message):
     except Exception:
         log.exception("Error during /start registration for user_id=%s", message.from_user.id)
 
-    # Preserve the original referral/deep-link behavior: /start <user_id>.
     args = (message.get_args() or "").strip()
     if args.isdigit():
         try:
@@ -280,8 +369,6 @@ async def log_update_error(update, exception):
         except Exception:
             log.exception("Could not send error notice to the user")
 
-    # Send the technical error directly to the owner so debugging no longer
-    # depends on screenshots from the Codespaces terminal.
     if config.owner:
         try:
             details = (
@@ -304,7 +391,6 @@ async def log_update_error(update, exception):
 
 @dp.message_handler(commands=['logs'])
 async def send_logs(message: types.Message):
-    """Owner-only command: send the latest runtime log as Telegram text."""
     if message.from_user.id != config.owner:
         return
 
@@ -316,8 +402,6 @@ async def send_logs(message: types.Message):
             await message.answer("bot.log пока пуст.")
             return
 
-        # Telegram messages are limited to 4096 characters. Send the newest
-        # part first, in safe-sized chunks, so no file download is required.
         chunks = []
         while content:
             chunks.insert(0, content[-3500:])
@@ -346,21 +430,14 @@ BOT_COMMANDS = [
     types.BotCommand("chatinfo", "информация о чате"),
     types.BotCommand("report", "пожаловаться"),
     types.BotCommand("ai", "обратиться к Аи"),
-    # Privileged/admin/moderation commands are deliberately hidden from the
-    # public Telegram command menu. Handlers enforce permissions themselves.
-
 ]
 
 
 async def on_startup(dispatcher):
-    # Handler modules are imported before polling starts (see below).
     from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
 
-    # A healthy bot must have the handlers from all modules on THIS dispatcher.
-    # If this number ever unexpectedly drops, it is immediately visible in the
-    # persistent log and in the owner's Telegram diagnostics.
     handler_count = len(getattr(dp.message_handlers, "handlers", []))
     if handler_count <= 3:
         log.error("HANDLER REGISTRATION FAILURE | only %d message handlers loaded", handler_count)
