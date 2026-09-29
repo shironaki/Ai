@@ -30,3 +30,6 @@ jobs:
 
       - name: Check AI service without credentials
         run: python -c "from services.ai_service import ai_status; print(ai_status()); assert ai_status()['configured'] is False"
+
+      - name: Run runtime regression tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v

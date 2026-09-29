@@ -358,15 +358,15 @@ async def log_update_error(update, exception):
         try:
             details = (
                 "🚨 <b>BOT ERROR</b>\n"
-                f"update_id: <code>{update_id}</code>\n"
-                f"type: <code>{type(exception).__name__}</code>\n"
-                f"error: <code>{str(exception)[:1200]}</code>\n"
+                f"update_id: <code>{html.escape(str(update_id))}</code>\n"
+                f"type: <code>{html.escape(type(exception).__name__)}</code>\n"
+                f"error: <code>{html.escape(str(exception)[:1200])}</code>\n"
             )
             if message:
                 details += (
-                    f"chat: <code>{message.chat.id}</code>\n"
-                    f"user: <code>{getattr(message.from_user, 'id', '?')}</code>\n"
-                    f"text: <code>{(message.text or message.caption or '')[:500]}</code>"
+                    f"chat: <code>{html.escape(str(message.chat.id))}</code>\n"
+                    f"user: <code>{html.escape(str(getattr(message.from_user, 'id', '?')))}</code>\n"
+                    f"text: <code>{html.escape((message.text or message.caption or '')[:500])}</code>"
                 )
             await bot.send_message(config.owner, details)
         except Exception:

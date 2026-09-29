@@ -1,7 +1,12 @@
-
+import os
 import sqlite3
+from pathlib import Path
 
-connect = sqlite3.connect("users.db")
+DB_DIR = Path(os.getenv("BOT_DATA_DIR", Path("data") / os.getenv("BOT_ENV", "local")))
+DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DB_DIR / "users.db"
+
+connect = sqlite3.connect(DB_PATH)
 cursor = connect.cursor()
 cursor.execute("""CREATE TABLE IF NOT EXISTS users(
     id INTEGER,

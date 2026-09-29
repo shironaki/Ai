@@ -1,0 +1,75 @@
+import ast
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class RuntimeRegressionTests(unittest.TestCase):
+    def test_ai_html_sanitizer_escapes_untrusted_tags(self):
+        from services.ai_service import escape_for_telegram_html
+
+        self.assertEqual(
+            escape_for_telegram_html('Название <название> & "тест"'),
+            'Название &lt;название&gt; &amp; "тест"',
+        )
+
+    def test_ai_status_is_safe_without_credentials(self):
+        old = os.environ.pop("GROQ_API_KEY", None)
+        try:
+            from services.ai_service import ai_status
+
+            self.assertFalse(ai_status()["configured"])
+            self.assertTrue(ai_status()["model"])
+        finally:
+            if old is not None:
+                os.environ["GROQ_API_KEY"] = old
+
+    def test_entrypoint_does_not_spawn_a_second_main_process(self):
+        source = (ROOT / "run.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "start_bot"
+        ]
+        self.assertEqual(len(calls), 1)
+
+    def test_test_environment_isolates_sqlite_data(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = os.environ.copy()
+            env["BOT_ENV"] = "test"
+            env["BOT_DATA_DIR"] = tmp
+            env.pop("BOT_TOKEN", None)
+            code = (
+                "from base import users, chats; "
+                "print(users.DB_PATH); print(chats.DB_PATH)"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            paths = result.stdout.strip().splitlines()
+            self.assertEqual(len(paths), 2)
+            self.assertTrue(all(Path(path).parent == Path(tmp) for path in paths))
+
+    def test_start_script_passes_shell_syntax(self):
+        subprocess.run(
+            ["bash", "-n", str(ROOT / "start.sh")],
+            check=True,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

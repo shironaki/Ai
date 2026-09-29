@@ -2,9 +2,12 @@ import os
 import sqlite3
 from pathlib import Path
 
-# Keep the database location compatible with the live bot by default.
-# BOT_DATA_DIR can override it for tests or a future managed deployment.
-DB_DIR = Path(os.getenv("BOT_DATA_DIR", Path(__file__).resolve().parents[1]))
+DB_DIR = Path(
+    os.getenv(
+        "BOT_DATA_DIR",
+        Path("data") / os.getenv("BOT_ENV", "local"),
+    )
+)
 DB_DIR.mkdir(parents=True, exist_ok=True)
 
 

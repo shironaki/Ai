@@ -5,7 +5,7 @@ from aiogram.dispatcher.handler import CancelHandler, current_handler
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.exceptions import Throttled
 
-from services.ai_service import ai_status, generate_reply, _LAST_ERROR
+from services.ai_service import ai_status, escape_for_telegram_html, generate_reply, _LAST_ERROR
 
 from main import (
     BaseMiddleware,
@@ -168,7 +168,8 @@ async def _answer_ai(message: types.Message, prompt: str):
         answer = None
 
     if answer:
-        await message.reply(answer)
+        # Bot uses global HTML parse mode; AI output is untrusted and may contain <...>.
+        await message.reply(escape_for_telegram_html(answer))
         return
 
     await message.reply(
