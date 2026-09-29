@@ -1800,7 +1800,10 @@ async def bankplus(message: types.Message):
     bank = (bank[0])
     command_parse = re.compile(r"(^Пополнить счёт|пополнить счёт|^Пополнить счет|пополнить счет) ?(\d+)?")
     parsed = command_parse.match(message.text)
-    suma = parsed.group(2)
+    suma = parsed.group(2) if parsed else None
+    if not suma or int(suma) <= 0:
+        await message.reply("❗ | Укажите положительную сумму. Пример: Пополнить счёт 100")
+        return
     suma = int(suma)
     data1 = {}
     data1["suma"] = suma
@@ -1821,7 +1824,10 @@ async def bankminus(message: types.Message):
     bank = (bank[0])
     command_parse = re.compile(r"(^Снять со счёта|снять со счёта|^Снять со счета|снять со счета) ?(\d+)?")
     parsed = command_parse.match(message.text)
-    suma = parsed.group(2)
+    suma = parsed.group(2) if parsed else None
+    if not suma or int(suma) <= 0:
+        await message.reply("❗ | Укажите положительную сумму. Пример: Пополнить счёт 100")
+        return
     suma = int(suma)
     data1 = {}
     data1["suma"] = suma
