@@ -26,7 +26,23 @@ python run.py
 2. В GitHub откройте репозиторий, выберите **Code → Codespaces → Create codespace**. Настройка `.devcontainer` установит Python 3.11 и зависимости.
 3. В настройках GitHub Codespaces добавьте секрет с именем `BOT_TOKEN`. Не сохраняйте токен в файлах или коммитах. Перезапустите Codespace после добавления секрета.
 4. Для AI добавьте секрет `GROQ_API_KEY` при использовании нейроответов.
-5. Откройте Codespace в мобильном браузере и в терминале выполните `bash start.sh`.
+5. В TEST/Codespace `BOT_TOKEN` должен быть токен отдельного тестового бота, а не production-бота.
+6. Откройте Codespace в мобильном браузере и в терминале выполните `bash start.sh`. Скрипт автоматически использует `BOT_ENV=test` и базу `data/test/`.
+
+## TEST / PROD
+
+Репозиторий один, но runtime-контуры разделены:
+
+- TEST: Codespace + TEST token + `data/test/`.
+- PROD: отдельный Linux-хост + PROD token + `/var/lib/ai-bot`.
+- Один Telegram-токен нельзя одновременно использовать для TEST и PROD.
+- Production не зависит от Codespace.
+
+Production-шаблоны и инструкции находятся в `deploy/PRODUCTION.md` и `deploy/systemd/`.
+
+## AI
+
+В личных сообщениях AI работает в двух режимах: команда `/ai`/`/аи` и обычный естественный текст. Команды бота по-прежнему обрабатываются своими handlers; обычный неизвестный текст в ЛС передаётся AI.
 
 ## Данные и дополнительные боты
 
