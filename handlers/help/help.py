@@ -140,7 +140,6 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
 
     try:
-        from services.ai_service import generate_reply
         answer = await generate_reply(message.from_user.id, prompt, role)
     except Exception:
         logging.exception("Could not load AI assistant")
