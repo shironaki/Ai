@@ -28,7 +28,7 @@ from main import (
     users,
 )
 
-from core.permissions import get_user_status, has_admin_role
+from core.permissions import get_user_status
 
 
 class ChRass(StatesGroup):
@@ -136,7 +136,7 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
 
     try:
-        from ai_assistant import generate_reply
+        from services.ai_service import generate_reply
         answer = await generate_reply(message.from_user.id, prompt, role)
     except Exception:
         logging.exception("Could not load AI assistant")
