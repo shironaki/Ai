@@ -30,6 +30,8 @@ from main import (
     get_user_status,
 )
 
+from core.permissions import get_user_status, has_admin_role
+
 
 class ChRass(StatesGroup):
     msg = State()
