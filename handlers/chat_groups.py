@@ -1,9 +1,8 @@
-import html
 from aiogram import types
 
 from main import config, dp, bot, users, chats, datetime
 from core.permissions import get_user_status
-from services.ai_service import generate_reply
+from services.ai_service import escape_for_telegram_html, generate_reply
 
 
 @dp.message_handler(content_types=types.ContentTypes.NEW_CHAT_MEMBERS)
@@ -71,7 +70,7 @@ async def echo_message(message: types.Message):
 
         if answer:
             # Bot uses global HTML parse mode; AI output is untrusted and may contain <...>.
-            await message.answer(html.escape(answer))
+            await message.answer(escape_for_telegram_html(answer))
         else:
             await message.answer(
                 "🧠 Интеллектуальный модуль сейчас недоступен. "
