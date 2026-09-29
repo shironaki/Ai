@@ -206,9 +206,15 @@ async def cancel_help_button_handler(c: types.callback_query):
 async def send_money(message: types.Message):
     command_parse = re.compile(r"(^Передать|передать) ?(\d+)?")
     parsed = command_parse.match(message.text)
+    if not message.reply_to_message:
+        await message.reply("❗ | Используйте команду ответом на сообщение пользователя.")
+        return
+    suma = parsed.group(2) if parsed else None
+    if not suma or int(suma) <= 0:
+        await message.reply("❗ | Укажите положительное количество. Например: Передать 100")
+        return
     balance = users.cursor.execute("SELECT balance from users where id = ?", (message.from_user.id,)).fetchone()
     balance = (balance[0])
-    suma = parsed.group(2)
     name1 = message.reply_to_message.from_user.get_mention(as_html=True)
     name2 = message.from_user.get_mention(as_html=True)
     suma = int(suma)
@@ -226,6 +232,7 @@ async def send_money(message: types.Message):
         if int(balance) >= suma:
             users.cursor.execute("""UPDATE users SET balance = balance + :suma WHERE id = :user_id;""", data)
             users.cursor.execute("""UPDATE users SET balance = balance - :suma WHERE id = :user_id;""", data1)
+            users.connect.commit()
             await message.answer(f"👤 | Пользователь: {name2}\n💸 | Передал(-а): <code>{suma}💰</code>\n👤 | Пользователю: {name1}", parse_mode='html')
         else:
             await message.reply(f"❎ | У вас недостаточно монет для передачи!", parse_mode='html')
@@ -256,6 +263,7 @@ async def send_money(message: types.Message):
         if int(balance) >= suma:
             users.cursor.execute("""UPDATE users SET balance = balance + :suma WHERE id = :user_id;""", data)
             users.cursor.execute("""UPDATE users SET balance = balance - :suma WHERE id = :user_id;""", data1)
+            users.connect.commit()
             await message.answer(f"👤 | Пользователь: {name2}\n💸 | Передал(-а): <code>{suma}💰</code>\n👤 | Пользователю: {name1}", parse_mode='html')
         else:
             await message.reply(f"❎ | У вас недостаточно монет для передачи!", parse_mode='html')
@@ -268,8 +276,11 @@ async def send_money(message: types.Message):
 async def work_cmd(message: types.Message):
     emoji = random.choice(["😴", "😶‍🌫️", "🫠", "🥶", "🤥", "🫡", "🤨", "😐", "🗿"])
     user_id = message['from']['id']
-    users.cursor.execute("SELECT work_time FROM users WHERE id = {}".format(user_id))
-    ltime = users.cursor.fetchone()[0]
+    row = users.cursor.execute("SELECT work_time FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        await message.reply("Вы не зарегистрированы! Введите /start")
+        return
+    ltime = row[0]
     current_date_time = datetime.now()
     current_time = current_date_time.time()
     q = current_time.strftime('%H:%M:%S')
@@ -313,8 +324,11 @@ async def dick_cmd(message: types.Message):
     name = (name[0])
     emoji = random.choice(["😶‍🌫️", "🫡", "🥶", "🤥", "😴", "🫠", "🤨", "😐", "🗿"])
     id = msg['from']['id']
-    users.cursor.execute(f"SELECT dick_time FROM users WHERE id = '{id}'")
-    ltime = users.cursor.fetchone()[0]
+    row = users.cursor.execute("SELECT dick_time FROM users WHERE id = ?", (id,)).fetchone()
+    if not row:
+        await msg.reply("Вы не зарегистрированы! Введите /start")
+        return
+    ltime = row[0]
     current_date_time = datetime.now()
     current_time = current_date_time.time()
     q = current_time.strftime('%H:%M:%S')
@@ -348,7 +362,10 @@ async def dick_cmd(message: types.Message):
 #Установить ставку
 @dp.message_handler(commands=['setstavka'])
 async def setbal(message: types.Message):
-    args = message.get_args()
+    args = (message.get_args() or "").strip()
+    if not args.isdigit():
+        await message.reply("❗ | Укажите число. Пример: /setstavka 100")
+        return
     summ = int(args)
     users.cursor.execute("SELECT stavka FROM users WHERE id=?", (message.from_user.id,))
     data = users.cursor.fetchone()
@@ -378,7 +395,10 @@ async def setbal(message: types.Message):
 #Установить хуй
 @dp.message_handler(commands=['setdick'])
 async def setdick(message: types.Message):
-    args = message.get_args()
+    args = (message.get_args() or "").strip()
+    if not args.isdigit():
+        await message.reply("❗ | Укажите число. Пример: /setdick 20")
+        return
     summ = int(args)
     users.cursor.execute("SELECT dick FROM users WHERE id=?", (message.from_user.id,))
     data = users.cursor.fetchone()
@@ -417,7 +437,7 @@ async def custom_rp(message: types.Message):
     if users.cursor.fetchone() is None:
         await message.reply(f'Вы не зарегистрированы!\nВведите /start')
     else:
-        if str(status) == 'Пользователь' or str(status) == 'Администратор' or str(status) == 'Создатель бота':
+        if str(status) in ('Пользователь', 'Игрок', 'Администратор', 'Создатель бота', 'Система'):
             if reply:
                 if args:
                     name1 = message.from_user.get_mention(as_html=True)
