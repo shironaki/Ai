@@ -50,20 +50,6 @@ class MyStatesGroup(StatesGroup):
     SECOND_STATE = State()
 
 
-# Register the core start/registration handlers first.
-# handlers.chat_groups contains /start and the final catch-all echo handler.
-# It must be imported before other handler modules so /start is never shadowed.
-import handlers.chat_groups  # noqa: E402,F401
-
-# Register the remaining handlers after the core registration handler.
-import handlers.admin  # noqa: E402,F401
-import handlers.help  # noqa: E402,F401
-from handlers.help.help import ThrottlingMiddleware  # noqa: E402
-import aboute  # noqa: E402,F401
-
-dp.middleware.setup(ThrottlingMiddleware())
-
-
 class ActivityLoggingMiddleware(BaseMiddleware):
     async def on_pre_process_update(self, update, data):
         if update.message:
@@ -116,7 +102,17 @@ async def log_update_error(update, exception):
 
 
 async def on_startup(dispatcher):
+    # Import handlers only after main.py has finished initializing.
+    # Handler modules import objects from main.py, so importing them earlier
+    # creates a circular-import timing problem and leaves Dispatcher empty.
+    import handlers.chat_groups  # noqa: F401
+    import handlers.admin  # noqa: F401
+    import handlers.help  # noqa: F401
+    from handlers.help.help import ThrottlingMiddleware
+
+    dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
+
     bot_info = await bot.get_me()
     log.info("Бот @%s подключён и ожидает сообщения", bot_info.username)
 
