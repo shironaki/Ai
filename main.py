@@ -1,7 +1,6 @@
 import asyncio
 import html
 import logging
-import os
 from logging.handlers import RotatingFileHandler
 import random
 import re
@@ -33,8 +32,6 @@ from aiogram.types import (
 from aiogram.utils.markdown import hbold, hcode
 
 from base import config, chats, users
-from core.permissions import (get_user_status, get_role_tag, get_display_role, format_user_tag, has_moderator_role, has_admin_role)
-from database.schema import ensure_schema
 
 LOG_FILE = "bot.log"
 
@@ -56,20 +53,11 @@ _console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(nam
 logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler], force=True)
 log = logging.getLogger(__name__)
 
-ensure_schema()
-
 if not config.bot_heart:
     raise RuntimeError("Укажите токен бота в переменной окружения BOT_TOKEN.")
 
 bot = Bot(token=config.bot_heart, parse_mode=types.ParseMode.HTML)
 dp = Dispatcher(bot, storage=MemoryStorage())
-
-def get_ai_config():
-    """Return optional hosted AI configuration without exposing secrets."""
-    return {
-        "api_key": os.getenv("GROQ_API_KEY"),
-        "model": os.getenv("AI_MODEL", "openai/gpt-oss-20b"),
-    }
 
 
 class MyStatesGroup(StatesGroup):
