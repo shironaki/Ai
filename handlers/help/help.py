@@ -86,7 +86,7 @@ class ThrottlingMiddleware(BaseMiddleware):
             
 
 #Обращение
-@dp.message_handler(commands=['обращение', 'q', 'вопрос'], commands_prefix='!./')
+@dp.message_handler(commands=['обращение', 'q', 'вопрос'], commands_prefix='/!.')
 async def cmd_quest(message: types.Message):
     id = message.from_user.id
     await message.answer(f'📥 | <b>Отправьте текст/фото для обращения:</b>')
@@ -109,7 +109,7 @@ async def bot_msg(message: types.Message):
     await message.answer(f'Что прикажите?')
 
 #Девборд
-@dp.message_handler(commands=['дев', 'dev'], commands_prefix='!./')
+@dp.message_handler(commands=['дев', 'dev'], commands_prefix='/!.')
 async def adm_ui(message):
     admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
     status = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
@@ -193,7 +193,7 @@ async def cancel_wnum_button_handler(c: types.callback_query):
         pass
 
 #chatinfo
-@dp.message_handler(commands=['chatinfo', 'чатинфо'], commands_prefix='./')
+@dp.message_handler(commands=['chatinfo', 'чатинфо'], commands_prefix='/!.')
 async def chatinfo_cmd(message: types.Message):
     msg = message
     chat_name = chats.cursor.execute("SELECT chat_name from chats where chat_id = ?", (msg.chat.id,)).fetchone()
