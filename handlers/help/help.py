@@ -25,6 +25,8 @@ from main import (
     time,
     timedelta,
     users,
+    has_admin_role,
+    get_user_status,
 )
 
 
@@ -102,11 +104,74 @@ async def quest_msgl(message: types.Message, state: FSMContext):
     await message.copy_to(owner)
     await bot_msg.edit_text(f'📤 Обращение отправлено!')
 
-#bot_msg
-@dp.message_handler(lambda m: m.text.lower().startswith(('мила', 'аи')))
+# Аи — персональный помощник Системы.
+# Без текста команда отвечает в характерном стиле по роли пользователя.
+# С текстом передаёт вопрос в AI-провайдер, поэтому ответы не нужно
+# прописывать вручную в коде.
+def _ai_role(message: types.Message) -> str:
+    if message.from_user.id == config.owner:
+        return "Основатель"
+    status = get_user_status(message.from_user.id)
+    if status in ("Администратор", "Система"):
+        return "Администратор"
+    if status == "Хелпер":
+        return "Хелпер"
+    return "Игрок"
+
+
+def _ai_intro(role: str) -> str:
+    if role == "Основатель":
+        return "👑 Я слушаю, Основатель. Система в полном распоряжении. Приказывайте."
+    if role in ("Администратор", "Хелпер"):
+        return "🛡️ Я слушаю. Полномочия подтверждены. Что прикажете?"
+    return "⚠️ Как простолюдин посмел обратиться ко мне? Говори причину своего дерзкого обращения."
+
+
+async def _answer_ai(message: types.Message, prompt: str):
+    role = _ai_role(message)
+
+    if not prompt:
+        await message.reply(_ai_intro(role))
+        return
+
+    try:
+        from ai_assistant import generate_reply
+        answer = await generate_reply(message.from_user.id, prompt, role)
+    except Exception:
+        logging.exception("Could not load AI assistant")
+        answer = None
+
+    if answer:
+        await message.reply(answer)
+        return
+
+    await message.reply(
+        _ai_intro(role)
+        + "\n\n"
+        + "🧠 Мой интеллектуальный модуль сейчас недоступен. "
+          "Если это первый запуск, владельцу нужно добавить GROQ_API_KEY в секреты хоста."
+    )
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text and re.match(
+            r"^/(?:аи|ai)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$",
+            m.text,
+            re.IGNORECASE,
+        )
+    )
+)
+async def ai_command(message: types.Message):
+    await _answer_ai(message, (message.get_args() or "").strip())
+
+
+@dp.message_handler(lambda m: m.text and m.text.lower().startswith(("мила", "аи", "ai")))
 async def bot_msg(message: types.Message):
-    await message.reply(f'Я вас слушаю..')
-    await message.answer(f'Что прикажите?')
+    match = re.match(r"^(?:мила|аи|ai)\b[\s,:-]*(.*)$", message.text, re.IGNORECASE)
+    prompt = match.group(1).strip() if match else ""
+    await _answer_ai(message, prompt)
+
 
 #Девборд
 @dp.message_handler(commands=['дев', 'dev'], commands_prefix='/!.')
