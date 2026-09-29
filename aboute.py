@@ -717,7 +717,7 @@ async def random_vybor(message: types.Message):
         return
 
 #Слоты
-@dp.message_handler(regexp=r"(^Слоты|слоты) ?(\d+)?")
+@dp.message_handler(regexp=r"^(?:Слоты|слоты)\s+(\d+)\s*$")
 async def slots(message: types.Message):
     msg = message
     name1 = message.from_user.get_mention(as_html=True)
@@ -1151,7 +1151,7 @@ async def kazino(message: types.Message):
 
 
 #Куб
-@dp.message_handler(regexp=r"(^Куб|куб) ?(\d+)? ?(\d+)?")
+@dp.message_handler(regexp=r"^(?:Куб|куб)\s+(\d+)\s+(\d+)\s*$")
 async def kub(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Куб|куб) ?(\d+)? ?(\d+)?")
@@ -1282,7 +1282,7 @@ async def kub(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Дартс
-@dp.message_handler(regexp=r"(^Дартс|дартс) ?(\d+)?")
+@dp.message_handler(regexp=r"^(?:Дартс|дартс)\s+(\d+)\s*$")
 async def darts(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Дартс|дартс) ?(\d+)?")
@@ -1373,7 +1373,7 @@ async def darts(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Боул
-@dp.message_handler(regexp=r"(^Боул|боул) ?(\d+)?")
+@dp.message_handler(regexp=r"^(?:Боул|боул)\s+(\d+)\s*$")
 async def boul(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Боул|боул) ?(\d+)?")
@@ -1469,7 +1469,7 @@ async def boul(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Фут
-@dp.message_handler(regexp=r"(^Фут|фут) ?(\d+)?")
+@dp.message_handler(regexp=r"^(?:Фут|фут)\s+(\d+)\s*$")
 async def football(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Фут|фут) ?(\d+)?")
@@ -1548,7 +1548,7 @@ async def football(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Баскет
-@dp.message_handler(regexp=r"(^Бас|бас|Баскет|баскет) ?(\d+)?")
+@dp.message_handler(regexp=r"^(?:Бас|бас|Баскет|баскет)\s+(\d+)\s*$")
 async def basket(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Бас|бас|Баскет|баскет) ?(\d+)?")
