@@ -10,6 +10,10 @@
     "BOT_TOKEN": {
       "description": "Telegram bot token from @BotFather",
       "documentationUrl": "https://core.telegram.org/bots/tutorial"
+    },
+    "GROQ_API_KEY": {
+      "description": "Optional Groq API key for AI replies",
+      "documentationUrl": "https://console.groq.com/keys"
     }
   }
 }

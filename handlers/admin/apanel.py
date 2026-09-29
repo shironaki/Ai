@@ -1,6 +1,7 @@
 from aiogram import types
 
-from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3, has_moderator_role
+from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3
+from core.permissions import has_moderator_role
 
 #user_status
 @dp.message_handler(commands=['setstatus'])
@@ -22,7 +23,7 @@ async def set_status(message: types.Message):
     status_rep = (status_rep[0])
     emoji = random.choice(["😐", "🤨", "😔", "😟"])
     if str(status) == 'Система' or int(id) == config.owner:
-        if str(stata) == 'Система' or str(stata) == 'Хелпер' or str(stata) == 'NPC' or str(stata) == 'Игрок':
+        if str(stata) in ('Система', 'Создатель бота', 'Администратор', 'Хелпер', 'Модератор', 'NPC', 'Игрок'):
             users.cursor.execute('UPDATE users SET status = ? WHERE id = ?', (stata, msg.reply_to_message.from_user.id))
             users.connect.commit()
             await msg.answer(f'✅ | Успешно!\nу пользователя {name_link}\nОбновлен статус: {stata}')

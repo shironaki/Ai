@@ -33,6 +33,8 @@ from aiogram.types import (
 from aiogram.utils.markdown import hbold, hcode
 
 from base import config, chats, users
+from core.permissions import (get_user_status, get_role_tag, get_display_role, format_user_tag, has_moderator_role, has_admin_role)
+from database.schema import ensure_schema
 
 LOG_FILE = "bot.log"
 
@@ -54,63 +56,13 @@ _console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(nam
 logging.basicConfig(level=logging.INFO, handlers=[_console_handler, _file_handler], force=True)
 log = logging.getLogger(__name__)
 
+ensure_schema()
+
 if not config.bot_heart:
     raise RuntimeError("Укажите токен бота в переменной окружения BOT_TOKEN.")
 
 bot = Bot(token=config.bot_heart, parse_mode=types.ParseMode.HTML)
 dp = Dispatcher(bot, storage=MemoryStorage())
-
-# Bot-level roles. Moderation commands are available only to users with one
-# of these roles; Telegram chat-admin status alone is not enough.
-MODERATOR_ROLES = {"Хелпер", "Администратор", "Создатель бота", "Система"}
-ADMIN_ROLES = {"Администратор", "Создатель бота", "Система"}
-
-ROLE_TAGS = {
-    "Система": "⚙️ СИСТЕМА",
-    "Создатель бота": "👑 ОСНОВАТЕЛЬ",
-    "Администратор": "🛡️ АДМИНИСТРАТОР",
-    "Хелпер": "👮 ХЕЛПЕР",
-    "Модератор": "🔨 МОДЕРАТОР",
-    "Игрок": "👤 ИГРОК",
-}
-
-
-def get_role_tag(user_id):
-    """Return a visible Telegram-style role tag for a user."""
-    if user_id == config.owner:
-        return ROLE_TAGS["Создатель бота"]
-    status = get_user_status(user_id)
-    return ROLE_TAGS.get(status, ROLE_TAGS["Игрок"])
-
-
-def get_display_role(user_id):
-    if user_id == config.owner:
-        return "Создатель бота"
-    status = get_user_status(user_id)
-    return status if status in ROLE_TAGS else "Игрок"
-
-
-def format_user_tag(user_id, name=None):
-    """Build a consistent visible role label for bot messages."""
-    display_name = name or f"id{user_id}"
-    return f"{get_role_tag(user_id)} · {display_name}"
-
-
-def get_user_status(user_id):
-    row = users.cursor.execute(
-        "SELECT status FROM users WHERE id = ?",
-        (user_id,),
-    ).fetchone()
-    return row[0] if row else None
-
-
-def has_moderator_role(user_id):
-    return user_id == config.owner or get_user_status(user_id) in MODERATOR_ROLES
-
-
-def has_admin_role(user_id):
-    return user_id == config.owner or get_user_status(user_id) in ADMIN_ROLES
-
 
 def get_ai_config():
     """Return optional hosted AI configuration without exposing secrets."""
@@ -403,16 +355,11 @@ BOT_COMMANDS = [
     types.BotCommand("dick", "увеличить параметр"),
     types.BotCommand("setstavka", "изменить ставку"),
     types.BotCommand("setdick", "изменить параметр"),
-    types.BotCommand("dev", "панель разработчика"),
     types.BotCommand("chatinfo", "информация о чате"),
     types.BotCommand("report", "пожаловаться"),
-    types.BotCommand("setbal", "установить баланс"),
-    types.BotCommand("setstatus", "изменить статус"),
-    types.BotCommand("deluser", "удалить пользователя"),
-    # Moderation commands are intentionally NOT in the public command menu.
-    # Access is role-checked inside handlers/admin/apanel.py.
-    types.BotCommand("system", "режим системы"),
-    types.BotCommand("logs", "получить технический лог"),
+    # Privileged/admin/moderation commands are deliberately hidden from the
+    # public Telegram command menu. Handlers enforce permissions themselves.
+
 ]
 
 

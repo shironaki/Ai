@@ -5,6 +5,8 @@ from aiogram.dispatcher.handler import CancelHandler, current_handler
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.exceptions import Throttled
 
+from services.ai_service import generate_reply
+
 from main import (
     BaseMiddleware,
     ContentType,
@@ -26,9 +28,9 @@ from main import (
     time,
     timedelta,
     users,
-    has_admin_role,
-    get_user_status,
 )
+
+from core.permissions import get_user_status
 
 
 class ChRass(StatesGroup):
@@ -122,10 +124,12 @@ def _ai_role(message: types.Message) -> str:
 
 def _ai_intro(role: str) -> str:
     if role == "Основатель":
-        return "👑 Я слушаю, Основатель. Система в полном распоряжении. Приказывайте."
-    if role in ("Администратор", "Хелпер"):
-        return "🛡️ Я слушаю. Полномочия подтверждены. Что прикажете?"
-    return "⚠️ Как простолюдин посмел обратиться ко мне? Говори причину своего дерзкого обращения."
+        return "👑 ОСНОВАТЕЛЬ · Я слушаю. Система в полном распоряжении. Приказывайте."
+    if role == "Администратор":
+        return "🛡️ АДМИНИСТРАТОР · Я слушаю. Полномочия подтверждены. Что прикажете?"
+    if role == "Хелпер":
+        return "👮 ХЕЛПЕР · Я слушаю. Полномочия подтверждены. Что прикажете?"
+    return "👤 ИГРОК · ⚠️ Как простолюдин посмел обратиться ко мне? Говори причину своего дерзкого обращения."
 
 
 async def _answer_ai(message: types.Message, prompt: str):
@@ -136,7 +140,7 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
 
     try:
-        from ai_assistant import generate_reply
+        from services.ai_service import generate_reply
         answer = await generate_reply(message.from_user.id, prompt, role)
     except Exception:
         logging.exception("Could not load AI assistant")

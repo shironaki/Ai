@@ -8,6 +8,8 @@ venv/
 # Bot runtime data
 users.db
 chats.db
+data/*.db
+data/*.log
 
 # Logs
 *.log
@@ -16,3 +18,5 @@ chats.db
 .DS_Store
 .vscode/
 .idea/
+bot.log
+bot.log.*
