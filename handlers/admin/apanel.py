@@ -263,7 +263,7 @@ async def unban(message):
         if not msg.reply_to_message:
             await msg.reply("Укажи на очищенного!")
             return
-        await bot.restrict_chat_member(msg.chat.id, msg.reply_to_message.from_user.id, types.ChatPermissions(True, True, True, True))
+        await bot.unban_chat_member(msg.chat.id, msg.reply_to_message.from_user.id, only_if_banned=True)
         await msg.reply(f'👤 | Система \n📢 | Воскресила {name2}')
         await bot.send_message(message.reply_to_message.from_user.id, f'✅ | Вы были воскрешенны в мире @{message.chat.username}')
     else:
