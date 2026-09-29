@@ -70,6 +70,44 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 dp.middleware.setup(ActivityLoggingMiddleware())
 
 
+class ChatRegistrationMiddleware(BaseMiddleware):
+    """Ensure group chats exist in chats.db before command handlers run."""
+
+    async def on_pre_process_message(self, message, data):
+        if message.chat.type not in ("group", "supergroup"):
+            return
+
+        chat_id = message.chat.id
+        exists = chats.cursor.execute(
+            "SELECT chat_id FROM chats WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if exists:
+            return
+
+        chats.cursor.execute(
+            "INSERT INTO chats VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                chat_id,
+                message.chat.title or "Без названия",
+                message.chat.username,
+                "разрешено",
+                0,
+                datetime.now().strftime("%d.%m.%Y"),
+                "Обычный",
+                "Отсутствуют",
+                "да",
+                "Не указаны!",
+                "Добро пожаловать в новый мир!",
+            ),
+        )
+        chats.connect.commit()
+        log.info("Registered new chat id=%s title=%s", chat_id, message.chat.title)
+
+
+dp.middleware.setup(ChatRegistrationMiddleware())
+
+
 # Diagnostic handler: proves that aiogram is dispatching /debug and /start.
 # It is intentionally registered before the imported catch-all handlers.
 @dp.message_handler(commands=['debug'])
