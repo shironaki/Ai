@@ -180,6 +180,30 @@ async def log_update_error(update, exception):
     return True
 
 
+BOT_COMMANDS = [
+    types.BotCommand("start", "начать работу"),
+    types.BotCommand("help", "список команд"),
+    types.BotCommand("work", "пойти на работу"),
+    types.BotCommand("bio", "установить био"),
+    types.BotCommand("name", "сменить ник"),
+    types.BotCommand("rp", "ролевое действие"),
+    types.BotCommand("dick", "увеличить параметр"),
+    types.BotCommand("setstavka", "изменить ставку"),
+    types.BotCommand("setdick", "изменить параметр"),
+    types.BotCommand("dev", "панель разработчика"),
+    types.BotCommand("chatinfo", "информация о чате"),
+    types.BotCommand("report", "пожаловаться"),
+    types.BotCommand("setbal", "установить баланс"),
+    types.BotCommand("setstatus", "изменить статус"),
+    types.BotCommand("deluser", "удалить пользователя"),
+    types.BotCommand("mute", "замутить пользователя"),
+    types.BotCommand("unmute", "снять мут"),
+    types.BotCommand("ban", "заблокировать пользователя"),
+    types.BotCommand("unban", "разблокировать пользователя"),
+    types.BotCommand("system", "режим системы"),
+]
+
+
 async def on_startup(dispatcher):
     # Import handlers only after main.py has finished initializing.
     # Handler modules import objects from main.py, so importing them earlier
@@ -197,6 +221,11 @@ async def on_startup(dispatcher):
     log_registered_handlers()
 
     bot_info = await bot.get_me()
+    try:
+        await bot.set_my_commands(BOT_COMMANDS)
+        log.info("Telegram command menu updated: %d commands", len(BOT_COMMANDS))
+    except Exception:
+        log.exception("Could not update Telegram command menu")
     log.info("Бот @%s подключён и ожидает сообщения", bot_info.username)
 
 
