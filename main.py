@@ -77,6 +77,85 @@ async def debug_dispatch(message: types.Message):
     await message.answer("DEBUG: обработчик сообщений работает.")
 
 
+# Independent /start handler.
+# We intentionally match the raw Telegram command here instead of relying on
+# aiogram's command filter or handlers/chat_groups.py. This gives /start a
+# guaranteed entry point while keeping the legacy handler available.
+@dp.message_handler(
+    lambda message: bool(
+        message.text
+        and re.match(r"^/start(?:@[A-Za-z0-9_]+)?(?:\\s|$)", message.text, re.IGNORECASE)
+    )
+)
+async def start_dispatch(message: types.Message):
+    start_text = "<b>Система 'Аи' приветствует Вас!</b>"
+    await message.answer(start_text)
+
+    try:
+        user_id = message.from_user.id
+        row = users.cursor.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+        if row:
+            log.info("/start: existing user id=%s", user_id)
+            return
+
+        now = datetime.now()
+        regdata = now.strftime("%d.%m.%Y")
+        ttime = (now - timedelta(seconds=18000)).strftime("%H:%M:%S")
+        first_name = message.from_user.first_name or "Игрок"
+        username = message.from_user.username
+
+        users.cursor.execute(
+            "INSERT INTO users VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                first_name,
+                username,
+                "Игрок",
+                0,
+                10,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                regdata,
+                ttime,
+                0,
+                "Не установлено...",
+                0,
+                1,
+                "00:000:00",
+                0,
+            ),
+        )
+        users.connect.commit()
+        log.info("/start: registered new user id=%s username=%s", user_id, username)
+
+        if config.owner:
+            try:
+                await bot.send_message(
+                    config.owner,
+                    "Новый игрок!\n"
+                    f"Ник: {first_name}\n"
+                    f"ID: {user_id}\n"
+                    f"Юзернейм: @{username or 'нет'}\n"
+                    "Зарегистрировался(ась) в л/с.",
+                )
+            except Exception:
+                log.exception("Could not notify owner about new /start registration")
+
+    except Exception:
+        log.exception("Error during /start registration for user_id=%s", message.from_user.id)
+
+
 def log_registered_handlers():
     handlers = getattr(dp.message_handlers, "handlers", [])
     log.info("Registered message handlers: %d", len(handlers))
