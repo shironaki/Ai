@@ -1,28 +1,22 @@
 # Architecture
 
-The bot is being migrated to a modular structure without changing existing gameplay behavior.
+## Runtime
 
-## Current layers
+- `run.py` — единственная точка запуска.
+- `main.py` — создание Bot/Dispatcher, middleware, диагностика и startup.
+- `handlers/` — Telegram-команды и callbacks.
 
-- `main.py` — application bootstrap, dispatcher and startup.
-- `config/` — configuration and role definitions.
-- `core/` — shared permission logic.
-- `handlers/` — Telegram command and callback handlers.
-- `services/` — reusable business integrations such as AI and moderation.
-- `base/` — legacy SQLite data access kept active during migration.
+## Application layers
 
-## Migration rule
+- `config/` — централизованные роли и их visible tags.
+- `core/` — permission checks shared by handlers and services.
+- `services/` — reusable business integrations (AI, moderation, users).
+- `database/` — structured SQLite read layer and schemas.
+- `base/` — compatibility layer for existing gameplay reads/writes; it remains active until every write path is migrated safely.
 
-New features should be added to the appropriate layer instead of growing `main.py` or mixing external services into handlers.
+## Roles
 
-Existing handlers remain intact during migration. Each module is moved only after its imports and dispatcher registration are safe.
-The old AI compatibility shim has been removed; handlers now import the AI service directly.
-
-## Role model
-
-Roles are defined centrally in `config/role_config.py`. Permission checks are exposed through `core/permissions.py`.
-
-Visible role labels:
+The role catalogue is defined once in `config/role_config.py`:
 
 - 👑 ОСНОВАТЕЛЬ
 - ⚙️ СИСТЕМА
@@ -31,8 +25,20 @@ Visible role labels:
 - 🔨 МОДЕРАТОР
 - 👤 ИГРОК
 
-## Database migration status
+Permission checks must use `core.permissions`, not duplicate role sets inside handlers.
 
-The new `database/` layer currently provides safe read access and schema definitions.
-The legacy `base/` modules remain active until all existing write paths are migrated.
-This prevents accidental data loss and keeps the current bot runtime stable during the refactor.
+## AI
+
+The AI integration lives in `services/ai_service.py` and uses the optional `GROQ_API_KEY` environment secret. Conversation history is short-lived in memory; no API key or prompt is stored in the repository.
+
+## Database migration rule
+
+The live bot still uses `base/users.py` and `base/chats.py` for legacy write paths. The new `database/` layer points at the same default database files and is intentionally read-oriented until all writes are migrated. This avoids creating a second database or silently losing existing user/game data.
+
+## Security/runtime rules
+
+- Secrets are environment variables only.
+- Moderation/admin commands are hidden from the public Telegram command menu.
+- Permission checks remain inside handlers even when a command is hidden.
+- Runtime logs stay outside Git.
+- Python 3.11 syntax is checked by GitHub Actions on pushes and pull requests.
