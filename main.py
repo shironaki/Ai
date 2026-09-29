@@ -84,6 +84,21 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 dp.middleware.setup(ActivityLoggingMiddleware())
 
 
+# Diagnostic handler: proves that aiogram is dispatching /debug and /start.
+# It is intentionally registered before the imported catch-all handlers.
+@dp.message_handler(commands=['debug'])
+async def debug_dispatch(message: types.Message):
+    await message.answer("DEBUG: обработчик сообщений работает.")
+
+
+def log_registered_handlers():
+    handlers = getattr(dp.message_handlers, "handlers", [])
+    log.info("Registered message handlers: %d", len(handlers))
+    for index, handler in enumerate(handlers):
+        callback = getattr(handler, "callback", None)
+        log.info("Handler[%d]: %s", index, getattr(callback, "__name__", repr(callback)))
+
+
 @dp.errors_handler()
 async def log_update_error(update, exception):
     log.error(
@@ -101,6 +116,7 @@ async def log_update_error(update, exception):
 
 
 async def on_startup(dispatcher):
+    log_registered_handlers()
     bot_info = await bot.get_me()
     log.info("Бот @%s подключён и ожидает сообщения", bot_info.username)
 
