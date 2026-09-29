@@ -8,14 +8,15 @@ The bot is being migrated to a modular structure without changing existing gamep
 - `config/` — configuration and role definitions.
 - `core/` — shared permission logic.
 - `handlers/` — Telegram command and callback handlers.
-- `services/` — reusable business integrations such as AI.
-- `base/` — current SQLite data access.
+- `services/` — reusable business integrations such as AI and moderation.
+- `base/` — legacy SQLite data access kept active during migration.
 
 ## Migration rule
 
 New features should be added to the appropriate layer instead of growing `main.py` or mixing external services into handlers.
 
 Existing handlers remain intact during migration. Each module is moved only after its imports and dispatcher registration are safe.
+The old AI compatibility shim has been removed; handlers now import the AI service directly.
 
 ## Role model
 
