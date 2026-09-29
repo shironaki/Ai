@@ -84,7 +84,7 @@ async def debug_dispatch(message: types.Message):
 @dp.message_handler(
     lambda message: bool(
         message.text
-        and re.match(r"^/start(?:@[A-Za-z0-9_]+)?(?:\\s|$)", message.text, re.IGNORECASE)
+        and re.match(r"^/start(?:@[A-Za-z0-9_]+)?(?:\s|$)", message.text, re.IGNORECASE)
     )
 )
 async def start_dispatch(message: types.Message):
