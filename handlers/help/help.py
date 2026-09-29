@@ -5,7 +5,7 @@ from aiogram.dispatcher.handler import CancelHandler, current_handler
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.exceptions import Throttled
 
-from services.ai_service import generate_reply
+from services.ai_service import ai_status, generate_reply, _LAST_ERROR
 
 from main import (
     BaseMiddleware,
@@ -134,6 +134,24 @@ def _ai_intro(role: str) -> str:
     if role == "Модератор":
         return "🔨 МОДЕРАТОР · Я слушаю. Полномочия подтверждены. Что прикажете?"
     return "👤 ИГРОК · ⚠️ Как простолюдин посмел обратиться ко мне? Говори причину своего дерзкого обращения."
+
+
+@dp.message_handler(commands=["aidiag"])
+async def ai_diagnostic(message: types.Message):
+    """Owner-only AI runtime diagnostic; never reveals the API key."""
+    if message.from_user.id != config.owner:
+        return
+
+    status = ai_status()
+    configured = "✅ задан" if status["configured"] else "❌ НЕ задан"
+    last_error = _LAST_ERROR.get("value") or "нет — запросов с ошибкой ещё не было"
+    await message.answer(
+        "<b>🧠 AI DIAGNOSTIC</b>\n"
+        f"Ключ: {configured}\n"
+        f"Модель: <code>{status['model']}</code>\n"
+        f"Последняя ошибка: <code>{last_error[:1500]}</code>\n\n"
+        "Для проверки ответа отправьте: <code>/ai привет</code>"
+    )
 
 
 async def _answer_ai(message: types.Message, prompt: str):
