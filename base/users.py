@@ -2,7 +2,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-DB_DIR = Path(os.getenv("BOT_DATA_DIR", "."))
+DB_DIR = Path(os.getenv("BOT_DATA_DIR", Path("data") / os.getenv("BOT_ENV", "local")))
 DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "users.db"
 
