@@ -368,8 +368,7 @@ async def log_update_error(update, exception):
                     f"user: <code>{getattr(message.from_user, 'id', '?')}</code>\n"
                     f"text: <code>{(message.text or message.caption or '')[:500]}</code>"
                 )
-            safe_details = html.escape(details)
-            await bot.send_message(config.owner, safe_details)
+            await bot.send_message(config.owner, details)
         except Exception:
             log.exception("Could not notify owner about runtime error")
     return True
