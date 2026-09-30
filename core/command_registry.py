@@ -41,18 +41,9 @@ COMMAND_REGISTRY = (
     CommandSpec("welcome", frozenset({"welcome", "приветствие"}), "chat", "Модератор"),
     CommandSpec("profile", frozenset({"инфа", "профиль"}), "information", "Игрок", description="показать профиль"),
     CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Игрок", description="информация о текущем чате"),
-    CommandSpec("stats", frozenset({"стата"}), "information", "Игрок", description="статистика, которую реально предоставляет обработчик"),
-    CommandSpec("info", frozenset({"инфо"}), "information", "Игрок", description="информация о системе/пользователе"),
-    CommandSpec("rules", frozenset({"правила", "rules"}), "information", "Игрок", description="показать правила текущего чата"),
-    CommandSpec("statuses", frozenset({"статусы"}), "information", "Игрок", description="показать доступные статусы"),
-    CommandSpec("name", frozenset({"name"}), "profile", "Игрок"),
-    CommandSpec("bio", frozenset({"bio", "био"}), "profile", "Игрок"),
-    CommandSpec("rp", frozenset({"rp"}), "profile", "Игрок"),
     CommandSpec("dev", frozenset({"dev", "дев"}), "system", "Система"),
     CommandSpec("report", frozenset({"r", "report"}), "communication", "Игрок"),
     CommandSpec("question", frozenset({"обращение", "q", "вопрос"}), "communication", "Игрок"),
-    CommandSpec("broadcast_users", frozenset({"rassilka"}), "system", "Система", "global", True, True),
-    CommandSpec("broadcast_chats", frozenset({"chat_rassilka"}), "system", "Система", "global", True, True),
 )
 
 
