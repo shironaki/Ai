@@ -16,7 +16,7 @@ from services.moderation_gateway import (
     detect_action as detect_moderation_action,
 )
 from services.ai_data import build_verified_context, chat_summary, system_summary, user_summary, runtime_summary
-from services.issue_tracker import parse_marker, parse_fixed, create_marker, list_markers, mark_fixed
+from services.issue_tracker import parse_marker, parse_fixed, create_marker, list_markers, mark_fixed, render_marker
 
 from main import (
     BaseMiddleware,
@@ -294,18 +294,10 @@ async def moderation_confirmation(message: types.Message):
 
 def _render_issue_list(rows) -> str:
     if not rows:
-        return "🧪 <b>QA-метки</b>\nОткрытых и закрытых меток пока нет."
-    lines = ["🧪 <b>QA-метки</b>"]
-    for row in rows:
-        marker_id, chat_id, message_id, reporter_id, reason, code, status, created_at, fixed_by, fixed_at = row
-        state = "✅ исправлено" if status == "fixed" else "🟠 открыто"
-        code_text = f" · код {code}" if code is not None else ""
-        lines.append(
-            f"#{marker_id} · {state}{code_text}\n"
-            f"чат <code>{chat_id}</code> · сообщение <code>{message_id}</code>\n"
-            f"причина: {escape_for_telegram_html(reason)}"
-        )
-    return "\n\n".join(lines)
+        return "🧪 <b>QA-метки</b>\nСписок пуст."
+    return "🧪 <b>QA-метки</b>\n\n" + "\n\n".join(
+        escape_for_telegram_html(render_marker(row)) for row in rows
+    )
 
 
 @dp.message_handler(
@@ -334,7 +326,7 @@ async def mark_issue(message: types.Message):
     lambda m: bool(
         m.text
         and (
-            m.text.casefold().strip() in {"/метки", "метки", "список меток", "issues"}
+            m.text.casefold().strip() in {"/метки", "/issues", "метки", "список меток", "issues"}
             or parse_fixed(m.text) is not None
         )
         and m.from_user.id == config.owner
