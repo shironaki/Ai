@@ -86,4 +86,4 @@ def render_marker(marker) -> str:
     marker_id, chat_id, message_id, reporter_id, reason, code, status, created_at, fixed_by, fixed_at = marker
     state = "исправлено" if status == "fixed" else "открыто"
     code_text = f" · код {code}" if code is not None else ""
-    return f"#{marker_id} · {state}{code_text}\\nчат {chat_id} · сообщение {message_id}\\nпричина: {reason}"
+    return f"#{marker_id} · {state}{code_text}\nчат {chat_id} · сообщение {message_id}\nпричина: {reason}"
