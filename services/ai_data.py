@@ -91,14 +91,15 @@ def build_verified_context(
             "данные чата",
         )
     )
-    wants_system = any(
-        phrase in text
-        for phrase in (
-            "статистика системы",
-            "статистика бота",
-            "сколько пользователей",
-            "сколько чатов",
-            "сколько юзеров",
+    wants_system = (
+        ("статист" in text and ("систем" in text or "бот" in text))
+        or any(
+            phrase in text
+            for phrase in (
+                "сколько пользователей",
+                "сколько чатов",
+                "сколько юзеров",
+            )
         )
     )
     wants_runtime = any(
