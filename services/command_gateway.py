@@ -14,8 +14,12 @@ from services.audit_service import record
 _PENDING = {}
 
 
-def has_pending(user_id: int) -> bool:
-    return user_id in _PENDING
+def _pending_key(user_id: int, chat_id: int):
+    return user_id, chat_id
+
+
+def has_pending(user_id: int, chat_id: int) -> bool:
+    return _pending_key(user_id, chat_id) in _PENDING
 
 
 def _extract_fallback(prompt: str):
@@ -130,12 +134,12 @@ async def execute(
     return result
 
 
-def remember(user_id: int, intent: dict) -> None:
-    _PENDING[user_id] = intent
+def remember(user_id: int, chat_id: int, intent: dict) -> None:
+    _PENDING[_pending_key(user_id, chat_id)] = dict(intent)
 
 
-def pop_pending(user_id: int):
-    return _PENDING.pop(user_id, None)
+def pop_pending(user_id: int, chat_id: int):
+    return _PENDING.pop(_pending_key(user_id, chat_id), None)
 
 
 def pending_prompt() -> str:
