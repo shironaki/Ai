@@ -16,6 +16,7 @@ from aiogram.utils.exceptions import BadRequest, TelegramAPIError
 from core.command_models import CommandContext, CommandIntent
 from core.command_policy import evaluate
 from core.permissions import get_display_role
+from base import config
 from services.audit_service import record
 
 _PENDING = {}
@@ -160,6 +161,10 @@ async def request(message: types.Message, text: str):
         return True
 
     intent = parsed["intent"]
+    if intent.target_user_id == config.owner:
+        await message.reply("⛔ Команды администрации не действуют на Основателя без его отдельного разрешения.")
+        return True
+
     decision = evaluate(intent, role, confirmed=False)
     if not decision.allowed:
         await message.reply(f"⛔ {decision.reason}")
