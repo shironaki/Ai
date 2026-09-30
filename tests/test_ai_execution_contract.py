@@ -14,7 +14,7 @@ class AIExecutionContractTests(unittest.TestCase):
         from services.ai_service import _system_prompt
 
         prompt = _system_prompt("Игрок")
-        self.assertIn("Не угадывай и не сочиняй", prompt)
+        self.assertIn("не угадывай и не сочиняй", prompt.lower())
         self.assertIn("подтверждённые данные для этого запроса не переданы", prompt)
 
 
