@@ -106,7 +106,7 @@ def _request_sync(messages, model, api_key):
     return content.strip()
 
 
-async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
+async def generate_reply(user_id: int, prompt: str, role: str = "Игрок", verified_context: str | None = None):
     """Generate a reply using Groq when GROQ_API_KEY is configured."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key or not api_key.strip():
@@ -124,7 +124,10 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
         -_MAX_HISTORY_MESSAGES:
     ]
 
-    messages = [{"role": "system", "content": _system_prompt(role)}]
+    system_content = _system_prompt(role)
+    if verified_context:
+        system_content += "\n\n" + verified_context
+    messages = [{"role": "system", "content": system_content}]
     messages.extend(candidate_history)
 
     try:
