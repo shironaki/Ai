@@ -29,8 +29,14 @@ def evaluate(intent: CommandIntent, role: str, *, confirmed: bool = False) -> Co
     if intent.scope not in {"chat", "global"}:
         return CommandDecision(False, "Область выполнения не определена.")
 
-    if intent.scope == "global" and spec.scope != "global" and role != "Создатель бота":
-        return CommandDecision(False, "Эта команда не разрешена вне текущего чата.")
+    if spec.scope not in {"chat", "global", "both"}:
+        return CommandDecision(False, "У команды некорректная политика области.")
+
+    if spec.scope == "chat" and intent.scope != "chat":
+        return CommandDecision(False, "Эта команда разрешена только в текущем чате.")
+
+    if spec.scope == "global" and intent.scope != "global":
+        return CommandDecision(False, "Эта команда разрешена только глобально.")
 
     if spec.destructive and spec.confirmation and not confirmed:
         return CommandDecision(True, "Требуется подтверждение.", True)

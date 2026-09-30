@@ -8,6 +8,7 @@ from aiogram.utils.exceptions import Throttled
 from services.ai_service import ai_status, escape_for_telegram_html, generate_reply, _LAST_ERROR
 from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember
 from services.security import redact
+from services.ai_data import build_verified_context
 
 from main import (
     BaseMiddleware,
@@ -223,7 +224,8 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
 
     try:
-        answer = await generate_reply(message.from_user.id, prompt, role)
+        verified_context = build_verified_context(message.from_user.id, message.chat.id, prompt, role)
+        answer = await generate_reply(message.from_user.id, prompt, role, verified_context=verified_context)
     except Exception:
         logging.exception("Could not load AI assistant")
         answer = None

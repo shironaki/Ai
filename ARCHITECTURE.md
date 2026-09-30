@@ -24,7 +24,7 @@ A command is described by:
 - aliases;
 - category;
 - minimum role;
-- supported scope;
+- supported scope (`chat`, `global` or `both`);
 - destructive flag;
 - confirmation requirement.
 
@@ -32,7 +32,7 @@ Natural-language AI must produce an intent, not executable code. The intended pi
 
 `Telegram -> intent -> registry -> policy -> target/scope validation -> confirmation -> executor -> audit`.
 
-The AI layer is never allowed to execute arbitrary Python, SQL, shell commands or Telegram API methods.
+The AI layer is never allowed to execute arbitrary Python, SQL, shell commands or Telegram API methods. Read-only facts are supplied through `services/ai_data.py`, which exposes fixed parameterized queries only.
 
 Legacy game commands are intentionally outside the core registry. The game system will be rebuilt as a separate module.
 
@@ -56,7 +56,7 @@ The AI integration lives in `services/ai_service.py` and uses the optional `GROQ
 - Conversation history is short-lived in memory.
 - API keys are never stored in repository files.
 - Provider errors are redacted before diagnostics.
-- AI command classification is allowlisted and currently supports only the runtime commands.
+- AI command classification is allowlisted and currently supports only the runtime commands.\n- AI answers can receive verified profile/chat/system/runtime facts from the read-only data layer; absent facts must not be invented.
 - Future command expansion must add registry entries and typed executors, not arbitrary code execution.
 
 ## Database
@@ -74,6 +74,6 @@ Local database directories are best-effort restricted to owner-only filesystem p
 - Founder pending intents are bound to both user and chat, preventing cross-chat scope confusion.
 - Runtime logs do not store ordinary message content.
 - Error diagnostics redact common API/token formats.
-- Audit events contain command metadata only; AI prompts, message text and credentials are excluded.
+- Audit events contain command metadata only; AI prompts, message text and credentials are excluded.\n- Command scope is explicit: chat-only commands cannot be promoted to global execution, even by the Founder.
 - Runtime logs stay outside Git.
 - Python 3.11 syntax is checked by GitHub Actions on pushes and pull requests.

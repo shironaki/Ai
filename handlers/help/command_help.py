@@ -1,62 +1,26 @@
-"""Authoritative /help surface built from the command registry."""
+"""Telegram adapter for the authoritative command help."""
 
 from aiogram import types
 
-from core.command_registry import commands_for_role
+from base import config
+from core.command_help import render_help
 from core.permissions import get_user_status
-from main import config, dp
-
-
-_CATEGORY_LABELS = {
-    "system": "⚙️ Система",
-    "runtime": "🛰 Runtime",
-    "information": "📖 Информация",
-    "administration": "🛡️ Администрирование",
-    "moderation": "🔨 Модерация",
-    "chat": "💬 Чат",
-    "profile": "👤 Профиль",
-    "communication": "✉️ Связь",
-}
+from main import dp
 
 
 def _role_for_message(message: types.Message) -> str:
     if message.from_user.id == config.owner:
         return "Основатель"
     status = get_user_status(message.from_user.id)
-    return status if status in {
+    if status in {
         "Система",
         "Создатель бота",
         "Администратор",
         "Хелпер",
         "Модератор",
-    } else "Игрок"
-
-
-def _format_alias(alias: str) -> str:
-    return alias if " " in alias else f"/{alias}"
-
-
-def render_help(role: str) -> str:
-    groups = {}
-    for spec in commands_for_role(role):
-        groups.setdefault(spec.category, []).append(spec)
-
-    lines = [
-        "<b>📚 Актуальные команды Системы</b>",
-        f"Роль: <b>{role}</b>",
-        "",
-        "Ниже только команды, зарегистрированные в текущем коде.",
-        "Функции, которых здесь нет, не считаются доступными.",
-    ]
-
-    for category, specs in groups.items():
-        lines.extend(["", f"<b>{_CATEGORY_LABELS.get(category, category.title())}</b>"])
-        for spec in specs:
-            aliases = ", ".join(_format_alias(alias) for alias in sorted(spec.aliases))
-            description = f" — {spec.description}" if spec.description else ""
-            lines.append(f"• <code>{aliases}</code>{description}")
-
-    return "\n".join(lines)
+    }:
+        return status
+    return "Игрок"
 
 
 @dp.message_handler(commands=["help", "хелп", "команды"], commands_prefix="/!.")
