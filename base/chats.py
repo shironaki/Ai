@@ -5,6 +5,13 @@ from pathlib import Path
 DB_DIR = Path(os.getenv("BOT_DATA_DIR", Path("data") / os.getenv("BOT_ENV", "local")))
 DB_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DB_DIR / "chats.db"
+if os.name != "nt":
+    try:
+        DB_DIR.chmod(0o700)
+        DB_PATH.touch(exist_ok=True)
+        DB_PATH.chmod(0o600)
+    except OSError:
+        pass
 
 connect = sqlite3.connect(DB_PATH)
 cursor = connect.cursor()
