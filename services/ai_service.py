@@ -120,3 +120,70 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
     history.append({"role": "assistant", "content": answer})
     history[:] = history[-_MAX_HISTORY_MESSAGES:]
     return answer
+
+
+async def classify_command(prompt: str, role: str = "Игрок"):
+    """Classify a natural-language command request into a safe command intent."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key or not api_key.strip():
+        return None
+
+    system = """
+Ты — классификатор команд Telegram-бота.
+Твоя задача — определить только намерение пользователя, НЕ выполнять его.
+На этом этапе разрешены только две команды:
+- stasis: включение режима тишины
+- awakening: выключение режима тишины
+
+Верни ТОЛЬКО JSON без markdown:
+{"command":"stasis|awakening|null","action":"enable|disable|null","scope":"chat|global|unknown"}
+
+scope:
+- chat = только текущий чат/мир
+- global = весь бот/везде/во всех чатах
+- unknown = область не указана
+
+Для stasis action должен быть enable, для awakening — disable.
+Если запрос не является однозначной командой, command должен быть null.
+Не угадывай команду по одному случайному слову.
+""".strip()
+
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt[:1000]},
+    ]
+    try:
+        raw = await asyncio.to_thread(
+            _request_sync,
+            messages,
+            os.getenv("AI_MODEL", DEFAULT_MODEL),
+            api_key,
+        )
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").strip()
+            if raw.lower().startswith("json"):
+                raw = raw[4:].strip()
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end <= start:
+            raise ValueError("AI command classifier returned invalid JSON")
+        import json
+        result = json.loads(raw[start:end + 1])
+        command = result.get("command")
+        action = result.get("action")
+        scope = result.get("scope", "unknown")
+        if command not in {"stasis", "awakening"}:
+            return None
+        expected_action = "enable" if command == "stasis" else "disable"
+        if action != expected_action:
+            return None
+        if scope not in {"chat", "global", "unknown"}:
+            scope = "unknown"
+        return {"command": command, "action": action, "scope": scope}
+    except Exception as exc:
+        _LAST_ERROR["value"] = html.escape(
+            f"{type(exc).__name__}: {exc}", quote=False
+        )
+        log.exception("AI command classification failed")
+        return None
