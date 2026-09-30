@@ -163,3 +163,18 @@ async def expiry_loop(bot) -> None:
             # The main runtime logger captures the surrounding task failure.
             pass
         await asyncio.sleep(5)
+
+
+async def notify_action(bot, *, chat_id: int, target_user_id: int, target_name: str, action: str, text: str) -> None:
+    """Notify both the moderation chat and the affected user when possible."""
+    try:
+        await bot.send_message(chat_id, text)
+    except Exception:
+        pass
+    try:
+        await bot.send_message(
+            target_user_id,
+            f"🔔 <b>Действие модерации:</b> {text}",
+        )
+    except Exception:
+        pass
