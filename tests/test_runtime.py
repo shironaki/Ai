@@ -119,7 +119,7 @@ class RuntimeRegressionTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             self.assertNotRegex(
                 source,
-                r"fetchone\\s*\\(\\)\\s*\\[",
+                "fetchone\\s*\\(\\)\\s*\\[",
                 msg=f"unsafe fetchone indexing remains in {path}",
             )
 
