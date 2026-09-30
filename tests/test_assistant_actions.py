@@ -83,6 +83,16 @@ class AssistantActionTests(unittest.TestCase):
             "ai_diagnostic",
         )
 
+    def test_broader_natural_phrasing_is_supported(self):
+        from services.assistant_actions import detect_direct_action
+
+        self.assertEqual(detect_direct_action("Покажи лог"), "logs")
+        self.assertEqual(detect_direct_action("Расскажи о системе"), "system_info")
+        self.assertEqual(detect_direct_action("Покажи информацию обо мне"), "profile")
+        self.assertEqual(detect_direct_action("Статистика текущего чата"), "chatinfo")
+        self.assertEqual(detect_direct_action("Покажи диагностику ИИ"), "ai_diagnostic")
+        self.assertEqual(detect_direct_action("Покажи отладку"), "debug")
+
     def test_unrelated_prompt_is_not_routed(self):
         from services.assistant_actions import detect_direct_action
 
