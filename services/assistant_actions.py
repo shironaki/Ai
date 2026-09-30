@@ -17,6 +17,8 @@ _DIRECT_ACTIONS = (
     "runtime",
     "debug",
     "ai_diagnostic",
+    "logs",
+    "system_info",
     "unsupported_settings",
 )
 
@@ -48,6 +50,34 @@ def detect_direct_action(prompt: str) -> str | None:
 
     if "settings" in text or "настройки" in text:
         return "unsupported_settings"
+
+    if any(
+        phrase in text
+        for phrase in (
+            "выведи логи",
+            "покажи логи",
+            "покажи журнал",
+            "выведи журнал",
+            "журнал событий",
+            "логи бота",
+            "лог бота",
+        )
+    ) or re.search(r"/logs(?:\s|$)", text):
+        return "logs"
+
+    if any(
+        phrase in text
+        for phrase in (
+            "о системе расскажи",
+            "расскажи о системе",
+            "расскажи про систему",
+            "что за система",
+            "расскажи о боте",
+            "что ты умеешь",
+            "возможности системы",
+        )
+    ):
+        return "system_info"
 
     if any(
         phrase in text

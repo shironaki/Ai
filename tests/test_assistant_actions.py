@@ -53,6 +53,36 @@ class AssistantActionTests(unittest.TestCase):
             "unsupported_settings",
         )
 
+    def test_system_info_is_direct_action(self):
+        from services.assistant_actions import detect_direct_action
+
+        self.assertEqual(
+            detect_direct_action("О системе расскажи"),
+            "system_info",
+        )
+        self.assertEqual(
+            detect_direct_action("Выдай информацию о системе"),
+            "system_stats",
+        )
+
+    def test_logs_are_direct_action(self):
+        from services.assistant_actions import detect_direct_action
+
+        self.assertEqual(detect_direct_action("Выведи логи"), "logs")
+        self.assertEqual(detect_direct_action("Покажи журнал"), "logs")
+
+    def test_ai_diagnostic_variants_are_direct_action(self):
+        from services.assistant_actions import detect_direct_action
+
+        self.assertEqual(
+            detect_direct_action("Сделай аи диагностику"),
+            "ai_diagnostic",
+        )
+        self.assertEqual(
+            detect_direct_action("Выведи аи диагностику"),
+            "ai_diagnostic",
+        )
+
     def test_unrelated_prompt_is_not_routed(self):
         from services.assistant_actions import detect_direct_action
 

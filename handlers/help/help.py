@@ -28,6 +28,7 @@ from main import (
     psutil,
     random,
     re,
+    LOG_FILE,
     sqlite3,
     time,
     timedelta,
@@ -300,6 +301,62 @@ async def _handle_direct_action(message: types.Message, prompt: str, role: str) 
             f"👤 Зарегистрированных пользователей: <b>{stats['registered_users']}</b>\\n"
             f"💬 Зарегистрированных чатов: <b>{stats['registered_chats']}</b>\\n"
             f"📨 Пользователей в Л/С: <b>{stats['private_users']}</b>"
+        )
+        return True
+
+    if action == "system_info":
+        stats = None
+        if role in {"Основатель", "Создатель бота", "Администратор", "Система"}:
+            stats = system_summary()
+
+        lines = [
+            "<b>⚙️ СИСТЕМА «АИ»</b>",
+            "Я — интерфейс управления и интеллектуальной поддержки Telegram-бота.",
+            "",
+            "Мои контуры:",
+            "• 🧠 AI-помощник — естественные вопросы и команды",
+            "• 📊 Данные — безопасное чтение профилей, чатов и системных счётчиков",
+            "• 🛡️ Права — роли и проверка разрешений",
+            "• 🛰 Runtime — стазис и пробуждение",
+            "• 🔎 Диагностика — проверка состояния модулей",
+            "• ✉️ Коммуникация — обращения и служебные функции",
+        ]
+        if stats is not None:
+            lines.extend([
+                "",
+                "<b>Текущие подтверждённые данные:</b>",
+                f"👤 Пользователей: <b>{stats['registered_users']}</b>",
+                f"💬 Зарегистрированных чатов: <b>{stats['registered_chats']}</b>",
+                f"📨 Личных регистраций: <b>{stats['private_users']}</b>",
+            ])
+        await message.reply("\\n".join(lines))
+        return True
+
+    if action == "logs":
+        if role != "Основатель":
+            await message.reply("⛔ Журнал бота доступен только Основателю.")
+            return True
+
+        try:
+            with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as log_file:
+                content = log_file.read()
+        except Exception as exc:
+            logging.exception("Could not read bot log")
+            await message.reply(
+                "⚠️ Не удалось прочитать журнал бота. "
+                f"Техническая причина: <code>{escape_for_telegram_html(type(exc).__name__)}</code>"
+            )
+            return True
+
+        if not content:
+            await message.reply("📜 Журнал бота пока пуст.")
+            return True
+
+        tail = content[-12000:]
+        if len(content) > len(tail):
+            tail = "…\\n" + tail
+        await message.reply(
+            f"<b>📜 ПОСЛЕДНИЕ ЛОГИ</b>\\n<pre>{escape_for_telegram_html(tail)}</pre>"
         )
         return True
 
