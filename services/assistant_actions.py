@@ -61,8 +61,12 @@ def detect_direct_action(prompt: str) -> str | None:
             "журнал событий",
             "логи бота",
             "лог бота",
+            "покажи лог",
+            "выведи лог",
+            "лог покажи",
+            "журнал покажи",
         )
-    ) or re.search(r"/logs(?:\s|$)", text):
+    ) or re.search(r"/logs(?:\s|$)", text) or re.search(r"\\bлог(?:и|ов)?\\b", text) or re.search(r"\\bжурнал(?:ы|а)?\\b", text):
         return "logs"
 
     if any(
@@ -75,6 +79,11 @@ def detect_direct_action(prompt: str) -> str | None:
             "расскажи о боте",
             "что ты умеешь",
             "возможности системы",
+            "о системе",
+            "про систему",
+            "о боте расскажи",
+            "про бота расскажи",
+            "система расскажи",
         )
     ):
         return "system_info"
@@ -87,11 +96,15 @@ def detect_direct_action(prompt: str) -> str | None:
             "диагностику аи",
             "диагностику ai",
             "диагностику искусственного интеллекта",
+            "диагностику модуля ии",
+            "диагностику ии",
+            "диагностика ии",
+            "диагностика ai",
         )
     ) or "/aidiag" in text:
         return "ai_diagnostic"
 
-    if "дебаг" in text or "debug" in text or "/debug" in text:
+    if "дебаг" in text or "отладк" in text or "debug" in text or "/debug" in text:
         return "debug"
 
     if any(
@@ -114,6 +127,8 @@ def detect_direct_action(prompt: str) -> str | None:
         for phrase in (
             "информация о системе",
             "информацию о системе",
+            "инфо о системе",
+            "инфу о системе",
             "данные системы",
             "сколько пользователей",
             "сколько чатов",
@@ -127,6 +142,8 @@ def detect_direct_action(prompt: str) -> str | None:
         for phrase in (
             "статистика этого чата",
             "статистику этого чата",
+            "статистика текущего чата",
+            "статистику текущего чата",
             "статистика чата",
             "статистику чата",
             "информация о чате",
@@ -145,6 +162,11 @@ def detect_direct_action(prompt: str) -> str | None:
         phrase in text
         for phrase in (
             "мой профиль",
+            "мой профайл",
+            "покажи информацию обо мне",
+            "покажи инфу обо мне",
+            "покажи мои сведения",
+            "покажи мои данные",
             "профиль мой",
             "мою статистику",
             "моя статистика",
