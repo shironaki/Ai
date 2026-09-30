@@ -27,6 +27,8 @@ class CommandRegistryTests(unittest.TestCase):
         self.assertNotIn("/settings", catalog)
         self.assertNotIn("/invite", catalog)
         self.assertNotIn("/logout", catalog)
+        self.assertNotIn("/stats", catalog)
+        self.assertNotIn("/settings", catalog)
 
     def test_legacy_game_commands_are_not_registered(self):
         from core.command_registry import resolve_command, is_legacy_game_alias
