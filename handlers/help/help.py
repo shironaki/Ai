@@ -598,11 +598,12 @@ async def bot_msg(message: types.Message):
         m.text
         and m.from_user.id == config.owner
         and not m.text.startswith("/")
-        and _looks_like_founder_command(m.text)
     )
 )
 async def founder_direct_command(message: types.Message):
-    await _handle_founder_command(message, message.text.strip())
+    # Founder never needs the "Аи" wake word. Known commands execute directly;
+    # ordinary conversation falls through to the same AI character pipeline.
+    await _answer_ai(message, message.text.strip())
 
 
 #Девборд
