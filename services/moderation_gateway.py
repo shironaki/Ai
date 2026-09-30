@@ -310,7 +310,13 @@ async def confirm(message: types.Message):
             expires_at=expires_at,
         )
     else:
-        await message.reply(
-            f"🔔 <b>Выполнено:</b> {action} <b>{target_name}</b>."
+        result_text = f"🔔 <b>Выполнено:</b> {action} <b>{target_name}</b>."
+        await notify_action(
+            message.bot,
+            chat_id=message.chat.id,
+            target_user_id=target_id,
+            target_name=target_name,
+            action=intent.command,
+            text=result_text,
         )
     return True
