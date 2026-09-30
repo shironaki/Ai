@@ -412,18 +412,13 @@ async def send_logs(message: types.Message):
 
 BOT_COMMANDS = [
     types.BotCommand("start", "начать работу"),
-    types.BotCommand("help", "список команд"),
-    types.BotCommand("work", "пойти на работу"),
-    types.BotCommand("bio", "установить био"),
-    types.BotCommand("name", "сменить ник"),
-    types.BotCommand("rp", "ролевое действие"),
-    types.BotCommand("dick", "увеличить параметр"),
-    types.BotCommand("setstavka", "изменить ставку"),
-    types.BotCommand("setdick", "изменить параметр"),
-    types.BotCommand("chatinfo", "информация о чате"),
-    types.BotCommand("report", "пожаловаться"),
+    types.BotCommand("help", "актуальный список команд"),
     types.BotCommand("ai", "обратиться к Аи"),
+    types.BotCommand("chatinfo", "информация о текущем чате"),
+    types.BotCommand("report", "отправить обращение/жалобу"),
+    types.BotCommand("q", "отправить обращение"),
 ]
+
 
 
 async def on_startup(dispatcher):
