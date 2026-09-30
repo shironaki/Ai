@@ -8,6 +8,7 @@ import requests
 
 from services.security import redact
 from core.command_registry import command_catalog
+from services.ai_character import CHARACTER_PROMPT
 
 log = logging.getLogger(__name__)
 
