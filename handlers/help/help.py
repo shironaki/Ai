@@ -9,7 +9,12 @@ from services.ai_service import ai_status, escape_for_telegram_html, generate_re
 from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember
 from services.security import redact
 from services.assistant_actions import detect_direct_action
-from services.moderation_gateway import (\n    request as request_moderation,\n    confirm as confirm_moderation,\n    has_pending as has_pending_moderation,\n    detect_action as detect_moderation_action,\n)
+from services.moderation_gateway import (
+    request as request_moderation,
+    confirm as confirm_moderation,
+    has_pending as has_pending_moderation,
+    detect_action as detect_moderation_action,
+)
 from services.ai_data import build_verified_context, chat_summary, system_summary, user_summary, runtime_summary
 
 from main import (
