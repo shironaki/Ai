@@ -25,8 +25,8 @@ _DIRECT_ACTIONS = (
 
 def _normalize(prompt: str) -> str:
     text = (prompt or "").casefold().replace("ё", "е")
-    text = re.sub(r"[^ws/.-]+", " ", text, flags=re.UNICODE)
-    return re.sub(r"s+", " ", text).strip()
+    text = re.sub(r"[^\w\s/.-]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
@@ -56,7 +56,7 @@ def detect_direct_action(prompt: str) -> str | None:
         "выведи журнал", "покажи лог", "выведи лог",
         "журнал событий", "журнал бота", "логи бота",
         "лог бота", "последние логи",
-    )) or re.search(r"/logs(?:s|$)", text):
+    )) or re.search(r"/logs(?:\s|$)", text):
         return "logs"
 
     if (
@@ -90,7 +90,7 @@ def detect_direct_action(prompt: str) -> str | None:
         "информация о чате", "информацию о чате",
         "информация об этом чате", "информацию об этом чате",
         "инфо чата", "данные чата", "чатинфо",
-    )) or re.search(r"/chatinfo(?:s|$)", text):
+    )) or re.search(r"/chatinfo(?:\s|$)", text):
         return "chatinfo"
 
     if _has_any(text, (
