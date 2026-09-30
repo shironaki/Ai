@@ -66,7 +66,7 @@ def detect_direct_action(prompt: str) -> str | None:
             "лог покажи",
             "журнал покажи",
         )
-    ) or re.search(r"/logs(?:\s|$)", text) or re.search(r"\\bлог(?:и|ов)?\\b", text) or re.search(r"\\bжурнал(?:ы|а)?\\b", text):
+    ) or re.search(r"/logs(?:\s|$)", text) or re.search(r"\bлог(?:и|ов)?\b", text) or re.search(r"\bжурнал(?:ы|а)?\b", text):
         return "logs"
 
     if any(
@@ -128,6 +128,10 @@ def detect_direct_action(prompt: str) -> str | None:
             "расскажи о боте",
             "что ты умеешь",
             "возможности системы",
+            "возможности у системы",
+            "возможности у бота",
+            "возможности у системы",
+            "возможности у бота",
             "о системе",
             "про систему",
             "о боте расскажи",
