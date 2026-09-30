@@ -6,6 +6,8 @@ import time
 
 import requests
 
+from services.security import redact
+
 log = logging.getLogger(__name__)
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -70,7 +72,7 @@ def _request_sync(messages, model, api_key):
         timeout=30,
     )
     if not response.ok:
-        detail = response.text[:800].replace("\n", " ")
+        detail = redact(response.text, 400)
         raise RuntimeError(f"Groq HTTP {response.status_code}: {detail}")
     data = response.json()
     choices = data.get("choices") or []
@@ -111,7 +113,7 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
             api_key,
         )
     except Exception as exc:
-        _LAST_ERROR["value"] = html.escape(f"{type(exc).__name__}: {exc}", quote=False)
+        _LAST_ERROR["value"] = redact(f"{type(exc).__name__}: {exc}")
         log.exception("AI provider request failed for user_id=%s", user_id)
         return None
 
