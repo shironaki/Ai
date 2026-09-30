@@ -33,6 +33,7 @@ from aiogram.utils.markdown import hbold, hcode
 
 from base import config, chats, users
 from core.runtime_state import is_paused, set_paused
+from services.security import redact
 
 LOG_FILE = "bot.log"
 BOT_PAUSED = False
@@ -84,14 +85,15 @@ class ActivityLoggingMiddleware(BaseMiddleware):
     async def on_pre_process_update(self, update, data):
         if update.message:
             message = update.message
-            text = (message.text or message.caption or "").replace("\n", " ")[:300]
+            raw_text = message.text or message.caption or ""
             log.info(
-                "UPDATE message | update_id=%s chat=%s type=%s user=%s text=%r",
+                "UPDATE message | update_id=%s chat=%s type=%s user=%s text_len=%s content_type=%s",
                 getattr(update, "update_id", "?"),
                 message.chat.id,
                 message.chat.type,
                 getattr(message.from_user, "id", "?"),
-                text,
+                len(raw_text),
+                getattr(message, "content_type", "unknown"),
             )
         elif update.callback_query:
             log.info(
@@ -373,7 +375,7 @@ async def log_update_error(update, exception):
                 details += (
                     f"chat: <code>{html.escape(str(message.chat.id))}</code>\n"
                     f"user: <code>{html.escape(str(getattr(message.from_user, 'id', '?')))}</code>\n"
-                    f"text: <code>{html.escape((message.text or message.caption or '')[:500])}</code>"
+                    f"text_len: <code>{len(message.text or message.caption or '')}</code>"
                 )
             await bot.send_message(config.owner, details)
         except Exception:
