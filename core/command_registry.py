@@ -18,12 +18,13 @@ class CommandSpec:
     destructive: bool = False
     confirmation: bool = False
     enabled: bool = True
+    description: str = ""
 
 
 COMMAND_REGISTRY = (
-    CommandSpec("start", frozenset({"start"}), "system", "Игрок"),
-    CommandSpec("help", frozenset({"help", "хелп", "команды"}), "information", "Игрок"),
-    CommandSpec("ai", frozenset({"ai", "аи"}), "information", "Игрок"),
+    CommandSpec("start", frozenset({"start"}), "system", "Игрок", description="регистрация и запуск"),
+    CommandSpec("help", frozenset({"help", "хелп", "команды"}), "information", "Игрок", description="список зарегистрированных команд"),
+    CommandSpec("ai", frozenset({"ai", "аи"}), "information", "Игрок", description="обращение к Аи"),
     CommandSpec("ai_diagnostic", frozenset({"aidiag"}), "system", "Создатель бота"),
     CommandSpec("logs", frozenset({"logs"}), "system", "Создатель бота", "global"),
     CommandSpec("debug", frozenset({"debug"}), "system", "Создатель бота", "global"),
@@ -38,12 +39,12 @@ COMMAND_REGISTRY = (
     CommandSpec("set_barrier", frozenset({"установить барьер"}), "moderation", "Модератор"),
     CommandSpec("remove_barrier", frozenset({"снять барьер"}), "moderation", "Модератор"),
     CommandSpec("welcome", frozenset({"welcome", "приветствие"}), "chat", "Модератор"),
-    CommandSpec("profile", frozenset({"инфа", "профиль"}), "information", "Игрок"),
-    CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Игрок"),
-    CommandSpec("stats", frozenset({"стата"}), "information", "Игрок"),
-    CommandSpec("info", frozenset({"инфо"}), "information", "Игрок"),
-    CommandSpec("rules", frozenset({"правила", "rules"}), "information", "Игрок"),
-    CommandSpec("statuses", frozenset({"статусы"}), "information", "Игрок"),
+    CommandSpec("profile", frozenset({"инфа", "профиль"}), "information", "Игрок", description="показать профиль"),
+    CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Игрок", description="информация о текущем чате"),
+    CommandSpec("stats", frozenset({"стата"}), "information", "Игрок", description="статистика, которую реально предоставляет обработчик"),
+    CommandSpec("info", frozenset({"инфо"}), "information", "Игрок", description="информация о системе/пользователе"),
+    CommandSpec("rules", frozenset({"правила", "rules"}), "information", "Игрок", description="показать правила текущего чата"),
+    CommandSpec("statuses", frozenset({"статусы"}), "information", "Игрок", description="показать доступные статусы"),
     CommandSpec("name", frozenset({"name"}), "profile", "Игрок"),
     CommandSpec("bio", frozenset({"bio", "био"}), "profile", "Игрок"),
     CommandSpec("rp", frozenset({"rp"}), "profile", "Игрок"),
@@ -91,3 +92,36 @@ def is_legacy_game_alias(value: str) -> bool:
         "бас", "баскет", "охота", "пополнить счёт", "пополнить счет",
         "снять со счёта", "снять со счета",
     }
+
+
+ROLE_ORDER = {
+    "Игрок": 10,
+    "Модератор": 20,
+    "Хелпер": 30,
+    "Администратор": 40,
+    "Создатель бота": 50,
+    "Система": 60,
+}
+
+
+def commands_for_role(role: str):
+    """Return enabled commands the role is allowed to use."""
+    actual_level = ROLE_ORDER.get(role, ROLE_ORDER["Игрок"])
+    return tuple(
+        spec
+        for spec in COMMAND_REGISTRY
+        if spec.enabled and ROLE_ORDER.get(spec.min_role, 999) <= actual_level
+    )
+
+
+def command_catalog(role: str) -> str:
+    """Build a compact, model-facing catalog from the authoritative registry."""
+    lines = []
+    for spec in commands_for_role(role):
+        aliases = ", ".join(
+            f"/{alias}" if " " not in alias else alias
+            for alias in sorted(spec.aliases)
+        )
+        description = f" — {spec.description}" if spec.description else ""
+        lines.append(f"- {aliases}{description}")
+    return "\n".join(lines) or "- Нет зарегистрированных команд."
