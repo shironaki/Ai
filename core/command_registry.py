@@ -1,8 +1,7 @@
-"""Single source of truth for user-facing bot commands.
+"""Single source of truth for the non-game user command surface.
 
-This registry intentionally excludes the legacy game commands. The game system
-will be rebuilt as a separate module later and must not leak into the core
-administration/AI command surface.
+Legacy game commands are deliberately excluded. The game system will be rebuilt
+later as an isolated module with its own registry and economy model.
 """
 
 from dataclasses import dataclass
@@ -22,61 +21,35 @@ class CommandSpec:
 
 
 COMMAND_REGISTRY = (
-    # Core / system
-    CommandSpec("start", frozenset({"start"}), "system", "Игрок", "chat"),
+    CommandSpec("start", frozenset({"start"}), "system", "Игрок"),
     CommandSpec("help", frozenset({"help", "хелп", "команды"}), "information", "Игрок"),
     CommandSpec("ai", frozenset({"ai", "аи"}), "information", "Игрок"),
     CommandSpec("ai_diagnostic", frozenset({"aidiag"}), "system", "Создатель бота"),
     CommandSpec("logs", frozenset({"logs"}), "system", "Создатель бота", "global"),
     CommandSpec("debug", frozenset({"debug"}), "system", "Создатель бота", "global"),
-
-    # Founder / runtime
-    CommandSpec("stasis", frozenset({"stasis", "стазис"}), "runtime", "Создатель бота", "chat"),
-    CommandSpec("awakening", frozenset({"awakening", "пробуждение"}), "runtime", "Создатель бота", "chat"),
-
-    # Administration
-    CommandSpec("setstatus", frozenset({"setstatus"}), "administration", "Администратор", "chat"),
+    CommandSpec("stasis", frozenset({"stasis", "стазис"}), "runtime", "Создатель бота"),
+    CommandSpec("awakening", frozenset({"awakening", "пробуждение"}), "runtime", "Создатель бота"),
+    CommandSpec("setstatus", frozenset({"setstatus"}), "administration", "Администратор"),
     CommandSpec("deluser", frozenset({"deluser"}), "administration", "Администратор", "chat", True, True),
-    CommandSpec("setbal", frozenset({"setbal"}), "administration", "Администратор", "chat", True, True),
-
-    # Moderation
     CommandSpec("mute", frozenset({"мут", "mute", "дебафф"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("unmute", frozenset({"андебафф", "размут", "unmute"}), "moderation", "Модератор"),
     CommandSpec("ban", frozenset({"аннигилировать", "ban"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("unban", frozenset({"воскресить", "unban"}), "moderation", "Модератор"),
     CommandSpec("set_barrier", frozenset({"установить барьер"}), "moderation", "Модератор"),
     CommandSpec("remove_barrier", frozenset({"снять барьер"}), "moderation", "Модератор"),
-
-    # Chat administration
     CommandSpec("welcome", frozenset({"welcome", "приветствие"}), "chat", "Модератор"),
-    CommandSpec("games_enable", frozenset({"разрешить игры"}), "chat", "Модератор"),
-    CommandSpec("games_disable", frozenset({"запретить игры"}), "chat", "Модератор"),
-
-    # Information / profile
     CommandSpec("profile", frozenset({"инфа", "профиль"}), "information", "Игрок"),
     CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Игрок"),
     CommandSpec("stats", frozenset({"стата"}), "information", "Игрок"),
     CommandSpec("info", frozenset({"инфо"}), "information", "Игрок"),
     CommandSpec("rules", frozenset({"правила", "rules"}), "information", "Игрок"),
     CommandSpec("statuses", frozenset({"статусы"}), "information", "Игрок"),
-    CommandSpec("my_games", frozenset({"мои игры"}), "information", "Игрок"),
     CommandSpec("name", frozenset({"name"}), "profile", "Игрок"),
     CommandSpec("bio", frozenset({"bio", "био"}), "profile", "Игрок"),
     CommandSpec("rp", frozenset({"rp"}), "profile", "Игрок"),
-    CommandSpec("dev", frozenset({"dev", "дев"}), "system", "Система", "chat"),
-
-    # User communication
+    CommandSpec("dev", frozenset({"dev", "дев"}), "system", "Система"),
     CommandSpec("report", frozenset({"r", "report"}), "communication", "Игрок"),
     CommandSpec("question", frozenset({"обращение", "q", "вопрос"}), "communication", "Игрок"),
-
-    # Economy / legacy non-game commands
-    CommandSpec("balance", frozenset({"б", "баланс", "мои 💰", "мой 💰", "💰"}), "economy", "Игрок"),
-    CommandSpec("top_balance", frozenset({"топ б", "богачи", "топ 💰"}), "economy", "Игрок"),
-    CommandSpec("top_players", frozenset({"топ и", "топ игроков"}), "economy", "Игрок"),
-    CommandSpec("set_bet", frozenset({"setstavka"}), "economy", "Игрок"),
-    CommandSpec("set_dick", frozenset({"setdick"}), "economy", "Игрок"),
-
-    # Broadcast / developer UI
     CommandSpec("broadcast_users", frozenset({"rassilka"}), "system", "Система", "global", True, True),
     CommandSpec("broadcast_chats", frozenset({"chat_rassilka"}), "system", "Система", "global", True, True),
 )
