@@ -18,6 +18,7 @@ from core.command_policy import evaluate
 from core.permissions import get_display_role
 from base import config
 from services.audit_service import record
+from services.moderation_scheduler import schedule, notify_issued
 
 _PENDING = {}
 
@@ -79,6 +80,7 @@ def _reason(text: str, action: str) -> str:
         "снять бан", "снять мут", "запрети писать", "запрети сообщения",
     ):
         cleaned = re.sub(re.escape(marker), "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\b(?:его|ее|её|их|ему|ей|этого|этот|пользователя|человека|юзера|юзеру)\b", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.-")
     return cleaned or "не указана"
 
@@ -170,6 +172,10 @@ async def request(message: types.Message, text: str):
         await message.reply(f"⛔ {decision.reason}")
         return True
 
+    if message.from_user.id == config.owner or role == "Создатель бота":
+        remember(message.from_user.id, message.chat.id, intent)
+        return await confirm(message)
+
     remember(message.from_user.id, message.chat.id, intent)
     await message.reply(confirmation_text(intent))
     return True
@@ -204,12 +210,17 @@ async def confirm(message: types.Message):
         p = dict(intent.parameters)
         duration = p.get("duration")
         until_date = None
+        duration_seconds = None
+        expires_at = None
         if duration:
             value, unit = duration
             kwargs = {"minutes": value} if unit == "минут" else (
                 {"hours": value} if unit == "часов" else {"days": value}
             )
             until_date = timedelta(**kwargs)
+            duration_seconds = int(until_date.total_seconds())
+            from datetime import datetime, timezone
+            expires_at = datetime.now(timezone.utc) + until_date
 
         if intent.command == "mute":
             await message.bot.restrict_chat_member(
@@ -278,8 +289,28 @@ async def confirm(message: types.Message):
         result="executed",
     )
     action = _ACTIONS[intent.command]
-    await message.reply(
-        f"✅ <b>Выполнено:</b> {action} "
-        f"<b>{intent.parameters.get('target_name', target_id)}</b>."
-    )
+    target_name = intent.parameters.get("target_name", target_id)
+
+    if duration_seconds and expires_at and intent.command in {"mute", "ban"}:
+        schedule(
+            chat_id=message.chat.id,
+            target_user_id=target_id,
+            target_name=target_name,
+            actor_user_id=message.from_user.id,
+            action=intent.command,
+            expires_at=expires_at,
+        )
+        await notify_issued(
+            message.bot,
+            chat_id=message.chat.id,
+            target_user_id=target_id,
+            target_name=target_name,
+            action=intent.command,
+            duration_seconds=duration_seconds,
+            expires_at=expires_at,
+        )
+    else:
+        await message.reply(
+            f"🔔 <b>Выполнено:</b> {action} <b>{target_name}</b>."
+        )
     return True
