@@ -306,7 +306,6 @@ def _render_issue_list(rows) -> str:
         and parse_marker(m.text)
         and m.reply_to_message is None
         and parse_fixed(m.text) is None
-        and m.from_user.id != config.owner
     )
 )
 async def mark_issue_without_target(message: types.Message):
