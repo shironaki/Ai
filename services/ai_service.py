@@ -16,6 +16,7 @@ def escape_for_telegram_html(text: str) -> str:
     """Escape untrusted AI text before sending it with aiogram HTML parse mode."""
     return html.escape(text, quote=False)
 
+
 _HISTORY = {}
 _LAST_REQUEST = {}
 _LAST_ERROR = {"value": ""}
@@ -95,11 +96,12 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
     _LAST_REQUEST[user_id] = now
 
     history = _HISTORY.setdefault(user_id, [])
-    history.append({"role": "user", "content": prompt})
-    history[:] = history[-_MAX_HISTORY_MESSAGES:]
+    candidate_history = (history + [{"role": "user", "content": prompt}])[
+        -_MAX_HISTORY_MESSAGES:
+    ]
 
     messages = [{"role": "system", "content": _system_prompt(role)}]
-    messages.extend(history)
+    messages.extend(candidate_history)
 
     try:
         answer = await asyncio.to_thread(
@@ -114,6 +116,7 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
         return None
 
     _LAST_ERROR["value"] = ""
+    history[:] = candidate_history
     history.append({"role": "assistant", "content": answer})
     history[:] = history[-_MAX_HISTORY_MESSAGES:]
     return answer
