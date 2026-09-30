@@ -31,6 +31,35 @@ class RuntimeRegressionTests(unittest.TestCase):
             if old is not None:
                 os.environ["GROQ_API_KEY"] = old
 
+    def test_ai_diagnostic_error_is_html_safe(self):
+        import services.ai_service as ai_service
+
+        old_key = os.environ.get("GROQ_API_KEY")
+        old_request = ai_service._request_sync
+        old_last_error = ai_service._LAST_ERROR["value"]
+
+        try:
+            os.environ["GROQ_API_KEY"] = "test-key"
+
+            def failing_request(*args, **kwargs):
+                bad_text = "bad " + chr(60) + "tag" + chr(62) + " " + chr(38) + " broken"
+                raise RuntimeError(bad_text)
+
+            ai_service._request_sync = failing_request
+            result = asyncio.run(ai_service.generate_reply(987654322, "проверка"))
+            self.assertIsNone(result)
+            self.assertEqual(
+                ai_service._LAST_ERROR["value"],
+                "RuntimeError: bad &lt;tag&gt; &amp; broken",
+            )
+        finally:
+            ai_service._request_sync = old_request
+            ai_service._LAST_ERROR["value"] = old_last_error
+            if old_key is None:
+                os.environ.pop("GROQ_API_KEY", None)
+            else:
+                os.environ["GROQ_API_KEY"] = old_key
+
     def test_ai_failed_request_does_not_pollute_context(self):
         import services.ai_service as ai_service
 
