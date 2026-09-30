@@ -224,3 +224,39 @@ AI не выбирает произвольную цель.
 ## Контрольная фраза
 
 Мы остановились после PR #21. В main уже есть единый natural-language вход для обычных informational requests и прямое natural-language moderation execution в группах. Следующий технический блок — не добавлять новые разрозненные phrase handlers, а собрать единый typed natural-language command executor и перенести в него Founder stasis/awakening, затем сделать общий target/scope resolver и закрыть security regression.
+
+
+## TEST checkpoint — 2026-09-30 — Assistant character/control/QA block
+
+### User-approved behavior contract
+- TEST remains the active development contour; this branch is not PROD and must not be merged until runtime verification in Codespaces is complete.
+- Аи has a stable character contract: confident, sometimes cheeky, sometimes warm, able to tease lightly or be stubborn when facts are certain; character must never replace factual accuracy or invent execution.
+- Founder/Основатель has a direct natural-language path without the mandatory “Аи” wake word. Known Founder command requests execute directly; when scope is omitted, current chat is the safe default, while explicit “везде/глобально” selects global scope.
+- Other roles, including Администратор, must address the assistant explicitly through “Аи, …”, “/аи …”, or “/ai …” for natural-language command execution.
+- Admin/moderation natural-language execution is gated behind explicit AI invocation.
+- Administrative moderation cannot target the Founder without a separate Founder permission flow.
+- A universal cancellation path exists for pending Founder/moderation requests: “отмени последний запрос”, “отмена”, “отставить”, “не трожь”, “забудь”, etc.
+- QA issue markers are public to create, but private to inspect: replying to a problematic message with “отметь …” or “исправить …” creates a persistent marker; optional код N is stored. Only Founder can view /метки/the QA list and mark an item fixed with “исправлено N”.
+- QA markers are persisted in SQLite issue_markers; they are separate from runtime/audit logs.
+- The marker list shows open/fixed state, reason, code, chat/message references and timestamps. When invoked from a group, the list is sent to the Founder in private chat.
+
+### Current TEST branch
+- Branch: test-global-assistant-upgrade
+- Draft PR: #22 — TEST: character, founder control, cancellation and QA markers
+- Latest tested SHA: 74ffe26100f2a9ef89fa85a677bbdb8d8f683fac
+- GitHub Actions Python integrity check: latest push and PR runs both success.
+- Main remains untouched by this block.
+- PROD migration is explicitly deferred until Codespaces bot runtime verification is completed.
+
+### Next runtime verification matrix
+1. Founder: natural “активируй стазис” executes without asking for scope.
+2. Founder: cancellation phrases clear any pending command state.
+3. Admin: “Аи, замуть ...” reaches moderation executor; bare “замуть ...” does not.
+4. Admin/moderator: moderation target equal to Founder is rejected without separate Founder permission.
+5. Any user: reply to a broken message with “отметь код 1 ошибка ...” creates a marker.
+6. Founder private: /метки shows markers; “исправлено N” changes status to fixed.
+7. Non-Founder: /метки exposes no QA list.
+8. Character: ordinary conversational requests get the new Aи personality without changing factual/execution contracts.
+
+### Protocol
+Codespace TEST -> runtime verification -> fix/regression test -> CI -> stable checkpoint -> only then migrate the same block to PROD -> continue next work again on TEST.
