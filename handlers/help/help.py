@@ -6,7 +6,7 @@ from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.exceptions import Throttled
 
 from services.ai_service import ai_status, escape_for_telegram_html, generate_reply, _LAST_ERROR
-from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember
+from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember, is_cancel_request, cancel_pending
 from services.security import redact
 from services.assistant_actions import detect_direct_action
 from services.moderation_gateway import (
@@ -16,6 +16,7 @@ from services.moderation_gateway import (
     detect_action as detect_moderation_action,
 )
 from services.ai_data import build_verified_context, chat_summary, system_summary, user_summary, runtime_summary
+from services.issue_tracker import parse_marker, parse_fixed, create_marker, list_markers, mark_fixed
 
 from main import (
     BaseMiddleware,
@@ -175,6 +176,7 @@ def _looks_like_founder_command(prompt: str) -> bool:
 
 
 async def _handle_founder_command(message: types.Message, prompt: str):
+    """Founder gets a direct command path; scope defaults to current chat unless global is explicit."""
     if message.from_user.id != config.owner or not _looks_like_founder_command(prompt):
         return False
 
@@ -182,12 +184,12 @@ async def _handle_founder_command(message: types.Message, prompt: str):
     if not intent:
         return False
 
-    if intent["scope"] == "unknown":
-        remember(message.from_user.id, message.chat.id, intent)
-        await message.reply(pending_prompt())
-        return True
+    if intent.get("scope") == "unknown":
+        # Founder commands are not stalled by a scope interrogation.
+        # Explicit global wording still wins; otherwise the safe default is this chat.
+        intent["scope"] = "chat"
 
-    result = await execute(message.from_user.id, message.chat.id, intent)
+    result = await execute(message.from_user.id, message.chat.id, intent, confirmed=True)
     if result:
         await message.reply(result)
         return True
@@ -220,6 +222,40 @@ async def founder_command_scope(message: types.Message):
     if result:
         await message.reply(result)
 
+def _ai_invocation(text: str) -> str | None:
+    normalized = (text or "").strip()
+    if not normalized:
+        return None
+    if normalized.startswith("/аи") or normalized.startswith("/ai"):
+        parts = normalized.split(maxsplit=1)
+        return parts[1].strip() if len(parts) > 1 else ""
+    if re.match(r"^аи(?:[,,:]|\\s)", normalized, re.IGNORECASE):
+        return re.sub(r"^аи(?:[,,:]|\\s)+", "", normalized, flags=re.IGNORECASE).strip()
+    return None
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and is_cancel_request(m.text)
+        and (
+            has_pending(m.from_user.id, m.chat.id)
+            or has_pending_moderation(m.from_user.id, m.chat.id)
+        )
+    )
+)
+async def cancel_pending_request(message: types.Message):
+    cancelled = cancel_pending(message.from_user.id, message.chat.id)
+    moderation_cancelled = False
+    if has_pending_moderation(message.from_user.id, message.chat.id):
+        from services.moderation_gateway import pop as pop_moderation
+        pop_moderation(message.from_user.id, message.chat.id)
+        moderation_cancelled = True
+    if cancelled or moderation_cancelled:
+        await message.reply("↩️ Ладно. Отставить. Незавершённый запрос отменён, ничего не выполняю.")
+        return True
+
+
 @dp.message_handler(
     lambda m: bool(
         m.text
@@ -232,13 +268,17 @@ async def founder_command_scope(message: types.Message):
     lambda m: bool(
         m.text
         and m.chat.type in {"group", "supergroup"}
-        and not m.text.startswith("/")
-        and detect_moderation_action(m.text)
+        and _ai_invocation(m.text) is not None
+        and detect_moderation_action(_ai_invocation(m.text) or "")
     )
 )
 async def natural_moderation_command(message: types.Message):
-    """Handle moderation orders without requiring the user to address the AI by name."""
-    await request_moderation(message, message.text.strip())
+    """Admin/moderation commands require an explicit AI invocation."""
+    prompt = _ai_invocation(message.text)
+    if prompt is None:
+        await moderation_confirmation(message)
+        return
+    await request_moderation(message, prompt)
 
 
 async def moderation_confirmation(message: types.Message):
@@ -250,6 +290,72 @@ async def moderation_confirmation(message: types.Message):
         return
     await confirm_moderation(message)
 
+
+
+def _render_issue_list(rows) -> str:
+    if not rows:
+        return "🧪 <b>QA-метки</b>\nОткрытых и закрытых меток пока нет."
+    lines = ["🧪 <b>QA-метки</b>"]
+    for row in rows:
+        marker_id, chat_id, message_id, reporter_id, reason, code, status, created_at, fixed_by, fixed_at = row
+        state = "✅ исправлено" if status == "fixed" else "🟠 открыто"
+        code_text = f" · код {code}" if code is not None else ""
+        lines.append(
+            f"#{marker_id} · {state}{code_text}\n"
+            f"чат <code>{chat_id}</code> · сообщение <code>{message_id}</code>\n"
+            f"причина: {escape_for_telegram_html(reason)}"
+        )
+    return "\n\n".join(lines)
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and parse_marker(m.text)
+        and m.reply_to_message is not None
+    )
+)
+async def mark_issue(message: types.Message):
+    parsed = parse_marker(message.text)
+    marker_id = create_marker(
+        chat_id=message.chat.id,
+        message_id=message.reply_to_message.message_id,
+        reporter_id=message.from_user.id,
+        reason=parsed["reason"],
+        code=parsed["code"],
+    )
+    await message.reply(
+        f"📝 Принято. Ошибка отмечена как <code>#{marker_id}</code>. "
+        "Причина сохранена; Основатель увидит её в QA-списке."
+    )
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and (
+            m.text.casefold().strip() in {"/метки", "метки", "список меток", "issues"}
+            or parse_fixed(m.text) is not None
+        )
+        and m.from_user.id == config.owner
+    )
+)
+async def issue_control(message: types.Message):
+    fixed_id = parse_fixed(message.text)
+    if fixed_id is not None:
+        if mark_fixed(fixed_id, message.from_user.id):
+            await message.reply(f"✅ QA-метка #{fixed_id} отмечена как исправленная.")
+        else:
+            await message.reply(f"ℹ️ QA-метка #{fixed_id} не найдена или уже закрыта.")
+        return
+    rows = list_markers()
+    text = _render_issue_list(rows)
+    # The list is private by design, even if the command is issued from a group.
+    if message.chat.type == "private":
+        await message.reply(text)
+    else:
+        await bot.send_message(config.owner, text)
+        await message.reply("📬 Список QA-меток отправлен Основателю в личные сообщения.")
 
 
 async def _handle_direct_action(message: types.Message, prompt: str, role: str) -> bool:
