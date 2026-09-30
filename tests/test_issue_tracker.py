@@ -27,3 +27,12 @@ class IssueTrackerTests(unittest.TestCase):
     def test_fixed_parser_does_not_consume_issue_reason(self):
         from services.issue_tracker import parse_fixed
         self.assertIsNone(parse_fixed("исправить команда стазис"))
+
+
+    def test_marker_reason_does_not_absorb_target_pronoun(self):
+        from services.moderation_gateway import _reason
+        self.assertEqual(_reason("замуть его на 30 минут", "mute"), "не указана")
+        self.assertEqual(
+            _reason("замуть его на 30 минут за спам", "mute"),
+            "за спам",
+        )
