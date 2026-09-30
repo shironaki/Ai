@@ -36,6 +36,26 @@ class SecurityLayerTests(unittest.TestCase):
         self.assertTrue(confirmed.allowed)
         self.assertFalse(confirmed.requires_confirmation)
 
+
+    def test_scope_policy_does_not_allow_global_for_chat_only_command(self):
+        from core.command_models import CommandIntent
+        from core.command_policy import evaluate
+
+        decision = evaluate(
+            CommandIntent("mute", scope="global"),
+            "Создатель бота",
+        )
+        self.assertFalse(decision.allowed)
+
+    def test_runtime_commands_allow_both_scopes(self):
+        from core.command_models import CommandIntent
+        from core.command_policy import evaluate
+
+        chat = evaluate(CommandIntent("stasis", scope="chat"), "Создатель бота")
+        global_ = evaluate(CommandIntent("stasis", scope="global"), "Создатель бота")
+        self.assertTrue(chat.allowed)
+        self.assertTrue(global_.allowed)
+
     def test_pending_founder_command_is_bound_to_chat(self):
         from services.command_gateway import (
             has_pending,
