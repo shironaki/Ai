@@ -51,3 +51,23 @@ def ensure_schema():
         connection.execute(USERS_SCHEMA)
     with connect_db("chats.db") as connection:
         connection.execute(CHATS_SCHEMA)
+    with connect_db("users.db") as connection:
+        connection.execute(ISSUE_MARKERS_SCHEMA)
+
+
+ISSUE_MARKERS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS issue_markers(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    reporter_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    code INTEGER,
+    status TEXT NOT NULL DEFAULT 'open',
+    fixed_by INTEGER,
+    created_at TEXT NOT NULL,
+    fixed_at TEXT
+)
+"""
+
+
