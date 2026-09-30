@@ -113,7 +113,7 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Игрок"):
             api_key,
         )
     except Exception as exc:
-        _LAST_ERROR["value"] = redact(f"{type(exc).__name__}: {exc}")
+        _LAST_ERROR["value"] = html.escape(redact(f"{type(exc).__name__}: {exc}"), quote=False)
         log.exception("AI provider request failed for user_id=%s", user_id)
         return None
 
