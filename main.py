@@ -32,18 +32,22 @@ from aiogram.types import (
 from aiogram.utils.markdown import hbold, hcode
 
 from base import config, chats, users
+from core.runtime_state import is_paused, set_paused
 
 LOG_FILE = "bot.log"
 BOT_PAUSED = False
 
 
-def bot_is_paused() -> bool:
-    return BOT_PAUSED
+def bot_is_paused(chat_id=None) -> bool:
+    """Return whether global or chat-scoped stasis blocks this chat."""
+    return is_paused(chat_id)
 
 
-def set_bot_paused(value: bool) -> None:
+def set_bot_paused(value: bool, scope: str = "global", chat_id=None) -> None:
+    """Set global or chat-scoped stasis state."""
     global BOT_PAUSED
-    BOT_PAUSED = bool(value)
+    set_paused(value, scope=scope, chat_id=chat_id)
+    BOT_PAUSED = is_paused(None)
 
 
 # Persistent diagnostic log: it survives terminal scrolling and keeps the
@@ -120,18 +124,18 @@ dp.middleware.setup(ActivityLoggingMiddleware())
 class RuntimeGateMiddleware(BaseMiddleware):
     """Globally silence the bot while preserving founder control."""
 
-    def _allowed(self, user_id):
-        return user_id == config.owner or not bot_is_paused()
+    def _allowed(self, user_id, chat_id=None):
+        return user_id == config.owner or not bot_is_paused(chat_id)
 
     async def on_pre_process_message(self, message, data):
         user_id = getattr(message.from_user, "id", None)
-        if not self._allowed(user_id):
+        if not self._allowed(user_id, getattr(message.chat, "id", None)):
             log.info("RUNTIME GATE | ignored message from user=%s while bot is in STASIS", user_id)
             raise CancelHandler()
 
     async def on_pre_process_callback_query(self, callback_query, data):
         user_id = getattr(callback_query.from_user, "id", None)
-        if not self._allowed(user_id):
+        if not self._allowed(user_id, None):
             log.info("RUNTIME GATE | ignored callback from user=%s while bot is in STASIS", user_id)
             raise CancelHandler()
 
