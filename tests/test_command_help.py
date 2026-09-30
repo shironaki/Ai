@@ -3,7 +3,7 @@ import unittest
 
 class CommandHelpTests(unittest.TestCase):
     def test_help_is_generated_from_registry(self):
-        from handlers.help.command_help import render_help
+        from core.command_help import render_help
 
         result = render_help("Игрок")
         self.assertIn("/help", result)
