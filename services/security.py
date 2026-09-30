@@ -5,12 +5,15 @@ import re
 
 _TOKEN_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._-]+"),
-    re.compile(r"(?i)(bot\d{6,}:[A-Za-z0-9_-]{20,})"),
+    re.compile(r"(?i)(bot\d{6,}:)[A-Za-z0-9_-]{20,}"),
     re.compile(r"(?i)(api[_-]?key\s*[=:]\s*)[^\s,;]+"),
+    re.compile(r"(?i)(gsk_)[A-Za-z0-9_-]+"),
+    re.compile(r"(?i)(sk-)[A-Za-z0-9_-]+"),
 )
 
 
 def redact(text: object, limit: int = 800) -> str:
+    """Remove common credential forms before data reaches logs/diagnostics."""
     value = str(text)
     for pattern in _TOKEN_PATTERNS:
         value = pattern.sub(lambda match: match.group(1) + "[REDACTED]", value)
