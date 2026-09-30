@@ -627,6 +627,8 @@ async def founder_direct_command(message: types.Message):
     role = _ai_role(message)
     if await _handle_direct_action(message, prompt, role):
         return
+    if await request_moderation(message, prompt):
+        return
     if is_cancel_request(prompt):
         if cancel_pending(message.from_user.id, message.chat.id):
             await message.reply("↩️ Ладно. Отставить. Незавершённый запрос отменён.")
