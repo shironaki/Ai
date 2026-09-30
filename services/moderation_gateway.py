@@ -204,7 +204,7 @@ async def confirm(message: types.Message):
             kwargs = {"minutes": value} if unit == "минут" else (
                 {"hours": value} if unit == "часов" else {"days": value}
             )
-            until_date = __import__("datetime").timedelta(**kwargs)
+            until_date = timedelta(**kwargs)
 
         if intent.command == "mute":
             await message.bot.restrict_chat_member(
