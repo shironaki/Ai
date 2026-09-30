@@ -1,22 +1,39 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
 .venv/
 venv/
 .env
+.env.*
+!.env.example
+
+# Secrets / local configuration
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+*.secret
 
 # Bot runtime data
 users.db
 chats.db
-data/*.db
-data/*.log
+*.sqlite
+*.sqlite3
+data/
+*.db
+*.db-shm
+*.db-wal
 
 # Logs
 *.log
+bot.log
+bot.log.*
 
 # OS / editor
 .DS_Store
 .vscode/
 .idea/
-bot.log
-bot.log.*
