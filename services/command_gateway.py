@@ -149,3 +149,20 @@ def pending_prompt() -> str:
         "💬 <b>В этом чате</b> — применить только к текущему миру\n\n"
         "Ответьте: <code>везде</code> или <code>в этом чате</code>."
     )
+
+
+_CANCEL_PHRASES = {
+    "отмени последний запрос", "отменить последний запрос", "отмени", "отмена",
+    "отменить", "отставить", "не трожь", "забудь", "забудь последний запрос",
+    "не надо", "стоп",
+}
+
+
+def is_cancel_request(prompt: str) -> bool:
+    text = " ".join((prompt or "").casefold().replace("ё", "е").split())
+    return text in _CANCEL_PHRASES
+
+
+def cancel_pending(user_id: int, chat_id: int) -> bool:
+    removed = _PENDING.pop(_pending_key(user_id, chat_id), None)
+    return removed is not None
