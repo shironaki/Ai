@@ -1,6 +1,6 @@
 # DEVELOPMENT_CHECKPOINT.md
 
-## Точка продолжения — 2026-09-30 (актуализировано)
+## Точка продолжения — 2026-09-30 (актуализировано, включая PROD)
 
 Этот файл является контрольной точкой проекта. При продолжении работы сначала прочитать его и продолжать с фактического состояния `main`, не восстанавливая состояние по догадкам.
 
@@ -18,9 +18,11 @@
 
 ## Фактическое состояние main
 
-Последний commit на момент checkpoint:
-`a3a3a59d16bfedac33a09cba0d75a67e3a0bc7ef`
-(`docs: add development continuation checkpoint`).
+Последний commit на момент checkpoint до PROD-конфигурации был:
+`a3a3a59d16bfedac33a09cba0d75a67e3a0bc7ef`.
+После него добавлен Render Blueprint commit:
+`621c717fb04d1bd1d76e438b901b352c6f29bd67`
+(`deploy: add Render production worker blueprint`).
 
 После исходного PR #13 в main уже вошли:
 
@@ -144,6 +146,21 @@ PR #21 подключил прямой вход для групп/супергр
 AI может помогать понимать свободную речь, но не является источником истины о состоянии системы и не получает произвольные исполнительные возможности.
 
 ## Следующий этап — продолжать отсюда
+
+## Production deployment checkpoint
+
+- PROD target: Render Background Worker.
+- `render.yaml` added and committed: `621c717fb04d1bd1d76e438b901b352c6f29bd67`.
+- Render service name: `ai-bot-prod`.
+- Runtime: Python, `python run.py`.
+- Region: Frankfurt.
+- Compute: `0.5c-512mb`, 1 instance.
+- Persistent disk: `/var/lib/ai-bot`, 1 GB.
+- Runtime env: `BOT_ENV=prod`, `BOT_DATA_DIR=/var/lib/ai-bot`, secrets `BOT_TOKEN` and `GROQ_API_KEY` are dashboard-only.
+- TEST remains Codespace + separate Telegram token + `data/test/`.
+- PROD must use a different Telegram bot token; never run TEST and PROD with the same token.
+- Cloudflare Workers is not the current deployment target: although Python Workers are supported, the runtime model is serverless/fetch-based and would require a different webhook/runtime architecture. Render is the fast path for the existing aiogram polling process.
+- Important: Render Background Workers have no free compute plan; this production setup requires paid compute. Persistent disk is also paid.
 
 ### Этап 2C — единый Natural-language command executor
 
