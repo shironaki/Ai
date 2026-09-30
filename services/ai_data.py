@@ -73,6 +73,7 @@ def build_verified_context(
     user_id: int,
     chat_id: int,
     prompt: str,
+    role: str = "Игрок",
 ) -> str | None:
     """Return verified context only for recognized read-only data requests."""
     text = prompt.casefold().replace("ё", "е")
@@ -118,7 +119,13 @@ def build_verified_context(
         sections.append(f"ПРОВЕРЕННЫЕ ДАННЫЕ ТЕКУЩЕГО ЧАТА: {chat!r}")
 
     if wants_system:
-        sections.append(f"ПРОВЕРЕННАЯ СТАТИСТИКА БД: {system_summary()!r}")
+        if role in {"Основатель", "Создатель бота", "Администратор", "Система"}:
+            sections.append(f"ПРОВЕРЕННАЯ СТАТИСТИКА БД: {system_summary()!r}")
+        else:
+            sections.append(
+                "ПРОВЕРЕННАЯ СТАТИСТИКА БД: доступ к системным счётчикам "
+                "для этой роли не предоставлен."
+            )
 
     if wants_runtime:
         sections.append(f"ПРОВЕРЕННОЕ СОСТОЯНИЕ RUNTIME: {runtime_summary(chat_id)!r}")
