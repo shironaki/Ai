@@ -44,6 +44,10 @@ COMMAND_REGISTRY = (
     CommandSpec("dev", frozenset({"dev", "дев"}), "system", "Система"),
     CommandSpec("report", frozenset({"r", "report"}), "communication", "Игрок"),
     CommandSpec("question", frozenset({"обращение", "q", "вопрос"}), "communication", "Игрок"),
+    CommandSpec("cancel", frozenset({"cancel", "отмена", "отмени", "отставить", "забудь"}), "control", "Игрок", description="отменить незавершённый запрос"),
+    CommandSpec("issue_mark", frozenset({"метка", "метки", "отметь", "исправить"}), "qa", "Игрок", description="отметить найденную ошибку"),
+    CommandSpec("issue_list", frozenset({"метки", "issues"}), "qa", "Создатель бота", "global", description="список QA-меток"),
+    CommandSpec("issue_fixed", frozenset({"исправлено"}), "qa", "Создатель бота", "global", True, False, True, "закрыть QA-метку как исправленную"),
 )
 
 
