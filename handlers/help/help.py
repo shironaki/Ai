@@ -260,6 +260,18 @@ async def bot_msg(message: types.Message):
     await _answer_ai(message, prompt)
 
 
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and m.from_user.id == config.owner
+        and not m.text.startswith("/")
+        and _looks_like_founder_command(m.text)
+    )
+)
+async def founder_direct_command(message: types.Message):
+    await _handle_founder_command(message, message.text.strip())
+
+
 #Девборд
 @dp.message_handler(commands=['дев', 'dev'], commands_prefix='/!.')
 async def adm_ui(message):
