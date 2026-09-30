@@ -93,6 +93,12 @@ class AssistantActionTests(unittest.TestCase):
         self.assertEqual(detect_direct_action("Покажи диагностику ИИ"), "ai_diagnostic")
         self.assertEqual(detect_direct_action("Покажи отладку"), "debug")
 
+    def test_stasis_status_is_read_only(self):
+        from services.assistant_actions import detect_direct_action
+
+        self.assertEqual(detect_direct_action("Активен ли сейчас стазис?"), "runtime")
+        self.assertEqual(detect_direct_action("Какой сейчас статус стазиса?"), "runtime")
+
     def test_unrelated_prompt_is_not_routed(self):
         from services.assistant_actions import detect_direct_action
 
