@@ -60,6 +60,10 @@ class AssistantActionTests(unittest.TestCase):
             detect_direct_action("О системе расскажи"),
             "system_info",
         )
+        self.assertEqual(
+            detect_direct_action("Выдай информацию о системе"),
+            "system_stats",
+        )
 
     def test_logs_are_direct_action(self):
         from services.assistant_actions import detect_direct_action
