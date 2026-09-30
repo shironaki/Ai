@@ -97,10 +97,9 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             )
         elif update.callback_query:
             log.info(
-                "UPDATE callback | update_id=%s user=%s data=%r",
+                "UPDATE callback | update_id=%s user=%s",
                 getattr(update, "update_id", "?"),
                 getattr(update.callback_query.from_user, "id", "?"),
-                update.callback_query.data,
             )
         else:
             log.info("UPDATE other | update_id=%s", getattr(update, "update_id", "?"))
