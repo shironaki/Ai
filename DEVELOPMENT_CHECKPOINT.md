@@ -1,133 +1,74 @@
 # DEVELOPMENT_CHECKPOINT.md
 
-## Точка продолжения — 2026-09-30
+## Точка продолжения — 2026-09-30 (актуализировано)
 
-Этот файл является контрольной точкой проекта. Если работа продолжается в новом чате, сначала прочитать этот файл и продолжать именно отсюда, не восстанавливая состояние по догадкам.
+Этот файл является контрольной точкой проекта. При продолжении работы сначала прочитать его и продолжать с фактического состояния `main`, не восстанавливая состояние по догадкам.
 
 ## Проект
 
 - Репозиторий: `shironaki/Ai`
-- Рабочая ветка после завершённых изменений: `main`
+- Рабочая ветка: `main`
 - Python 3.11
 - aiogram 2.25.2
 - SQLite
 - AI: Groq OpenAI-compatible API
 - Секреты: `BOT_TOKEN`, `GROQ_API_KEY` только через environment/Codespaces secrets.
-- Вопрос хостинга/сервера временно отложен. Не возвращаться к нему, пока пользователь сам не поднимет тему.
-- Текущая цель: превратить бота из «чат-бота, который советует slash-команды» в полноценного AI-помощника, который понимает естественную речь, безопасно выполняет разрешённые действия и возвращает реальные данные.
+- Hosting/server пока не является задачей; не возвращаться к нему без запроса пользователя.
+- Цель: полноценный AI-помощник, который понимает естественную речь, безопасно выполняет разрешённые действия и возвращает реальные данные.
 
-## Последняя завершённая точка
+## Фактическое состояние main
 
-PR #13 был слит в `main`.
+Последний commit на момент checkpoint:
+`a3a3a59d16bfedac33a09cba0d75a67e3a0bc7ef`
+(`docs: add development continuation checkpoint`).
 
-Merge commit:
-`37962b020cb0b6eb7b14c81424c66d2cde91736f`
+После исходного PR #13 в main уже вошли:
 
-Изменение:
-`feat: make natural-language assistant execute safe data requests (#13)`
+- PR #14 — обычные личные сообщения переведены через единый assistant gateway; добавлены direct actions для system info/logs.
+- PR #15 — закреплён execution honesty contract: AI не может заявлять о невыполненном действии и выдумывать результаты.
+- PR #17 — расширена естественная маршрутизация informational requests.
+- PR #18 — добавлен подтверждаемый natural-language moderation gateway.
+- PR #20 — финализирована conversational routing и запрещено выдумывать диагностические метрики/несуществующие slash-команды.
+- PR #21 — естественные moderation-команды в группах/супергруппах выполняются напрямую без префикса AI; сохранены reply-target, role/status checks, confirmation и audit.
 
-Добавлен `services/assistant_actions.py` и прямой безопасный маршрут для информационных запросов в `handlers/help/help.py`.
+Актуальный последний функциональный merge:
+`8913c36f5ed91d75e9b1dd34ec25bcff91337219`
+(`feat: execute natural moderation commands without AI prefix (#21)`).
 
-Поддержаны естественные запросы:
+## Что уже реально существует
 
-- профиль / статистика пользователя;
-- статистика/информация текущего чата;
-- системная статистика для разрешённых ролей;
-- runtime/stasis;
+### Direct informational actions
+
+`services/assistant_actions.py` определяет безопасный deterministic routing для:
+
 - help;
-- debug;
-- AI diagnostic;
-- явная обработка отсутствующего /settings.
-
-Добавлены регрессионные тесты на формулировки из пользовательского Telegram-теста.
-
-## Что показал последний живой тест
-
-На тестовом Telegram-скрине пользователь проверил:
-
-1. «О системе расскажи»
-2. «Выведи дебаг»
-3. «Выведи логи»
-4. «Сделай аи диагностику»
-5. «Выведи аи диагностику»
-
-Наблюдения:
-
-### Критическая проблема A — естественный запрос всё ещё попадает в AI
-
-«Выведи дебаг» ответил текстом о том, что реальный журнал отладки недоступен.
-
-«Выведи логи» ответил текстом о том, что реального журнала событий нет.
-
-Это означает, что эти запросы не были гарантированно перехвачены прямым executor-маршрутом в реальном runtime либо соответствующие действия требуют отдельной реализации.
-
-### Критическая проблема B — AI генерирует выдуманную диагностику
-
-На «Выведи аи диагностику» AI выдал:
-
-- модуль ИИ активен;
-- сеть стабильна, задержка < 200 мс;
-- память использовано 45%;
-- обработчики работают корректно.
-
-Эти показатели нельзя считать достоверными: они не были получены из реального runtime/data source.
-
-Правило проекта: AI никогда не должен выдумывать системные метрики, состояние сети, память, обработчики, логи или другие диагностические факты.
-
-### Критическая проблема C — «запускаю диагностику» не должно быть псевдооперацией
-
-На «Сделай аи диагностику» AI ответил «запускаю диагностику, подождите…».
-
-Без реального executor это недопустимо. Бот должен либо реально выполнить диагностический handler и показать факты, либо прямо сообщить, что конкретная диагностика не реализована.
-
-### Наблюдение D — «О системе расскажи»
-
-Это общий информационный запрос. Он может идти через AI, но AI должен получать только подтверждённые факты из `services/ai_data.py` и не выдумывать возможности/команды/метрики.
-
-## Текущая архитектурная задача
-
-Не чинить каждый ответ отдельным prompt-фрагментом.
-
-Нужно завершить архитектуру:
-
-`Telegram -> natural language -> intent -> registry -> policy -> target/scope validation -> confirmation -> typed executor -> audit -> response`
-
-Для безопасных read-only действий допустим укороченный путь:
-
-`Telegram -> deterministic intent -> read-only executor -> real data -> response`
-
-AI используется для понимания свободной речи там, где это необходимо, но не является источником истины о состоянии системы.
-
-## Следующий этап — выполнять отсюда
-
-### Этап 2A — реальные информационные executors
-
-Проверить и при необходимости вынести в отдельные typed executors:
-
 - profile;
 - chatinfo;
 - system_stats;
+- system_info;
 - runtime;
 - debug;
 - ai_diagnostic;
 - logs;
-- help.
+- unsupported_settings.
 
-Для каждого определить:
+`handlers/help/help.py` исполняет эти действия напрямую. Для logs используется реальный `LOG_FILE`, для AI diagnostic — реальные `ai_status()` и `_LAST_ERROR`, для system/profile/chat — read-only data layer.
 
-- источник истины;
-- разрешённые роли;
-- формат ответа;
-- реальные данные;
-- что делать, если данных нет.
+### AI data layer
 
-Особенно `debug`, `logs`, `ai_diagnostic`: нельзя отдавать управление LLM, если пользователь просит фактическую диагностику.
+`services/ai_data.py` предоставляет только параметризованные read-only данные:
 
-### Этап 2B — расширение command registry
+- user_summary;
+- chat_summary;
+- system_summary;
+- runtime_summary;
+- verified AI context.
 
-После стабилизации read-only actions расширить registry для остальных безопасных/non-game команд.
+AI не получает произвольный SQL/Python/Telegram API.
 
-Каждая команда должна иметь:
+### Command registry / policy
+
+`core/command_registry.py` — единый registry non-game команд с metadata:
 
 - key;
 - aliases;
@@ -136,77 +77,133 @@ AI используется для понимания свободной реч�
 - scope;
 - destructive;
 - confirmation;
-- typed executor.
+- enabled;
+- description.
 
-Не возвращать старые phantom-команды и не добавлять команды, которых нет в реальном executor.
+Legacy game aliases намеренно исключены из core registry.
 
-### Этап 2C — Natural-language command executor
+`core/command_policy.py` и `core/command_models.py` разделяют policy и intent.
 
-Примеры ожидаемого поведения:
+### Founder runtime gateway
 
-- «поставь этот чат в стазис» -> intent `stasis`, scope `chat`;
-- «включи стазис везде» -> intent `stasis`, scope `global`;
-- «разбуди этот чат» -> `awakening`, scope `chat`.
+`services/command_gateway.py` сейчас управляет Founder natural-language stasis/awakening.
 
-Для destructive actions сохраняется explicit confirmation.
+Текущий контур:
+`natural language -> interpret (AI/fallback) -> policy -> scoped runtime executor -> audit`.
+
+Поддерживаются:
+- stasis;
+- awakening;
+- scope chat/global;
+- уточнение области через pending state;
+- audit.
+
+Это следующий кандидат на перенос в общий deterministic/typed command executor, чтобы не оставлять отдельный Founder-only контур.
+
+### Moderation gateway
+
+`services/moderation_gateway.py` содержит подтверждаемый natural-language moderation executor.
+
+PR #21 подключил прямой вход для групп/супергрупп без обязательного обращения к AI.
+
+Примеры:
+- замутить/размутить;
+- заблокировать/разбанить;
+- target через reply;
+- duration;
+- confirmation;
+- role/status checks;
+- audit.
+
+## Тестовый контур
+
+В `tests/` существуют regression tests для:
+
+- AI data layer;
+- AI execution contract;
+- assistant actions;
+- command help;
+- command registry;
+- compile;
+- moderation gateway;
+- runtime;
+- security layer.
+
+После каждого изменения обязательно проверять compile/tests фактическим запуском CI или доступным runtime.
+
+## Архитектурный принцип
+
+Главный контракт проекта:
+
+`Telegram -> natural language -> deterministic/AI intent -> registry -> policy -> target/scope validation -> confirmation -> typed executor -> audit -> response`
+
+Для read-only:
+
+`Telegram -> deterministic intent -> read-only executor -> real data -> response`
+
+AI может помогать понимать свободную речь, но не является источником истины о состоянии системы и не получает произвольные исполнительные возможности.
+
+## Следующий этап — продолжать отсюда
+
+### Этап 2C — единый Natural-language command executor
+
+Не расширять бесконечно `assistant_actions.py` отдельными if/phrase блоками.
+
+Нужно построить общий слой:
+
+1. deterministic intent parser для известных команд;
+2. registry lookup;
+3. policy evaluation;
+4. target resolver;
+5. scope resolver;
+6. confirmation state;
+7. typed executor;
+8. audit;
+9. Telegram response.
+
+Первый перенос — `stasis/awakening` из `services/command_gateway.py` в общий контур.
 
 ### Этап 2D — target resolver
 
-Безопасно понимать:
+Безопасно разрешать только:
 
 - текущий чат;
-- пользователь, на сообщение которого сделан reply;
+- пользователя из reply;
 - явно указанный username;
-- явно указанный Telegram ID, если конкретный executor это разрешает.
+- явно указанный Telegram ID только там, где конкретный executor это разрешает.
 
-AI не может самостоятельно выбирать произвольную цель.
+AI не выбирает произвольную цель.
 
-### Этап 2E — аудит и security regression
+### Этап 2E — security regression
 
 Проверить:
 
-- никакого arbitrary SQL;
-- никакого arbitrary Python;
-- никакого shell;
-- никакого произвольного Telegram API через AI;
+- no arbitrary SQL;
+- no arbitrary Python;
+- no shell;
+- no arbitrary Telegram API through AI;
 - secrets не попадают в ответы/логи;
-- audit не содержит текст сообщений/prompts/credentials;
-- chat/global scope не смешиваются;
-- confirmation привязано к user + chat.
+- audit не содержит prompt/message/credentials;
+- chat/global scopes не смешиваются;
+- confirmation привязана к user + chat;
+- destructive actions никогда не исполняются без required confirmation.
 
 ## Game scope
 
-Старые игровые команды сейчас НЕ исправлять по одной.
+Старые игровые команды пока не переписывать по одной. Они намеренно изолированы от core registry. Игровой слой будет переписан отдельно после стабилизации AI assistant/command executor.
 
-Они намеренно исключены из core registry.
+## Рабочие правила
 
-После стабилизации AI assistant/command executor игровой слой будет переписан отдельно как новый модуль.
-
-## Рабочие правила для продолжения
-
-1. Не спрашивать пользователя о подтверждении каждого технического шага, если задача уже определена.
+1. Перед изменением читать актуальный код.
 2. Работать крупными законченными блоками.
-3. Перед изменением проверить текущий код.
-4. После изменений обязательно запускать/проверять тесты.
-5. Не объявлять работу проверенной без фактического результата.
-6. Если ошибка повторилась дважды или три последовательных изменения не улучшили ситуацию — остановиться и показать точную проблему, а не бесконечно менять код.
-7. Не выдумывать отсутствующие данные.
-8. Не использовать LLM как источник системных фактов.
-9. Не возвращать пользователя к slash-команде, если соответствующее действие уже можно безопасно выполнить напрямую.
-10. Не обсуждать hosting/server, пока пользователь сам не поднимет эту тему.
+3. После изменений фактически запускать/проверять тесты.
+4. Не объявлять проверку без результата.
+5. Не выдумывать отсутствующие данные.
+6. Не использовать LLM как источник системных фактов.
+7. Не возвращать пользователя к slash-команде, если действие безопасно и уже имеет executor.
+8. Не спрашивать подтверждение каждого технического шага, если задача уже определена.
+9. Если одна ошибка повторилась дважды или три последовательных изменения не улучшили ситуацию — остановиться и показать точную проблему.
 
 ## Контрольная фраза
 
-Продолжение работы должно начинаться с:
-
-«Мы остановились после PR #13, который добавил прямой natural-language маршрут для read-only действий. Последний живой тест показал три дефекта: debug/logs всё ещё уходят в AI, AI diagnostic выдумывает метрики, а фразы вроде “сделай диагностику” могут создавать ложное ощущение запущенной операции. Следующий шаг — реальные typed executors для диагностики/логов и затем универсальный natural-language command executor.»
-
-## Состояние на момент создания checkpoint
-
-- Архитектурный принцип: AI = intent/диалог, executor = действие, DB/runtime = источник истины.
-- Read-only data layer существует.
-- Command registry/policy существует.
-- Runtime scoped state существует.
-- Audit/security layers существуют.
-- PR #13 merged.
-- Следующая работа: Этап 2A -> 2B -> 2C -> 2D -> 2E.
+Мы остановились после PR #21. В main уже есть единый natural-language вход для обычных informational requests и прямое natural-language moderation execution в группах. Следующий технический блок — не добавлять новые разрозненные phrase handlers, а собрать единый typed natural-language command executor и перенести в него Founder stasis/awakening, затем сделать общий target/scope resolver и закрыть security regression.
