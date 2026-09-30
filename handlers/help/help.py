@@ -8,7 +8,8 @@ from aiogram.utils.exceptions import Throttled
 from services.ai_service import ai_status, escape_for_telegram_html, generate_reply, _LAST_ERROR
 from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember
 from services.security import redact
-from services.ai_data import build_verified_context
+from services.assistant_actions import detect_direct_action
+from services.ai_data import build_verified_context, chat_summary, system_summary, user_summary, runtime_summary
 
 from main import (
     BaseMiddleware,
@@ -213,6 +214,129 @@ async def founder_command_scope(message: types.Message):
         await message.reply(result)
 
 
+async def _handle_direct_action(message: types.Message, prompt: str, role: str) -> bool:
+    """Execute safe informational requests directly instead of asking for slash commands."""
+    action = detect_direct_action(prompt)
+    if action is None:
+        return False
+
+    if action == "help":
+        from core.command_help import render_help
+        await message.reply(render_help(role))
+        return True
+
+    if action == "unsupported_settings":
+        await message.reply(
+            "⚙️ <b>Настройки</b> сейчас не реализованы в Системе. "
+            "Я не буду придумывать несуществующую команду или предлагать фиктивный интерфейс."
+        )
+        return True
+
+    if action == "profile":
+        profile = user_summary(message.from_user.id)
+        if profile is None:
+            await message.reply("Ты ещё не зарегистрирован в Системе. Используй /start один раз.")
+            return True
+
+        username = profile.get("username") or "нет"
+        await message.reply(
+            "<b>📈 ПРОФИЛЬ ПОЛЬЗОВАТЕЛЯ</b>\\n"
+            f"🏷 Никнейм: <b>{escape_for_telegram_html(str(profile.get('name') or 'Игрок'))}</b>\\n"
+            f"👤 Статус: <b>{escape_for_telegram_html(str(profile.get('status') or 'Игрок'))}</b>\\n"
+            f"💰 Баланс: <code>{profile.get('balance', 0)}</code>\\n"
+            f"🎮 Игр сыграно: <b>{profile.get('games', 0)}</b>\\n"
+            f"👥 Приглашено: <b>{profile.get('invited_users', 0)}</b>\\n"
+            f"🕰 Регистрация: <b>{escape_for_telegram_html(str(profile.get('regdata') or 'не указана'))}</b>\\n"
+            f"🔗 Username: <code>{escape_for_telegram_html(str(username))}</code>"
+        )
+        return True
+
+    if action == "chatinfo":
+        chat = chat_summary(message.chat.id)
+        if chat is None:
+            # Private chats are valid Telegram chats but are intentionally not
+            # stored in the world registry. Still return useful live context.
+            if message.chat.type == "private":
+                await message.reply(
+                    "<b>💬 ТЕКУЩИЙ ЧАТ</b>\\n"
+                    "Тип: <b>личный диалог</b>\\n"
+                    f"ID: <code>{message.chat.id}</code>\\n"
+                    f"Пользователь: <b>{escape_for_telegram_html(str(message.from_user.full_name))}</b>"
+                )
+            else:
+                await message.reply("Этот чат ещё не зарегистрирован в Системе.")
+            return True
+
+        try:
+            members = await message.chat.get_members_count()
+            admins = await bot.get_chat_administrators(chat_id=message.chat.id)
+            member_line = f"👥 Участников: <b>{members}</b>\\n"
+            admin_line = f"👮 Администраторов: <b>{len(admins)}</b>\\n"
+        except Exception:
+            member_line = ""
+            admin_line = ""
+
+        await message.reply(
+            "<b>💬 ИНФОРМАЦИЯ О ЧАТЕ</b>\\n"
+            f"🗒 Название: <b>{escape_for_telegram_html(str(chat.get('name') or 'Без названия'))}</b>\\n"
+            f"📎 Username: <code>{escape_for_telegram_html(str(chat.get('username') or 'нет'))}</code>\\n"
+            f"🕰 Регистрация: <b>{escape_for_telegram_html(str(chat.get('registered_at') or 'не указана'))}</b>\\n"
+            f"⚙️ Статус: <b>{escape_for_telegram_html(str(chat.get('status') or 'не указан'))}</b>\\n"
+            f"🎮 Игр сыграно: <b>{chat.get('games', 0)}</b>\\n"
+            f"🎯 Игры: <b>{escape_for_telegram_html(str(chat.get('game_rule') or 'не указано'))}</b>\\n"
+            + member_line
+            + admin_line
+        )
+        return True
+
+    if action == "system_stats":
+        if role not in {"Основатель", "Создатель бота", "Администратор", "Система"}:
+            await message.reply("⛔ Системная статистика доступна только административным ролям.")
+            return True
+
+        stats = system_summary()
+        await message.reply(
+            "<b>⚙️ СТАТИСТИКА СИСТЕМЫ</b>\\n"
+            f"👤 Зарегистрированных пользователей: <b>{stats['registered_users']}</b>\\n"
+            f"💬 Зарегистрированных чатов: <b>{stats['registered_chats']}</b>\\n"
+            f"📨 Пользователей в Л/С: <b>{stats['private_users']}</b>"
+        )
+        return True
+
+    if action == "runtime":
+        state = runtime_summary(message.chat.id)
+        await message.reply(
+            "<b>🛰 СОСТОЯНИЕ RUNTIME</b>\\n"
+            f"🌐 Глобальный стазис: <b>{'активен' if state['global_paused'] else 'неактивен'}</b>\\n"
+            f"💬 Стазис текущего чата: <b>{'активен' if state['current_chat_paused'] else 'неактивен'}</b>"
+        )
+        return True
+
+    if action == "debug":
+        if role != "Основатель":
+            await message.reply("⛔ Диагностический режим доступен только Основателю.")
+            return True
+        await message.reply("DEBUG: обработчик сообщений работает.")
+        return True
+
+    if action == "ai_diagnostic":
+        if role != "Основатель":
+            await message.reply("⛔ AI-диагностика доступна только Основателю.")
+            return True
+        status = ai_status()
+        configured = "✅ задан" if status["configured"] else "❌ НЕ задан"
+        last_error = _LAST_ERROR.get("value") or "нет — запросов с ошибкой ещё не было"
+        await message.reply(
+            "<b>🧠 AI DIAGNOSTIC</b>\\n"
+            f"Ключ: {configured}\\n"
+            f"Модель: <code>{escape_for_telegram_html(str(status['model']))}</code>\\n"
+            f"Последняя ошибка: <code>{escape_for_telegram_html(str(last_error)[:1500])}</code>"
+        )
+        return True
+
+    return False
+
+
 async def _answer_ai(message: types.Message, prompt: str):
     role = _ai_role(message)
 
@@ -221,6 +345,9 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
 
     if await _handle_founder_command(message, prompt):
+        return
+
+    if await _handle_direct_action(message, prompt, role):
         return
 
     try:
