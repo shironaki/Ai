@@ -224,7 +224,7 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
 
     try:
-        verified_context = build_verified_context(message.from_user.id, message.chat.id, prompt)
+        verified_context = build_verified_context(message.from_user.id, message.chat.id, prompt, role)
         answer = await generate_reply(message.from_user.id, prompt, role, verified_context=verified_context)
     except Exception:
         logging.exception("Could not load AI assistant")
