@@ -6,6 +6,7 @@ from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.exceptions import Throttled
 
 from services.ai_service import ai_status, escape_for_telegram_html, generate_reply, _LAST_ERROR
+from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember
 
 from main import (
     BaseMiddleware,
@@ -154,11 +155,70 @@ async def ai_diagnostic(message: types.Message):
     )
 
 
+def _looks_like_founder_command(prompt: str) -> bool:
+    text = prompt.lower().replace("ё", "е")
+    hints = (
+        "стазис", "стазиз", "режим тишины", "пробуди", "пробуждение",
+        "включи", "активируй", "выключи", "отмени", "разбуди",
+    )
+    return any(hint in text for hint in hints)
+
+
+async def _handle_founder_command(message: types.Message, prompt: str):
+    if message.from_user.id != config.owner or not _looks_like_founder_command(prompt):
+        return False
+
+    intent = await interpret(prompt)
+    if not intent:
+        return False
+
+    if intent["scope"] == "unknown":
+        remember(message.from_user.id, intent)
+        await message.reply(pending_prompt())
+        return True
+
+    result = await execute(message.from_user.id, message.chat.id, intent)
+    if result:
+        await message.reply(result)
+        return True
+    return False
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and m.from_user.id == config.owner
+        and has_pending(m.from_user.id)
+        and not m.text.startswith("/")
+    )
+)
+async def founder_command_scope(message: types.Message):
+    text = message.text.lower().replace("ё", "е").strip()
+    if text in {"везде", "глобально", "во всех чатах", "весь бот", "повсеместно"}:
+        scope = "global"
+    elif text in {"в этом чате", "этот чат", "здесь", "только здесь", "в этом мире", "только в этом мире"}:
+        scope = "chat"
+    else:
+        await message.reply(pending_prompt())
+        return
+
+    intent = pop_pending(message.from_user.id)
+    if not intent:
+        return
+    intent["scope"] = scope
+    result = await execute(message.from_user.id, message.chat.id, intent)
+    if result:
+        await message.reply(result)
+
+
 async def _answer_ai(message: types.Message, prompt: str):
     role = _ai_role(message)
 
     if not prompt:
         await message.reply(_ai_intro(role))
+        return
+
+    if await _handle_founder_command(message, prompt):
         return
 
     try:
@@ -198,6 +258,18 @@ async def bot_msg(message: types.Message):
     match = re.match(r"^(?:мила|аи|ai)\b[\s,:-]*(.*)$", message.text, re.IGNORECASE)
     prompt = match.group(1).strip() if match else ""
     await _answer_ai(message, prompt)
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and m.from_user.id == config.owner
+        and not m.text.startswith("/")
+        and _looks_like_founder_command(m.text)
+    )
+)
+async def founder_direct_command(message: types.Message):
+    await _handle_founder_command(message, message.text.strip())
 
 
 #Девборд
