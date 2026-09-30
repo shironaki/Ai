@@ -260,3 +260,49 @@ AI не выбирает произвольную цель.
 
 ### Protocol
 Codespace TEST -> runtime verification -> fix/regression test -> CI -> stable checkpoint -> only then migrate the same block to PROD -> continue next work again on TEST.
+
+
+## TEST checkpoint — 2026-09-30 — Regression block: QA snapshots, runtime status, moderation lifecycle
+
+### Fixed from user QA markers
+1. QA marker now preserves the actual problematic message.
+   - Stores message text/caption, message author, reporter, chat/message IDs, reason and optional code.
+   - Existing QA tables are migrated in-place when the new columns are missing.
+   - /метки remains Founder-only.
+2. Stasis status is read-only.
+   - Phrases such as «активен ли сейчас стазис?» and «какой статус стазиса?» route to runtime status.
+   - Asking for status cannot activate stasis.
+3. Moderation target/reason are separated.
+   - Reply-to-message is the authoritative target, including ordinary forwarded user messages.
+   - Pronouns such as «его/её/их» are removed from the reason; «замуть его» therefore does not create reason «его».
+   - Without a target, the bot asks for the exact message/user to mark rather than guessing.
+4. Moderation lifecycle notifications added.
+   - Timed mute/ban is persisted in moderation_timers.
+   - At issuance, the group receives action + duration + expiry + remaining-time information.
+   - The affected user receives the same information in private chat when Telegram permits the bot to message them.
+   - Expiry is monitored every 5 seconds and survives bot restart because timers are stored in SQLite.
+   - On expiry, both group and affected user are notified when Telegram permits it.
+   - Unmute/unban also notify the group and affected user.
+5. Founder confirmation removed from destructive command flow.
+   - Founder-issued actions execute through the typed executor with confirmation already satisfied.
+   - Lower roles continue to require explicit confirmation.
+6. Literal backslash-n output fixed in the affected natural-language profile/chat/system statistics responses.
+   - User-facing newlines are now real Telegram line breaks.
+7. QA marking without reply now asks for both the target and the reason.
+   - Replying to the problematic message remains the recommended path.
+8. Founder assistant mode corrected.
+   - Founder no longer receives AI conversation responses for every ordinary message.
+   - Direct Founder messages are treated as system requests only when they match a registered safe action/command/moderation path.
+   - For ordinary conversation, Founder can explicitly invoke «Аи, ...» or /ai ...
+   - Founder moderation also uses the typed moderation executor directly.
+
+### Verification
+- Branch: test-global-assistant-upgrade
+- Draft PR: #22
+- Latest CI-verified SHA before this checkpoint update: a052b06e6c50e01984ff63a2acceac6a37889d8a
+- GitHub Actions Python integrity run #401: success
+- Main remains untouched.
+- Real Telegram/Codespaces runtime verification is still required before this TEST block can be considered release-ready.
+
+### Protocol remains
+Codespace TEST -> real Telegram verification -> fix/regression test -> CI -> stable checkpoint -> only then migrate the same block to PROD -> continue next development block on TEST.
