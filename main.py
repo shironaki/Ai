@@ -135,7 +135,10 @@ class RuntimeGateMiddleware(BaseMiddleware):
 
     async def on_pre_process_callback_query(self, callback_query, data):
         user_id = getattr(callback_query.from_user, "id", None)
-        if not self._allowed(user_id, None):
+        if not self._allowed(
+            user_id, getattr(getattr(callback_query, "message", None), "chat", None).id
+            if getattr(getattr(callback_query, "message", None), "chat", None) else None,
+        ):
             log.info("RUNTIME GATE | ignored callback from user=%s while bot is in STASIS", user_id)
             raise CancelHandler()
 
