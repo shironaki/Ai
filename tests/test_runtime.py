@@ -109,6 +109,20 @@ class RuntimeRegressionTests(unittest.TestCase):
             else:
                 os.environ["GROQ_API_KEY"] = old_key
 
+    def test_handlers_do_not_index_missing_fetchone_results(self):
+        handler_paths = (
+            ROOT / "handlers" / "help" / "help.py",
+            ROOT / "handlers" / "admin" / "apanel.py",
+            ROOT / "handlers" / "chat_groups.py",
+        )
+        for path in handler_paths:
+            source = path.read_text(encoding="utf-8")
+            self.assertNotRegex(
+                source,
+                "fetchone\\s*\\(\\)\\s*\\[",
+                msg=f"unsafe fetchone indexing remains in {path}",
+            )
+
     def test_entrypoint_does_not_spawn_a_second_main_process(self):
         source = (ROOT / "run.py").read_text(encoding="utf-8")
         tree = ast.parse(source)

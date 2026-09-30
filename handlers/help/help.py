@@ -204,7 +204,8 @@ async def bot_msg(message: types.Message):
 @dp.message_handler(commands=['дев', 'dev'], commands_prefix='/!.')
 async def adm_ui(message):
     admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
-    status = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
+    status_row = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
+    status = status_row[0] if status_row else None
     if message.from_user.id in admins_list or str(status) == 'Система':
         admin_menu = InlineKeyboardMarkup()
         statistics_bt = InlineKeyboardButton(text = '📊 Статистика', callback_data = 'stat') # type: ignore
@@ -222,8 +223,8 @@ async def adm_ui(message):
 
 @dp.callback_query_handler(text='cancel_del')
 async def handle_cdel_button(c: types.CallbackQuery):
-    status = users.cursor.execute("SELECT status from users where id = ?", (c.from_user.id,)).fetchone()
-    status = (status[0])
+    status_row = users.cursor.execute("SELECT status from users where id = ?", (c.from_user.id,)).fetchone()
+    status = status_row[0] if status_row else None
     if str(status) == 'Система':
         await c.message.delete()
     else:
@@ -288,18 +289,16 @@ async def cancel_wnum_button_handler(c: types.callback_query):
 @dp.message_handler(commands=['chatinfo', 'чатинфо'], commands_prefix='/!.')
 async def chatinfo_cmd(message: types.Message):
     msg = message
-    chat_name = chats.cursor.execute("SELECT chat_name from chats where chat_id = ?", (msg.chat.id,)).fetchone()
-    chat_name = (chat_name[0])
-    chat_username = chats.cursor.execute("SELECT chat_username from chats where chat_id = ?", (msg.chat.id,)).fetchone()
-    chat_username = (chat_username[0])
-    chat_status = chats.cursor.execute("SELECT chat_status from chats where chat_id = ?", (msg.chat.id,)).fetchone()
-    chat_status = (chat_status[0])
-    chat_games = chats.cursor.execute("SELECT chat_games from chats where chat_id = ?", (msg.chat.id,)).fetchone()
-    chat_games = (chat_games[0])
-    game_rule = chats.cursor.execute("SELECT game_rule from chats where chat_id = ?", (msg.chat.id,)).fetchone()
-    game_rule = (game_rule[0])
-    reg_data = chats.cursor.execute("SELECT reg_data from chats where chat_id = ?", (msg.chat.id,)).fetchone()
-    reg_data = (reg_data[0])
+    chat_row = chats.cursor.execute(
+        "SELECT chat_name, chat_username, chat_status, chat_games, game_rule, reg_data "
+        "FROM chats WHERE chat_id = ?",
+        (msg.chat.id,),
+    ).fetchone()
+    if chat_row is None:
+        await msg.reply("Этот чат ещё не зарегистрирован в Системе.")
+        return
+
+    chat_name, chat_username, chat_status, chat_games, game_rule, reg_data = chat_row
     members = await message.chat.get_members_count()
     admins_id = [(admin.user.id) for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
     if str(chat_status) == 'Официальный':
