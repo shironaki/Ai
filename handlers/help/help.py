@@ -7,6 +7,7 @@ from aiogram.utils.exceptions import Throttled
 
 from services.ai_service import ai_status, escape_for_telegram_html, generate_reply, _LAST_ERROR
 from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember
+from services.security import redact
 
 from main import (
     BaseMiddleware,
@@ -173,7 +174,7 @@ async def _handle_founder_command(message: types.Message, prompt: str):
         return False
 
     if intent["scope"] == "unknown":
-        remember(message.from_user.id, intent)
+        remember(message.from_user.id, message.chat.id, intent)
         await message.reply(pending_prompt())
         return True
 
@@ -202,7 +203,7 @@ async def founder_command_scope(message: types.Message):
         await message.reply(pending_prompt())
         return
 
-    intent = pop_pending(message.from_user.id)
+    intent = pop_pending(message.from_user.id, message.chat.id)
     if not intent:
         return
     intent["scope"] = scope
