@@ -20,6 +20,9 @@ def _ensure_table() -> None:
                 chat_id INTEGER NOT NULL,
                 message_id INTEGER NOT NULL,
                 reporter_id INTEGER NOT NULL,
+                reporter_name TEXT,
+                message_text TEXT,
+                message_sender_name TEXT,
                 reason TEXT NOT NULL,
                 code INTEGER,
                 status TEXT NOT NULL DEFAULT 'open',
@@ -45,16 +48,16 @@ def parse_fixed(text: str):
     return int(match.group(1)) if match else None
 
 
-def create_marker(*, chat_id: int, message_id: int, reporter_id: int, reason: str, code: int | None = None) -> int:
+def create_marker(*, chat_id: int, message_id: int, reporter_id: int, reason: str, code: int | None = None, message_text: str | None = None, message_sender_name: str | None = None, reporter_name: str | None = None) -> int:
     _ensure_table()
     now = datetime.now(timezone.utc).isoformat()
     with connect_db("users.db") as db:
         cur = db.execute(
             """
-            INSERT INTO issue_markers(chat_id,message_id,reporter_id,reason,code,status,created_at)
-            VALUES(?,?,?,?,?,'open',?)
+            INSERT INTO issue_markers(chat_id,message_id,reporter_id,reporter_name,message_text,message_sender_name,reason,code,status,created_at)
+            VALUES(?,?,?,?,?,?,?,?,'open',?)
             """,
-            (chat_id, message_id, reporter_id, reason[:1000], code, now),
+            (chat_id, message_id, reporter_id, reporter_name, message_text[:4000] if message_text else None, message_sender_name, reason[:1000], code, now),
         )
         return int(cur.lastrowid)
 
@@ -64,7 +67,7 @@ def list_markers(limit: int = 30):
     with connect_db("users.db") as db:
         return db.execute(
             """
-            SELECT id,chat_id,message_id,reporter_id,reason,code,status,created_at,fixed_by,fixed_at
+            SELECT id,chat_id,message_id,reporter_id,reporter_name,message_text,message_sender_name,reason,code,status,created_at,fixed_by,fixed_at
             FROM issue_markers ORDER BY id DESC LIMIT ?
             """,
             (max(1, min(limit, 100)),),
@@ -83,7 +86,17 @@ def mark_fixed(marker_id: int, fixed_by: int) -> bool:
 
 
 def render_marker(marker) -> str:
-    marker_id, chat_id, message_id, reporter_id, reason, code, status, created_at, fixed_by, fixed_at = marker
+    marker_id, chat_id, message_id, reporter_id, reporter_name, message_text, message_sender_name, reason, code, status, created_at, fixed_by, fixed_at = marker
     state = "исправлено" if status == "fixed" else "открыто"
     code_text = f" · код {code}" if code is not None else ""
-    return f"#{marker_id} · {state}{code_text}\nчат {chat_id} · сообщение {message_id}\nпричина: {reason}"
+    original = (message_text or "[текст сообщения не сохранён]").strip()
+    sender = message_sender_name or "неизвестен"
+    reporter = reporter_name or str(reporter_id)
+    return (
+        f"#{marker_id} · {state}{code_text}\n"
+        f"чат {chat_id} · сообщение {message_id}\n"
+        f"автор сообщения: {sender}\n"
+        f"отметил: {reporter}\n"
+        f"сообщение:\n«{original}»\n"
+        f"причина: {reason}"
+    )
