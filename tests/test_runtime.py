@@ -123,6 +123,35 @@ class RuntimeRegressionTests(unittest.TestCase):
                 msg=f"unsafe fetchone indexing remains in {path}",
             )
 
+    def test_runtime_state_supports_global_and_chat_scopes(self):
+        from core.runtime_state import is_paused, set_paused
+
+        set_paused(False, scope="global")
+        set_paused(False, scope="chat", chat_id=1001)
+        set_paused(True, scope="chat", chat_id=1001)
+        self.assertTrue(is_paused(1001))
+        self.assertFalse(is_paused(1002))
+
+        set_paused(True, scope="global")
+        self.assertTrue(is_paused(1001))
+        self.assertTrue(is_paused(1002))
+
+        set_paused(False, scope="global")
+        self.assertFalse(is_paused(1002))
+        set_paused(False, scope="chat", chat_id=1001)
+
+    def test_founder_command_fallback_recognizes_scopes(self):
+        from services.command_gateway import _extract_fallback
+
+        self.assertEqual(
+            _extract_fallback("стазис включи в этом чате"),
+            {"command": "stasis", "action": "enable", "scope": "chat"},
+        )
+        self.assertEqual(
+            _extract_fallback("выключи стазис везде"),
+            {"command": "awakening", "action": "disable", "scope": "global"},
+        )
+
     def test_entrypoint_does_not_spawn_a_second_main_process(self):
         source = (ROOT / "run.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
