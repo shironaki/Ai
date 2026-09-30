@@ -64,12 +64,16 @@ async def echo_message(message: types.Message):
             elif status in ("Хелпер", "Модератор"):
                 role = status
 
-            answer = await generate_reply(message.from_user.id, message.text.strip(), role)
+            # Use the same assistant gateway as /ai and "Аи ...".
+            # This is critical: ordinary private messages must not bypass
+            # deterministic direct actions and fall straight into the LLM.
+            from handlers.help.help import _answer_ai
+            await _answer_ai(message, message.text.strip())
+            return
         except Exception:
             answer = None
 
         if answer:
-            # Bot uses global HTML parse mode; AI output is untrusted and may contain <...>.
             await message.answer(escape_for_telegram_html(answer))
         else:
             await message.answer(
