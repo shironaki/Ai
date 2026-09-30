@@ -34,6 +34,7 @@ from aiogram.utils.markdown import hbold, hcode
 from base import config, chats, users
 from core.runtime_state import is_paused, set_paused
 from services.security import redact
+from services.moderation_scheduler import expiry_loop
 
 LOG_FILE = "bot.log"
 BOT_PAUSED = False
@@ -422,6 +423,7 @@ BOT_COMMANDS = [
 
 
 async def on_startup(dispatcher):
+    asyncio.create_task(expiry_loop(bot))
     from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
