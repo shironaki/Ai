@@ -9,6 +9,7 @@ from services.ai_service import ai_status, escape_for_telegram_html, generate_re
 from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember
 from services.security import redact
 from services.assistant_actions import detect_direct_action
+from services.moderation_gateway import request as request_moderation, confirm as confirm_moderation, has_pending as has_pending_moderation
 from services.ai_data import build_verified_context, chat_summary, system_summary, user_summary, runtime_summary
 
 from main import (
@@ -214,6 +215,24 @@ async def founder_command_scope(message: types.Message):
     if result:
         await message.reply(result)
 
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and has_pending_moderation(m.from_user.id, m.chat.id)
+        and not m.text.startswith("/")
+        and m.text.casefold().strip() in {"подтверждаю", "подтверждаю действие", "да, подтверждаю", "отмена", "отменить", "нет"}
+    )
+)
+async def moderation_confirmation(message: types.Message):
+    answer = message.text.casefold().strip()
+    if answer in {"отмена", "отменить", "нет"}:
+        from services.moderation_gateway import pop as pop_moderation
+        pop_moderation(message.from_user.id, message.chat.id)
+        await message.reply("↩️ Действие отменено. Ничего не изменено.")
+        return
+    await confirm_moderation(message)
+
+
 
 async def _handle_direct_action(message: types.Message, prompt: str, role: str) -> bool:
     """Execute safe informational requests directly instead of asking for slash commands."""
@@ -402,6 +421,9 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
 
     if await _handle_founder_command(message, prompt):
+        return
+
+    if await request_moderation(message, prompt):
         return
 
     if await _handle_direct_action(message, prompt, role):
