@@ -1,0 +1,23 @@
+services:
+  - type: worker
+    name: ai-bot-prod
+    runtime: python
+    region: frankfurt
+    plan: 0.5c-512mb
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    autoDeploy: true
+    numInstances: 1
+    envVars:
+      - key: BOT_ENV
+        value: prod
+      - key: BOT_DATA_DIR
+        value: /var/lib/ai-bot
+      - key: BOT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+    disk:
+      name: ai-bot-prod-data
+      mountPath: /var/lib/ai-bot
+      sizeGB: 1
