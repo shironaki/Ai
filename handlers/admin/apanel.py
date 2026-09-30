@@ -163,7 +163,7 @@ async def mute(message):
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = (mod_cmd[0])
+    mod_cmd = mod_cmd[0] if mod_cmd else None
     if str(mod_cmd) == 'да':
         if not message.reply_to_message:
             await message.reply("Укажи на дефективного!")
@@ -211,7 +211,7 @@ async def unmute(message):
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = (mod_cmd[0])
+    mod_cmd = mod_cmd[0] if mod_cmd else None
     if str(mod_cmd) == 'да':
         if not message.reply_to_message:
             await message.reply("Укажи на исправившегося!")
@@ -235,7 +235,7 @@ async def ban(message):
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = (mod_cmd[0])
+    mod_cmd = mod_cmd[0] if mod_cmd else None
     if str(mod_cmd) == 'да':
         if not message.reply_to_message:
             await message.reply("Укажи на усеченного!")
@@ -283,7 +283,7 @@ async def unban(message):
     name1 = msg.from_user.get_mention()
     name2 = msg.reply_to_message.from_user.get_mention()
     mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = (mod_cmd[0])
+    mod_cmd = mod_cmd[0] if mod_cmd else None
     if str(mod_cmd) == 'да':
         if not msg.reply_to_message:
             await msg.reply("Укажи на очищенного!")
@@ -312,7 +312,7 @@ async def vidat(message: types.Message):
     data["suma"] = suma
     data['user_id'] = message.reply_to_message.from_user.id
     stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
-    status = (stts[0])
+    status = stts[0] if stts else None
     if str(status) in ('Администратор', 'Хелпер', 'Система') or message.from_user.id == config.owner:
         if suma is None:
             await message.reply(f'Введите число!')
@@ -348,7 +348,7 @@ async def zabrat(message: types.Message):
     data["suma"] = suma
     data['user_id'] = message.reply_to_message.from_user.id
     stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
-    status = (stts[0])
+    status = stts[0] if stts else None
     if str(status) in ('Администратор', 'Хелпер', 'Система') or message.from_user.id == config.owner:
         if suma is None:
             await message.reply(f'Введите число!')
@@ -380,7 +380,7 @@ async def setbal(message: types.Message):
         await message.reply("Не найден в базе данных!")
         return
     stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
-    status = (stts[0])
+    status = stts[0] if stts else None
     if str(status) == 'Создатель бота':
         reply = message.reply_to_message
         if reply:
