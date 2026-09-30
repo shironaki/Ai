@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import os
 import subprocess
 import sys
@@ -29,6 +30,55 @@ class RuntimeRegressionTests(unittest.TestCase):
         finally:
             if old is not None:
                 os.environ["GROQ_API_KEY"] = old
+
+    def test_ai_failed_request_does_not_pollute_context(self):
+        import services.ai_service as ai_service
+
+        user_id = 987654321
+        old_key = os.environ.get("GROQ_API_KEY")
+        old_request = ai_service._request_sync
+        old_history = dict(ai_service._HISTORY)
+        old_last_request = dict(ai_service._LAST_REQUEST)
+
+        try:
+            os.environ["GROQ_API_KEY"] = "test-key"
+            ai_service._HISTORY.clear()
+            ai_service._LAST_REQUEST.clear()
+
+            def failing_request(*args, **kwargs):
+                raise RuntimeError("synthetic provider failure")
+
+            ai_service._request_sync = failing_request
+            result = asyncio.run(ai_service.generate_reply(user_id, "первый запрос"))
+            self.assertIsNone(result)
+            self.assertEqual(ai_service._HISTORY.get(user_id), [])
+
+            ai_service._LAST_REQUEST.clear()
+
+            def successful_request(messages, model, api_key):
+                self.assertEqual(messages[-1]["content"], "второй запрос")
+                return "ответ"
+
+            ai_service._request_sync = successful_request
+            result = asyncio.run(ai_service.generate_reply(user_id, "второй запрос"))
+            self.assertEqual(result, "ответ")
+            self.assertEqual(
+                ai_service._HISTORY[user_id],
+                [
+                    {"role": "user", "content": "второй запрос"},
+                    {"role": "assistant", "content": "ответ"},
+                ],
+            )
+        finally:
+            ai_service._request_sync = old_request
+            ai_service._HISTORY.clear()
+            ai_service._HISTORY.update(old_history)
+            ai_service._LAST_REQUEST.clear()
+            ai_service._LAST_REQUEST.update(old_last_request)
+            if old_key is None:
+                os.environ.pop("GROQ_API_KEY", None)
+            else:
+                os.environ["GROQ_API_KEY"] = old_key
 
     def test_entrypoint_does_not_spawn_a_second_main_process(self):
         source = (ROOT / "run.py").read_text(encoding="utf-8")
