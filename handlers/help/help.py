@@ -327,20 +327,18 @@ async def chatinfo_cmd(message: types.Message):
 #profile_msg
 @dp.message_handler(lambda msg: ((msg.text.lower() == 'инфа') or (msg.text.lower() == "профиль")))
 async def profile_msg(message):
-    balance = (users.cursor.execute("SELECT balance from users where id = ?", (message.from_user.id,)).fetchone())[0]
-    name = (users.cursor.execute("SELECT name from users where id = ?", (message.from_user.id,)).fetchone())[0]
-    status = (users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone())[0]
-    games = (users.cursor.execute("SELECT games from users where id = ?", (message.from_user.id,)).fetchone())[0]
-    stavka = (users.cursor.execute("SELECT stavka from users where id = ?", (message.from_user.id,)).fetchone())[0]
-    dick = (users.cursor.execute("SELECT dick from users where id = ?", (message.from_user.id,)).fetchone())[0]
-    regdata = (users.cursor.execute("SELECT regdata from users where id = ?", (message.from_user.id,)).fetchone())[0]
-    invited_users = (users.cursor.execute("SELECT invited_users from users where id = ?", (message.from_user.id,)).fetchone())[0]
+    row = users.cursor.execute(
+        "SELECT name, status, balance, stavka, games, dick, regdata, invited_users "
+        "FROM users WHERE id = ?",
+        (message.from_user.id,),
+    ).fetchone()
 
-    users.cursor.execute(f"SELECT id from users WHERE id = '{message.from_user.id}'")
-    if users.cursor.fetchone() is None:
-        await message.reply(f'Вы не зарегистрированы!\nВведите /start')
-    else:
-        await message.reply(f"""📈 | Профиль пользователя
+    if row is None:
+        await message.reply("Вы не зарегистрированы!\nВведите /start")
+        return
+
+    name, status, balance, stavka, games, dick, regdata, invited_users = row
+    await message.reply(f"""📈 | Профиль пользователя
 🏷 Никнейм: {name}
 👤 Статус: {status}
 💰 Баланс: <code>{balance}</code>
@@ -350,6 +348,7 @@ async def profile_msg(message):
 🔗 Реферальная ссылка: <code>t.me/angelfredoombot?start={message.from_user.id}</code>
 👥 Всего приглашено людей: {invited_users}
 🕰 Дата регистрации: {regdata}""", parse_mode='html')
+
 
 #Рассылка
 #Для юзеров
