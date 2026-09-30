@@ -62,7 +62,7 @@ def detect_direct_action(prompt: str) -> str | None:
             "логи бота",
             "лог бота",
         )
-    ) or re.search(r"/logs(?:\\s|$)", text):
+    ) or re.search(r"/logs(?:\s|$)", text):
         return "logs"
 
     if any(
