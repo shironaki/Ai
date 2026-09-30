@@ -184,8 +184,6 @@ scope:
             scope = "unknown"
         return {"command": command, "action": action, "scope": scope}
     except Exception as exc:
-        _LAST_ERROR["value"] = html.escape(
-            f"{type(exc).__name__}: {exc}", quote=False
-        )
+        _LAST_ERROR["value"] = redact(f"{type(exc).__name__}: {exc}")
         log.exception("AI command classification failed")
         return None
