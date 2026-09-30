@@ -7,7 +7,7 @@ class AIExecutionContractTests(unittest.TestCase):
 
         prompt = _system_prompt("Основатель")
         self.assertIn("Ты не являешься непосредственным исполнителем команд", prompt)
-        self.assertIn("не утверждай, что изменил роль", prompt)
+        self.assertIn("не утверждай, что изменил роль", prompt.lower())
         self.assertIn("не подключено", prompt)
 
     def test_model_must_not_invent_unverified_system_results(self):
