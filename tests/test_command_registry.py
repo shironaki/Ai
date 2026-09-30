@@ -16,6 +16,18 @@ class CommandRegistryTests(unittest.TestCase):
             if spec.destructive:
                 self.assertTrue(spec.confirmation, spec.key)
 
+
+    def test_founder_catalog_is_grounded_in_registry(self):
+        from core.command_registry import command_catalog
+
+        catalog = command_catalog("Основатель")
+        self.assertIn("/start", catalog)
+        self.assertIn("/stasis", catalog)
+        self.assertIn("/awakening", catalog)
+        self.assertNotIn("/settings", catalog)
+        self.assertNotIn("/invite", catalog)
+        self.assertNotIn("/logout", catalog)
+
     def test_legacy_game_commands_are_not_registered(self):
         from core.command_registry import resolve_command, is_legacy_game_alias
 
