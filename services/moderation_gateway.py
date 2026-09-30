@@ -18,7 +18,7 @@ from core.command_policy import evaluate
 from core.permissions import get_display_role
 from base import config
 from services.audit_service import record
-from services.moderation_scheduler import schedule, notify_issued
+from services.moderation_scheduler import schedule, notify_issued, notify_action, format_duration
 
 _PENDING = {}
 
@@ -173,21 +173,21 @@ async def request(message: types.Message, text: str):
         return True
 
     if message.from_user.id == config.owner or role == "Создатель бота":
-        remember(message.from_user.id, message.chat.id, intent)
-        return await confirm(message)
+        # Founder has already issued the instruction: execute directly.
+        return await confirm(message, confirmed=True)
 
     remember(message.from_user.id, message.chat.id, intent)
     await message.reply(confirmation_text(intent))
     return True
 
 
-async def confirm(message: types.Message):
+async def confirm(message: types.Message, *, confirmed: bool = False):
     intent = pop(message.from_user.id, message.chat.id)
     if intent is None:
         return False
 
     role = get_display_role(message.from_user.id)
-    decision = evaluate(intent, role, confirmed=True)
+    decision = evaluate(intent, role, confirmed=confirmed)
     if not decision.allowed:
         await message.reply(f"⛔ {decision.reason}")
         return True
