@@ -32,6 +32,14 @@ def _ensure_table() -> None:
             )
             """
         )
+        columns = {row[1] for row in db.execute("PRAGMA table_info(issue_markers)").fetchall()}
+        for name, ddl in (
+            ("reporter_name", "TEXT"),
+            ("message_text", "TEXT"),
+            ("message_sender_name", "TEXT"),
+        ):
+            if name not in columns:
+                db.execute(f"ALTER TABLE issue_markers ADD COLUMN {name} {ddl}")
 
 
 def parse_marker(text: str):
