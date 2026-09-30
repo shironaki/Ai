@@ -189,7 +189,7 @@ async def _handle_founder_command(message: types.Message, prompt: str):
     lambda m: bool(
         m.text
         and m.from_user.id == config.owner
-        and has_pending(m.from_user.id)
+        and has_pending(m.from_user.id, m.chat.id)
         and not m.text.startswith("/")
     )
 )
