@@ -1,7 +1,7 @@
-"""Deterministic, safe direct actions for natural-language assistant requests.
+"""Deterministic, safe routing for natural-language assistant requests.
 
-This module only routes a small set of read-only/informational requests.
-It never executes arbitrary commands, SQL, Python, or Telegram methods.
+This module deliberately handles only informational/read-only requests.
+It never executes arbitrary SQL, Python, shell commands, or Telegram API calls.
 """
 
 from __future__ import annotations
@@ -25,8 +25,12 @@ _DIRECT_ACTIONS = (
 
 def _normalize(prompt: str) -> str:
     text = (prompt or "").casefold().replace("ё", "е")
-    text = re.sub(r"[^\w\s/.-]+", " ", text, flags=re.UNICODE)
-    return re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"[^ws/.-]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"s+", " ", text).strip()
+
+
+def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
+    return any(phrase in text for phrase in phrases)
 
 
 def detect_direct_action(prompt: str) -> str | None:
@@ -35,128 +39,91 @@ def detect_direct_action(prompt: str) -> str | None:
     if not text:
         return None
 
-    if any(
-        phrase in text
-        for phrase in (
-            "доступные мне команды",
-            "покажи доступные команды",
-            "покажи мои команды",
-            "список моих команд",
-            "какие у меня команды",
-            "какие команды мне доступны",
-        )
-    ):
+    if _has_any(text, (
+        "доступные мне команды", "покажи доступные команды",
+        "покажи мои команды", "список моих команд",
+        "какие у меня команды", "какие команды мне доступны",
+        "какие команды доступны", "что я могу использовать",
+        "что мне доступно", "список команд",
+    )):
         return "help"
 
     if "settings" in text or "настройки" in text:
         return "unsupported_settings"
 
-    if any(
-        phrase in text
-        for phrase in (
-            "выведи логи",
-            "покажи логи",
-            "покажи журнал",
-            "выведи журнал",
-            "журнал событий",
-            "логи бота",
-            "лог бота",
-        )
-    ) or re.search(r"/logs(?:\s|$)", text):
+    if _has_any(text, (
+        "выведи логи", "покажи логи", "покажи журнал",
+        "выведи журнал", "покажи лог", "выведи лог",
+        "журнал событий", "журнал бота", "логи бота",
+        "лог бота", "последние логи",
+    )) or re.search(r"/logs(?:s|$)", text):
         return "logs"
 
-    if any(
-        phrase in text
-        for phrase in (
-            "о системе расскажи",
-            "расскажи о системе",
-            "расскажи про систему",
-            "что за система",
-            "расскажи о боте",
-            "что ты умеешь",
-            "возможности системы",
-        )
-    ):
+    if _has_any(text, (
+        "о системе расскажи", "расскажи о системе",
+        "расскажи про систему", "расскажи о боте",
+        "расскажи про бота", "что за система",
+        "что это за система", "что ты умеешь",
+        "что умеет бот", "возможности системы",
+        "возможности бота", "информация о боте",
+        "информацию о боте", "информация о системе",
+        "информацию о системе",
+    )):
         return "system_info"
 
-    if any(
-        phrase in text
-        for phrase in (
-            "аи диагностику",
-            "ai диагностику",
-            "диагностику аи",
-            "диагностику ai",
-            "диагностику искусственного интеллекта",
-        )
-    ) or "/aidiag" in text:
+    if _has_any(text, (
+        "сделай аи диагностику", "сделай ai диагностику",
+        "выведи аи диагностику", "выведи ai диагностику",
+        "покажи аи диагностику", "покажи ai диагностику",
+        "запусти аи диагностику", "запусти ai диагностику",
+        "диагностику аи", "диагностику ai",
+        "диагностика ии", "диагностика искусственного интеллекта",
+    )) or re.search(r"/aidiag(?:s|$)", text):
         return "ai_diagnostic"
 
-    if "дебаг" in text or "debug" in text or "/debug" in text:
+    if _has_any(text, (
+        "выведи дебаг", "покажи дебаг", "сделай дебаг",
+        "запусти дебаг", "покажи debug", "выведи debug",
+        "запусти debug", "диагностику обработчика",
+    )) or re.search(r"/debug(?:s|$)", text):
         return "debug"
 
-    if any(
-        phrase in text
-        for phrase in (
-            "стазис",
-            "режим тишины",
-            "состояние бота",
-            "бот сейчас активен",
-            "бот сейчас молчит",
-        )
-    ):
+    if _has_any(text, (
+        "состояние бота", "бот сейчас активен",
+        "бот сейчас молчит", "режим тишины",
+    )) or "стазис" in text:
         return "runtime"
 
     if (
-        "статистик" in text
-        and ("систем" in text or "бот" in text)
-    ) or any(
-        phrase in text
-        for phrase in (
-            "информация о системе",
-            "информацию о системе",
-            "данные системы",
-            "сколько пользователей",
-            "сколько чатов",
-            "сколько юзеров",
-        )
-    ):
+        "статистик" in text and _has_any(text, ("систем", "бота", "бот "))
+    ) or _has_any(text, (
+        "информация о системе", "информацию о системе",
+        "данные системы", "данные о системе",
+        "сколько пользователей", "сколько зарегистрированных пользователей",
+        "сколько чатов", "сколько зарегистрированных чатов",
+        "сколько юзеров",
+    )):
         return "system_stats"
 
-    if any(
-        phrase in text
-        for phrase in (
-            "статистика этого чата",
-            "статистику этого чата",
-            "статистика чата",
-            "статистику чата",
-            "информация о чате",
-            "информацию о чате",
-            "инфо чата",
-            "данные чата",
-            "чатинфо",
-            "/chatinfo",
-        )
-    ):
+    if _has_any(text, (
+        "статистика этого чата", "статистику этого чата",
+        "статистика текущего чата", "статистику текущего чата",
+        "статистика чата", "статистику чата",
+        "статистика этого мира", "статистику этого мира",
+        "информация о чате", "информацию о чате",
+        "информация об этом чате", "информацию об этом чате",
+        "инфо чата", "данные чата", "чатинфо",
+    )) or re.search(r"/chatinfo(?:s|$)", text):
         return "chatinfo"
 
-    # Handle natural Russian word order: "профиль мой", "покажи мой профиль",
-    # "покажи мою статистику", "мои данные", etc.
-    if any(
-        phrase in text
-        for phrase in (
-            "мой профиль",
-            "профиль мой",
-            "мою статистику",
-            "моя статистика",
-            "мои данные",
-            "покажи профиль",
-            "профиль покажи",
-            "покажи мои данные",
-            "данные обо мне",
-            "кто я",
-            "профиль пользователя",
-        )
-    ):
+    if _has_any(text, (
+        "мой профиль", "профиль мой", "мою статистику",
+        "моя статистика", "мои показатели", "мои данные",
+        "покажи профиль", "профиль покажи", "покажи мои данные",
+        "покажи мои показатели", "данные обо мне",
+        "информация обо мне", "информацию обо мне",
+        "кто я", "профиль пользователя",
+    )):
         return "profile"
 
     return None
