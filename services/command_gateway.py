@@ -19,7 +19,7 @@ def _extract_fallback(prompt: str):
     text = prompt.lower().replace("ё", "е")
     stasis_words = ("стазис", "стазиз", "режим тишины", "тишину")
     awakening_words = ("пробуждение", "пробуди", "разбуди", "выключи стазис", "отмени стазис")
-    if any(word in text for word in stasis_words) and any(word in text for word in ("включ", "актив", "установ", "введ", "стазис")):
+    if any(word in text for word in stasis_words) and any(word in text for word in ("включ", "актив", "установ", "введ")):
         command = "stasis"
     elif any(word in text for word in awakening_words):
         command = "awakening"
