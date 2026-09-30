@@ -42,5 +42,4 @@ def render_help(role: str) -> str:
             description = f" — {spec.description}" if spec.description else ""
             lines.append(f"• <code>{aliases}</code>{description}")
 
-    return "
-".join(lines)
+    return "\n".join(lines)
