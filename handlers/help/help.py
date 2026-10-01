@@ -264,6 +264,10 @@ async def cancel_pending_request(message: types.Message):
         and m.text.casefold().strip() in {"подтверждаю", "подтверждаю действие", "да, подтверждаю", "отмена", "отменить", "нет"}
     )
 )
+async def natural_moderation_confirmation(message: types.Message):
+    await moderation_confirmation(message)
+
+
 @dp.message_handler(
     lambda m: bool(
         m.text
@@ -280,8 +284,6 @@ async def natural_moderation_command(message: types.Message):
     prompt = _ai_invocation(message.text)
     if prompt is None:
         prompt = message.text.strip()
-    if detect_moderation_action(prompt) is None:
-        return
     await request_moderation(message, prompt)
 
 
