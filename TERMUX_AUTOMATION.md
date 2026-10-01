@@ -15,7 +15,7 @@ Start the supervisor once:
 ```bash
 cd ~/Ai
 chmod +x scripts/termux_update.sh scripts/termux_supervisor.sh scripts/termux_report.py
-nohup sh ~/Ai/scripts/termux_supervisor.sh >> ~/Ai/termux-supervisor.log 2>&1 &
+nohup bash ~/Ai/scripts/termux_supervisor.sh >> ~/Ai/termux-supervisor.log 2>&1 &
 ```
 
 The supervisor checks GitHub every 60 seconds, starts the bot when it is missing, restarts it when health fails, and processes new commits transactionally.
@@ -51,6 +51,15 @@ set -a
 . ~/.config/ai/termux.env
 set +a
 ```
+
+The same protected env file is also loaded by the Termux supervisor. Keep the bot token there as well:
+
+```bash
+printf 'BOT_TOKEN=%s\n' 'PASTE_BOT_TOKEN_HERE' >> ~/.config/ai/termux.env
+chmod 600 ~/.config/ai/termux.env
+```
+
+Do not paste the bot token into chat or commit it. The reporter redacts it from published diagnostics.
 
 The reporter also accepts GITHUB_TOKEN, GH_TOKEN, or an authenticated gh CLI session.
 
