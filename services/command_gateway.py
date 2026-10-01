@@ -1,14 +1,12 @@
-"""Typed natural-language command gateway.
+"""Founder natural-language gateway.
 
-The gateway interprets requests, resolves scope, applies policy, and delegates
-execution to a registry-backed typed executor. AI never receives executable
-Python/SQL/Telegram capabilities.
+The gateway interprets requests, but policy and execution remain separate.
+AI never receives an executable Python/SQL capability.
 """
 
 from base import config
 from core.command_models import CommandContext, CommandIntent
 from core.command_policy import evaluate
-from core.command_registry import resolve_command
 from core.runtime_state import set_paused
 from services.ai_service import classify_command
 from services.audit_service import record
@@ -24,24 +22,8 @@ def has_pending(user_id: int, chat_id: int) -> bool:
     return _pending_key(user_id, chat_id) in _PENDING
 
 
-def resolve_scope(prompt: str, default: str = "unknown") -> str:
-    """Resolve only explicit chat/global scope markers from natural language."""
-    text = " ".join((prompt or "").casefold().replace("ё", "е").split())
-    if any(
-        marker in text
-        for marker in ("везде", "глобально", "во всех чатах", "весь бот", "повсеместно")
-    ):
-        return "global"
-    if any(
-        marker in text
-        for marker in ("этот чат", "в этом чате", "здесь", "только здесь", "в этом мире")
-    ):
-        return "chat"
-    return default
-
-
 def _extract_fallback(prompt: str):
-    text = " ".join((prompt or "").casefold().replace("ё", "е").split())
+    text = prompt.lower().replace("ё", "е")
     stasis_words = ("стазис", "стазиз", "режим тишины", "тишину")
     awakening_words = (
         "пробуждение", "пробуди", "разбуди", "выключи стазис", "отмени стазис"
@@ -55,73 +37,34 @@ def _extract_fallback(prompt: str):
     else:
         return None
 
+    scope = "global" if any(
+        word in text for word in (
+            "везде", "глобально", "всех чат", "весь бот", "повсеместно"
+        )
+    ) else "unknown"
+    if any(word in text for word in (
+        "этот чат", "здесь", "в этом чате", "только здесь", "этом мире"
+    )):
+        scope = "chat"
+
     return {
         "command": command,
         "action": "enable" if command == "stasis" else "disable",
-        "scope": resolve_scope(text),
+        "scope": scope,
     }
 
 
 async def interpret(prompt: str):
-    raw = await classify_command(prompt, role="Основатель") or _extract_fallback(prompt)
-    if not raw:
-        return None
-
-    spec = resolve_command(raw.get("command", ""))
-    if spec is None:
-        return None
-
-    return {
-        "command": spec.key,
-        "action": raw.get("action", ""),
-        "scope": resolve_scope(prompt, raw.get("scope", "unknown")),
-        "source": raw.get("source", "ai"),
-    }
+    return await classify_command(prompt, role="Основатель") or _extract_fallback(prompt)
 
 
 def _intent_from_dict(data: dict) -> CommandIntent:
     return CommandIntent(
         command=data.get("command", ""),
         action=data.get("action", ""),
-        scope=data.get("scope", "unknown"),
-        source=data.get("source", "ai"),
+        scope=data.get("scope", "chat"),
+        source="ai",
     )
-
-
-def _execute_runtime(intent: CommandIntent, *, chat_id: int) -> str | None:
-    if intent.command not in {"stasis", "awakening"}:
-        return None
-
-    set_paused(
-        intent.command == "stasis",
-        scope=intent.scope,
-        chat_id=chat_id,
-    )
-
-    if intent.command == "stasis":
-        scope_text = (
-            "Режим тишины установлен <b>для всего бота</b>."
-            if intent.scope == "global"
-            else "Режим тишины установлен <b>только в этом чате</b>."
-        )
-        return (
-            "🛰 <b>СТАЗИС АКТИВИРОВАН.</b>\n"
-            f"{scope_text}\n"
-            "Контур Основателя остаётся активен."
-        )
-
-    scope_text = (
-        "Глобальный режим тишины снят."
-        if intent.scope == "global"
-        else "Режим тишины снят <b>только в этом чате</b>."
-    )
-    return f"⚡ <b>ПРОБУЖДЕНИЕ ЗАВЕРШЕНО.</b>\n{scope_text}"
-
-
-_TYPED_EXECUTORS = {
-    "stasis": _execute_runtime,
-    "awakening": _execute_runtime,
-}
 
 
 async def execute(
@@ -135,12 +78,17 @@ async def execute(
         return "⛔ Командный контур Основателя недоступен для этой роли."
 
     command = intent.get("command")
-    scope = intent.get("scope", "unknown")
+    scope = intent.get("scope")
     if scope not in {"chat", "global"}:
-        return "🧭 Не удалось определить область выполнения. Уточните: «везде» или «в этом чате»."
+        return None
 
-    typed_intent = _intent_from_dict(intent)
-    decision = evaluate(typed_intent, "Создатель бота", confirmed=confirmed)
+    context = CommandContext(
+        user_id=user_id,
+        chat_id=chat_id,
+        role="Создатель бота",
+        source=intent.get("source", "ai"),
+    )
+    decision = evaluate(_intent_from_dict(intent), context.role, confirmed=confirmed)
     if not decision.allowed:
         record(
             user_id=user_id,
@@ -154,25 +102,32 @@ async def execute(
     if decision.requires_confirmation:
         return "⚠️ Для этого действия требуется явное подтверждение."
 
-    executor = _TYPED_EXECUTORS.get(typed_intent.command)
-    if executor is None:
-        record(
-            user_id=user_id,
-            chat_id=chat_id,
-            command=typed_intent.command or "unknown",
-            scope=scope,
-            result="unsupported",
-        )
-        return "⛔ Для этой зарегистрированной команды ещё нет typed executor."
-
-    result = executor(typed_intent, chat_id=chat_id)
-    if result is None:
+    if command not in {"stasis", "awakening"}:
         return None
 
+    set_paused(command == "stasis", scope=scope, chat_id=chat_id)
+    result = (
+        "🛰 <b>СТАЗИС АКТИВИРОВАН.</b>\n"
+        + (
+            "Режим тишины установлен <b>для всего бота</b>."
+            if scope == "global"
+            else "Режим тишины установлен <b>только в этом чате</b>."
+        )
+        + "\nКонтур Основателя остаётся активен."
+        if command == "stasis"
+        else (
+            "⚡ <b>ПРОБУЖДЕНИЕ ЗАВЕРШЕНО.</b>\n"
+            + (
+                "Глобальный режим тишины снят."
+                if scope == "global"
+                else "Режим тишины снят <b>только в этом чате</b>."
+            )
+        )
+    )
     record(
         user_id=user_id,
         chat_id=chat_id,
-        command=typed_intent.command,
+        command=command,
         scope=scope,
         result="executed",
     )
@@ -197,8 +152,9 @@ def pending_prompt() -> str:
 
 
 _CANCEL_PHRASES = {
-    "отмени последний запрос", "отменить последний запрос", "отмени", "отмена", "отменить",
-    "отставить", "не трожь", "забудь", "забудь последний запрос", "не надо", "стоп",
+    "отмени последний запрос", "отменить последний запрос", "отмени", "отмена",
+    "отменить", "отставить", "не трожь", "забудь", "забудь последний запрос",
+    "не надо", "стоп",
 }
 
 
