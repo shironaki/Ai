@@ -538,7 +538,9 @@ async def _handle_direct_action(message: types.Message, prompt: str, role: str) 
             await message.reply(
                 f"{prefix}<pre>{escape_for_telegram_html(chunk)}</pre>"
             )
-        return True    if action == "runtime":
+        return True
+
+    if action == "runtime":
         state = runtime_summary(message.chat.id)
         await message.reply(
             "<b>🛰 СОСТОЯНИЕ RUNTIME</b>\n"
