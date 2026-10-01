@@ -175,6 +175,10 @@ if [[ "$LOCAL" != "$REMOTE" ]]; then
     # The current shell loaded the pre-update script into memory. Restart from
     # disk so dependency installation uses the freshly pulled implementation.
     log "UPDATE: restarting updater from freshly pulled revision"
+    # The current process owns the update lock. Release it before exec so the
+    # freshly loaded updater can acquire the lock instead of self-skipping.
+    trap - EXIT
+    cleanup
     exec env TERMUX_UPDATE_APPLY=1 bash "$REPO/scripts/termux_update.sh"
 
 elif [[ "$APPLY_UPDATED" == "1" ]]; then
