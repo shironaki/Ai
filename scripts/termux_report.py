@@ -68,6 +68,8 @@ def snapshot() -> str:
     commit = run("git", "rev-parse", "HEAD")
     branch = run("git", "branch", "--show-current")
     health = run(os.getenv("TERMUX_PYTHON", str(ROOT / ".venv/bin/python")), str(ROOT / "scripts/healthcheck.py"))
+    ai_configured = bool(os.getenv("GROQ_API_KEY", "").strip())
+    ai_model = os.getenv("AI_MODEL", "openai/gpt-oss-20b")
     bot_pid = BOT_PID.read_text(encoding="utf-8").strip() if BOT_PID.exists() else "<missing>"
     supervisor_pid = SUPERVISOR_PID.read_text(encoding="utf-8").strip() if SUPERVISOR_PID.exists() else "<missing>"
     bot_ps = run("ps", "-p", bot_pid, "-o", "pid=,etime=,command=") if bot_pid.isdigit() else "<not running>"
@@ -79,6 +81,7 @@ timestamp: {time.strftime("%Y-%m-%d %H:%M:%S %z")}
 branch: {branch}
 commit: {commit}
 health: {health or "<empty>"}
+ai: {"configured" if ai_configured else "UNCONFIGURED"} model={ai_model}
 bot process: {bot_ps}
 supervisor process: {sup_ps}
 
