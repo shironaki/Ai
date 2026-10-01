@@ -1,1 +1,3 @@
-# Runtime dependencies used by the current bot\naiogram==2.25.2\nrequests\n
+# Runtime dependencies used by the current bot
+aiogram==2.25.2
+requests
