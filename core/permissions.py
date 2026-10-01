@@ -1,5 +1,6 @@
-from base import config, users
+from base import users
 from config.role_config import ADMIN_ROLES, MODERATOR_ROLES, ROLE_TAGS
+from core.identity import is_owner, resolve_role
 
 
 def get_user_status(user_id):
@@ -11,10 +12,7 @@ def get_user_status(user_id):
 
 
 def get_display_role(user_id):
-    if user_id == config.owner:
-        return "Создатель бота"
-    status = get_user_status(user_id)
-    return status if status in ROLE_TAGS else "Игрок"
+    return resolve_role(user_id)
 
 
 def get_role_tag(user_id):
@@ -27,8 +25,8 @@ def format_user_tag(user_id, name=None):
 
 
 def has_moderator_role(user_id):
-    return user_id == config.owner or get_user_status(user_id) in MODERATOR_ROLES
+    return is_owner(user_id) or get_user_status(user_id) in MODERATOR_ROLES
 
 
 def has_admin_role(user_id):
-    return user_id == config.owner or get_user_status(user_id) in ADMIN_ROLES
+    return is_owner(user_id) or get_user_status(user_id) in ADMIN_ROLES
