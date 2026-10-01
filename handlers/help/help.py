@@ -710,6 +710,11 @@ async def handle_ping_button(c: types.CallbackQuery):
         cancel_menu = InlineKeyboardMarkup()
         cancel_bt = InlineKeyboardButton(text = '🚫 Отмена', callback_data = 'cancel')
         cancel_menu.add(cancel_bt)
+        if psutil is None:
+            await c.message.edit_text(
+                'Проверка...\nСистемные метрики недоступны в текущем окружении.'
+            )
+            return
         cpu = psutil.cpu_percent()
         mem = psutil.virtual_memory().percent
         a = time.time()
