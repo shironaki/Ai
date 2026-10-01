@@ -5,7 +5,7 @@
 ### Current state
 - Repository: shironaki/Ai
 - Active branch: test-global-assistant-upgrade
-- Latest TEST commit: e11287b7619c8be7e3c6f7401f4a5f2d80c86b6a
+- Latest TEST commit: 30123cabe89f5237b1bc3068965f34eabbbc16f3
 - Draft PR: #22, base main; main/PROD remains untouched.
 - Persistent live diagnostics: GitHub Issue #23.
 - Current phone uses manual Termux supervisor; Termux:Boot is intentionally deferred to the second phone.
@@ -15,6 +15,9 @@
 - BOT_TOKEN is required from the protected Termux environment file.
 - TERMUX_GITHUB_TOKEN is used separately for telemetry.
 - psutil is optional in main.py and Android/Termux dependency bootstrap skips psutil.
+- Termux runtime requirements were reduced to the packages actually used by the current code (`aiogram`, `requests`).
+- Termux bootstrap now installs a modern Android-compatible `aiohttp` wheel separately and installs aiogram 2.x without re-resolving its obsolete aiohttp constraint, preventing source builds of old aiohttp/Pillow.
+- Founder regression tests now mock the database objects safely; CI is green again (59 tests).
 - Termux updater installs dependencies before pytest, then performs Telegram health verification.
 - Failed update/bootstrap/startup/health paths are designed to rollback to the previous local commit.
 - Supervisor writes its PID and runs the updater/report loop.
@@ -33,6 +36,12 @@ The user successfully executed the clean Termux recovery block:
 ### Live state at handoff
 The latest telemetry snapshot available immediately before this checkpoint still contained historical failure tails: missing aiogram/requests, old psutil Android incompatibility, old stale-ref errors, and supervisor not running. It predates or is concurrent with the fresh supervisor startup and therefore is NOT proof that the new bootstrap failed.
 Do not ask the user to repeat the cleanup block unless a newer telemetry snapshot proves the fresh supervisor failed.
+
+### Latest TEST bootstrap repair
+- Root cause of the live bootstrap failure: the legacy `requirements.txt` pulled unused native packages and, through `aiogram==2.25.2`, an old aiohttp range. On Termux/Python 3.13 this caused pip to build aiohttp/Pillow from source and fail on missing JPEG development libraries.
+- TEST repair is committed in `requirements.txt` and `scripts/termux_update.sh`.
+- CI run #574 is green: dependency install, compile, application import, AI service check, and all 59 runtime tests passed.
+- The live Termux telemetry still predates this repair and remains on old commit `2c674931...`; supervisor is not currently running. No conclusion about the repaired bootstrap can be drawn until Termux pulls the new TEST commit.
 
 ### Exact continuation condition
 On the next check, inspect Issue #23 first. Continue from the newest telemetry snapshot only.
