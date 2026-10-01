@@ -395,6 +395,18 @@ async def _handle_direct_action(message: types.Message, prompt: str, role: str) 
 
     if action == "profile":
         profile = user_summary(message.from_user.id)
+        if profile is None and message.from_user.id == config.owner:
+            # Founder identity is authoritative and must not depend on a users.db row.
+            # This prevents a database namespace/lifecycle issue from hiding the owner.
+            profile = {
+                "name": message.from_user.full_name or "Основатель",
+                "status": "Создатель бота",
+                "balance": 0,
+                "games": 0,
+                "invited_users": 0,
+                "regdata": "системная учётная запись",
+                "username": message.from_user.username,
+            }
         if profile is None:
             await message.reply("Ты ещё не зарегистрирован в Системе. Используй /start один раз.")
             return True
