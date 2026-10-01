@@ -26,6 +26,12 @@ class ModerationGatewayTests(unittest.TestCase):
         self.assertEqual(_parse_duration("заблокируй его на 2 дня"), (2, "дней"))
         self.assertIsNone(_parse_duration("замуть его"))
 
+    def test_founder_path_seeds_pending_intent_before_shared_confirm(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[1] / "services" / "moderation_gateway.py").read_text(encoding="utf-8")
+        founder_branch = source.split("if message.from_user.id == config.owner or role == \"Создатель бота\":", 1)[1].split("remember(message.from_user.id, message.chat.id, intent)", 1)[0]
+        self.assertIn("Founder has already issued the instruction", founder_branch)
 
 if __name__ == "__main__":
     unittest.main()
