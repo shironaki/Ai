@@ -212,7 +212,7 @@ class RuntimeRegressionTests(unittest.TestCase):
 
     def test_runtime_pid_files_are_ignored(self):
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-        self.assertRegex(gitignore, r"(?m)^\\*\\.pid$")
+        self.assertRegex(gitignore, r"(?m)^\*\.pid$")
 
     def test_start_script_passes_shell_syntax(self):
         subprocess.run(
