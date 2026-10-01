@@ -4,6 +4,7 @@ This module exposes a deliberately small set of parameterized SQLite reads.
 It never accepts SQL from users or the AI model.
 """
 
+from base import config
 from database.chats import get_chat
 from database.connection import connect_db
 from database.users import get_user
