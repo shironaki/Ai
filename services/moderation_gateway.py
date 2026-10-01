@@ -186,6 +186,9 @@ async def request(message: types.Message, text: str):
 
     if message.from_user.id == config.owner or role == "Создатель бота":
         # Founder has already issued the instruction: execute directly.
+        # confirm() consumes the pending intent, so seed it before entering
+        # the shared execution path.
+        remember(message.from_user.id, message.chat.id, intent)
         return await confirm(message, confirmed=True)
 
     remember(message.from_user.id, message.chat.id, intent)
