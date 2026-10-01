@@ -28,7 +28,8 @@ def _ensure_table() -> None:
                 status TEXT NOT NULL DEFAULT 'open',
                 fixed_by INTEGER,
                 created_at TEXT NOT NULL,
-                fixed_at TEXT
+                fixed_at TEXT,
+                diagnostic_id INTEGER
             )
             """
         )
@@ -37,9 +38,11 @@ def _ensure_table() -> None:
             ("reporter_name", "TEXT"),
             ("message_text", "TEXT"),
             ("message_sender_name", "TEXT"),
+            ("diagnostic_id", "INTEGER"),
         ):
             if name not in columns:
                 db.execute(f"ALTER TABLE issue_markers ADD COLUMN {name} {ddl}")
+        db.commit()
 
 
 def parse_marker(text: str):
@@ -56,18 +59,64 @@ def parse_fixed(text: str):
     return int(match.group(1)) if match else None
 
 
-def create_marker(*, chat_id: int, message_id: int, reporter_id: int, reason: str, code: int | None = None, message_text: str | None = None, message_sender_name: str | None = None, reporter_name: str | None = None) -> int:
+def create_marker(
+    *,
+    chat_id: int,
+    message_id: int,
+    reporter_id: int,
+    reason: str,
+    code: int | None = None,
+    message_text: str | None = None,
+    message_sender_name: str | None = None,
+    reporter_name: str | None = None,
+    diagnostic_id: int | None = None,
+) -> int:
     _ensure_table()
     now = datetime.now(timezone.utc).isoformat()
     with connect_db("users.db") as db:
         cur = db.execute(
             """
-            INSERT INTO issue_markers(chat_id,message_id,reporter_id,reporter_name,message_text,message_sender_name,reason,code,status,created_at)
-            VALUES(?,?,?,?,?,?,?,?,'open',?)
+            INSERT INTO issue_markers(
+                chat_id,message_id,reporter_id,reporter_name,message_text,
+                message_sender_name,reason,code,status,created_at,diagnostic_id
+            ) VALUES(?,?,?,?,?,?,?,?, 'open',?,?)
             """,
-            (chat_id, message_id, reporter_id, reporter_name, message_text[:4000] if message_text else None, message_sender_name, reason[:1000], code, now),
+            (
+                chat_id,
+                message_id,
+                reporter_id,
+                reporter_name,
+                message_text[:4000] if message_text else None,
+                message_sender_name,
+                reason[:1000],
+                code,
+                now,
+                diagnostic_id,
+            ),
         )
         return int(cur.lastrowid)
+
+
+def create_runtime_error_marker(
+    *,
+    chat_id: int,
+    message_id: int,
+    reporter_id: int,
+    message_text: str,
+    diagnostic_id: int,
+    exception_type: str,
+    exception_text: str,
+) -> int:
+    return create_marker(
+        chat_id=chat_id,
+        message_id=message_id,
+        reporter_id=reporter_id,
+        reason=f"Автоматическая диагностика: {exception_type}: {exception_text}"[:1000],
+        message_text=message_text,
+        message_sender_name="runtime",
+        reporter_name="SYSTEM QA",
+        diagnostic_id=diagnostic_id,
+    )
 
 
 def list_markers(limit: int = 30):
@@ -75,7 +124,9 @@ def list_markers(limit: int = 30):
     with connect_db("users.db") as db:
         return db.execute(
             """
-            SELECT id,chat_id,message_id,reporter_id,reporter_name,message_text,message_sender_name,reason,code,status,created_at,fixed_by,fixed_at
+            SELECT id,chat_id,message_id,reporter_id,reporter_name,message_text,
+                   message_sender_name,reason,code,status,created_at,fixed_by,
+                   fixed_at,diagnostic_id
             FROM issue_markers ORDER BY id DESC LIMIT ?
             """,
             (max(1, min(limit, 100)),),
@@ -94,14 +145,22 @@ def mark_fixed(marker_id: int, fixed_by: int) -> bool:
 
 
 def render_marker(marker) -> str:
-    marker_id, chat_id, message_id, reporter_id, reporter_name, message_text, message_sender_name, reason, code, status, created_at, fixed_by, fixed_at = marker
+    values = list(marker)
+    while len(values) < 14:
+        values.append(None)
+    (
+        marker_id, chat_id, message_id, reporter_id, reporter_name,
+        message_text, message_sender_name, reason, code, status,
+        created_at, fixed_by, fixed_at, diagnostic_id
+    ) = values[:14]
     state = "исправлено" if status == "fixed" else "открыто"
     code_text = f" · код {code}" if code is not None else ""
+    diagnostic_text = f" · диагностика #{diagnostic_id}" if diagnostic_id else ""
     original = (message_text or "[текст сообщения не сохранён]").strip()
     sender = message_sender_name or "неизвестен"
     reporter = reporter_name or str(reporter_id)
     return (
-        f"#{marker_id} · {state}{code_text}\n"
+        f"#{marker_id} · {state}{code_text}{diagnostic_text}\n"
         f"чат {chat_id} · сообщение {message_id}\n"
         f"автор сообщения: {sender}\n"
         f"отметил: {reporter}\n"
