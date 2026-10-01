@@ -133,6 +133,39 @@ class RuntimeRegressionTests(unittest.TestCase):
             {"command": "awakening", "action": "disable", "scope": "global"},
         )
 
+    def test_command_scope_resolver_only_accepts_explicit_scope(self):
+        from services.command_gateway import resolve_scope
+        self.assertEqual(resolve_scope("активируй стазис везде"), "global")
+        self.assertEqual(resolve_scope("активируй стазис здесь"), "chat")
+        self.assertEqual(resolve_scope("активируй стазис"), "unknown")
+        self.assertEqual(resolve_scope("активируй стазис", "chat"), "chat")
+
+    def test_typed_executor_rejects_unregistered_command(self):
+        from services.command_gateway import execute
+        from base import config
+        result = asyncio.run(
+            execute(
+                config.owner,
+                1001,
+                {"command": "shell", "action": "run", "scope": "chat"},
+                confirmed=True,
+            )
+        )
+        self.assertIn("не зарегистрирована", result)
+
+    def test_typed_executor_requires_valid_scope(self):
+        from services.command_gateway import execute
+        from base import config
+        result = asyncio.run(
+            execute(
+                config.owner,
+                1001,
+                {"command": "stasis", "action": "enable", "scope": "unknown"},
+                confirmed=True,
+            )
+        )
+        self.assertIn("область выполнения", result)
+
     def test_entrypoint_does_not_spawn_a_second_main_process(self):
         source = (ROOT / "run.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
