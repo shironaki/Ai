@@ -9,6 +9,17 @@ REPORT_ELAPSED=0
 
 cd "$REPO" || exit 1
 
+ENV_FILE="${TERMUX_ENV_FILE:-$HOME/.config/ai/termux.env}"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    . "$ENV_FILE"
+    set +a
+fi
+
+SUPERVISOR_PID="$REPO/termux-supervisor.pid"
+echo "$" > "$SUPERVISOR_PID"
+trap 'rm -f "$SUPERVISOR_PID"' EXIT
+
 report() {
     "$PYTHON" "$REPO/scripts/termux_report.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
 }
