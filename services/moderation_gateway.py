@@ -8,6 +8,7 @@ destructive actions require an explicit confirmation in the same chat.
 from __future__ import annotations
 
 import re
+import logging
 from datetime import timedelta
 
 from aiogram import types
@@ -141,15 +142,25 @@ def pop(user_id: int, chat_id: int):
 
 
 async def request(message: types.Message, text: str):
+    logging.info(
+        "MODERATION REQUEST | chat=%s user=%s text=%r reply_target=%s",
+        message.chat.id,
+        message.from_user.id,
+        text,
+        message.reply_to_message.from_user.id if message.reply_to_message and message.reply_to_message.from_user else None,
+    )
     if message.chat.type not in {"group", "supergroup"}:
+        logging.info("MODERATION SKIP | reason=not_group chat=%s", message.chat.id)
         return False
 
     role = get_display_role(message.from_user.id)
     parsed = build_intent(message, text)
     if parsed is None:
+        logging.info("MODERATION SKIP | reason=no_action text=%r", text)
         return False
 
     if "error" in parsed:
+        logging.info("MODERATION REJECT | error=%s text=%r", parsed.get("error"), text)
         if parsed["error"] == "target":
             await message.reply(
                 "🎯 Для модерационного действия ответьте на сообщение нужного пользователя. "
@@ -163,6 +174,7 @@ async def request(message: types.Message, text: str):
         return True
 
     intent = parsed["intent"]
+    logging.info("MODERATION INTENT | action=%s target=%s role=%s", intent.command, intent.target_user_id, role)
     if intent.target_user_id == config.owner:
         await message.reply("⛔ Команды администрации не действуют на Основателя без его отдельного разрешения.")
         return True
@@ -202,6 +214,7 @@ async def confirm(message: types.Message, *, confirmed: bool = False):
         return True
 
     try:
+        logging.info("MODERATION EXECUTE | action=%s target=%s chat=%s", intent.command, target_id, message.chat.id)
         target_member = await message.chat.get_member(target_id)
         if target_member.status in {"creator", "administrator"}:
             await message.reply("⛔ Нельзя применять это действие к администратору чата.")
