@@ -118,6 +118,15 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             data["diagnostic_chat_id"] = message.chat.id
             data["diagnostic_user_id"] = getattr(message.from_user, "id", None)
             data["diagnostic_text"] = raw_text
+            if getattr(message.from_user, "id", None) == config.owner:
+                try:
+                    users.ensure_owner_registered(
+                        message.from_user.id,
+                        message.from_user.full_name,
+                        message.from_user.username,
+                    )
+                except Exception:
+                    log.exception("FOUNDER IDENTITY | failed to persist owner profile")
             try:
                 data["diagnostic_event_id"] = record_diagnostic(
                     update_id=data["diagnostic_update_id"],
