@@ -344,3 +344,24 @@ Codespace TEST -> real Telegram verification -> fix/regression test -> CI -> sta
 3. Build a real bot health/heartbeat check instead of treating a live `run.py` process as sufficient health.
 4. Separately verify/harden Termux so: GitHub TEST update -> Termux pull -> dependency/config check -> safe restart -> health verification is deterministic and automatic.
 5. Only after that continue the next global assistant/executor upgrade.
+
+
+## TEST checkpoint — 2026-10-01 — Runtime hardening block
+
+### Completed
+- Removed the persistent secret-bearing `credential.helper` write from Codespaces boot. Existing local helper configuration is explicitly unset before auto-update.
+- GitHub authentication for TEST auto-update is now ephemeral through Git's process-level configuration environment; the token is not stored in `.git/config`.
+- Runtime PID artifacts are ignored by Git. Termux-specific PID/lock artifacts are also ignored so automation cannot dirty the checkout by itself.
+- Added `scripts/healthcheck.py`: health requires a fresh asyncio heartbeat plus a successful Telegram `getMe` call. A live `run.py` process alone is no longer considered healthy.
+- `main.py` writes a runtime heartbeat every 10 seconds and on received updates.
+- Codespaces boot and auto-update now use the real health check when deciding whether the bot is healthy and whether a restart succeeded.
+- Added deterministic Termux TEST automation: `scripts/termux_update.sh`, `scripts/termux_supervisor.sh`, `scripts/termux_boot.sh`, and `TERMUX_AUTOMATION.md`.
+- Termux automation is fail-closed on dirty working trees, runs dependency sync + pytest before restarting after an update, and performs the same Telegram health check after restart/recovery.
+- Added regression coverage for shell syntax, credential persistence invariants, PID ignore rules, and runtime hardening wiring.
+
+### Important boundary
+- This hardening block is TEST-only. `main`/PROD has not been modified by this work.
+- Termux automation is now implemented in the repository, but the live Termux contour still requires one real-device verification: GitHub update -> pull -> test -> restart -> Telegram health check.
+
+### Exact next block
+After live verification of the hardening block in Codespaces and Termux, continue with the already planned global architecture upgrade: move Founder stasis/awakening into the common typed natural-language command executor, then unify target/scope resolution and security regression coverage. Do not expand into scattered phrase handlers.
