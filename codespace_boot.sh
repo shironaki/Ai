@@ -25,7 +25,23 @@ bot_running() {
     printf '%s\n' "$CMD" | grep -q '[ /]run\.py\( \|$\)'
 }
 
+migrate_test_data() {
+    SRC="$REPO/data/local"
+    DST="$REPO/data/test"
+
+    [ -d "$SRC" ] || return 0
+    mkdir -p "$DST"
+
+    for DB in users.db chats.db; do
+        if [ -f "$SRC/$DB" ] && [ ! -f "$DST/$DB" ]; then
+            cp "$SRC/$DB" "$DST/$DB"
+            log "DATA: migrated $DB from data/local to data/test"
+        fi
+    done
+}
+
 log "BOOT: lifecycle started"
+migrate_test_data
 if [ -n "${BOT_TOKEN:-}" ]; then
     log "BOOT: BOT_TOKEN=SET"
 else
