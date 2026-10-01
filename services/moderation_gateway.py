@@ -15,6 +15,7 @@ from aiogram import types
 from aiogram.utils.exceptions import BadRequest, TelegramAPIError
 
 from core.command_models import CommandContext, CommandIntent
+from core.command_resolution import resolve_reply_target
 from core.command_policy import evaluate
 from core.permissions import get_display_role
 from base import config
@@ -91,7 +92,7 @@ def build_intent(message: types.Message, text: str):
     if action is None:
         return None
 
-    target = message.reply_to_message.from_user if message.reply_to_message else None
+    target = resolve_reply_target(message)
     if target is None:
         return {"error": "target"}
 
