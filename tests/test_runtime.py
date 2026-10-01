@@ -186,6 +186,31 @@ class RuntimeRegressionTests(unittest.TestCase):
             self.assertEqual(len(paths), 2)
             self.assertTrue(all(Path(path).parent == Path(tmp) for path in paths))
 
+
+    def test_runtime_hardening_scripts_are_syntactically_valid(self):
+        scripts = (
+            ROOT / "autoupdate.sh",
+            ROOT / "codespace_boot.sh",
+            ROOT / "scripts" / "termux_update.sh",
+            ROOT / "scripts" / "termux_supervisor.sh",
+            ROOT / "scripts" / "termux_boot.sh",
+        )
+        for path in scripts:
+            subprocess.run(["bash", "-n", str(path)], check=True)
+
+    def test_runtime_hardening_does_not_persist_git_credentials(self):
+        boot = (ROOT / "codespace_boot.sh").read_text(encoding="utf-8")
+        updater = (ROOT / "autoupdate.sh").read_text(encoding="utf-8")
+        self.assertNotIn("git config --local credential.helper", boot)
+        self.assertIn("git config --local --unset-all credential.helper", boot)
+        self.assertIn("GIT_CONFIG_COUNT=1", updater)
+        self.assertIn("git config --local --unset-all credential.helper", updater)
+        self.assertIn("scripts/healthcheck.py", updater)
+
+    def test_runtime_pid_files_are_ignored(self):
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertRegex(gitignore, r"(?m)^\\*\\.pid$")
+
     def test_start_script_passes_shell_syntax(self):
         subprocess.run(
             ["bash", "-n", str(ROOT / "start.sh")],
