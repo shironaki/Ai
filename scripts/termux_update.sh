@@ -11,6 +11,7 @@ LOG="$REPO/termux-autoupdate.log"
 
 export BOT_ENV="${BOT_ENV:-test}"
 export BOT_DATA_DIR="${BOT_DATA_DIR:-$REPO/data/${BOT_ENV}}"
+APPLY_UPDATED="${TERMUX_UPDATE_APPLY:-0}"
 
 ENV_FILE="${TERMUX_ENV_FILE:-$HOME/.config/ai/termux.env}"
 if [ -f "$ENV_FILE" ]; then
@@ -162,7 +163,26 @@ if [[ "$LOCAL" != "$REMOTE" ]]; then
     # The current shell loaded the pre-update script into memory. Restart from
     # disk so dependency installation uses the freshly pulled implementation.
     log "UPDATE: restarting updater from freshly pulled revision"
-    exec bash "$REPO/scripts/termux_update.sh"
+    exec env TERMUX_UPDATE_APPLY=1 bash "$REPO/scripts/termux_update.sh"
+
+elif [[ "$APPLY_UPDATED" == "1" ]]; then
+    if ! install_dependencies; then
+        rollback "$LOCAL"
+        exit 0
+    fi
+
+    if ! "$PYTHON" -m pytest -q >> "$LOG" 2>&1; then
+        rollback "$LOCAL"
+        exit 0
+    fi
+
+    stop_bot
+    if ! start_bot; then
+        log "UPDATE: new revision failed health check"
+        rollback "$LOCAL"
+        exit 0
+    fi
+    log "UPDATE: bot restarted and health-verified"
 
 elif ! is_running; then
     start_bot
