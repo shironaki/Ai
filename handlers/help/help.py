@@ -612,7 +612,7 @@ async def _answer_ai(message: types.Message, prompt: str):
         _ai_intro(role)
         + "\n\n"
         + "🧠 Мой интеллектуальный модуль сейчас недоступен. "
-          "Если это первый запуск, владельцу нужно добавить GROQ_API_KEY в секреты хоста."
+          "Ключ провайдера AI не настроен в текущем runtime. Добавьте GROQ_API_KEY в локальный runtime-secret и перезапустите бота."
     )
 
 
