@@ -42,3 +42,54 @@ cursor.execute("""CREATE TABLE IF NOT EXISTS users(
 )
 """)
 connect.commit()
+
+
+def ensure_owner_registered(user_id: int, name: str | None = None, username: str | None = None) -> None:
+    """Keep the configured founder present in the legacy users registry.
+
+    Founder authorization is still determined by config.owner; this row only
+    keeps legacy handlers that require a users.db record from asking the founder
+    to run /start after a fresh database/bootstrap.
+    """
+    if not user_id:
+        return
+
+    row = cursor.execute("SELECT id FROM users WHERE id = ? LIMIT 1", (user_id,)).fetchone()
+    if row:
+        if name is not None or username is not None:
+            cursor.execute(
+                "UPDATE users SET name = COALESCE(?, name), username = ? WHERE id = ?",
+                (name, username, user_id),
+            )
+            connect.commit()
+        return
+
+    cursor.execute(
+        "INSERT INTO users VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            name or "Основатель",
+            username,
+            "Создатель бота",
+            0,
+            10,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            "системная учётная запись",
+            "00:00:00",
+            0,
+            "Системная учётная запись Основателя",
+            0,
+            1,
+            "00:000:00",
+            0,
+        ),
+    )
+    connect.commit()
