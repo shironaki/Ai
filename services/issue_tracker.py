@@ -156,6 +156,23 @@ def render_marker(marker) -> str:
     state = "исправлено" if status == "fixed" else "открыто"
     code_text = f" · код {code}" if code is not None else ""
     diagnostic_text = f" · диагностика #{diagnostic_id}" if diagnostic_id else ""
+    diagnostic_details = ""
+    if diagnostic_id:
+        row = connect_db("users.db")
+        try:
+            event = row.execute(
+                "SELECT stage,handler,exception_type,exception_text FROM diagnostic_events WHERE id=?",
+                (diagnostic_id,),
+            ).fetchone()
+            if event:
+                diagnostic_details = (
+                    f"\nэтап: {event['stage']}"
+                    f"\nобработчик: {event['handler'] or '-'}"
+                    f"\nисключение: {event['exception_type'] or '-'}"
+                    f"{': ' + event['exception_text'] if event['exception_text'] else ''}"
+                )
+        finally:
+            row.close()
     original = (message_text or "[текст сообщения не сохранён]").strip()
     sender = message_sender_name or "неизвестен"
     reporter = reporter_name or str(reporter_id)
@@ -166,4 +183,5 @@ def render_marker(marker) -> str:
         f"отметил: {reporter}\n"
         f"сообщение:\n«{original}»\n"
         f"причина: {reason}"
+        f"{diagnostic_details}"
     )
