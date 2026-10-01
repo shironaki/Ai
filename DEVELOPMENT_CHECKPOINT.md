@@ -5,7 +5,7 @@
 ### Current state
 - Repository: shironaki/Ai
 - Active branch: test-global-assistant-upgrade
-- Latest TEST commit: 2c674931e1bb466ec3f4c1e3b2c4ca358bf9a806
+- Latest TEST commit: e11287b7619c8be7e3c6f7401f4a5f2d80c86b6a
 - Draft PR: #22, base main; main/PROD remains untouched.
 - Persistent live diagnostics: GitHub Issue #23.
 - Current phone uses manual Termux supervisor; Termux:Boot is intentionally deferred to the second phone.
@@ -48,7 +48,12 @@ Success criteria:
 If the fresh bootstrap fails, fix the Termux bootstrap mechanism in TEST directly rather than repeatedly cycling the user through manual cleanup.
 
 ### Owner/founder follow-up
-The user previously reported that the bot does not reliably recognize the founder/owner and may ask for /start again as if the user is absent from the system. This remains an unresolved TEST follow-up. After Termux runtime is green, inspect owner persistence/registration and founder-role resolution in the repository before changing behavior. Do not guess the user's ID and do not expose secrets.
+- Root cause identified: founder authorization already resolves from `config.owner`, but legacy handlers still required a row in `users.db` and could therefore ask the founder for `/start` after a fresh database/bootstrap.
+- TEST fix committed in `base/users.py` and `main.py`: the configured founder is persisted in the legacy registry and their live Telegram name/username are refreshed on incoming messages. No owner ID is guessed or changed.
+- Regression coverage added in `tests/test_founder_identity.py`.
+- CI passed on the fix: compile, application import, AI service check, and full runtime regression suite all successful.
+- This fix is TEST-only and is not yet live on Termux until the supervisor advances to the new commit.
+- Do not expose secrets.
 
 ### Operating rule
 Work directly from repository state, make fixes in TEST, verify CI, then verify live state through Issue #23. Never treat CI alone as proof of live Telegram health. Never expose secrets. Keep main/PROD untouched until explicit live TEST verification and user approval.
