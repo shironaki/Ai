@@ -1,12 +1,1 @@
-# Python 3.11
-aiogram==2.25.2
-APScheduler
-asyncpg
-captcha
-gTTS
-Pillow
-psutil
-pyTelegramBotAPI
-python-decouple
-requests
-watchdog
+# Runtime dependencies used by the current bot\naiogram==2.25.2\nrequests\n
