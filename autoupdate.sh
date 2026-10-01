@@ -16,7 +16,7 @@ bot_running() {
     [ -n "$PID" ] || return 1
     kill -0 "$PID" 2>/dev/null || return 1
     CMD="$(ps -p "$PID" -o command= 2>/dev/null || true)"
-    printf '%s\n' "$CMD" | grep -q '[ /]run\.py\( \|$\)'
+    printf '%s\n' "$CMD" | grep -F -q -- "$BOT"
 }
 stop_bot() {
     if ! bot_running; then rm -f "$PIDFILE"; return 0; fi
