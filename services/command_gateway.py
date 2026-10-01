@@ -6,6 +6,7 @@ AI never receives an executable Python/SQL capability.
 
 from base import config
 from core.command_models import CommandContext, CommandIntent
+from core.command_resolution import resolve_scope
 from core.command_policy import evaluate
 from core.runtime_state import set_paused
 from services.ai_service import classify_command
@@ -78,8 +79,8 @@ async def execute(
         return "⛔ Командный контур Основателя недоступен для этой роли."
 
     command = intent.get("command")
-    scope = intent.get("scope")
-    if scope not in {"chat", "global"}:
+    scope = resolve_scope(intent.get("scope"), default="chat")
+    if scope is None:
         return None
 
     context = CommandContext(
