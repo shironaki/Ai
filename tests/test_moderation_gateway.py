@@ -30,8 +30,11 @@ class ModerationGatewayTests(unittest.TestCase):
         from pathlib import Path
 
         source = (Path(__file__).resolve().parents[1] / "services" / "moderation_gateway.py").read_text(encoding="utf-8")
-        founder_branch = source.split("if message.from_user.id == config.owner or role == \"Создатель бота\":", 1)[1].split("remember(message.from_user.id, message.chat.id, intent)", 1)[0]
-        self.assertIn("Founder has already issued the instruction", founder_branch)
+        founder_branch = source.split("if message.from_user.id == config.owner or role == \"Создатель бота\":", 1)[1]
+        self.assertLess(
+            founder_branch.index("remember(message.from_user.id, message.chat.id, intent)"),
+            founder_branch.index("return await confirm(message, confirmed=True)"),
+        )
 
 if __name__ == "__main__":
     unittest.main()
