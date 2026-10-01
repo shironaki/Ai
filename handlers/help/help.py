@@ -644,25 +644,13 @@ async def bot_msg(message: types.Message):
     )
 )
 async def founder_direct_command(message: types.Message):
-    # Founder gets direct execution/read-only system actions without a wake word.
-    # Ordinary conversation is not treated as a command; use "Аи, ..." or /ai
-    # when a conversational AI response is wanted.
+    # Founder-only command interception happens here first.
+    # All remaining messages use the canonical AI routing path so that
+    # moderation, direct informational actions, cancellation and AI replies
+    # cannot drift between two independent pipelines.
     prompt = message.text.strip()
     if await _handle_founder_command(message, prompt):
         return
-    role = _ai_role(message)
-    if await _handle_direct_action(message, prompt, role):
-        return
-    if await request_moderation(message, prompt):
-        return
-    if is_cancel_request(prompt):
-        if cancel_pending(message.from_user.id, message.chat.id):
-            await message.reply("↩️ Ладно. Отставить. Незавершённый запрос отменён.")
-        return
-
-    # Founder direct routing must not swallow ordinary private messages.
-    # If no deterministic action matched, continue through the same AI path
-    # used by all other private messages.
     await _answer_ai(message, prompt)
 
 
