@@ -28,6 +28,9 @@ data/
 *.db-shm
 *.db-wal
 
+# Runtime PID files
+*.pid
+
 # Logs
 *.log
 bot.log
