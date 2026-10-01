@@ -22,5 +22,6 @@
       "description": "Optional Groq API key for AI replies",
       "documentationUrl": "https://console.groq.com/keys"
     }
-  }
+  },
+  "postStartCommand": "sh ./codespace_boot.sh"
 }
