@@ -206,6 +206,9 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn("GIT_CONFIG_COUNT=1", updater)
         self.assertIn("git config --local --unset-all credential.helper", updater)
         self.assertIn("scripts/healthcheck.py", updater)
+        health = (ROOT / "scripts" / "healthcheck.py").read_text(encoding="utf-8")
+        self.assertIn("getWebhookInfo", health)
+        self.assertIn("polling conflict detected", health)
 
     def test_runtime_pid_files_are_ignored(self):
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
