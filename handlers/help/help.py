@@ -660,6 +660,11 @@ async def founder_direct_command(message: types.Message):
             await message.reply("↩️ Ладно. Отставить. Незавершённый запрос отменён.")
         return
 
+    # Founder direct routing must not swallow ordinary private messages.
+    # If no deterministic action matched, continue through the same AI path
+    # used by all other private messages.
+    await _answer_ai(message, prompt)
+
 
 #Девборд
 @dp.message_handler(commands=['дев', 'dev'], commands_prefix='/!.')
