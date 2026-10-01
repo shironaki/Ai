@@ -58,4 +58,7 @@ Continue working from TEST only. Verify fresh Termux telemetry after runtime cha
 ### Current QA continuation
 - Stage 2C/2D review confirms the typed command registry/policy exists, but Founder stasis/awakening still has a Founder-specific gateway and moderation has its own target handling.
 - Security regression coverage added in `tests/test_security_regression.py`: scope isolation, destructive confirmation, pending-state binding to user+chat, and audit metadata secrecy.
-- Next implementation block: extract shared target/scope resolution without broadening executor authority, then integrate it into Founder/moderation gateways. Keep game commands isolated and main/PROD untouched.
+- Shared conservative target/scope resolution is now in `core/command_resolution.py` and is integrated into Founder/moderation gateways; explicit reply targets only, allowlisted scopes only.
+- Regression coverage added in `tests/test_command_resolution.py`.
+- CI run #616 for prior checkpoint was green; awaiting CI for this new resolver chain.
+- Next: inspect command dispatch wiring and confirmation handlers for cross-command pending-state collisions, then add regression coverage. Keep game commands isolated and main/PROD untouched.
