@@ -1,6 +1,7 @@
 import asyncio
 import html
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 import random
 import re
@@ -40,6 +41,27 @@ from services.issue_tracker import create_runtime_error_marker
 
 LOG_FILE = "bot.log"
 BOT_PAUSED = False
+HEALTH_DIR = os.path.join(os.getenv("BOT_DATA_DIR", "data/test"), "runtime")
+HEARTBEAT_FILE = os.path.join(HEALTH_DIR, "heartbeat")
+
+
+def write_health_heartbeat() -> None:
+    """Persist a small local heartbeat proving the bot event loop is alive."""
+    try:
+        os.makedirs(HEALTH_DIR, exist_ok=True)
+        tmp_path = HEARTBEAT_FILE + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as handle:
+            handle.write(str(time.time()))
+        os.replace(tmp_path, HEARTBEAT_FILE)
+    except Exception:
+        log.exception("HEALTH | failed to write heartbeat")
+
+
+async def runtime_heartbeat() -> None:
+    """Keep an external watchdog informed that the asyncio runtime is alive."""
+    while True:
+        write_health_heartbeat()
+        await asyncio.sleep(10)
 
 
 def bot_is_paused(chat_id=None) -> bool:
@@ -104,6 +126,7 @@ class ActivityLoggingMiddleware(BaseMiddleware):
                 )
             except Exception:
                 log.exception("DIAGNOSTIC JOURNAL | failed to record update")
+            write_health_heartbeat()
             log.info(
                 "UPDATE message | update_id=%s chat=%s type=%s user=%s text_len=%s content_type=%s",
                 getattr(update, "update_id", "?"),
@@ -488,6 +511,8 @@ BOT_COMMANDS = [
 
 
 async def on_startup(dispatcher):
+    write_health_heartbeat()
+    asyncio.create_task(runtime_heartbeat())
     asyncio.create_task(expiry_loop(bot))
     from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
