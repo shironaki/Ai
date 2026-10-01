@@ -73,20 +73,57 @@ install_dependencies() {
     platform_name="$("$PYTHON" -c 'import platform; print(platform.system().lower())')"
 
     if [[ "$platform_name" == "android" ]]; then
-        log "DEPS: Android/Termux detected; installing requirements without psutil"
+        log "DEPS: Android/Termux detected; using Android wheels and skipping legacy native builds"
+
+        # Legacy requirements forced old aiohttp/Pillow source builds on current Termux Python.
         local tmp_req
         tmp_req="${TMPDIR:-/data/data/com.termux/files/usr/tmp}/ai-requirements.txt"
-        if ! grep -vE '^[[:space:]]*psutil([<=>].*)?[[:space:]]*$' "$REPO/requirements.txt" > "$tmp_req"; then
+        if ! grep -vE '^[[:space:]]*aiogram([<=>].*)?[[:space:]]*$' "$REPO/requirements.txt" > "$tmp_req"; then
             log "STOP: failed to prepare Termux requirements"
             rm -f "$tmp_req"
             return 1
         fi
-        if ! "$PYTHON" -m pip install -r "$tmp_req" >> "$LOG" 2>&1; then
-            log "STOP: Termux dependency installation failed"
+
+        if ! "$PYTHON" -m pip install --upgrade pip >> "$LOG" 2>&1; then
+            log "STOP: failed to upgrade pip"
             rm -f "$tmp_req"
             return 1
         fi
+
+        # Install modern aiohttp separately so aiogram 2.x cannot force an obsolete
+        # <3.9 source distribution without an Android wheel.
+        if ! "$PYTHON" -m pip install --only-binary=:all: "aiohttp>=3.14,<3.15" >> "$LOG" 2>&1; then
+            log "STOP: Android aiohttp wheel installation failed"
+            rm -f "$tmp_req"
+            return 1
+        fi
+
+        if ! "$PYTHON" -m pip install --only-binary=:all: -r "$tmp_req" >> "$LOG" 2>&1; then
+            log "STOP: Termux pure-Python dependency installation failed"
+            rm -f "$tmp_req"
+            return 1
+        fi
+
+        # aiogram 2.25.2 is pure Python. Its metadata pins an obsolete aiohttp
+        # range, so do not let pip replace the Android-compatible aiohttp.
+        if ! "$PYTHON" -m pip install --no-deps "aiogram==2.25.2" >> "$LOG" 2>&1; then
+            log "STOP: aiogram installation failed"
+            rm -f "$tmp_req"
+            return 1
+        fi
+
+        if ! "$PYTHON" -m pip install --only-binary=:all: "Babel>=2.9.1,<2.10" "certifi>=2021.10.8" "magic-filter>=1.0.9,<1.1.0" >> "$LOG" 2>&1; then
+            log "STOP: aiogram runtime dependencies failed"
+            rm -f "$tmp_req"
+            return 1
+        fi
+
         rm -f "$tmp_req"
+
+        if ! "$PYTHON" -c 'import aiogram, aiohttp, requests; print("TERMUX IMPORTS OK", aiogram.__version__, aiohttp.__version__)' >> "$LOG" 2>&1; then
+            log "STOP: Termux runtime imports failed"
+            return 1
+        fi
     else
         if ! "$PYTHON" -m pip install -r "$REPO/requirements.txt" >> "$LOG" 2>&1; then
             log "STOP: dependency installation failed"
@@ -96,7 +133,6 @@ install_dependencies() {
 
     "$PYTHON" -m pip install pytest >> "$LOG" 2>&1
 }
-
 start_bot() {
     if is_running; then
         return 0
