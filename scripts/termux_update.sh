@@ -71,19 +71,27 @@ install_dependencies() {
     fi
 
     local platform_name
-    platform_name="$( "$PYTHON" -c 'import platform; print(platform.system().lower())' )"
+    platform_name="$("$PYTHON" -c 'import platform; print(platform.system().lower())')"
     local is_termux="false"
     if [[ -n "${PREFIX:-}" && "$PREFIX" == /data/data/com.termux/* ]] || [[ -d /data/data/com.termux/files/usr ]]; then
         is_termux="true"
     fi
 
     if [[ "$platform_name" == "android" || "$is_termux" == "true" ]]; then
-        log "DEPS: Android/Termux detected (platform=$platform_name); using Android wheels and skipping legacy native builds"
+        log "DEPS: Android/Termux detected (platform=$platform_name); using Android wheels and isolating aiogram 2.x"
 
         local tmp_req
-        tmp_req="${TMPDIR:-/data/data/com.termux/files/usr/tmp}/ai-requirements.txt"
-        if ! grep -vE '^[[:space:]]*aiogram([<=>].*)?[[:space:]]*$' "$REPO/requirements.txt" > "$tmp_req"; then
+        tmp_req="${TMPDIR:-/data/data/com.termux/files/usr/tmp}/ai-requirements.$$"
+        if ! awk '
+            /^[[:space:]]*aiogram([<=>~!].*)?[[:space:]]*$/ { next }
+            { print }
+        ' "$REPO/requirements.txt" > "$tmp_req"; then
             log "STOP: failed to prepare Termux requirements"
+            rm -f "$tmp_req"
+            return 1
+        fi
+        if grep -qiE '^[[:space:]]*aiogram([<=>~!].*)?[[:space:]]*$' "$tmp_req"; then
+            log "STOP: aiogram leaked into isolated Termux requirements"
             rm -f "$tmp_req"
             return 1
         fi
@@ -133,6 +141,7 @@ install_dependencies() {
 
     "$PYTHON" -m pip install pytest >> "$LOG" 2>&1
 }
+
 start_bot() {
     if is_running; then
         return 0
@@ -145,12 +154,15 @@ start_bot() {
 
 rollback() {
     local good_commit="$1"
-    log "ROLLBACK: restoring $good_commit"
+    log "ROLLBACK: restoring $good_commit without re-running dependency installer"
     stop_bot || true
     git reset --hard "$good_commit" >> "$LOG" 2>&1
-    install_dependencies || true
-    start_bot
-    log "ROLLBACK: stable revision restored and health-verified"
+    if start_bot; then
+        log "ROLLBACK: stable revision restored and health-verified"
+    else
+        log "ROLLBACK: stable revision restored but health check failed"
+        return 1
+    fi
 }
 
 if [[ "$LOCAL" != "$REMOTE" ]]; then
