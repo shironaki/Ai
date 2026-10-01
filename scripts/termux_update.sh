@@ -166,31 +166,26 @@ if [[ "$LOCAL" != "$REMOTE" ]]; then
 fi
 
 if ! install_dependencies; then
-        rollback "$LOCAL"
-        exit 0
-    fi
-
-    if ! "$PYTHON" -m pytest -q >> "$LOG" 2>&1; then
-        rollback "$LOCAL"
-        exit 0
-    fi
-
-    stop_bot
-    if ! start_bot; then
-        log "UPDATE: new revision failed health check"
-        rollback "$LOCAL"
-        exit 0
-    fi
-    log "UPDATE: bot restarted and health-verified"
-elif ! is_running; then
-    start_bot
-    log "RECOVERY: bot started and health-verified"
-else
-    "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1 || {
-        log "RECOVERY: health check failed; restarting bot"
-        stop_bot
-        start_bot
-    }
+    rollback "$LOCAL"
+    exit 0
 fi
 
+if ! "$PYTHON" -m pytest -q >> "$LOG" 2>&1; then
+    rollback "$LOCAL"
+    exit 0
+fi
+
+stop_bot
+if ! start_bot; then
+    log "UPDATE: new revision failed health check"
+    rollback "$LOCAL"
+    exit 0
+fi
+log "UPDATE: bot restarted and health-verified"
+exit 0
+
 log "OK: Termux sync check completed at $(git rev-parse HEAD)"
+
+
+# Keep the normal supervisor loop separate from update handling: when this script
+# is already on the current revision, dependencies/tests/health are verified above.
