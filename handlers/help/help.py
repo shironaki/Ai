@@ -527,12 +527,18 @@ async def _handle_direct_action(message: types.Message, prompt: str, role: str) 
         tail = content[-12000:]
         if len(content) > len(tail):
             tail = "…\n" + tail
-        await message.reply(
-            f"<b>📜 ПОСЛЕДНИЕ ЛОГИ</b>\n<pre>{escape_for_telegram_html(tail)}</pre>"
-        )
-        return True
 
-    if action == "runtime":
+        # Telegram limits a single message to 4096 characters.
+        # Split diagnostic logs into safe chunks.
+        header = "<b>📜 ПОСЛЕДНИЕ ЛОГИ</b>\n"
+        chunk_size = 3500
+        chunks = [tail[i:i + chunk_size] for i in range(0, len(tail), chunk_size)]
+        for index, chunk in enumerate(chunks):
+            prefix = header if index == 0 else f"<b>📜 ЛОГИ · часть {index + 1}/{len(chunks)}</b>\n"
+            await message.reply(
+                f"{prefix}<pre>{escape_for_telegram_html(chunk)}</pre>"
+            )
+        return True    if action == "runtime":
         state = runtime_summary(message.chat.id)
         await message.reply(
             "<b>🛰 СОСТОЯНИЕ RUNTIME</b>\n"
