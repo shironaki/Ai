@@ -6,6 +6,7 @@
 - Repository: shironaki/Ai
 - Active branch: test-global-assistant-upgrade
 - Latest TEST runtime verified commit: fb0abf7aab825d91ca68cca1a6e1099d444eafa0
+- Latest TEST code/QA commit: `5b7f4c3804e55e4d8855d99b96e14eb980d85c58`.
 - Draft PR: #22, base main; main/PROD remains untouched.
 - Persistent live diagnostics: GitHub Issue #23.
 - Termux bot and supervisor are running and polling is healthy; live health reports `ai=ready`.
@@ -56,4 +57,5 @@ Continue working from TEST only. Verify fresh Termux telemetry after runtime cha
 
 ### Current QA continuation
 - Stage 2C/2D review confirms the typed command registry/policy exists, but Founder stasis/awakening still has a Founder-specific gateway and moderation has its own target handling.
-- Next implementation block: extract shared target/scope resolution without broadening executor authority, then add security regressions for scope isolation, confirmation binding, and audit secrecy. Keep game commands isolated and main/PROD untouched.
+- Security regression coverage added in `tests/test_security_regression.py`: scope isolation, destructive confirmation, pending-state binding to user+chat, and audit metadata secrecy.
+- Next implementation block: extract shared target/scope resolution without broadening executor authority, then integrate it into Founder/moderation gateways. Keep game commands isolated and main/PROD untouched.
