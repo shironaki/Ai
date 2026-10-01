@@ -22,7 +22,7 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 trap cleanup EXIT
 
-if [[ -n "$(git status --porcelain)" ]]; then
+if [[ -n "$(git status --porcelain)"]]; then
     log "STOP: working tree is not clean"
     exit 1
 fi
@@ -30,13 +30,6 @@ fi
 git fetch origin "$BRANCH" >> "$LOG" 2>&1
 LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse "origin/$BRANCH")"
-
-if [[ "$LOCAL" != "$REMOTE" ]]; then
-    log "UPDATE: $LOCAL -> $REMOTE"
-    git pull --ff-only origin "$BRANCH" >> "$LOG" 2>&1
-    "$PYTHON" -m pip install -r "$REPO/requirements.txt" >> "$LOG" 2>&1
-    "$PYTHON" -m pytest -q >> "$LOG" 2>&1
-fi
 
 is_running() {
     [[ -f "$PIDFILE" ]] || return 1
@@ -72,9 +65,39 @@ start_bot() {
     "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1
 }
 
-if [[ "$LOCAL" != "$REMOTE" ]]; then
-    stop_bot
+rollback() {
+    local good_commit="$1"
+    log "ROLLBACK: restoring $good_commit"
+    stop_bot || true
+    git reset --hard "$good_commit" >> "$LOG" 2>&1
+    "$PYTHON" -m pip install -r "$REPO/requirements.txt" >> "$LOG" 2>&1 || true
     start_bot
+    log "ROLLBACK: stable revision restored and health-verified"
+}
+
+if [[ "$LOCAL" != "$REMOTE" ]]; then
+    log "UPDATE: $LOCAL -> $REMOTE"
+    if ! git pull --ff-only origin "$BRANCH" >> "$LOG" 2>&1; then
+        log "STOP: fast-forward update failed; keeping $LOCAL"
+        exit 1
+    fi
+
+    if ! "$PYTHON" -m pip install -r "$REPO/requirements.txt" >> "$LOG" 2>&1; then
+        rollback "$LOCAL"
+        exit 0
+    fi
+
+    if ! "$PYTHON" -m pytest -q >> "$LOG" 2>&1; then
+        rollback "$LOCAL"
+        exit 0
+    fi
+
+    stop_bot
+    if ! start_bot; then
+        log "UPDATE: new revision failed health check"
+        rollback "$LOCAL"
+        exit 0
+    fi
     log "UPDATE: bot restarted and health-verified"
 elif ! is_running; then
     start_bot
