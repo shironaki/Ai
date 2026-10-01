@@ -1,34 +1,28 @@
 # DEVELOPMENT_CHECKPOINT.md
 
-## Canonical TEST continuation — 2026-10-01 — typed command executor hardening
+## Canonical TEST continuation — 2026-10-01 — autonomous Termux recovery
 
 ### Current state
 - Repository: `shironaki/Ai`
 - Active branch: `test-global-assistant-upgrade`
-- Latest code commit: `2d811fe2dc4ae2f5e54c9d637fe4ac4e43be901b`
 - Draft PR: #22, base `main`; main/PROD remains untouched.
-- GitHub Actions `Python integrity check` run #515: completed / success.
+- The previous typed command-executor experiment was reverted after a live runtime regression.
+- Stable command gateway/runtime behavior is restored and CI has passed after the rollback.
 
 ### Completed in this block
-- Founder natural-language stasis/awakening now passes through a registry-backed typed executor.
-- Natural-language scope resolution is centralized: only explicit chat/global markers are accepted; unknown scope is not silently converted during execution.
-- Command intents are normalized against the authoritative command registry before execution.
-- Unsupported registered commands fail closed with an explicit executor-missing result instead of falling through.
-- Added regression coverage for explicit scope resolution, invalid scope rejection, and unregistered-command rejection.
-- Existing audit, policy, confirmation, and role gates remain in the execution path.
+- Termux updater now treats every remote commit as a transactional update.
+- Before accepting a new revision, Termux installs dependencies and runs the full pytest suite.
+- The updated bot must start and pass the real Telegram health check.
+- If dependency installation, tests, startup, or health verification fails, Termux automatically resets to the previous local commit and restores dependencies from that revision.
+- Added a persistent Termux:Boot installer that places the bot boot hook in `~/.termux/boot/ai-bot`.
+- Updated Termux documentation for autonomous startup and rollback.
+- Shell syntax coverage already validates the Termux automation scripts.
 
 ### Runtime hardening status
-- CI verifies the repository and runtime regression suite.
-- Live Codespaces/Termux state is not inferred from CI.
-- PROD/main remains untouched.
-
-### Next global block
-Continue the same architecture with a shared target resolver for typed commands:
-- current chat;
-- reply-target user;
-- explicitly supplied username;
-- explicitly supplied Telegram ID only where the command policy allows it.
-AI may produce intent data, but target resolution must be deterministic and policy-bound.
+- CI verifies repository integrity and runtime regression coverage.
+- Live Telegram/Termux state is never inferred from CI.
+- TEST only; PROD/main remains untouched.
+- The remaining live step is to install the Termux:Boot hook once and let the supervisor own update/restart/recovery.
 
 ### Operating rule
-Work from the repository state, make the fix, verify CI, and only then hand the result to the user for live checking. Never expose secrets and never treat CI alone as proof of live Telegram health.
+Work directly from the repository state, make the fix, wait for completed CI, then hand the result to the user for live checking. No plans/reports unless requested. Never expose secrets and never treat CI alone as proof of live Telegram health.
