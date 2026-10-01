@@ -86,6 +86,11 @@ if [ "$LOCAL" != "$REMOTE" ]; then
     exit 0
 fi
 if bot_healthy; then log "UP TO DATE: $LOCAL; BOT health verified"; exit 0; fi
-log "UP TO DATE: $LOCAL; BOT missing; restarting"
+if bot_running; then
+    log "UP TO DATE: $LOCAL; BOT unhealthy; stopping stale process before recovery"
+    stop_bot
+else
+    log "UP TO DATE: $LOCAL; BOT missing; starting recovery"
+fi
 start_bot || exit 1
 log "AUTOUPDATE: restart completed"
