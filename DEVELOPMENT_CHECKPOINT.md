@@ -306,3 +306,41 @@ Codespace TEST -> runtime verification -> fix/regression test -> CI -> stable ch
 
 ### Protocol remains
 Codespace TEST -> real Telegram verification -> fix/regression test -> CI -> stable checkpoint -> only then migrate the same block to PROD -> continue next development block on TEST.
+
+
+## CANONICAL CONTINUITY CHECKPOINT — 2026-10-01
+
+### Current state
+- Active development contour: TEST branch `test-global-assistant-upgrade`.
+- Latest verified commit before this checkpoint: `b73e3b20109b6dc9b85d5a50f77b8bd37a89395b`.
+- GitHub Actions Python integrity check for that commit: run #462, completed/success.
+- TEST bot was verified live in Codespaces: polling started, Telegram API `getMe` succeeded, `/start` was received/dispatched/handled, and an outbound Telegram send was verified.
+- Codespace boot now performs an immediate remote-branch sync check, runs tests before replacing the bot after an update, restarts the bot when the local checkout is stale, and starts a 60-second updater loop.
+- Persistent diagnostic QA exists: runtime exceptions are recorded in `diagnostic_events`, linked to QA markers, and exposed to the Founder through the existing QA flow.
+- The previously observed `/logs` MessageIsTooLong failure was fixed by chunking log responses.
+- The previously observed direct natural-language moderation routing failure was fixed and runtime-tested.
+
+### Important truth / non-claims
+- Do NOT claim that every possible future error is eliminated. The observed historical runtime failures are addressed and the current TEST runtime is working, but exhaustive feature-by-feature verification has not been performed.
+- Known hardening work remains: the current Codespace boot script persists a token-bearing Git credential helper in local `.git/config`; runtime PID files are not yet ignored by `.gitignore`; process health currently means the `run.py` process is alive, not that Telegram polling is independently heartbeat-verified.
+- Termux is a separate runtime environment. The repository currently contains the Codespaces auto-update/boot path, but this checkpoint does NOT claim that every GitHub push is already guaranteed to pull into Termux and restart it automatically. Termux automation must be explicitly verified/hardened as its own deployment contour.
+- Never print, copy, commit, or request secret values. If a token is exposed, treat it as compromised and rotate/revoke it.
+
+### Operating protocol for every future chat in this project
+1. First identify the repository `shironaki/Ai`, active branch, current commit, and TEST/PROD/Termux contour.
+2. Read this `DEVELOPMENT_CHECKPOINT.md` before proposing work; treat the newest checkpoint as the source of continuity.
+3. Inspect the actual current code before changing it. Do not rely on old chat assumptions when the repository can verify the state.
+4. Keep TEST isolated from PROD. Do not modify PROD/main for TEST work unless the user explicitly requests migration after runtime verification.
+5. Work only on the requested global/scalable block; avoid cosmetic or one-off patches unless they close a verified failure or security risk.
+6. After every code change: run/check CI immediately; then perform runtime verification when the change affects runtime.
+7. Use the diagnostic journal and QA markers as the primary self-diagnostic path. Do not repeatedly ask the user to paste logs when the repository/runtime can reveal the same information.
+8. If the same failure repeats twice, or three consecutive changes do not improve it, stop and report the exact root issue instead of guessing.
+9. Never expose or reproduce secrets. Keep tokens/API keys out of commits, logs, answers, and checkpoint text.
+10. At the end of a meaningful block, update this checkpoint with: current branch/commit, what changed, what was verified, unresolved risks, and the exact next block.
+
+### Immediate next hardening block before larger feature work
+1. Remove persistent secret-bearing Git credential configuration from `codespace_boot.sh` and use an ephemeral authentication mechanism.
+2. Add PID/runtime files to `.gitignore` and ensure auto-update cannot become blocked by expected runtime artifacts.
+3. Build a real bot health/heartbeat check instead of treating a live `run.py` process as sufficient health.
+4. Separately verify/harden Termux so: GitHub TEST update -> Termux pull -> dependency/config check -> safe restart -> health verification is deterministic and automatic.
+5. Only after that continue the next global assistant/executor upgrade.
