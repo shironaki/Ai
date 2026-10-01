@@ -70,12 +70,15 @@ install_dependencies() {
     fi
 
     local platform_name
-    platform_name="$("$PYTHON" -c 'import platform; print(platform.system().lower())')"
+    platform_name="$( "$PYTHON" -c 'import platform; print(platform.system().lower())' )"
+    local is_termux="false"
+    if [[ -n "${PREFIX:-}" && "$PREFIX" == /data/data/com.termux/* ]] || [[ -d /data/data/com.termux/files/usr ]]; then
+        is_termux="true"
+    fi
 
-    if [[ "$platform_name" == "android" ]]; then
-        log "DEPS: Android/Termux detected; using Android wheels and skipping legacy native builds"
+    if [[ "$platform_name" == "android" || "$is_termux" == "true" ]]; then
+        log "DEPS: Android/Termux detected (platform=$platform_name); using Android wheels and skipping legacy native builds"
 
-        # Legacy requirements forced old aiohttp/Pillow source builds on current Termux Python.
         local tmp_req
         tmp_req="${TMPDIR:-/data/data/com.termux/files/usr/tmp}/ai-requirements.txt"
         if ! grep -vE '^[[:space:]]*aiogram([<=>].*)?[[:space:]]*$' "$REPO/requirements.txt" > "$tmp_req"; then
@@ -90,8 +93,6 @@ install_dependencies() {
             return 1
         fi
 
-        # Install modern aiohttp separately so aiogram 2.x cannot force an obsolete
-        # <3.9 source distribution without an Android wheel.
         if ! "$PYTHON" -m pip install --only-binary=:all: "aiohttp>=3.14,<3.15" >> "$LOG" 2>&1; then
             log "STOP: Android aiohttp wheel installation failed"
             rm -f "$tmp_req"
@@ -104,8 +105,6 @@ install_dependencies() {
             return 1
         fi
 
-        # aiogram 2.25.2 is pure Python. Its metadata pins an obsolete aiohttp
-        # range, so do not let pip replace the Android-compatible aiohttp.
         if ! "$PYTHON" -m pip install --no-deps "aiogram==2.25.2" >> "$LOG" 2>&1; then
             log "STOP: aiogram installation failed"
             rm -f "$tmp_req"
