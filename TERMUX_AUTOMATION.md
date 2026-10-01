@@ -61,6 +61,15 @@ chmod 600 ~/.config/ai/termux.env
 
 Do not paste the bot token into chat or commit it. The reporter redacts it from published diagnostics.
 
+For the AI assistant, the same protected file must also contain the provider key:
+
+```bash
+printf 'GROQ_API_KEY=%s\n' 'PASTE_GROQ_KEY_HERE' >> ~/.config/ai/termux.env
+chmod 600 ~/.config/ai/termux.env
+```
+
+The key is loaded by the supervisor and bot process, never committed or published. Runtime telemetry reports only `ai=ready` or `ai=unconfigured`.
+
 The reporter also accepts GITHUB_TOKEN, GH_TOKEN, or an authenticated gh CLI session.
 
 ## Automatic rollback
