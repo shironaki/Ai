@@ -14,7 +14,7 @@ report() {
 }
 
 while true; do
-    if ! sh "$REPO/scripts/termux_update.sh"; then
+    if ! bash "$REPO/scripts/termux_update.sh"; then
         report
     fi
 
