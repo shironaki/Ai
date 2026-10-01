@@ -13,6 +13,7 @@ BOT_LOG = ROOT / os.getenv("BOT_LOG_FILE", "bot.log")
 UPDATE_LOG = ROOT / os.getenv("TERMUX_UPDATE_LOG", "termux-autoupdate.log")
 SUPERVISOR_PID = ROOT / "termux-supervisor.pid"
 BOT_PID = ROOT / "termux-bot.pid"
+TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
 def run(*args: str) -> str:
     try:
@@ -40,6 +41,12 @@ def token() -> str:
         if value:
             return value
     try:
+        for line in TOKEN_FILE.read_text(encoding="utf-8").splitlines():
+            if line.startswith("TERMUX_GITHUB_TOKEN="):
+                return line.split("=", 1)[1].strip().strip("'").strip('"')
+    except OSError:
+        pass
+    try:
         return subprocess.check_output(["gh", "auth", "token"], text=True, stderr=subprocess.DEVNULL, timeout=5).strip()
     except Exception:
         return ""
@@ -47,7 +54,7 @@ def token() -> str:
 def request(method: str, path: str, value=None):
     tok = token()
     if not tok:
-        raise RuntimeError("GitHub token unavailable; use TERMUX_GITHUB_TOKEN or gh auth")
+        raise RuntimeError("GitHub token unavailable; configure ~/.config/ai/termux.env or gh auth")
     payload = None if value is None else json.dumps(value, ensure_ascii=False).encode()
     req = urllib.request.Request(
         API + path, data=payload, method=method,
