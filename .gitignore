@@ -30,6 +30,10 @@ data/
 
 # Runtime PID files
 *.pid
+termux-*.pid
+
+# Termux runtime lock
+.termux-update.lock/
 
 # Logs
 *.log
