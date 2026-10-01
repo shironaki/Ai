@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Publish sanitized live Termux diagnostics to GitHub Issue #23."""
+from __future__ import annotations
+import json, os, re, subprocess, time, urllib.request
+from pathlib import Path
+
+REPO = os.getenv("TERMUX_GITHUB_REPO", "shironaki/Ai")
+ISSUE = int(os.getenv("TERMUX_RUNTIME_ISSUE", "23"))
+API = f"https://api.github.com/repos/{REPO}"
+MARKER = "<!-- TERMUX-RUNTIME -->"
+ROOT = Path(os.getenv("BOT_REPO_DIR", Path(__file__).resolve().parents[1]))
+BOT_LOG = ROOT / os.getenv("BOT_LOG_FILE", "bot.log")
+UPDATE_LOG = ROOT / os.getenv("TERMUX_UPDATE_LOG", "termux-autoupdate.log")
+SUPERVISOR_PID = ROOT / "termux-supervisor.pid"
+BOT_PID = ROOT / "termux-bot.pid"
+
+def run(*args: str) -> str:
+    try:
+        return subprocess.check_output(args, cwd=ROOT, text=True, stderr=subprocess.STDOUT, timeout=8).strip()
+    except Exception as exc:
+        return f"<error: {type(exc).__name__}>"
+
+def tail(path: Path, lines: int = 80) -> str:
+    try:
+        data = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return "<missing>"
+    return "\n".join(data[-lines:]) if data else "<empty>"
+
+def redact(text: str) -> str:
+    for secret in (os.getenv("BOT_TOKEN", ""), os.getenv("GITHUB_TOKEN", ""),
+                   os.getenv("GH_TOKEN", ""), os.getenv("TERMUX_GITHUB_TOKEN", "")):
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    return re.sub(r"(bot\d{6,}:[A-Za-z0-9_-]{20,})", "[REDACTED]", text)
+
+def token() -> str:
+    for name in ("TERMUX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    try:
+        return subprocess.check_output(["gh", "auth", "token"], text=True, stderr=subprocess.DEVNULL, timeout=5).strip()
+    except Exception:
+        return ""
+
+def request(method: str, path: str, value=None):
+    tok = token()
+    if not tok:
+        raise RuntimeError("GitHub token unavailable; use TERMUX_GITHUB_TOKEN or gh auth")
+    payload = None if value is None else json.dumps(value, ensure_ascii=False).encode()
+    req = urllib.request.Request(
+        API + path, data=payload, method=method,
+        headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {tok}",
+                 "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=12) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+def snapshot() -> str:
+    commit = run("git", "rev-parse", "HEAD")
+    branch = run("git", "branch", "--show-current")
+    health = run(os.getenv("TERMUX_PYTHON", str(ROOT / ".venv/bin/python")), str(ROOT / "scripts/healthcheck.py"))
+    bot_pid = BOT_PID.read_text(encoding="utf-8").strip() if BOT_PID.exists() else "<missing>"
+    supervisor_pid = SUPERVISOR_PID.read_text(encoding="utf-8").strip() if SUPERVISOR_PID.exists() else "<missing>"
+    bot_ps = run("ps", "-p", bot_pid, "-o", "pid=,etime=,command=") if bot_pid.isdigit() else "<not running>"
+    sup_ps = run("ps", "-p", supervisor_pid, "-o", "pid=,etime=,command=") if supervisor_pid.isdigit() else "<not running>"
+    return redact(
+        f"""{MARKER}
+## Termux runtime
+timestamp: {time.strftime("%Y-%m-%d %H:%M:%S %z")}
+branch: {branch}
+commit: {commit}
+health: {health or "<empty>"}
+bot process: {bot_ps}
+supervisor process: {sup_ps}
+
+### bot.log (tail)
+{tail(BOT_LOG)}
+
+### termux-autoupdate.log (tail)
+{tail(UPDATE_LOG)}
+"""
+    )
+
+def main() -> int:
+    body = snapshot()
+    try:
+        comments = request("GET", f"/issues/{ISSUE}/comments?per_page=100")
+        existing = next((item for item in comments if MARKER in item.get("body", "")), None)
+        if existing:
+            request("PATCH", f"/issues/comments/{existing['id']}", {"body": body})
+        else:
+            request("POST", f"/issues/{ISSUE}/comments", {"body": body})
+        print("TERMUX TELEMETRY: published")
+        return 0
+    except Exception as exc:
+        print(f"TERMUX TELEMETRY: failed ({type(exc).__name__}: {exc})")
+        return 1
+
+if __name__ == "__main__":
+    raise SystemExit(main())
