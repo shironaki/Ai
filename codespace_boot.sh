@@ -5,8 +5,6 @@ REPO="/workspaces/Ai"
 cd "$REPO" || exit 1
 
 # TEST Codespaces must use the same persistent data namespace as start.sh.
-# Without these exports postStartCommand could boot against data/local,
-# making existing users appear unregistered.
 export BOT_ENV="${BOT_ENV:-test}"
 export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"
 
@@ -16,6 +14,15 @@ UPDATER_PIDFILE="$REPO/updater.pid"
 
 log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"
+}
+
+bot_running() {
+    [ -f "$PIDFILE" ] || return 1
+    PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+    [ -n "$PID" ] || return 1
+    kill -0 "$PID" 2>/dev/null || return 1
+    CMD="$(ps -p "$PID" -o command= 2>/dev/null || true)"
+    printf '%s\n' "$CMD" | grep -q '[ /]run\.py\( \|$\)'
 }
 
 log "BOOT: lifecycle started"
@@ -36,7 +43,7 @@ if [ ! -x "$REPO/.venv/bin/python" ]; then
     exit 1
 fi
 
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+if bot_running; then
     log "BOT: already running"
 else
     if [ -z "${BOT_TOKEN:-}" ]; then
