@@ -17,7 +17,7 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
-echo "$" > "$SUPERVISOR_PID"
+echo "$$" > "$SUPERVISOR_PID"
 trap 'rm -f "$SUPERVISOR_PID"' EXIT
 
 report() {
