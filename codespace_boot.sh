@@ -4,6 +4,12 @@ set -u
 REPO="/workspaces/Ai"
 cd "$REPO" || exit 1
 
+# TEST Codespaces must use the same persistent data namespace as start.sh.
+# Without these exports postStartCommand could boot against data/local,
+# making existing users appear unregistered.
+export BOT_ENV="${BOT_ENV:-test}"
+export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"
+
 LOG="$REPO/codespace-boot.log"
 PIDFILE="$REPO/bot.pid"
 UPDATER_PIDFILE="$REPO/updater.pid"
