@@ -87,7 +87,9 @@ def main() -> int:
             return 1
 
     username = payload.get("result", {}).get("username", "unknown")
-    print(f"HEALTH OK: heartbeat={age:.1f}s telegram=@{username} polling=ready")
+    ai_ready = bool(os.getenv("GROQ_API_KEY", "").strip())
+    ai_state = "ready" if ai_ready else "unconfigured"
+    print(f"HEALTH OK: heartbeat={age:.1f}s telegram=@{username} polling=ready ai={ai_state}")
     return 0
 
 
