@@ -1,68 +1,56 @@
 # DEVELOPMENT_CHECKPOINT.md
 
-## Canonical TEST continuation — 2026-10-01 — Termux live recovery checkpoint
+## Canonical TEST continuation — 2026-10-01 — Termux dependency bootstrap diagnosis
 
 ### Current state
 - Repository: shironaki/Ai
 - Active branch: test-global-assistant-upgrade
-- Latest TEST commit: 30123cabe89f5237b1bc3068965f34eabbbc16f3
+- Latest TEST commit: 01e15b01b8371d59bc593da257d79e5af5df7d26
 - Draft PR: #22, base main; main/PROD remains untouched.
 - Persistent live diagnostics: GitHub Issue #23.
-- Current phone uses manual Termux supervisor; Termux:Boot is intentionally deferred to the second phone.
+- Termux live verification is not yet green.
+- Supervisor must remain stopped while repairing the bootstrap; do not treat historical Issue #23 telemetry as current health.
 
-### What is already fixed in TEST
-- Termux updater uses bash and loads ~/.config/ai/termux.env.
-- BOT_TOKEN is required from the protected Termux environment file.
-- TERMUX_GITHUB_TOKEN is used separately for telemetry.
-- psutil is optional in main.py and Android/Termux dependency bootstrap skips psutil.
-- Termux runtime requirements were reduced to the packages actually used by the current code (`aiogram`, `requests`).
-- Termux bootstrap now installs a modern Android-compatible `aiohttp` wheel separately and installs aiogram 2.x without re-resolving its obsolete aiohttp constraint, preventing source builds of old aiohttp/Pillow.
-- Founder regression tests now mock the database objects safely; CI is green again (59 tests).
-- Termux updater installs dependencies before pytest, then performs Telegram health verification.
-- Failed update/bootstrap/startup/health paths are designed to rollback to the previous local commit.
-- Supervisor writes its PID and runs the updater/report loop.
-- Telemetry publishes sanitized runtime snapshots to Issue #23.
+### Confirmed live Termux facts
+- Python: 3.13.13
+- pip: 26.0.1
+- The Termux device can download the official `aiohttp==3.14.3` CPython 3.13 Android ARM64 wheel with `--only-binary=:all:`.
+- Therefore Android wheel availability is NOT the blocker.
+- The 2026-10-01 23:10:52 failure window shows pip resolving `aiogram==2.25.2` together with its obsolete dependency constraint `aiohttp<3.9.0,>=3.8.0`, selecting `aiohttp-3.8.6.tar.gz` and attempting a source build.
+- `packaging` is not installed in the current venv, so the prior tag-inspection command failed; this is not itself a runtime blocker.
 
-### Latest live action completed by user
-The user successfully executed the clean Termux recovery block:
-1. stopped old termux_supervisor.sh processes;
-2. deleted the stale origin/test-global-assistant-upgrade remote ref;
-3. fetched origin/test-global-assistant-upgrade successfully;
-4. hard-reset the working tree to origin/test-global-assistant-upgrade at 2c67493;
-5. removed and recreated .venv;
-6. verified BOT_TOKEN exists without exposing it;
-7. started a fresh supervisor with PID 30864.
+### TEST repair just committed
+- `scripts/termux_update.sh` now isolates aiogram 2.x from the temporary Termux requirements using a PID-specific temp file and an explicit leak check.
+- Termux installs `aiohttp>=3.14,<3.15` from Android binary wheels first.
+- Termux installs the remaining requirements separately, then installs `aiogram==2.25.2` with `--no-deps`, followed by its pure-Python runtime dependencies.
+- Rollback no longer invokes the dependency installer from the restored old revision. This prevents a failed TEST update from immediately re-running the obsolete dependency bootstrap and polluting the diagnostic log with legacy source-build errors.
+- No secrets are exposed or changed.
 
-### Live state at handoff
-The latest telemetry snapshot available immediately before this checkpoint still contained historical failure tails: missing aiogram/requests, old psutil Android incompatibility, old stale-ref errors, and supervisor not running. It predates or is concurrent with the fresh supervisor startup and therefore is NOT proof that the new bootstrap failed.
-Do not ask the user to repeat the cleanup block unless a newer telemetry snapshot proves the fresh supervisor failed.
+### Required next live action
+The device currently contains competing/historical updater activity in the log. Do NOT start the supervisor yet.
 
-### Latest TEST bootstrap repair
-- Root cause of the live bootstrap failure: the legacy `requirements.txt` pulled unused native packages and, through `aiogram==2.25.2`, an old aiohttp range. On Termux/Python 3.13 this caused pip to build aiohttp/Pillow from source and fail on missing JPEG development libraries.
-- TEST repair is committed in `requirements.txt` and `scripts/termux_update.sh`.
-- CI run #574 is green: dependency install, compile, application import, AI service check, and all 59 runtime tests passed.
-- The live Termux telemetry still predates this repair and remains on old commit `2c674931...`; supervisor is not currently running. No conclusion about the repaired bootstrap can be drawn until Termux pulls the new TEST commit.
+After the repository change is pulled to Termux, the next live check must:
+1. stop any old `termux_supervisor.sh` process;
+2. sync TEST to commit `01e15b01...`;
+3. run the updater once in the foreground;
+4. inspect only the fresh log window from that run;
+5. confirm `TERMUX IMPORTS OK`, pytest success, bot health, and then start the supervisor.
 
-### Exact continuation condition
-On the next check, inspect Issue #23 first. Continue from the newest telemetry snapshot only.
-Success criteria:
+### Success criteria
 - health reports HEALTH OK;
 - bot process is running;
 - supervisor process is running;
 - heartbeat is fresh;
 - Telegram polling is ready;
 - no new aiogram/requests/psutil bootstrap error;
-- no new remote-ref lock error.
+- no remote-ref/lock error;
+- founder identity is verified live: configured owner is recognized without requiring a new /start registration.
 
-If the fresh bootstrap fails, fix the Termux bootstrap mechanism in TEST directly rather than repeatedly cycling the user through manual cleanup.
-
-### Owner/founder follow-up
-- Root cause identified: founder authorization already resolves from `config.owner`, but legacy handlers still required a row in `users.db` and could therefore ask the founder for `/start` after a fresh database/bootstrap.
-- TEST fix committed in `base/users.py` and `main.py`: the configured founder is persisted in the legacy registry and their live Telegram name/username are refreshed on incoming messages. No owner ID is guessed or changed.
-- Regression coverage added in `tests/test_founder_identity.py`.
-- CI passed on the fix: compile, application import, AI service check, and full runtime regression suite all successful.
-- This fix is TEST-only and is not yet live on Termux until the supervisor advances to the new commit.
-- Do not expose secrets.
+### Founder identity follow-up
+- TEST already contains the founder persistence fix in `base/users.py` and `main.py`.
+- Regression coverage exists in `tests/test_founder_identity.py`.
+- CI previously passed all 59 runtime tests on the founder fix.
+- This remains TEST-only until live Termux verification.
 
 ### Operating rule
-Work directly from repository state, make fixes in TEST, verify CI, then verify live state through Issue #23. Never treat CI alone as proof of live Telegram health. Never expose secrets. Keep main/PROD untouched until explicit live TEST verification and user approval.
+Work directly from repository state, make fixes in TEST, verify CI, then verify live state through fresh telemetry. Never treat CI or stale Issue #23 telemetry alone as proof of live Telegram health. Keep main/PROD untouched until explicit live TEST verification and user approval.
