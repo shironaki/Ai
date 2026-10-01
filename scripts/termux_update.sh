@@ -22,7 +22,7 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 trap cleanup EXIT
 
-if [[ -n "$(git status --porcelain)"]]; then
+if [[ -n "$(git status --porcelain)" ]]; then
     log "STOP: working tree is not clean"
     exit 1
 fi
