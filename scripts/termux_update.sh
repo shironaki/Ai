@@ -159,7 +159,13 @@ if [[ "$LOCAL" != "$REMOTE" ]]; then
         exit 1
     fi
 
-    if ! install_dependencies; then
+    # The current shell loaded the pre-update script into memory. Restart from
+    # disk so dependency installation uses the freshly pulled implementation.
+    log "UPDATE: restarting updater from freshly pulled revision"
+    exec bash "$REPO/scripts/termux_update.sh"
+fi
+
+if ! install_dependencies; then
         rollback "$LOCAL"
         exit 0
     fi
