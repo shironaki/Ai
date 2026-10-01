@@ -23,7 +23,7 @@ def user_summary(user_id: int) -> dict | None:
         "id": int(row["id"]),
         "name": row["name"],
         "username": row["username"],
-        "status": row["status"],
+        "status": "Создатель бота" if user_id == config.owner else row["status"],
         "balance": row["balance"],
         "games": row["games"],
         "regdata": row["regdata"],
