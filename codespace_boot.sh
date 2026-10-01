@@ -28,10 +28,8 @@ bot_running() {
 migrate_test_data() {
     SRC="$REPO/data/local"
     DST="$REPO/data/test"
-
     [ -d "$SRC" ] || return 0
     mkdir -p "$DST"
-
     for DB in users.db chats.db; do
         if [ -f "$SRC/$DB" ] && [ ! -f "$DST/$DB" ]; then
             cp "$SRC/$DB" "$DST/$DB"
@@ -42,46 +40,42 @@ migrate_test_data() {
 
 log "BOOT: lifecycle started"
 migrate_test_data
-if [ -n "${BOT_TOKEN:-}" ]; then
-    log "BOOT: BOT_TOKEN=SET"
-else
-    log "BOOT: BOT_TOKEN=MISSING"
-fi
-
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-    log "BOOT: GITHUB_TOKEN=SET"
-else
-    log "BOOT: GITHUB_TOKEN=MISSING"
-fi
+[ -n "${BOT_TOKEN:-}" ] && log "BOOT: BOT_TOKEN=SET" || log "BOOT: BOT_TOKEN=MISSING"
+[ -n "${GITHUB_TOKEN:-}" ] && log "BOOT: GITHUB_TOKEN=SET" || log "BOOT: GITHUB_TOKEN=MISSING"
 
 if [ ! -x "$REPO/.venv/bin/python" ]; then
     log "STOP: Python venv missing"
     exit 1
 fi
 
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git config --local credential.helper '!f() { printf "protocol=https\\nhost=github.com\\nusername=x-access-token\\npassword=%s\\n\\n" "$GITHUB_TOKEN"; }; f'
+    log "BOOT: running immediate autoupdate check"
+    if sh "$REPO/autoupdate.sh" >> "$LOG" 2>&1; then
+        log "BOOT: immediate autoupdate completed"
+    else
+        log "BOOT: immediate autoupdate failed; continuing"
+    fi
+fi
+
 if bot_running; then
     log "BOT: already running"
+elif [ -z "${BOT_TOKEN:-}" ]; then
+    log "STOP: BOT_TOKEN missing; bot not started"
 else
-    if [ -z "${BOT_TOKEN:-}" ]; then
-        log "STOP: BOT_TOKEN missing; bot not started"
-    else
-        nohup "$REPO/.venv/bin/python" "$REPO/run.py" >> "$REPO/bot.log" 2>&1 < /dev/null &
-        echo $! > "$PIDFILE"
-        log "BOT: started PID $(cat "$PIDFILE")"
-    fi
+    nohup "$REPO/.venv/bin/python" "$REPO/run.py" >> "$REPO/bot.log" 2>&1 < /dev/null &
+    echo $! > "$PIDFILE"
+    log "BOT: started PID $(cat "$PIDFILE")"
 fi
 
 if [ -f "$UPDATER_PIDFILE" ] && kill -0 "$(cat "$UPDATER_PIDFILE" 2>/dev/null)" 2>/dev/null; then
     log "UPDATER: already running"
+elif [ -z "${GITHUB_TOKEN:-}" ]; then
+    log "STOP: GITHUB_TOKEN missing; updater not started"
 else
-    if [ -z "${GITHUB_TOKEN:-}" ]; then
-        log "STOP: GITHUB_TOKEN missing; updater not started"
-    else
-        git config --local credential.helper '!f() { printf "protocol=https\\nhost=github.com\\nusername=x-access-token\\npassword=%s\\n\\n" "$GITHUB_TOKEN"; }; f'
-        nohup sh -c 'while true; do ./autoupdate.sh; sleep 60; done' >> "$REPO/updater.log" 2>&1 < /dev/null &
-        echo $! > "$UPDATER_PIDFILE"
-        log "UPDATER: started PID $(cat "$UPDATER_PIDFILE")"
-    fi
+    nohup sh -c 'while true; do ./autoupdate.sh; sleep 60; done' >> "$REPO/updater.log" 2>&1 < /dev/null &
+    echo $! > "$UPDATER_PIDFILE"
+    log "UPDATER: started PID $(cat "$UPDATER_PIDFILE")"
 fi
 
 log "BOOT: lifecycle completed"
