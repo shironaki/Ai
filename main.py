@@ -35,6 +35,8 @@ from base import config, chats, users
 from core.runtime_state import is_paused, set_paused
 from services.security import redact
 from services.moderation_scheduler import expiry_loop
+from services.diagnostic_journal import record as record_diagnostic
+from services.issue_tracker import create_runtime_error_marker
 
 LOG_FILE = "bot.log"
 BOT_PAUSED = False
@@ -84,9 +86,24 @@ class MyStatesGroup(StatesGroup):
 
 class ActivityLoggingMiddleware(BaseMiddleware):
     async def on_pre_process_update(self, update, data):
+        data["diagnostic_update_id"] = getattr(update, "update_id", None)
         if update.message:
             message = update.message
             raw_text = message.text or message.caption or ""
+            data["diagnostic_chat_id"] = message.chat.id
+            data["diagnostic_user_id"] = getattr(message.from_user, "id", None)
+            data["diagnostic_text"] = raw_text
+            try:
+                data["diagnostic_event_id"] = record_diagnostic(
+                    update_id=data["diagnostic_update_id"],
+                    chat_id=message.chat.id,
+                    user_id=getattr(message.from_user, "id", None),
+                    stage="update_received",
+                    result="received",
+                    context={"content_type": getattr(message, "content_type", "unknown")},
+                )
+            except Exception:
+                log.exception("DIAGNOSTIC JOURNAL | failed to record update")
             log.info(
                 "UPDATE message | update_id=%s chat=%s type=%s user=%s text_len=%s content_type=%s",
                 getattr(update, "update_id", "?"),
@@ -107,10 +124,23 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 
     async def on_process_message(self, message, data):
         handler = current_handler.get()
+        handler_name = getattr(handler, "__name__", repr(handler)) if handler else None
+        data["diagnostic_handler"] = handler_name
         if handler:
-            log.info("DISPATCH | handler=%s", getattr(handler, "__name__", repr(handler)))
+            log.info("DISPATCH | handler=%s", handler_name)
         else:
             log.info("DISPATCH | handler not selected yet")
+        try:
+            record_diagnostic(
+                update_id=data.get("diagnostic_update_id"),
+                chat_id=data.get("diagnostic_chat_id"),
+                user_id=data.get("diagnostic_user_id"),
+                handler=handler_name,
+                stage="dispatch",
+                result="handler_selected" if handler else "no_handler",
+            )
+        except Exception:
+            log.exception("DIAGNOSTIC JOURNAL | failed to record dispatch")
 
     async def on_post_process_message(self, message, results, data):
         handler = current_handler.get()
@@ -354,11 +384,44 @@ async def log_update_error(update, exception):
     )
 
     message = getattr(update, "message", None)
+    diagnostic_id = None
+    marker_id = None
+    try:
+        diagnostic_id = record_diagnostic(
+            update_id=update_id,
+            chat_id=getattr(message.chat, "id", None) if message else None,
+            user_id=getattr(message.from_user, "id", None) if message else None,
+            stage="exception",
+            result="unhandled_exception",
+            exception=exception,
+            context={
+                "text": (message.text or message.caption or "")[:1000] if message else "",
+                "content_type": getattr(message, "content_type", None) if message else None,
+            },
+        )
+        if message:
+            marker_id = create_runtime_error_marker(
+                chat_id=message.chat.id,
+                message_id=message.message_id,
+                reporter_id=getattr(message.from_user, "id", config.owner),
+                message_text=(message.text or message.caption or f"[{message.content_type}]")[:4000],
+                diagnostic_id=diagnostic_id,
+                exception_type=type(exception).__name__,
+                exception_text=str(exception),
+            )
+        log.error(
+            "DIAGNOSTIC AUTO-QA | diagnostic_id=%s marker_id=%s update_id=%s",
+            diagnostic_id, marker_id, update_id,
+        )
+    except Exception:
+        log.exception("DIAGNOSTIC AUTO-QA | failed to persist exception")
+
     if message:
         try:
             await message.answer(
-                "⚠️ Ошибка обработчика. Диагностика записана в bot.log. "
-                "Владелец бота получит технический отчёт."
+                "⚠️ Ошибка обработчика. Я автоматически сохранила диагностику "
+                f"<code>#{diagnostic_id or '?'}</code> и QA-метку "
+                f"<code>#{marker_id or '?'}</code>."
             )
         except Exception:
             log.exception("Could not send error notice to the user")
@@ -375,7 +438,9 @@ async def log_update_error(update, exception):
                 details += (
                     f"chat: <code>{html.escape(str(message.chat.id))}</code>\n"
                     f"user: <code>{html.escape(str(getattr(message.from_user, 'id', '?')))}</code>\n"
-                    f"text_len: <code>{len(message.text or message.caption or '')}</code>"
+                    f"text_len: <code>{len(message.text or message.caption or '')}</code>\n"
+                    f"diagnostic_id: <code>{html.escape(str(diagnostic_id or '?'))}</code>\n"
+                    f"qa_marker: <code>#{html.escape(str(marker_id or '?'))}</code>"
                 )
             await bot.send_message(config.owner, details)
         except Exception:
