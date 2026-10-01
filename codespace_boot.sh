@@ -68,6 +68,13 @@ if bot_healthy; then
 elif [ -z "${BOT_TOKEN:-}" ]; then
     log "STOP: BOT_TOKEN missing; bot not started"
 else
+    if bot_running; then
+        log "BOT: existing process is unhealthy; stopping stale process before recovery"
+        PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+        [ -n "$PID" ] && kill "$PID" 2>/dev/null || true
+        sleep 2
+        rm -f "$PIDFILE"
+    fi
     nohup "$REPO/.venv/bin/python" "$REPO/run.py" >> "$REPO/bot.log" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
     sleep 5
