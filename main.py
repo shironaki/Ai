@@ -13,7 +13,10 @@ from datetime import datetime, timedelta
 from time import gmtime, localtime, strftime
 
 import aiogram
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 import requests
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
