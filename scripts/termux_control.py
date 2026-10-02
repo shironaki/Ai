@@ -2,6 +2,7 @@
 """Fixed-command emergency control plane for the Termux supervisor."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -22,6 +23,9 @@ PIDFILE = ROOT / "termux-bot.pid"
 STATEFILE = ROOT / "data" / "test" / "runtime" / "termux-control-state.json"
 ROLEFILE = ROOT / "data" / "test" / "runtime" / "termux-role"
 DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()
+LEASE_BRANCH = os.getenv("TERMUX_LEASE_BRANCH", "termux-lease").strip()
+LEASE_PATH = os.getenv("TERMUX_LEASE_PATH", "lease.json").strip()
+LEASE_TTL = max(30, int(os.getenv("TERMUX_LEASE_TTL", "45")))
 LOG = ROOT / "termux-autoupdate.log"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
@@ -63,6 +67,72 @@ def request(method: str, path: str, value=None):
     )
     with urllib.request.urlopen(req, timeout=12) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def lease_request(method: str, path: str, value=None):
+    return request(method, path, value)
+
+
+def read_lease() -> tuple[dict, str]:
+    payload = lease_request(
+        "GET",
+        f"/contents/{LEASE_PATH}?ref={LEASE_BRANCH}",
+    )
+    encoded = payload.get("content", "")
+    if payload.get("encoding") == "base64":
+        raw = base64.b64decode(encoded).decode("utf-8")
+    else:
+        raw = encoded
+    return json.loads(raw or "{}"), str(payload.get("sha", ""))
+
+
+def write_lease(lease: dict, sha: str) -> bool:
+    value = {
+        "message": f"chore: update Termux lease for {DEVICE_ID}",
+        "content": base64.b64encode(
+            (json.dumps(lease, separators=(",", ":")) + "\n").encode("utf-8")
+        ).decode("ascii"),
+        "sha": sha,
+        "branch": LEASE_BRANCH,
+    }
+    try:
+        lease_request("PUT", f"/contents/{LEASE_PATH}", value)
+        return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            return False
+        raise
+
+
+def acquire_or_renew_lease() -> tuple[bool, str]:
+    if not DEVICE_ID:
+        return False, "TERMUX_DEVICE_ID is not configured"
+    lease, sha = read_lease()
+    now = int(time.time())
+    owner = str(lease.get("owner", "")).strip().casefold()
+    expires_at = int(lease.get("expires_at", 0) or 0)
+    if owner and owner != DEVICE_ID and expires_at > now:
+        return False, f"lease held by {owner} for {expires_at - now}s"
+    new_lease = {
+        "owner": DEVICE_ID,
+        "expires_at": now + LEASE_TTL,
+        "updated_at": now,
+    }
+    if write_lease(new_lease, sha):
+        return True, f"lease owner={DEVICE_ID} ttl={LEASE_TTL}s"
+    return False, "lease update conflict; another device won the lease"
+
+
+def release_lease() -> tuple[bool, str]:
+    if not DEVICE_ID:
+        return False, "TERMUX_DEVICE_ID is not configured"
+    lease, sha = read_lease()
+    owner = str(lease.get("owner", "")).strip().casefold()
+    if owner != DEVICE_ID:
+        return True, f"lease owner={owner or 'none'}"
+    if write_lease({"owner": "", "expires_at": 0, "updated_at": int(time.time())}, sha):
+        return True, "lease released"
+    return False, "lease release conflict; refusing to overwrite another owner"
 
 
 def load_state() -> int | None:
@@ -149,11 +219,30 @@ def set_role(role: str) -> str:
     role = role.casefold()
     if role not in {"active", "standby"}:
         return "ignored: invalid role"
+    if role == "active":
+        try:
+            acquired, lease_message = acquire_or_renew_lease()
+        except Exception as exc:
+            return f"role=active denied: lease unavailable ({type(exc).__name__})"
+        if not acquired:
+            return f"role=active denied: {lease_message}"
+        ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
+        ROLEFILE.write_text("active\n", encoding="utf-8")
+        health = restart_bot()
+        if health.startswith("HEALTH OK:"):
+            return f"role=active; {lease_message}; {health}"
+        release_lease()
+        ROLEFILE.write_text("standby\n", encoding="utf-8")
+        return f"role=active failed; lease released; {health}"
+
     ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
-    ROLEFILE.write_text(role + "\n", encoding="utf-8")
-    if role == "standby":
-        return "role=standby; " + stop_bot_for_role()
-    return "role=active; " + restart_bot()
+    ROLEFILE.write_text("standby\n", encoding="utf-8")
+    stopped = stop_bot_for_role()
+    try:
+        released, lease_message = release_lease()
+    except Exception as exc:
+        released, lease_message = False, f"lease release failed ({type(exc).__name__})"
+    return f"role=standby; {stopped}; {lease_message}"
 
 
 def stop_bot_for_role() -> str:
@@ -207,6 +296,20 @@ def execute(command: str) -> str:
 
 
 def main() -> int:
+    role = ROLEFILE.read_text(encoding="utf-8").strip().casefold() if ROLEFILE.exists() else "active"
+    if role == "active":
+        try:
+            acquired, lease_message = acquire_or_renew_lease()
+        except Exception as exc:
+            acquired, lease_message = False, f"lease unavailable ({type(exc).__name__})"
+        if not acquired:
+            stop_bot_for_role()
+            ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
+            ROLEFILE.write_text("standby\n", encoding="utf-8")
+            with LOG.open("a", encoding="utf-8") as fh:
+                fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
+            return 1
+
     comments = request("GET", f"/issues/{ISSUE}/comments?per_page=100")
     commands = [
         item for item in comments
