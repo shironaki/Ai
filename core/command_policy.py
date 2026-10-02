@@ -14,10 +14,10 @@ def evaluate(intent: CommandIntent, role: str, *, confirmed: bool = False) -> Co
     if not role_allows(role, spec.min_role):
         return CommandDecision(False, "Недостаточно прав для этой команды.")
 
-    if intent.scope not in {"chat", "global"}:
+    if intent.scope not in {"chat", "global", "private"}:
         return CommandDecision(False, "Область выполнения не определена.")
 
-    if spec.scope not in {"chat", "global", "both"}:
+    if spec.scope not in {"chat", "global", "private", "both"}:
         return CommandDecision(False, "У команды некорректная политика области.")
 
     if spec.scope == "chat" and intent.scope != "chat":
