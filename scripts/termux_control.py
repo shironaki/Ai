@@ -20,6 +20,8 @@ PYTHON = Path(os.getenv("TERMUX_PYTHON", str(ROOT / ".venv/bin/python")))
 BOT = ROOT / "run.py"
 PIDFILE = ROOT / "termux-bot.pid"
 STATEFILE = ROOT / "data" / "test" / "runtime" / "termux-control-state.json"
+ROLEFILE = ROOT / "data" / "test" / "runtime" / "termux-role"
+DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()
 LOG = ROOT / "termux-autoupdate.log"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
@@ -143,7 +145,45 @@ def restart_bot() -> str:
         return f"restart started pid={process.pid}; health check error: {type(exc).__name__}"
 
 
+def set_role(role: str) -> str:
+    role = role.casefold()
+    if role not in {"active", "standby"}:
+        return "ignored: invalid role"
+    ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
+    ROLEFILE.write_text(role + "\n", encoding="utf-8")
+    if role == "standby":
+        if bot_running():
+            return "role=standby; stopping bot: " + restart_bot() if False else stop_bot_for_role()
+        return "role=standby; bot already stopped"
+    return "role=active; " + restart_bot()
+
+
+def stop_bot_for_role() -> str:
+    if not bot_running():
+        PIDFILE.unlink(missing_ok=True)
+        return "bot already stopped"
+    pid = PIDFILE.read_text(encoding="utf-8").strip()
+    try:
+        os.kill(int(pid), 15)
+    except OSError:
+        pass
+    for _ in range(15):
+        if not bot_running():
+            break
+        time.sleep(1)
+    PIDFILE.unlink(missing_ok=True)
+    return "bot stopped"
+
+
 def execute(command: str) -> str:
+    if command.startswith("ROLE "):
+        parts = command.split()
+        if len(parts) != 3:
+            return "ignored: ROLE syntax is ROLE <device_id> <active|standby>"
+        target, role = parts[1].casefold(), parts[2].casefold()
+        if not DEVICE_ID or target != DEVICE_ID:
+            return "ignored: command targets another device"
+        return set_role(role)
     if command == "STATUS":
         report = subprocess.run(
             [str(PYTHON), str(ROOT / "scripts/termux_report.py")],
@@ -194,7 +234,7 @@ def main() -> int:
             (line.strip().upper() for line in raw.splitlines() if line.strip()),
             "",
         )
-        if command in {"STATUS", "RESTART", "UPDATE"}:
+        if command in {"STATUS", "RESTART", "UPDATE"} or command.startswith("ROLE "):
             message = execute(command)
             result(command, message.replace("\n", " "))
         save_state(comment_id)
