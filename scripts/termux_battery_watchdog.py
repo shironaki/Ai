@@ -49,7 +49,7 @@ def send_message(text: str) -> bool:
         return False
     response = requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": OWNER_ID, "text": text},
+        json={"chat_id": OWNER_ID, "text": text, "parse_mode": "HTML"},
         timeout=15,
     )
     response.raise_for_status()
