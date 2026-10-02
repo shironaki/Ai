@@ -1,6 +1,8 @@
 """Telegram adapter for the authoritative command help."""
 
 from aiogram import types
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from base import config
@@ -13,7 +15,8 @@ from services.chat_roles import get_role, list_roles
 from services.silence_service import set_silent, is_silent
 from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
-from main import dp, bot, chats, users, bot_is_paused, set_bot_paused
+from main import dp, bot, chats, users, bot_is_paused, set_bot_paused, ContentType
+from services.broadcast_service import broadcast_message
 
 
 def _role_for_message(message: types.Message) -> str:
@@ -386,6 +389,72 @@ async def panel_welcome_fixed(call):
     await call.answer()
 
 
+class BroadcastState(StatesGroup):
+    target = State()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:broadcast")
+async def panel_system_broadcast(call: types.CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=1)
+    menu.add(
+        InlineKeyboardButton("👤 Пользователям", callback_data="panel:broadcast:users"),
+        InlineKeyboardButton("💬 Чатам", callback_data="panel:broadcast:chats"),
+        InlineKeyboardButton("🌐 Всем", callback_data="panel:broadcast:all"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:system"),
+    )
+    await call.message.edit_text(
+        "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\nВыберите аудиторию.",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("panel:broadcast:"))
+async def panel_broadcast_target(call: types.CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    target = call.data.rsplit(":", 1)[-1]
+    await BroadcastState.target.set()
+    state = FSMContext.current()
+    await state.update_data(broadcast_target=target)
+    labels = {"users": "пользователям", "chats": "чатам", "all": "пользователям и чатам"}
+    await call.message.edit_text(
+        "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\n"
+        f"Отправьте следующим сообщением текст, фото или другое сообщение для рассылки {labels[target]}.",
+        reply_markup=_panel_back(),
+    )
+    await call.answer()
+
+
+@dp.message_handler(content_types=ContentType.ANY, state=BroadcastState.target)
+async def panel_broadcast_message(message: types.Message, state: FSMContext):
+    if not is_owner(message.from_user.id):
+        await state.finish()
+        return
+    data = await state.get_data()
+    target = data.get("broadcast_target")
+    await state.finish()
+
+    user_ids = []
+    chat_ids = []
+    if target in {"users", "all"}:
+        user_ids = [int(row[0]) for row in users.cursor.execute("SELECT id FROM users").fetchall()]
+    if target in {"chats", "all"}:
+        chat_ids = [int(row[0]) for row in chats.cursor.execute("SELECT chat_id FROM chats").fetchall()]
+    recipients = user_ids + chat_ids
+    status = await message.answer("📣 Рассылка началась…")
+    sent, failed = await broadcast_message(message, recipients)
+    await status.edit_text(
+        "📣 <b>Рассылка завершена.</b>\n\n"
+        f"✅ Успешно: <b>{sent}</b>\n"
+        f"❌ Неуспешно: <b>{failed}</b>"
+    )
+
+
 @dp.callback_query_handler(lambda c: c.data == "panel:system")
 async def panel_system(call):
     if not is_owner(call.from_user.id):
@@ -393,6 +462,7 @@ async def panel_system(call):
         return
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("🧠 AI diagnostic", callback_data="panel:system:ai"))
+    menu.add(InlineKeyboardButton("📣 Рассылка", callback_data="panel:system:broadcast"))
     menu.add(InlineKeyboardButton("🛰 Стазис", callback_data="panel:system:stasis"))
     menu.add(InlineKeyboardButton("🧪 QA-метки", callback_data="panel:system:issues"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
