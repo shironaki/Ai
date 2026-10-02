@@ -7,7 +7,6 @@ import time
 import requests
 
 from services.security import redact
-from core.command_registry import command_catalog
 from services.ai_character import CHARACTER_PROMPT
 
 log = logging.getLogger(__name__)
@@ -29,7 +28,6 @@ _MIN_REQUEST_INTERVAL = 2.0
 
 
 def _system_prompt(role: str) -> str:
-    catalog = command_catalog(role)
     return f"""
 Ты — «Аи», характерный виртуальный помощник Telegram-бота.
 Отвечай по-русски, естественно, коротко и по делу, но с характером.
@@ -60,9 +58,6 @@ def _system_prompt(role: str) -> str:
 - Если пользователь просит показать информацию, которую бот умеет получить напрямую (профиль, чат, систему, логи или диагностику), не инструктируй его вручную вводить slash-команду. Если прямой исполнитель не сработал, честно сообщи, что запрос не был обработан, без выдуманного результата.
 - Диагностика может содержать только факты из переданного контекста: наличие ключа, модель и последняя ошибка. Никогда не придумывай проценты памяти, задержку сети, число обработчиков, uptime или состояние модулей.
 - Не утверждай, что видел реальные логи, БД или системные метрики, если соответствующий подтверждённый контекст не передан.
-
-Фактический каталог команд для этой роли:
-{catalog}
 
 Если пользователь — основатель, обращайся уважительно и подчёркивай, что
 это основатель Системы.
@@ -113,7 +108,7 @@ def _request_sync(messages, model, api_key):
     return content.strip()
 
 
-async def generate_reply(user_id: int, prompt: str, role: str = "Игрок", verified_context: str | None = None):
+async def generate_reply(user_id: int, prompt: str, role: str = "Пользователь", verified_context: str | None = None):
     """Generate a reply using Groq when GROQ_API_KEY is configured."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key or not api_key.strip():
