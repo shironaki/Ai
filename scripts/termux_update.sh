@@ -201,7 +201,32 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
     log "UPDATE: bot restarted and health-verified"
 
 elif ! is_running; then
-    start_bot
+    NEED_DEPS="0"
+
+    if [[ ! -x "$PYTHON" ]]; then
+        log "RECOVERY: .venv missing; creating virtual environment"
+        if ! python -m venv "$REPO/.venv" >> "$LOG" 2>&1; then
+            log "STOP: failed to create Python virtual environment"
+            exit 1
+        fi
+        NEED_DEPS="1"
+    elif ! "$PYTHON" -c 'import aiogram, aiohttp, requests' >> "$LOG" 2>&1; then
+        log "RECOVERY: Python runtime imports failed; reinstalling dependencies"
+        NEED_DEPS="1"
+    fi
+
+    if [[ "$NEED_DEPS" == "1" ]]; then
+        if ! install_dependencies; then
+            log "STOP: initial/recovery dependency installation failed"
+            exit 1
+        fi
+    fi
+
+    if ! start_bot; then
+        log "STOP: initial/recovery bot start or health check failed"
+        exit 1
+    fi
+
     log "RECOVERY: bot started and health-verified"
 else
     "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1 || {
