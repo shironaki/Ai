@@ -82,7 +82,7 @@ def ai_status() -> dict:
     }
 
 
-def _request_sync(messages, model, api_key, *, max_tokens=900, return_meta=False):
+def _request_sync(messages, model, api_key, *, max_tokens=900):
     response = requests.post(
         GROQ_URL,
         headers={
@@ -108,8 +108,6 @@ def _request_sync(messages, model, api_key, *, max_tokens=900, return_meta=False
     if not content:
         raise RuntimeError("Groq returned an empty response")
     content = content.strip()
-    if return_meta:
-        return content, choices[0].get("finish_reason")
     return content
 
 
@@ -148,15 +146,13 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Пользов�
     messages.extend(candidate_history)
 
     try:
-        answer, finish_reason = await asyncio.to_thread(
+        answer = await asyncio.to_thread(
             _request_sync,
             messages,
             os.getenv("AI_MODEL", DEFAULT_MODEL),
             api_key,
-            max_tokens=900,
-            return_meta=True,
         )
-        if finish_reason == "length" or _looks_incomplete(answer):
+        if _looks_incomplete(answer):
             continuation_messages = list(messages)
             continuation_messages.append({"role": "assistant", "content": answer})
             continuation_messages.append({
