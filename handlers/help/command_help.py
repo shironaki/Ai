@@ -4,6 +4,7 @@ from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils.exceptions import MessageToEditNotFound
 
 from base import config
 from core.command_help import render_help
@@ -17,7 +18,7 @@ from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
 from main import dp, bot, chats, users, bot_is_paused, set_bot_paused, ContentType
 from services.broadcast_service import broadcast_message
-from services.action_cancel import cancel_current_action
+from services.action_cancel import cancel_current_action, register_runtime_action
 
 
 def _role_for_message(message: types.Message) -> str:
@@ -74,23 +75,51 @@ def _panel_role(user_id, chat_id=None):
     return (get_role(chat_id, user_id) if chat_id is not None else get_user_status(user_id)) or "Пользователь"
 
 
-def _panel_back():
-    return InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
-
-
-@dp.callback_query_handler(lambda c: c.data == "panel:root")
-async def panel_root(call):
+def _panel_menu(user_id: int, chat_id: int) -> InlineKeyboardMarkup:
     menu = InlineKeyboardMarkup(row_width=2)
-    if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id):
+    if is_owner(user_id) or has_moderator_role(user_id, chat_id):
         menu.add(InlineKeyboardButton("👥 Пользователи", callback_data="panel:users"))
         menu.add(InlineKeyboardButton("🔨 Модерация", callback_data="panel:moderation"))
     menu.add(InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"))
     menu.add(InlineKeyboardButton("📬 Репорты", callback_data="panel:reports"))
     menu.add(InlineKeyboardButton("↩️ Отменить текущее действие", callback_data="panel:cancel"))
-    if is_owner(call.from_user.id):
+    if is_owner(user_id):
         menu.add(InlineKeyboardButton("⚙️ Системное", callback_data="panel:system"))
     menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="panel:close"))
+    return menu
+
+
+def _panel_back(parent: str = "panel:root"):
+    return InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data=parent))
+
+
+async def _panel_edit(call, text: str, reply_markup=None):
+    """Edit the current panel message, recreating it if Telegram no longer has it."""
+    try:
+        await _panel_edit(call, text, reply_markup=reply_markup)
+    except MessageToEditNotFound:
+        await call.message.answer(text, reply_markup=reply_markup)
+    except Exception as exc:
+        if "message to edit not found" in str(exc).lower():
+            await call.message.answer(text, reply_markup=reply_markup)
+        else:
+            raise
+
+
+async def _render_panel_root_message(message: types.Message):
+    menu = _panel_menu(message.from_user.id, message.chat.id)
+    await message.answer(
+        "<b>🛠 АДМИНИСТРАТИВНАЯ ПАНЕЛЬ</b>\n\n"
+        "Уровень: <b>" + _panel_role(message.from_user.id, message.chat.id) + "</b>\n"
+        "Показываются только доступные вашему уровню функции.",
+        reply_markup=menu,
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:root")
+async def panel_root(call):
     from main import log
+    menu = _panel_menu(call.from_user.id, call.message.chat.id)
     log.info(
         "PANEL ROOT ENTER | user=%s chat=%s buttons=%s",
         call.from_user.id,
@@ -99,14 +128,14 @@ async def panel_root(call):
     )
     await call.answer()
     log.info("PANEL ROOT ANSWERED | user=%s chat=%s", call.from_user.id, call.message.chat.id)
-    await call.message.edit_text(
+    await _panel_edit(
+        call,
         "<b>🛠 АДМИНИСТРАТИВНАЯ ПАНЕЛЬ</b>\n\n"
         "Уровень: <b>" + _panel_role(call.from_user.id, call.message.chat.id) + "</b>\n"
         "Показываются только доступные вашему уровню функции.",
         reply_markup=menu,
     )
     log.info("PANEL ROOT EDITED | user=%s chat=%s", call.from_user.id, call.message.chat.id)
-
 
 @dp.callback_query_handler(lambda c: c.data == "panel:cancel")
 async def panel_cancel(call: types.CallbackQuery):
@@ -176,7 +205,7 @@ async def panel_relation_select(call):
     await call.message.edit_text(
         "<b>🤝 ОТНОШЕНИЕ АИ</b>\n\n"
         "Теперь ответьте на сообщение пользователя, которому назначается этот уровень.",
-        reply_markup=_panel_back(),
+        reply_markup=_panel_back("panel:users"),
     )
     await call.answer()
 
@@ -208,7 +237,7 @@ async def panel_role_select(call):
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "role", "target_role": role}
     await call.message.edit_text(
         "<b>🎭 " + role + "</b>\nОтветьте на сообщение пользователя, которому назначается роль.",
-        reply_markup=_panel_back(),
+        reply_markup=_panel_back("panel:users"),
     )
     await call.answer()
 
@@ -277,7 +306,7 @@ async def panel_admins(call):
     body = "\n\n".join(sections) or "Нет доступных данных."
     await call.message.edit_text(
         "<b>👮 СОСТАВ АДМИНИСТРАТОРОВ</b>\n\n" + body,
-        reply_markup=_panel_back(),
+        reply_markup=_panel_back("panel:users"),
     )
     await call.answer()
 
@@ -296,7 +325,7 @@ async def panel_myinfo(call):
         "Роль: <b>" + escape_for_telegram_html(str(data.get("status") or "—")) + "</b>\n"
         "Регистрация в Системе: <code>" + escape_for_telegram_html(str(data.get("system_registered_at") or "—")) + "</code>\n"
         "Регистрация в Telegram: <b>не предоставляется Telegram Bot API</b>",
-        reply_markup=_panel_back(),
+        reply_markup=_panel_back("panel:users"),
     )
     await call.answer()
 
@@ -329,9 +358,9 @@ async def panel_chatinfo(call):
             "Участников по Telegram: <b>" + str(count) + "</b>\n"
             "Администраторов: <b>" + str(len(admins)) + "</b>"
         )
-        await call.message.edit_text(text, reply_markup=_panel_back())
+        await call.message.edit_text(text, reply_markup=_panel_back("panel:info"))
     except Exception:
-        await call.message.edit_text("⚠️ Telegram не предоставил данные этого чата.", reply_markup=_panel_back())
+        await call.message.edit_text("⚠️ Telegram не предоставил данные этого чата.", reply_markup=_panel_back("panel:info"))
     await call.answer()
 
 
@@ -359,7 +388,7 @@ async def panel_mod_select(call):
     from handlers.help.help import _PANEL_PENDING
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "moderation", "action": action}
     extra = " и укажите длительность (например: 10м)" if action in {"mute", "ban"} else ""
-    await call.message.edit_text("Ответьте на сообщение цели" + extra + ".", reply_markup=_panel_back())
+    await call.message.edit_text("Ответьте на сообщение цели" + extra + ".", reply_markup=_panel_back("panel:moderation"))
     await call.answer()
 
 
@@ -443,7 +472,7 @@ async def panel_welcome_auto(call):
         return
     chats.cursor.execute("UPDATE chats SET welcome='' WHERE chat_id=?", (call.message.chat.id,))
     chats.connect.commit()
-    await call.message.edit_text("🤖 Авто-Аи включено.", reply_markup=_panel_back())
+    await call.message.edit_text("🤖 Авто-Аи включено.", reply_markup=_panel_back("panel:welcome"))
     await call.answer()
 
 
@@ -454,7 +483,7 @@ async def panel_welcome_fixed(call):
         return
     from handlers.help.help import _PANEL_PENDING
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "welcome"}
-    await call.message.edit_text("✏️ Ответьте на это сообщение текстом фиксированного приветствия.", reply_markup=_panel_back())
+    await call.message.edit_text("✏️ Ответьте на это сообщение текстом фиксированного приветствия.", reply_markup=_panel_back("panel:welcome"))
     await call.answer()
 
 
@@ -494,7 +523,7 @@ async def panel_broadcast_target(call: types.CallbackQuery):
     await call.message.edit_text(
         "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\n"
         f"Отправьте следующим сообщением текст, фото или другое сообщение для рассылки {labels[target]}.",
-        reply_markup=_panel_back(),
+        reply_markup=_panel_back("panel:system:broadcast"),
     )
     await call.answer()
 
@@ -572,7 +601,7 @@ async def panel_system_names_select(call):
     }
     await call.message.edit_text(
         "🗣 Отправьте через запятую имена вызова Аи. Например: <code>Аи, Система</code>.",
-        reply_markup=_panel_back(),
+        reply_markup=_panel_back("panel:system:names"),
     )
     await call.answer()
 
@@ -611,9 +640,10 @@ async def panel_system_stasis_apply(call):
         return
     enabled = bot_is_paused()
     set_bot_paused(not enabled)
+    register_runtime_action(call.from_user.id, call.message.chat.id, previous_enabled=enabled, scope="global")
     await call.message.edit_text(
         "<b>🛰 СТАЗИС</b>\\n\\nСостояние: <b>" + ("активен" if not enabled else "снят") + "</b>",
-        reply_markup=_panel_back(),
+        reply_markup=_panel_back("panel:system"),
     )
     await call.answer("Стазис активирован." if not enabled else "Стазис снят.", show_alert=True)
 
@@ -626,7 +656,7 @@ async def panel_system_issues(call):
     from services.issue_tracker import list_markers, render_marker
     rows = list_markers()
     body = "\n\n".join(escape_for_telegram_html(render_marker(row)) for row in rows) or "Список пуст."
-    await call.message.edit_text("<b>🧪 QA-МЕТКИ</b>\n\n" + body, reply_markup=_panel_back())
+    await call.message.edit_text("<b>🧪 QA-МЕТКИ</b>\n\n" + body, reply_markup=_panel_back("panel:system"))
     await call.answer()
 
 
