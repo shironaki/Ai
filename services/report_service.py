@@ -37,6 +37,9 @@ def _ensure_table() -> None:
             )
             """
         )
+        columns = {row[1] for row in db.execute("PRAGMA table_info(user_reports)").fetchall()}
+        if "answer_text" not in columns:
+            db.execute("ALTER TABLE user_reports ADD COLUMN answer_text TEXT")
         db.commit()
 
 
