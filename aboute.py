@@ -71,7 +71,7 @@ async def rassilka_msgl(message: types.Message, state: FSMContext):
 async def send_rass(call: types.CallbackQuery):
     status = users.cursor.execute("SELECT status from users where id = ?", (call.from_user.id,)).fetchone()
     status = (status[0])
-    if str(status) in ('Создатель бота', 'Система') or message.from_user.id == config.owner:
+    if str(status) in ('Создатель бота', 'Система') or call.from_user.id == config.owner:
         await call.message.edit_text(text='🖋 Введите текст/фото для рассылки:')
         await ChRass.msg.set()
     else:
@@ -99,20 +99,7 @@ async def rassilka_msgl(message: types.Message, state: FSMContext):
     uptimestr = str(time.strftime("%H:%M:%S", time.gmtime(int(uptime))))
     await bot_msg.edit_text(f'📣 Рассылка завершена!\n\n✅ Успешно: {len(confirm)}\n❌ Неуспешно: {len(decline)}\n⌚ Время: {str(uptimestr)}')
 
-    #helpui
-@dp.message_handler(commands=['help', 'хелп', 'команды'], commands_prefix='/!.')
-async def help_ui(message):
-    help_menu = InlineKeyboardMarkup()
-    osnova_bt = InlineKeyboardButton(text = '📖 Основные', callback_data = 'osnova')
-    games_bt = InlineKeyboardButton(text = '🎰 Игровые', callback_data = 'games')
-    moders_bt = InlineKeyboardButton(text = '👮‍ Для модераторов', callback_data = 'moders')
-    rolpl_bt = InlineKeyboardButton(text = '🎭 Role Play', callback_data = 'rolpl')
-    cancel_help_bt = InlineKeyboardButton(text = '🚫 Закрыть', callback_data = 'cancel_help')
-    help_menu.add(osnova_bt, games_bt)
-    help_menu.add(rolpl_bt, moders_bt)
-    help_menu.add(cancel_help_bt)
-    await message.answer('Все команды бота:', reply_markup=help_menu)
-
+    #helpui legacy callback controls are retained below; /help is owned by handlers.help.help.
 @dp.callback_query_handler(text='cancel_help')
 async def handle_help_cdel_button(c: types.CallbackQuery):
     await c.message.delete()
