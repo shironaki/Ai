@@ -19,6 +19,8 @@ from services.ai_data import build_verified_context, chat_summary, system_summar
 from services.issue_tracker import list_markers, render_marker
 from services.report_service import create_report, list_open, get_report, answer_report, reminder_loop
 from services.chat_members import sync_chat_admins
+from services.chat_roles import get_role, set_role
+
 
 from main import (
     BaseMiddleware,
@@ -48,6 +50,12 @@ from core.permissions import get_user_status, has_admin_role, has_moderator_role
 from core.identity import is_owner, resolve_role
 from core.role_transitions import available_role_targets
 from core.command_resolution import is_founder_scope_reply
+
+
+def _panel_role(user_id: int, chat_id: int | None = None) -> str:
+    if is_owner(user_id):
+        return "Создатель бота"
+    return get_role(chat_id, user_id) if chat_id and get_role(chat_id, user_id) else (get_user_status(user_id) or "Пользователь")
 
 
 class ChRass(StatesGroup):
@@ -609,17 +617,17 @@ async def panel_pending_action(message: types.Message):
 
 async def _apply_panel_role(message: types.Message, target_user_id: int, target_role: str) -> bool:
     actor_id = message.from_user.id
-    actor_role = _panel_role(actor_id)
+    actor_role = _panel_role(actor_id, message.chat.id)
     if target_role not in available_role_targets(actor_role, actor_is_owner=is_owner(actor_id)):
         return False
     row = users.cursor.execute("SELECT id FROM users WHERE id = ?", (target_user_id,)).fetchone()
     if row is None:
         await message.reply("❗ Пользователь не зарегистрирован в Системе.")
         return False
-    users.cursor.execute("UPDATE users SET status = ? WHERE id = ?", (target_role, target_user_id))
+    if not set_role(message.chat.id, target_user_id, target_role, actor_id):
+        return False
     from services.role_audit import record_role_grant
     record_role_grant(chat_id=message.chat.id, actor_id=actor_id, target_id=target_user_id, role=target_role)
-    users.connect.commit()
     await message.reply(
         f"✅ Роль пользователя обновлена: <b>{escape_for_telegram_html(target_role)}</b>."
     )
