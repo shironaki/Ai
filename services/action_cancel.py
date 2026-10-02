@@ -39,6 +39,11 @@ def _cancel_runtime_action(user_id: int, chat_id: int) -> bool:
     return True
 
 
+def has_runtime_action(user_id: int, chat_id: int) -> bool:
+    """Return whether a reversible runtime action can currently be undone."""
+    return (user_id, chat_id) in _RUNTIME_ACTIONS or (user_id, 0) in _RUNTIME_ACTIONS
+
+
 def cancel_current_action(user_id: int, chat_id: int) -> bool:
     """Cancel the most recent reversible action in this chat."""
     cancelled = cancel_pending(user_id, chat_id)
