@@ -28,6 +28,7 @@ LEASE_BRANCH = os.getenv("TERMUX_LEASE_BRANCH", "termux-lease").strip()
 LEASE_PATH = os.getenv("TERMUX_LEASE_PATH", "lease.json").strip()
 LEASE_TTL = max(90, int(os.getenv("TERMUX_LEASE_TTL", "120")))
 LEASE_RENEW_BEFORE = max(30, int(os.getenv("TERMUX_LEASE_RENEW_BEFORE", "60")))
+FORCE_FENCE_WAIT = max(15, int(os.getenv("TERMUX_FORCE_FENCE_WAIT", "20")))
 AUTO_FAILOVER = os.getenv("TERMUX_AUTO_FAILOVER", "1").strip().casefold() in {"1", "true", "yes", "on"}
 LOG = ROOT / "termux-autoupdate.log"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
@@ -184,6 +185,38 @@ def release_lease() -> tuple[bool, str]:
     return False, "lease release conflict; refusing to overwrite another owner"
 
 
+def force_takeover() -> str:
+    if not DEVICE_ID:
+        return "force denied: TERMUX_DEVICE_ID is not configured"
+    try:
+        lease, parent = read_lease()
+        current_owner = str(lease.get("owner", "")).strip().casefold()
+        now = int(time.time())
+        new_lease = {
+            "owner": DEVICE_ID,
+            "expires_at": now + LEASE_TTL,
+            "updated_at": now,
+        }
+        if current_owner == DEVICE_ID and int(lease.get("expires_at", 0) or 0) > now:
+            lease_message = f"force takeover already owned by {DEVICE_ID}"
+        elif not write_lease(new_lease, parent):
+            return "force denied: lease changed concurrently; retry"
+        else:
+            lease_message = f"force takeover owner={DEVICE_ID}; previous_owner={current_owner or 'none'}"
+            if current_owner and current_owner != DEVICE_ID:
+                time.sleep(FORCE_FENCE_WAIT)
+        ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
+        ROLEFILE.write_text("active\n", encoding="utf-8")
+        health = restart_bot()
+        if health.startswith("HEALTH OK:"):
+            return f"{lease_message}; {health}"
+        release_lease()
+        ROLEFILE.write_text("standby\n", encoding="utf-8")
+        return f"force takeover failed; lease released; {health}"
+    except Exception as exc:
+        return f"force denied: {type(exc).__name__}: {exc}"
+
+
 def load_state() -> int | None:
     try:
         return int(json.loads(STATEFILE.read_text(encoding="utf-8"))["last_comment_id"])
@@ -338,6 +371,14 @@ def stop_bot_for_role() -> str:
 
 
 def execute(command: str) -> str:
+    if command.startswith("FORCE "):
+        parts = command.split()
+        if len(parts) != 3 or parts[2] != "ACTIVE":
+            return "ignored: FORCE syntax is FORCE <device_id> ACTIVE"
+        target = parts[1].casefold()
+        if not DEVICE_ID or target != DEVICE_ID:
+            return "ignored: command targets another device"
+        return force_takeover()
     if command.startswith("ROLE "):
         parts = command.split()
         if len(parts) != 3:
@@ -430,7 +471,7 @@ def main() -> int:
             (line.strip().upper() for line in raw.splitlines() if line.strip()),
             "",
         )
-        if command in {"STATUS", "RESTART", "UPDATE"} or command.startswith("ROLE "):
+        if command in {"STATUS", "RESTART", "UPDATE"} or command.startswith("ROLE ") or command.startswith("FORCE "):
             message = execute(command)
             result(command, message.replace("\n", " "))
         save_state(comment_id)
