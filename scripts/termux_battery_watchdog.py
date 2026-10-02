@@ -12,7 +12,7 @@ import requests
 REPO = Path(os.getenv("BOT_REPO_DIR", Path.home() / "Ai"))
 DATA_DIR = Path(os.getenv("BOT_DATA_DIR", REPO / "data" / "test"))
 STATE_FILE = DATA_DIR / "runtime" / "battery_watchdog.json"
-CHECK_INTERVAL = int(os.getenv("TERMUX_BATTERY_INTERVAL", "60"))
+CHECK_INTERVAL = int(os.getenv("TERMUX_BATTERY_INTERVAL", "15"))
 WARNING_LEVEL = int(os.getenv("TERMUX_BATTERY_WARNING", "20"))
 CRITICAL_LEVEL = int(os.getenv("TERMUX_BATTERY_CRITICAL", "10"))
 OWNER_ID = int(os.getenv("OWNER_ID", "1057867710"))
