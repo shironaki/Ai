@@ -323,8 +323,24 @@ class RuntimeRegressionTests(unittest.TestCase):
 
     def test_termux_supervisor_records_real_pid(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
-        self.assertIn('echo "$" > "$SUPERVISOR_PID"', source)
-        self.assertNotIn('echo "$" > "$SUPERVISOR_PID"', source)
+        pid_lines = [line.strip() for line in source.splitlines() if "SUPERVISOR_PID" in line and line.strip().startswith("echo ")]
+        self.assertIn('echo "
+
+    def test_termux_update_self_heals_dependencies_while_bot_is_running(self):
+        source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'import aiogram, aiohttp, requests',
+            source,
+        )
+        self.assertIn(
+            'while bot is running; reinstalling dependencies',
+            source,
+        )
+
+if __name__ == "__main__":
+    unittest.main()
+ + '$" > "$SUPERVISOR_PID"', pid_lines)
+
 
     def test_termux_update_self_heals_dependencies_while_bot_is_running(self):
         source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
