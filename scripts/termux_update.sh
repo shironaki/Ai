@@ -6,6 +6,7 @@ BRANCH="${BOT_BRANCH:-test-global-assistant-upgrade}"
 PYTHON="$REPO/.venv/bin/python"
 BOT="$REPO/run.py"
 PIDFILE="$REPO/termux-bot.pid"
+ROLEFILE="$REPO/data/test/runtime/termux-role"
 LOCKDIR="$REPO/.termux-update.lock"
 LOG="$REPO/termux-autoupdate.log"
 
@@ -21,6 +22,11 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 cd "$REPO"
+
+is_active_role() {
+    [[ ! -f "$ROLEFILE" ]] || [[ "$(cat "$ROLEFILE" 2>/dev/null || true)" == "active" ]]
+}
+
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"; }
 
@@ -199,6 +205,13 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
         exit 0
     fi
     log "UPDATE: bot restarted and health-verified"
+
+elif ! is_active_role; then
+    if is_running; then
+        log "ROLE: standby; stopping bot"
+        stop_bot
+    fi
+    log "OK: standby role; bot remains stopped"
 
 elif ! is_running; then
     NEED_DEPS="0"
