@@ -32,6 +32,7 @@ def _ensure_table() -> None:
                 created_at TEXT NOT NULL,
                 answered_at TEXT,
                 answered_by INTEGER,
+                answer_text TEXT,
                 last_reminded_at TEXT
             )
             """
@@ -109,10 +110,10 @@ def answer_report(report_id: int, answered_by: int, answer_text: str) -> bool:
         db.execute(
             """
             UPDATE user_reports
-            SET status='answered', answered_at=?, answered_by=?
+            SET status='answered', answered_at=?, answered_by=?, answer_text=?
             WHERE id=? AND status='open'
             """,
-            (now, answered_by, report_id),
+            (now, answered_by, answer_text[:6000], report_id),
         )
         db.commit()
         return True
