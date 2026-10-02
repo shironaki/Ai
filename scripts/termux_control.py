@@ -152,9 +152,7 @@ def set_role(role: str) -> str:
     ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
     ROLEFILE.write_text(role + "\n", encoding="utf-8")
     if role == "standby":
-        if bot_running():
-            return "role=standby; stopping bot: " + restart_bot() if False else stop_bot_for_role()
-        return "role=standby; bot already stopped"
+        return "role=standby; " + stop_bot_for_role()
     return "role=active; " + restart_bot()
 
 
