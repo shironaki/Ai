@@ -33,12 +33,64 @@ def _split_names(raw: str | None, defaults: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(values[:8]) or defaults
 
 
+def _ensure_settings() -> None:
+    with connect_db("users.db") as db:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_settings(
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        db.commit()
+
+
+def _get_setting(key: str) -> str | None:
+    _ensure_settings()
+    with connect_db("users.db") as db:
+        row = db.execute("SELECT value FROM ai_settings WHERE key=?", (key,)).fetchone()
+    return str(row["value"]) if row else None
+
+
+def _set_setting(key: str, value: str) -> None:
+    _ensure_settings()
+    with connect_db("users.db") as db:
+        db.execute(
+            """
+            INSERT INTO ai_settings(key,value,updated_at) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
+            """,
+            (key, value, datetime.now(timezone.utc).isoformat()),
+        )
+        db.commit()
+
+
 def invocation_names() -> tuple[str, ...]:
-    return _split_names(os.getenv("AI_INVOCATION_NAMES"), DEFAULT_INVOCATION_NAMES)
+    return _split_names(
+        _get_setting("invocation_names") or os.getenv("AI_INVOCATION_NAMES"),
+        DEFAULT_INVOCATION_NAMES,
+    )
 
 
 def alternate_names() -> tuple[str, ...]:
-    return _split_names(os.getenv("AI_ALTERNATE_NAMES"), DEFAULT_ALTERNATE_NAMES)
+    return _split_names(
+        _get_setting("alternate_names") or os.getenv("AI_ALTERNATE_NAMES"),
+        DEFAULT_ALTERNATE_NAMES,
+    )
+
+
+def set_invocation_names(value: str) -> tuple[str, ...]:
+    names = _split_names(value, DEFAULT_INVOCATION_NAMES)
+    _set_setting("invocation_names", ",".join(names))
+    return names
+
+
+def set_alternate_names(value: str) -> tuple[str, ...]:
+    names = _split_names(value, DEFAULT_ALTERNATE_NAMES)
+    _set_setting("alternate_names", ",".join(names))
+    return names
 
 
 def _ensure_table() -> None:
