@@ -260,6 +260,27 @@ class RuntimeRegressionTests(unittest.TestCase):
             control.read_lease = old_read
             control.write_lease = old_write
 
+    def test_termux_force_command_requires_target_device_and_active(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_force = control.force_takeover
+        try:
+            control.DEVICE_ID = "phone2"
+            control.force_takeover = lambda: "forced"
+            self.assertEqual(control.execute("FORCE phone2 ACTIVE"), "forced")
+            self.assertEqual(
+                control.execute("FORCE phone1 ACTIVE"),
+                "ignored: command targets another device",
+            )
+            self.assertIn(
+                "FORCE syntax",
+                control.execute("FORCE phone2 STANDBY"),
+            )
+        finally:
+            control.DEVICE_ID = old_device
+            control.force_takeover = old_force
+
     def test_runtime_hardening_scripts_are_syntactically_valid(self):
         scripts = (
             ROOT / "autoupdate.sh",
