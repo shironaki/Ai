@@ -113,6 +113,7 @@ class MyStatesGroup(StatesGroup):
 class ActivityLoggingMiddleware(BaseMiddleware):
     async def on_pre_process_update(self, update, data):
         data["diagnostic_update_id"] = getattr(update, "update_id", None)
+        data["diagnostic_started_at"] = time.perf_counter()
         if update.message:
             message = update.message
             raw_text = message.text or message.caption or ""
@@ -208,10 +209,16 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 
     async def on_post_process_callback_query(self, callback_query, results, data):
         handler = current_handler.get()
+        elapsed = (
+            time.perf_counter() - data["diagnostic_started_at"]
+            if data.get("diagnostic_started_at") is not None
+            else None
+        )
         log.info(
-            "CALLBACK DONE | data=%s handler=%s",
+            "CALLBACK DONE | data=%s handler=%s duration_ms=%s",
             redact(getattr(callback_query, "data", "") or ""),
             getattr(handler, "__name__", repr(handler)) if handler else None,
+            round(elapsed * 1000, 1) if elapsed is not None else "?",
         )
 
     async def on_process_message(self, message, data):
@@ -236,10 +243,22 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 
     async def on_post_process_message(self, message, results, data):
         handler = current_handler.get()
+        elapsed = (
+            time.perf_counter() - data["diagnostic_started_at"]
+            if data.get("diagnostic_started_at") is not None
+            else None
+        )
         if handler:
-            log.info("HANDLER DONE | handler=%s", getattr(handler, "__name__", repr(handler)))
+            log.info(
+                "HANDLER DONE | handler=%s duration_ms=%s",
+                getattr(handler, "__name__", repr(handler)),
+                round(elapsed * 1000, 1) if elapsed is not None else "?",
+            )
         else:
-            log.warning("HANDLER DONE | no handler reported")
+            log.warning(
+                "HANDLER DONE | no handler reported duration_ms=%s",
+                round(elapsed * 1000, 1) if elapsed is not None else "?",
+            )
 
 
 dp.middleware.setup(ActivityLoggingMiddleware())
