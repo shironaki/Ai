@@ -627,28 +627,47 @@ async def _apply_panel_role(message: types.Message, target_user_id: int, target_
 #chatinfo
 @dp.message_handler(commands=['chatinfo', 'чатинфо'], commands_prefix='/!.')
 async def chatinfo_cmd(message: types.Message):
-    summary = chat_summary(message.chat.id)
-    if summary is None:
+    target_chat_id = message.chat.id
+    args = (message.get_args() or "").strip()
+    if args:
+        if not is_owner(message.from_user.id):
+            await message.reply("Только Основатель может запрашивать информацию о другом чате.")
+            return
+        try:
+            target_chat_id = int(args)
+        except ValueError:
+            await message.reply("Укажите корректный chat_id.")
+            return
+    summary = chat_summary(target_chat_id)
+    if summary is None and target_chat_id == message.chat.id:
         await message.reply("Этот чат ещё не зарегистрирован в Системе.")
         return
     try:
-        tg_chat = await bot.get_chat(message.chat.id)
-        members = await bot.get_chat_members_count(message.chat.id)
-        admins = await bot.get_chat_administrators(chat_id=message.chat.id)
+        tg_chat = await bot.get_chat(target_chat_id)
+        members = await bot.get_chat_members_count(target_chat_id)
+        admins = await bot.get_chat_administrators(chat_id=target_chat_id)
+        try:
+            await sync_chat_admins(bot, target_chat_id)
+        except Exception:
+            pass
     except Exception:
+        if target_chat_id != message.chat.id:
+            await message.reply("Telegram не предоставил доступ к этому чату.")
+            return
         tg_chat = message.chat
         members = None
         admins = []
-    admin_count = len(admins)
+    name = getattr(tg_chat, "title", None) or (summary or {}).get("name") or "—"
+    username = getattr(tg_chat, "username", None) or (summary or {}).get("username") or "—"
     await message.answer(
-        "<b>💬 ИНФОРМАЦИЯ О ЧАТЕ</b>\n\n"
-        f"Название: <b>{escape_for_telegram_html(str(getattr(tg_chat, 'title', None) or summary.get('name') or '—'))}</b>\n"
-        f"Username: <code>{escape_for_telegram_html(str(getattr(tg_chat, 'username', None) or summary.get('username') or '—'))}</code>\n"
-        f"Тип: <b>{escape_for_telegram_html(str(getattr(tg_chat, 'type', '—')))}</b>\n"
-        f"ID: <code>{message.chat.id}</code>\n"
-        f"Участников по Telegram: <b>{members if members is not None else 'нет данных'}</b>\n"
-        f"Администраторов: <b>{admin_count}</b>\n"
-        f"Регистрация в Системе: <code>{escape_for_telegram_html(str(summary.get('system_registered_at') or '—'))}</code>"
+        "<b>💬 ИНФОРМАЦИЯ О ЧАТЕ</b>\\n\\n"
+        f"Название: <b>{escape_for_telegram_html(str(name))}</b>\\n"
+        f"Username: <code>{escape_for_telegram_html(str(username))}</code>\\n"
+        f"Тип: <b>{escape_for_telegram_html(str(getattr(tg_chat, 'type', '—')))}</b>\\n"
+        f"ID: <code>{target_chat_id}</code>\\n"
+        f"Участников по Telegram: <b>{members if members is not None else 'нет данных'}</b>\\n"
+        f"Администраторов: <b>{len(admins)}</b>\\n"
+        f"Регистрация в Системе: <code>{escape_for_telegram_html(str((summary or {}).get('system_registered_at') or '—'))}</code>"
     )
 
 #profile_msg
