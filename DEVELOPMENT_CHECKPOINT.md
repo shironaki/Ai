@@ -104,3 +104,28 @@ Continue working from TEST only. Verify fresh Termux telemetry after runtime cha
 - Public profile remains reserved for the future game subsystem; `инфа` is the active factual information surface.
 - CI #731 for the resulting TEST head completed successfully with 75 tests.
 - Main/PROD remains untouched. The next block is the deeper chat administration/membership layer, report workflow hardening, and full panel migration of remaining legacy administration actions.
+
+## Current protocol checkpoint — 2026-10-02
+
+Branch: `test-global-assistant-upgrade`. Main/PROD untouched.
+
+Completed in the current admin block:
+- Unified broadcast: one founder-only panel flow for users/chats/all; legacy `rassilka` and `chat_rassilka` handlers removed.
+- Unified cancellation: `cancel`/`отмена`/`стоп` synonyms share one cancellation service; panel has «Отменить текущее действие».
+- Legacy `aboute.py` handler module removed from startup and deleted because it still registered deferred game/profile/economy handlers despite `GAME_DISABLED` comments.
+- Deterministic AI relationship layer added:
+  - score -100..100;
+  - negative relation can block AI calls;
+  - max positive enables alternate invocation names and no-call private AI responses;
+  - founder is fixed at 100 and never blocked;
+  - primary/alternate invocation names are configurable and persist in SQLite, with environment defaults.
+- Founder panel now exposes AI relationship controls and invocation-name settings.
+- New regression coverage added for broadcast, cancellation and AI relationship.
+- Latest verified CI run: run #897, green, all runtime regression tests passed.
+
+Next required work:
+1. Fresh Termux/runtime verification of the latest TEST branch; do not claim live deployment until observed.
+2. Continue admin/security audit: role assignment paths, chat-founder/admin synchronization, report cadence/forwarded payloads, startup/update delivery.
+3. Only after admin block remains green and runtime-verified, continue AI relationship refinement if needed, then AI character/personality block.
+4. Keep game/economy/profile disabled and keep Main/PROD untouched.
+
