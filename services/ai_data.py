@@ -25,10 +25,8 @@ def user_summary(user_id: int) -> dict | None:
         "name": row["name"],
         "username": row["username"],
         "status": "Создатель бота" if user_id == config.owner else row["status"],
-        "balance": row["balance"],
-        "games": row["games"],
-        "regdata": row["regdata"],
-        "invited_users": row["invited_users"],
+        "system_registered_at": row["regdata"],
+        "telegram_registration": "не предоставляется Telegram Bot API",
     }
 
 
@@ -41,9 +39,7 @@ def chat_summary(chat_id: int) -> dict | None:
         "name": row["chat_name"],
         "username": row["chat_username"],
         "status": row["chat_status"],
-        "games": row["chat_games"],
-        "registered_at": row["reg_data"],
-        "game_rule": row["game_rule"],
+        "system_registered_at": row["reg_data"],
     }
 
 
