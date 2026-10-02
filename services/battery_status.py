@@ -1,39 +1,46 @@
-"""Read the Android battery status through Termux:API."""
+"""Read cached Android battery status from the Termux watchdog."""
 
 import json
 import os
-import subprocess
+import time
+from pathlib import Path
+
+
+REPO = Path(os.getenv("BOT_REPO_DIR", Path.home() / "Ai"))
+DATA_DIR = Path(os.getenv("BOT_DATA_DIR", REPO / "data" / "test"))
+STATE_FILE = DATA_DIR / "runtime" / "battery_watchdog.json"
+MAX_CACHE_AGE = int(os.getenv("TERMUX_BATTERY_CACHE_MAX_AGE", "120"))
 
 
 def get_battery_status() -> dict:
-    """Return normalized battery information from termux-battery-status."""
-    env = os.environ.copy()
-    result = subprocess.run(
-        ["termux-battery-status"],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        env=env,
-    )
-    payload = json.loads(result.stdout)
+    """Return the latest battery sample collected by the watchdog.
 
-    percentage = int(payload.get("percentage", payload.get("level", -1)))
-    plugged = str(payload.get("plugged", "UNKNOWN")).upper()
-    android_status = str(payload.get("status", "UNKNOWN")).upper()
+    The watchdog already polls Termux:API every minute. Reading its cache keeps
+    the Telegram handler instantaneous and prevents a stuck Termux:API call
+    from blocking the bot.
+    """
+    try:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError("battery watchdog cache is unavailable") from exc
 
-    charging = (
-        android_status in {"CHARGING", "FULL"}
-        or (
-            plugged not in {"UNPLUGGED", "NONE", "UNKNOWN"}
-            and android_status != "DISCHARGING"
-        )
-    )
+    battery = state.get("last_battery")
+    if not isinstance(battery, dict):
+        raise RuntimeError("battery watchdog has not collected a sample yet")
+
+    checked_at = int(battery.get("checked_at", 0))
+    if checked_at <= 0:
+        raise RuntimeError("battery watchdog sample has no timestamp")
+
+    age = max(0, int(time.time()) - checked_at)
+    if age > MAX_CACHE_AGE:
+        raise RuntimeError(f"battery watchdog cache is stale ({age}s)")
 
     return {
-        "percentage": percentage,
-        "plugged": plugged,
-        "status": android_status,
-        "charging": charging,
-        "temperature": payload.get("temperature"),
+        "percentage": int(battery.get("percentage", -1)),
+        "plugged": str(battery.get("plugged", "UNKNOWN")).upper(),
+        "status": str(battery.get("status", "UNKNOWN")).upper(),
+        "charging": bool(battery.get("charging", False)),
+        "temperature": battery.get("temperature"),
+        "age_seconds": age,
     }
