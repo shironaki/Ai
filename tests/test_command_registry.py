@@ -7,7 +7,8 @@ class CommandRegistryTests(unittest.TestCase):
 
         self.assertGreater(len(COMMAND_REGISTRY), 10)
         self.assertIsNotNone(resolve_command("/стазис"))
-        self.assertIsNotNone(resolve_command("профиль"))
+        self.assertIsNotNone(resolve_command("инфа"))
+        self.assertIsNone(resolve_command("профиль"))
 
     def test_destructive_commands_require_confirmation(self):
         from core.command_registry import COMMAND_REGISTRY
