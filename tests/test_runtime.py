@@ -200,6 +200,42 @@ class RuntimeRegressionTests(unittest.TestCase):
             control.DEVICE_ID = old_device
             control.read_lease = old_read
 
+    def test_termux_lease_renews_only_near_expiry(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_read = control.read_lease
+        old_write = control.write_lease
+        calls = []
+        try:
+            control.DEVICE_ID = "phone1"
+            control.read_lease = lambda: ({"owner": "phone1", "expires_at": int(__import__("time").time()) + control.LEASE_RENEW_BEFORE - 1}, "lease-sha")
+            control.write_lease = lambda lease, parent: calls.append((lease, parent)) or True
+            acquired, message = control.acquire_or_renew_lease()
+            self.assertTrue(acquired)
+            self.assertIn("lease renewed", message)
+            self.assertEqual(calls[0][0]["owner"], "phone1")
+            self.assertGreater(calls[0][0]["expires_at"], int(__import__("time").time()))
+        finally:
+            control.DEVICE_ID = old_device
+            control.read_lease = old_read
+            control.write_lease = old_write
+
+    def test_termux_lease_denies_unexpired_other_owner(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_read = control.read_lease
+        try:
+            control.DEVICE_ID = "phone2"
+            control.read_lease = lambda: ({"owner": "phone1", "expires_at": int(__import__("time").time()) + 120}, "lease-sha")
+            acquired, message = control.acquire_or_renew_lease()
+            self.assertFalse(acquired)
+            self.assertIn("lease held by phone1", message)
+        finally:
+            control.DEVICE_ID = old_device
+            control.read_lease = old_read
+
     def test_termux_lease_acquire_uses_remote_parent_and_cas_push(self):
         import scripts.termux_control as control
 
