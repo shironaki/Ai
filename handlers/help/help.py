@@ -456,7 +456,7 @@ async def unified_report_request(message: types.Message):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:reports")
 async def panel_reports(call: types.CallbackQuery):
-    if not is_owner(call.from_user.id) and not has_admin_role(call.from_user.id):
+    if not is_owner(call.from_user.id) and not has_admin_role(call.from_user.id, call.message.chat.id):
         await call.answer("Нет доступа.", show_alert=True)
         return
     rows = list_open()
