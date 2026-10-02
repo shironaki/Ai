@@ -25,6 +25,8 @@ def evaluate(intent: CommandIntent, role: str, *, confirmed: bool = False) -> Co
 
     if spec.scope == "global" and intent.scope != "global":
         return CommandDecision(False, "Эта команда разрешена только глобально.")
+    if spec.scope == "private" and intent.scope != "private":
+        return CommandDecision(False, "Эта команда разрешена только в личном чате.")
 
     if spec.destructive and spec.confirmation and not confirmed:
         return CommandDecision(True, "Требуется подтверждение.", True)
