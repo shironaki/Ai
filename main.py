@@ -592,6 +592,94 @@ async def log_update_error(update, exception):
     return True
 
 
+
+def _runtime_status_snapshot() -> dict:
+    now = time.time()
+    heartbeat_age = None
+    try:
+        with open(HEARTBEAT_FILE, "r", encoding="utf-8") as handle:
+            heartbeat_age = max(0.0, now - float(handle.read().strip()))
+    except (OSError, ValueError, TypeError):
+        pass
+
+    process_uptime = None
+    if psutil is not None:
+        try:
+            process_uptime = max(0.0, now - psutil.Process(os.getpid()).create_time())
+        except Exception:
+            pass
+
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        ).strip()
+    except Exception:
+        commit = "unknown"
+
+    return {
+        "heartbeat_age": heartbeat_age,
+        "process_uptime": process_uptime,
+        "commit": commit,
+        "pid": os.getpid(),
+    }
+
+
+@dp.message_handler(commands=["status"])
+async def runtime_status(message: types.Message):
+    if message.from_user.id != config.owner:
+        return
+
+    status = _runtime_status_snapshot()
+    heartbeat_age = status["heartbeat_age"]
+    heartbeat_state = (
+        "🟢 OK" if heartbeat_age is not None and heartbeat_age <= 30
+        else "🔴 STALE/MISSING"
+    )
+    uptime = status["process_uptime"]
+    if uptime is None:
+        uptime_text = "unknown"
+    else:
+        uptime_text = f"{int(uptime // 3600)}ч {int((uptime % 3600) // 60)}м {int(uptime % 60)}с"
+
+    heartbeat_text = f"{heartbeat_age:.1f}s назад" if heartbeat_age is not None else "нет"
+    await message.answer(
+        "🛰 <b>FOUNDER RUNTIME STATUS</b>\n"
+        f"Бот: <b>{heartbeat_state}</b>\n"
+        f"Heartbeat: <code>{heartbeat_text}</code>\n"
+        f"PID: <code>{status['pid']}</code>\n"
+        f"Uptime: <code>{uptime_text}</code>\n"
+        f"Commit: <code>{html.escape(status['commit'])}</code>"
+    )
+
+
+@dp.message_handler(commands=["restart"])
+async def remote_restart(message: types.Message):
+    if message.from_user.id != config.owner:
+        return
+
+    request_path = os.path.join(HEALTH_DIR, "restart.request")
+    try:
+        os.makedirs(HEALTH_DIR, exist_ok=True)
+        with open(request_path, "w", encoding="utf-8") as handle:
+            handle.write(f"requested_at={time.time()}\nrequested_by={message.from_user.id}\n")
+        await message.answer(
+            "🔄 <b>ПЕРЕЗАПУСК ЗАПРОШЕН.</b>\n"
+            "Текущий процесс завершается, Termux supervisor поднимет его заново."
+        )
+        log.warning("REMOTE RESTART | founder requested restart; pid=%s", os.getpid())
+        await asyncio.sleep(0.3)
+        os._exit(0)
+    except Exception as exc:
+        log.exception("REMOTE RESTART | failed")
+        await message.answer(
+            f"⚠️ Не удалось подготовить перезапуск: <code>{html.escape(str(exc)[:500])}</code>"
+        )
+
+
 @dp.message_handler(commands=["battery", "charge"])
 async def battery_status(message: types.Message):
     if message.from_user.id != config.owner:
