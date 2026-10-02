@@ -46,7 +46,6 @@ COMMAND_REGISTRY = (
     CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Пользователь"),
     CommandSpec("report", frozenset({"report", "репорт"}), "communication", "Пользователь"),
     CommandSpec("cancel", frozenset({"cancel", "отмена"}), "control", "Пользователь", description="отменить текущее действие"),
-    CommandSpec("issue_mark", frozenset({"метка"}), "qa", "Пользователь", description="зарегистрировать найденную проблему"),
     CommandSpec("issue_list", frozenset({"список меток"}), "qa", "Создатель бота", "global", description="показать состояние QA-меток"),
 )
 
