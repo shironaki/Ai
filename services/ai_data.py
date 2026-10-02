@@ -74,7 +74,7 @@ def build_verified_context(
     user_id: int,
     chat_id: int,
     prompt: str,
-    role: str = "Игрок",
+    role: str = "Пользователь",
 ) -> str | None:
     """Return verified context only for recognized read-only data requests."""
     text = prompt.casefold().replace("ё", "е")
