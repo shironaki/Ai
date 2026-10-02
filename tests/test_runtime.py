@@ -323,7 +323,11 @@ class RuntimeRegressionTests(unittest.TestCase):
 
     def test_termux_supervisor_records_real_pid(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
-        pid_lines = [line.strip() for line in source.splitlines() if "SUPERVISOR_PID" in line and line.strip().startswith("echo ")]
+        pid_lines = [
+            line.strip()
+            for line in source.splitlines()
+            if "SUPERVISOR_PID" in line and line.strip().startswith("echo ")
+        ]
         expected = 'echo "' + chr(36) * 2 + '" > "' + chr(36) + 'SUPERVISOR_PID"'
         self.assertEqual(pid_lines, [expected])
 
