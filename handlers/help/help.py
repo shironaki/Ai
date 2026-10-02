@@ -387,20 +387,32 @@ async def unified_report_request(message: types.Message):
         reason=reason or "Жалоба по сообщению",
         payload=payload,
     )
-    try:
-        await bot.send_message(
-            config.owner,
-            "<b>📬 НОВЫЙ РЕПОРТ</b>\n"
-            f"ID: <code>#{report_id}</code>\n"
-            f"От: <b>{escape_for_telegram_html(message.from_user.full_name)}</b> "
-            f"(<code>{message.from_user.id}</code>)\n"
-            f"Причина: <b>{escape_for_telegram_html(reason or 'Жалоба по сообщению')}</b>",
-            reply_markup=InlineKeyboardMarkup().add(
-                InlineKeyboardButton("📖 Открыть репорт", callback_data=f"report:view:{report_id}")
-            ),
-        )
-    except Exception:
-        logging.exception("Could not notify owner about report")
+    recipients = tuple(dict.fromkeys((config.owner, *getattr(config, "tech_team_ids", ()))) )
+    notification = (
+        "<b>📬 НОВЫЙ РЕПОРТ</b>\n"
+        f"ID: <code>#{report_id}</code>\n"
+        f"От: <b>{escape_for_telegram_html(message.from_user.full_name)}</b> "
+        f"(<code>{message.from_user.id}</code>)\n"
+        f"Источник чата: <code>{message.chat.id}</code>\n"
+        f"Причина: <b>{escape_for_telegram_html(reason or 'Жалоба по сообщению')}</b>\n\n"
+        "ℹ️ Репорты — для жалоб, обращений и запросов. Технические ошибки фиксируются внутренними QA-метками."
+    )
+    for recipient_id in recipients:
+        try:
+            await bot.send_message(
+                recipient_id,
+                notification,
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("📖 Открыть репорт", callback_data=f"report:view:{report_id}")
+                ),
+            )
+            if recipient_id != message.from_user.id:
+                try:
+                    await message.copy_to(recipient_id)
+                except Exception:
+                    pass
+        except Exception:
+            logging.exception("Could not notify report recipient %s", recipient_id)
     await message.reply(f"📬 Репорт #{report_id} принят. Ответ будет направлен отдельно.")
 
 
