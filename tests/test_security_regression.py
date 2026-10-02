@@ -43,9 +43,9 @@ class SecurityRegressionTests(unittest.TestCase):
         from core.command_resolution import is_founder_scope_reply
 
         self.assertTrue(is_founder_scope_reply("в этом чате"))
-        self.assertTrue(_is_founder_scope_reply("ГЛОБАЛЬНО"))
+        self.assertTrue(is_founder_scope_reply("ГЛОБАЛЬНО"))
         for text in ("подтверждаю", "отмена", "замуть его на 30 минут", "аи статус"):
-            self.assertFalse(_is_founder_scope_reply(text))
+            self.assertFalse(is_founder_scope_reply(text))
 
     def test_audit_event_contains_metadata_only(self):
         from services.audit_service import record
