@@ -1,0 +1,174 @@
+"""Unified user report service.
+
+Reports are for complaints, requests and appeals to administration.
+They are not QA markers: technical defects belong to the separate issue tracker.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+from database.connection import connect_db
+
+
+REMINDER_HOURS = 2
+
+
+def _ensure_table() -> None:
+    with connect_db("users.db") as db:
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_reports(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reporter_id INTEGER NOT NULL,
+                reporter_name TEXT,
+                source_chat_id INTEGER NOT NULL,
+                source_message_id INTEGER,
+                target_user_id INTEGER,
+                reason TEXT NOT NULL,
+                payload TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TEXT NOT NULL,
+                answered_at TEXT,
+                answered_by INTEGER,
+                last_reminded_at TEXT
+            )
+            """
+        )
+        db.commit()
+
+
+def create_report(
+    *,
+    reporter_id: int,
+    reporter_name: str,
+    source_chat_id: int,
+    source_message_id: int | None,
+    reason: str,
+    payload: str | None = None,
+    target_user_id: int | None = None,
+) -> int:
+    _ensure_table()
+    now = datetime.now(timezone.utc).isoformat()
+    with connect_db("users.db") as db:
+        cur = db.execute(
+            """
+            INSERT INTO user_reports(
+                reporter_id,reporter_name,source_chat_id,source_message_id,
+                target_user_id,reason,payload,status,created_at
+            ) VALUES(?,?,?,?,?,?,?,'open',?)
+            """,
+            (
+                reporter_id,
+                reporter_name[:255],
+                source_chat_id,
+                source_message_id,
+                target_user_id,
+                reason[:2000],
+                payload[:6000] if payload else None,
+                now,
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def get_report(report_id: int):
+    _ensure_table()
+    with connect_db("users.db") as db:
+        return db.execute(
+            "SELECT * FROM user_reports WHERE id = ?", (report_id,)
+        ).fetchone()
+
+
+def list_open(limit: int = 30):
+    _ensure_table()
+    with connect_db("users.db") as db:
+        return db.execute(
+            """
+            SELECT id,reporter_id,reporter_name,source_chat_id,source_message_id,
+                   reason,status,created_at,answered_at
+            FROM user_reports
+            WHERE status = 'open'
+            ORDER BY id ASC LIMIT ?
+            """,
+            (max(1, min(limit, 100)),),
+        ).fetchall()
+
+
+def answer_report(report_id: int, answered_by: int, answer_text: str) -> bool:
+    _ensure_table()
+    now = datetime.now(timezone.utc).isoformat()
+    with connect_db("users.db") as db:
+        row = db.execute(
+            "SELECT reporter_id,status FROM user_reports WHERE id = ?",
+            (report_id,),
+        ).fetchone()
+        if row is None or row["status"] != "open":
+            return False
+        db.execute(
+            """
+            UPDATE user_reports
+            SET status='answered', answered_at=?, answered_by=?
+            WHERE id=? AND status='open'
+            """,
+            (now, answered_by, report_id),
+        )
+        db.commit()
+        return True
+
+
+def due_reminders(limit: int = 50):
+    _ensure_table()
+    threshold = datetime.now(timezone.utc) - timedelta(hours=REMINDER_HOURS)
+    threshold_iso = threshold.isoformat()
+    with connect_db("users.db") as db:
+        return db.execute(
+            """
+            SELECT id,reporter_name,reason,created_at
+            FROM user_reports
+            WHERE status='open'
+              AND created_at <= ?
+              AND (last_reminded_at IS NULL OR last_reminded_at <= ?)
+            ORDER BY created_at ASC LIMIT ?
+            """,
+            (threshold_iso, threshold_iso, max(1, min(limit, 100))),
+        ).fetchall()
+
+
+def mark_reminded(report_ids: list[int]) -> None:
+    if not report_ids:
+        return
+    _ensure_table()
+    now = datetime.now(timezone.utc).isoformat()
+    with connect_db("users.db") as db:
+        db.executemany(
+            "UPDATE user_reports SET last_reminded_at=? WHERE id=? AND status='open'",
+            [(now, report_id) for report_id in report_ids],
+        )
+        db.commit()
+
+
+async def reminder_loop(bot, owner_id: int) -> None:
+    """Remind the owner every two hours about unanswered reports."""
+    while True:
+        try:
+            rows = due_reminders()
+            if rows:
+                ids = [int(row["id"]) for row in rows]
+                lines = [
+                    "⏰ <b>Незакрытые обращения</b>",
+                    f"Есть {len(ids)} репорт(ов), ожидающих ответа более {REMINDER_HOURS} ч.",
+                    "",
+                ]
+                for row in rows[:10]:
+                    lines.append(
+                        f"#{row['id']} · {row['reporter_name'] or row['reporter_id']} · "
+                        f"{str(row['reason'])[:180]}"
+                    )
+                await bot.send_message(owner_id, "\n".join(lines))
+                mark_reminded(ids)
+        except Exception:
+            # Reminder failure must never stop the bot's main loop.
+            pass
+        await asyncio.sleep(300)
