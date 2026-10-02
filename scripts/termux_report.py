@@ -67,6 +67,7 @@ def request(method: str, path: str, value=None):
 def snapshot() -> str:
     commit = run("git", "rev-parse", "HEAD")
     branch = run("git", "branch", "--show-current")
+    git_status = run("git", "status", "--porcelain")
     health = run(os.getenv("TERMUX_PYTHON", str(ROOT / ".venv/bin/python")), str(ROOT / "scripts/healthcheck.py"))
     ai_configured = bool(os.getenv("GROQ_API_KEY", "").strip())
     ai_model = os.getenv("AI_MODEL", "openai/gpt-oss-20b")
