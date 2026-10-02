@@ -319,18 +319,29 @@ async def panel_silence_apply(call):
         from aiogram.types import ChatPermissions
         enabled = is_silent(call.message.chat.id)
         new_state = not enabled
-        await bot.set_chat_permissions(
-            call.message.chat.id,
-            ChatPermissions(
-                can_send_messages=not new_state,
-                can_send_media_messages=not new_state,
-                can_send_polls=not new_state,
-                can_send_other_messages=not new_state,
-                can_add_web_page_previews=not new_state,
-                can_invite_users=not new_state,
-            ),
-        )
-        set_silent(call.message.chat.id, new_state)
+        if new_state:
+            chat = await bot.get_chat(call.message.chat.id)
+            previous = permissions_dict(getattr(chat, "permissions", None))
+            await bot.set_chat_permissions(
+                call.message.chat.id,
+                ChatPermissions(
+                    can_send_messages=False,
+                    can_send_media_messages=False,
+                    can_send_polls=False,
+                    can_send_other_messages=False,
+                    can_add_web_page_previews=False,
+                    can_invite_users=previous.get("can_invite_users", True),
+                ),
+            )
+            set_silent(call.message.chat.id, True, previous)
+        else:
+            previous = get_previous_permissions(call.message.chat.id)
+            restore = previous or {"can_send_messages": True}
+            await bot.set_chat_permissions(
+                call.message.chat.id,
+                ChatPermissions(**restore),
+            )
+            set_silent(call.message.chat.id, False)
         await call.answer("Тишина снята." if enabled else "Тишина включена.", show_alert=True)
         await panel_moderation(call)
     except Exception:
