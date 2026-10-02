@@ -11,6 +11,7 @@ import re
 
 _DIRECT_ACTIONS = (
     "help",
+    "panel",
     "profile",
     "chatinfo",
     "system_stats",
@@ -40,6 +41,10 @@ def detect_direct_action(prompt: str) -> str | None:
         for phrase in (
             "доступные мне команды",
             "покажи доступные команды",
+            "покажи мне команды",
+            "покажи команды",
+            "выведи мне команды",
+            "выведи команды",
             "покажи мои команды",
             "список моих команд",
             "какие у меня команды",
@@ -47,6 +52,20 @@ def detect_direct_action(prompt: str) -> str | None:
         )
     ):
         return "help"
+
+    if any(
+        phrase in text
+        for phrase in (
+            "покажи панель",
+            "покажи мне панель",
+            "выведи панель",
+            "выведи мне панель",
+            "открой панель",
+            "открой мне панель",
+            "административную панель",
+        )
+    ):
+        return "panel"
 
     if "settings" in text or "настройки" in text:
         return "unsupported_settings"
