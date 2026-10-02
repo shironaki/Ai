@@ -198,6 +198,12 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
         exit 0
     fi
 
+    if ! is_active_role; then
+        stop_bot
+        log "UPDATE: revision installed; standby role keeps bot stopped"
+        exit 0
+    fi
+
     stop_bot
     if ! start_bot; then
         log "UPDATE: new revision failed health check"
