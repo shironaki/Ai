@@ -90,13 +90,22 @@ async def panel_root(call):
     if is_owner(call.from_user.id):
         menu.add(InlineKeyboardButton("⚙️ Системное", callback_data="panel:system"))
     menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="panel:close"))
+    from main import log
+    log.info(
+        "PANEL ROOT ENTER | user=%s chat=%s buttons=%s",
+        call.from_user.id,
+        call.message.chat.id,
+        len(menu.inline_keyboard),
+    )
+    await call.answer()
+    log.info("PANEL ROOT ANSWERED | user=%s chat=%s", call.from_user.id, call.message.chat.id)
     await call.message.edit_text(
         "<b>🛠 АДМИНИСТРАТИВНАЯ ПАНЕЛЬ</b>\n\n"
         "Уровень: <b>" + _panel_role(call.from_user.id, call.message.chat.id) + "</b>\n"
         "Показываются только доступные вашему уровню функции.",
         reply_markup=menu,
     )
-    await call.answer()
+    log.info("PANEL ROOT EDITED | user=%s chat=%s", call.from_user.id, call.message.chat.id)
 
 
 @dp.callback_query_handler(lambda c: c.data == "panel:cancel")
