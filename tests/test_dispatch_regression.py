@@ -46,6 +46,18 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertEqual(len(handlers), 1, handlers)
         self.assertEqual(handlers[0][0], "handlers/help/command_help.py")
 
+    def test_legacy_slash_moderation_routes_through_unified_gateway(self):
+        source = (ROOT / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
+        self.assertIn("from services.moderation_gateway import request as request_moderation", source)
+        for function_name in ("mute", "unmute", "ban", "unban"):
+            start = source.index("async def " + function_name + "(")
+            end = source.find("\n# ", start)
+            block = source[start:] if end == -1 else source[start:end]
+            self.assertIn("request_moderation(message, message.text.strip())", block)
+        self.assertNotIn("restrict_chat_member(", source)
+        self.assertNotIn("ban_chat_member(", source)
+        self.assertNotIn("unban_chat_member(", source)
+
     def test_legacy_chat_broadcast_callback_uses_callback_user(self):
         source = (ROOT / "aboute.py").read_text(encoding="utf-8")
         marker = '@dp.callback_query_handler(text="chat_rassilka")'
