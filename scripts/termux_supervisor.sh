@@ -61,6 +61,8 @@ ensure_battery_watchdog() {
 while true; do
     ensure_battery_watchdog
 
+    "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
+
     if ! bash "$REPO/scripts/termux_update.sh"; then
         report
     fi
