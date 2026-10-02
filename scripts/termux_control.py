@@ -2,12 +2,10 @@
 """Fixed-command emergency control plane for the Termux supervisor."""
 from __future__ import annotations
 
-import base64
 import json
 import os
 import subprocess
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -69,45 +67,77 @@ def request(method: str, path: str, value=None):
         return json.loads(response.read().decode("utf-8"))
 
 
-def lease_request(method: str, path: str, value=None):
-    return request(method, path, value)
+def lease_git(*args: str, input_text: str | None = None, check: bool = True) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        input=input_text,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[-500:]
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return (result.stdout or "").strip()
 
 
 def read_lease() -> tuple[dict, str]:
-    payload = lease_request(
-        "GET",
-        f"/contents/{LEASE_PATH}?ref={LEASE_BRANCH}",
+    lease_git("fetch", "origin", LEASE_BRANCH)
+    parent = lease_git("rev-parse", f"origin/{LEASE_BRANCH}")
+    raw = lease_git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
+    return json.loads(raw or "{}"), parent
+
+
+def write_lease(lease: dict, parent: str) -> bool:
+    content = json.dumps(lease, separators=(",", ":")) + "\n"
+    blob = lease_git("hash-object", "-w", "--stdin", input_text=content)
+    tree = lease_git(
+        "mktree",
+        input_text=f"100644 blob {blob}\t{LEASE_PATH}\n",
     )
-    encoded = payload.get("content", "")
-    if payload.get("encoding") == "base64":
-        raw = base64.b64decode(encoded).decode("utf-8")
-    else:
-        raw = encoded
-    return json.loads(raw or "{}"), str(payload.get("sha", ""))
-
-
-def write_lease(lease: dict, sha: str) -> bool:
-    value = {
-        "message": f"chore: update Termux lease for {DEVICE_ID}",
-        "content": base64.b64encode(
-            (json.dumps(lease, separators=(",", ":")) + "\n").encode("utf-8")
-        ).decode("ascii"),
-        "sha": sha,
-        "branch": LEASE_BRANCH,
-    }
-    try:
-        lease_request("PUT", f"/contents/{LEASE_PATH}", value)
+    env = os.environ.copy()
+    env.update({
+        "GIT_AUTHOR_NAME": "Termux Lease",
+        "GIT_AUTHOR_EMAIL": "termux-lease@localhost",
+        "GIT_COMMITTER_NAME": "Termux Lease",
+        "GIT_COMMITTER_EMAIL": "termux-lease@localhost",
+    })
+    result = subprocess.run(
+        ["git", "commit-tree", tree, "-p", parent, "-m",
+         f"chore: update Termux lease for {DEVICE_ID}"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[-500:]
+        raise RuntimeError(f"git commit-tree failed: {detail}")
+    commit = result.stdout.strip()
+    push = subprocess.run(
+        ["git", "push", "--porcelain", "origin", f"{commit}:refs/heads/{LEASE_BRANCH}"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if push.returncode == 0:
         return True
-    except urllib.error.HTTPError as exc:
-        if exc.code == 409:
-            return False
-        raise
+    detail = (push.stderr or push.stdout or "").strip().lower()
+    if "non-fast-forward" in detail or "[rejected]" in detail or "fetch first" in detail:
+        return False
+    raise RuntimeError(f"git push lease failed: {detail[-500:]}")
 
 
 def acquire_or_renew_lease() -> tuple[bool, str]:
     if not DEVICE_ID:
         return False, "TERMUX_DEVICE_ID is not configured"
-    lease, sha = read_lease()
+    lease, parent = read_lease()
     owner = str(lease.get("owner", "")).strip().casefold()
     if owner == DEVICE_ID:
         return True, f"lease owner={DEVICE_ID}"
@@ -118,7 +148,7 @@ def acquire_or_renew_lease() -> tuple[bool, str]:
         "expires_at": 0,
         "updated_at": int(time.time()),
     }
-    if write_lease(new_lease, sha):
+    if write_lease(new_lease, parent):
         return True, f"lease owner={DEVICE_ID}"
     return False, "lease update conflict; another device won the lease"
 
@@ -126,11 +156,11 @@ def acquire_or_renew_lease() -> tuple[bool, str]:
 def release_lease() -> tuple[bool, str]:
     if not DEVICE_ID:
         return False, "TERMUX_DEVICE_ID is not configured"
-    lease, sha = read_lease()
+    lease, parent = read_lease()
     owner = str(lease.get("owner", "")).strip().casefold()
     if owner != DEVICE_ID:
         return True, f"lease owner={owner or 'none'}"
-    if write_lease({"owner": "", "expires_at": 0, "updated_at": int(time.time())}, sha):
+    if write_lease({"owner": "", "expires_at": 0, "updated_at": int(time.time())}, parent):
         return True, "lease released"
     return False, "lease release conflict; refusing to overwrite another owner"
 
