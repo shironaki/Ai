@@ -21,7 +21,7 @@ fi
 
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
 SUPERVISOR_HEARTBEAT="$REPO/data/test/runtime/supervisor-heartbeat"
-echo "$" > "$SUPERVISOR_PID"
+echo "$$" > "$SUPERVISOR_PID"
 mkdir -p "$(dirname "$SUPERVISOR_HEARTBEAT")"
 trap 'rm -f "$SUPERVISOR_PID"' EXIT
 
