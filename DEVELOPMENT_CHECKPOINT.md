@@ -81,3 +81,5 @@ Continue working from TEST only. Verify fresh Termux telemetry after runtime cha
 - Added `tests/test_dispatch_regression.py` covering single authoritative `/help` routing and the callback regression.
 - CI run #645 for this dispatch hardening commit completed successfully.
 - Next: continue the broad legacy-handler audit, prioritizing destructive/admin commands and deterministic natural-language routing. Main/PROD remains untouched.
+
+- Unified legacy slash moderation: `/mute`, `/unmute`, `/ban`, `/unban` compatibility handlers in `handlers/admin/apanel.py` now delegate to `services.moderation_gateway`, so confirmation/policy/audit logic is no longer bypassed. Regression coverage added; CI run #651 is green.
