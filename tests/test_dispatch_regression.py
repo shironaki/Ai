@@ -98,7 +98,10 @@ class DispatchRegressionTests(unittest.TestCase):
             'c.data == "panel:system:names"', 'c.data.startswith("panel:names:")',
             'c.data == "panel:system:ai"', 'c.data == "panel:system:stasis"',
             'c.data == "panel:system:stasis:apply"', 'c.data == "panel:system:issues"',
-            'c.data == "panel:close"',
+            'c.data == "panel:system:status"', 'c.data == "panel:system:diagnostics"',
+            'c.data == "panel:system:battery"', 'c.data == "panel:system:logs"',
+            'c.data == "panel:system:debug"', 'c.data == "panel:system:restart"',
+            'c.data == "panel:back"', 'c.data == "panel:close"',
         )
         for pattern in handler_patterns:
             self.assertIn(pattern, source, pattern)
