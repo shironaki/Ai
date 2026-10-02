@@ -542,12 +542,14 @@ async def report_answer_start(call: types.CallbackQuery):
         await call.answer("Репорт уже закрыт или не найден.", show_alert=True)
         return
     _REPORT_PENDING[(call.from_user.id, call.message.chat.id)] = report_id
-    await call.message.edit_text(
+    from handlers.help.command_help import _panel_edit
+    await _panel_edit(
+        call,
         f"✉️ <b>Ответ на репорт #{report_id}</b>\n\n"
         "Отправьте следующим сообщением текст ответа. "
         "Он будет направлен автору репорта.",
         reply_markup=InlineKeyboardMarkup().add(
-            InlineKeyboardButton("◀️ Отмена", callback_data="panel:reports")
+            InlineKeyboardButton("◀️ Отмена", callback_data="panel:back")
         ),
     )
     await call.answer()
