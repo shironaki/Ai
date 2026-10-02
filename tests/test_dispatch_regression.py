@@ -58,14 +58,14 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertNotIn("ban_chat_member(", source)
         self.assertNotIn("unban_chat_member(", source)
 
-    def test_legacy_chat_broadcast_callback_uses_callback_user(self):
-        source = (ROOT / "aboute.py").read_text(encoding="utf-8")
-        marker = '@dp.callback_query_handler(text="chat_rassilka")'
-        start = source.index(marker)
-        end = source.index("@dp.message_handler", start)
-        block = source[start:end]
-        self.assertIn("call.from_user.id", block)
-        self.assertNotIn("message.from_user.id", block)
+    def test_legacy_broadcast_routes_are_removed_and_panel_route_is_authoritative(self):
+        aboute = (ROOT / "aboute.py").read_text(encoding="utf-8")
+        help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        self.assertNotIn('chat_rassilka', aboute)
+        self.assertNotIn('rassilka', aboute)
+        self.assertIn('panel:system:broadcast', help_source)
+        self.assertIn('from services.broadcast_service import broadcast_message', help_source)
+
 
 
 if __name__ == "__main__":
