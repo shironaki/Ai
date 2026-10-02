@@ -905,6 +905,7 @@ async def panel_info(call: types.CallbackQuery):
     menu.add(
         InlineKeyboardButton("👤 Моя информация", callback_data="panel:my_info"),
         InlineKeyboardButton("💬 Информация о чате", callback_data="panel:chat_info"),
+        InlineKeyboardButton("👋 Настроить приветствие", callback_data="panel:welcome"),
     )
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text(
@@ -913,6 +914,37 @@ async def panel_info(call: types.CallbackQuery):
         reply_markup=menu,
     )
 
+
+@dp.callback_query_handler(lambda c: c.data == "panel:welcome")
+async def panel_welcome(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    if call.message.chat.type not in {"group", "supergroup"}:
+        await call.answer("Приветствие настраивается только в группе или супергруппе.", show_alert=True)
+        return
+    _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "welcome"}
+    await call.message.edit_text(
+        "<b>👋 ПРИВЕТСТВИЕ</b>\n\n"
+        "Отправьте следующим сообщением единый текст приветствия. Если оставить собственный текст не заданным, Аи будет создавать новое приветствие при каждом входе.",
+        reply_markup=InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("✨ Вернуть автоприветствие Аи", callback_data="panel:welcome:auto"),
+            InlineKeyboardButton("◀️ Информация", callback_data="panel:info"),
+        ),
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:welcome:auto")
+async def panel_welcome_auto(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    chats.cursor.execute("UPDATE chats SET welcome = ? WHERE chat_id = ?", ("", call.message.chat.id))
+    chats.connect.commit()
+    await call.message.edit_text(
+        "✨ <b>Автоприветствие Аи включено.</b>\nПри каждом новом участнике Аи будет создавать новую фразу.",
+        reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Информация", callback_data="panel:info")),
+    )
 
 @dp.callback_query_handler(lambda c: c.data == "panel:system")
 async def panel_system(call: types.CallbackQuery):
@@ -1248,6 +1280,18 @@ async def panel_pending_action(message: types.Message):
         handled = await request_moderation(message, phrase)
         if not handled:
             await message.reply("⚠️ Не удалось сформировать действие. Проверьте цель и параметры.")
+        return
+    if pending["kind"] == "welcome":
+        if message.chat.type not in {"group", "supergroup"}:
+            await message.reply("⛔ Приветствие можно установить только в группе или супергруппе.")
+            return
+        text_value = (message.text or "").strip()
+        if not text_value:
+            await message.reply("❗ Нужен текст приветствия.")
+            return
+        chats.cursor.execute("UPDATE chats SET welcome = ? WHERE chat_id = ?", (text_value[:1000], message.chat.id))
+        chats.connect.commit()
+        await message.reply("✅ Единое приветствие сохранено.")
         return
     if pending["kind"] == "role":
         target = message.reply_to_message.from_user
