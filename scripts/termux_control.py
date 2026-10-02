@@ -24,6 +24,9 @@ ROLEFILE = ROOT / "data" / "test" / "runtime" / "termux-role"
 DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()
 LEASE_BRANCH = os.getenv("TERMUX_LEASE_BRANCH", "termux-lease").strip()
 LEASE_PATH = os.getenv("TERMUX_LEASE_PATH", "lease.json").strip()
+LEASE_TTL = max(90, int(os.getenv("TERMUX_LEASE_TTL", "120")))
+LEASE_RENEW_BEFORE = max(30, int(os.getenv("TERMUX_LEASE_RENEW_BEFORE", "60")))
+AUTO_FAILOVER = os.getenv("TERMUX_AUTO_FAILOVER", "0").strip().casefold() in {"1", "true", "yes", "on"}
 LOG = ROOT / "termux-autoupdate.log"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
@@ -138,18 +141,32 @@ def acquire_or_renew_lease() -> tuple[bool, str]:
     if not DEVICE_ID:
         return False, "TERMUX_DEVICE_ID is not configured"
     lease, parent = read_lease()
+    now = int(time.time())
     owner = str(lease.get("owner", "")).strip().casefold()
-    if owner == DEVICE_ID:
-        return True, f"lease owner={DEVICE_ID}"
-    if owner:
-        return False, f"lease held by {owner}"
+    expires_at = int(lease.get("expires_at", 0) or 0)
+
+    if owner == DEVICE_ID and expires_at > now:
+        if expires_at - now > LEASE_RENEW_BEFORE:
+            return True, f"lease owner={DEVICE_ID} ttl={expires_at - now}s"
+        new_lease = {
+            "owner": DEVICE_ID,
+            "expires_at": now + LEASE_TTL,
+            "updated_at": now,
+        }
+        if write_lease(new_lease, parent):
+            return True, f"lease renewed owner={DEVICE_ID} ttl={LEASE_TTL}s"
+        return False, "lease renewal conflict; another device won the lease"
+
+    if owner and expires_at > now:
+        return False, f"lease held by {owner} for {expires_at - now}s"
+
     new_lease = {
         "owner": DEVICE_ID,
-        "expires_at": 0,
-        "updated_at": int(time.time()),
+        "expires_at": now + LEASE_TTL,
+        "updated_at": now,
     }
     if write_lease(new_lease, parent):
-        return True, f"lease owner={DEVICE_ID}"
+        return True, f"lease acquired owner={DEVICE_ID} ttl={LEASE_TTL}s"
     return False, "lease update conflict; another device won the lease"
 
 
@@ -327,6 +344,7 @@ def execute(command: str) -> str:
 
 def main() -> int:
     role = ROLEFILE.read_text(encoding="utf-8").strip().casefold() if ROLEFILE.exists() else "active"
+
     if role == "active":
         try:
             acquired, lease_message = acquire_or_renew_lease()
@@ -339,6 +357,23 @@ def main() -> int:
             with LOG.open("a", encoding="utf-8") as fh:
                 fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
             return 1
+
+    elif AUTO_FAILOVER:
+        try:
+            acquired, lease_message = acquire_or_renew_lease()
+        except Exception as exc:
+            acquired, lease_message = False, f"lease unavailable ({type(exc).__name__})"
+        if acquired:
+            ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
+            ROLEFILE.write_text("active\n", encoding="utf-8")
+            health = restart_bot()
+            if health.startswith("HEALTH OK:"):
+                result("AUTO_FAILOVER", f"role=active; {lease_message}; {health}")
+                return 0
+            release_lease()
+            ROLEFILE.write_text("standby\n", encoding="utf-8")
+            with LOG.open("a", encoding="utf-8") as fh:
+                fh.write(f"CONTROL: auto-failover start failed; lease released ({health})\\n")
 
     comments = request("GET", f"/issues/{ISSUE}/comments?per_page=100")
     commands = [
