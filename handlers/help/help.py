@@ -1359,29 +1359,21 @@ async def chatinfo_cmd(message: types.Message):
 👮‍♂️ | Администраторов в чате: {len(admins_id)}""")
 
 #profile_msg
-@dp.message_handler(lambda msg: ((msg.text.lower() == 'инфа') or (msg.text.lower() == "профиль")))
-async def profile_msg(message):
-    row = users.cursor.execute(
-        "SELECT name, status, balance, stavka, games, dick, regdata, invited_users "
-        "FROM users WHERE id = ?",
-        (message.from_user.id,),
-    ).fetchone()
-
-    if row is None:
-        await message.reply("Вы не зарегистрированы!\nВведите /start")
+@dp.message_handler(lambda msg: bool(msg.text and msg.text.casefold().strip() == "инфа"))
+async def info_msg(message):
+    summary = user_summary(message.from_user.id)
+    if summary is None:
+        await message.reply("Вы ещё не зарегистрированы в Системе. Откройте личный чат и выполните первичный запуск.")
         return
-
-    name, status, balance, stavka, games, dick, regdata, invited_users = row
-    await message.reply(f"""📈 | Профиль пользователя
-🏷 Никнейм: {name}
-👤 Статус: {status}
-💰 Баланс: <code>{balance}</code>
-💰 Ставка: <code>{stavka}</code>
-🎮 Всего игр: <b>{games}</b>
-🍆 Длина члена: <b>{dick}</b> см.
-🔗 Реферальная ссылка: <code>t.me/angelfredoombot?start={message.from_user.id}</code>
-👥 Всего приглашено людей: {invited_users}
-🕰 Дата регистрации: {regdata}""", parse_mode='html')
+    await message.reply(
+        "<b>👤 ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ</b>\n\n"
+        f"Имя: <b>{escape_for_telegram_html(str(summary.get('name') or '—'))}</b>\n"
+        f"Username: <code>{escape_for_telegram_html(str(summary.get('username') or '—'))}</code>\n"
+        f"ID: <code>{summary.get('id')}</code>\n"
+        f"Роль: <b>{escape_for_telegram_html(str(summary.get('status') or '—'))}</b>\n"
+        f"Регистрация в Системе: <code>{escape_for_telegram_html(str(summary.get('system_registered_at') or '—'))}</code>\n"
+        "Регистрация в Telegram: <b>не предоставляется Telegram Bot API</b>",
+    )
 
 
 #Рассылка
