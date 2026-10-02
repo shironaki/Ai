@@ -62,15 +62,6 @@ def _panel_role(user_id: int, chat_id: int | None = None) -> str:
     return (get_role(chat_id, user_id) if chat_id is not None else get_user_status(user_id)) or "Пользователь"
 
 
-class ChRass(StatesGroup):
-    msg = State()
-
-class Rass(StatesGroup):
-    msg = State()
-
-class Quest(StatesGroup):
-    msg = State()
-
 
 def rate_limit(limit, key=None):
     def decorator(func):
@@ -118,23 +109,6 @@ class ThrottlingMiddleware(BaseMiddleware):
         if throttled.exceeded_count <= 2:
             await message.reply('❎ | Не спамь!')
             
-
-#Обращение
-# LEGACY_Q_DISABLED: /q and /вопрос now resolve through the unified report flow.
-async def cmd_quest(message: types.Message):
-    id = message.from_user.id
-    await message.answer(f'📥 | <b>Отправьте текст/фото для обращения:</b>')
-    await Quest.msg.set()
-
-@dp.message_handler(content_types=ContentType.ANY, state=Quest.msg)
-async def quest_msgl(message: types.Message, state: FSMContext):
-    await state.finish()
-    owner = config.owner
-    name = message.from_user.get_mention(as_html=True)
-    bot_msg = await message.answer(f'Обращение отправляется...')
-    await bot.send_message(owner, f'Получено обращение!\n\nОтправитель: {name}\nID: {message.from_user.id}\nЮзернейм: @{message.from_user.username}\n\nОбращение:')
-    await message.copy_to(owner)
-    await bot_msg.edit_text(f'📤 Обращение отправлено!')
 
 # Аи — персональный помощник Системы.
 # Без текста команда отвечает в характерном стиле по роли пользователя.
