@@ -248,6 +248,18 @@ elif ! is_running; then
 
     log "RECOVERY: bot started and health-verified"
 else
+    # Keep runtime dependencies self-healing even when the bot process is still alive.
+    # This also repairs auxiliary Termux services (for example the battery watchdog)
+    # that import the same Python dependencies as the bot.
+    if ! "$PYTHON" -c 'import aiogram, aiohttp, requests' >> "$LOG" 2>&1; then
+        log "RECOVERY: Python runtime imports failed while bot is running; reinstalling dependencies"
+        if install_dependencies; then
+            log "RECOVERY: dependencies restored"
+        else
+            log "RECOVERY: dependency reinstall failed"
+        fi
+    fi
+
     "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1 || {
         log "RECOVERY: health check failed; restarting bot"
         stop_bot
