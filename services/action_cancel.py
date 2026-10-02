@@ -17,7 +17,8 @@ def register_runtime_action(
     scope: str = "global",
 ) -> None:
     """Remember a runtime transition so the universal Cancel button can undo it."""
-    _RUNTIME_ACTIONS[(user_id, chat_id)] = {
+    key_chat_id = 0 if scope == "global" else chat_id
+    _RUNTIME_ACTIONS[(user_id, key_chat_id)] = {
         "previous_enabled": bool(previous_enabled),
         "scope": scope,
         "chat_id": chat_id,
@@ -26,6 +27,8 @@ def register_runtime_action(
 
 def _cancel_runtime_action(user_id: int, chat_id: int) -> bool:
     action = _RUNTIME_ACTIONS.pop((user_id, chat_id), None)
+    if not action:
+        action = _RUNTIME_ACTIONS.pop((user_id, 0), None)
     if not action:
         return False
     set_paused(
