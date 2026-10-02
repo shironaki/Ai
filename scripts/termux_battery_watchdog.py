@@ -70,10 +70,20 @@ def main() -> int:
             charging = plugged not in {"UNPLUGGED", "NONE", "UNKNOWN"} and battery.get("status") != "DISCHARGING"
 
             state = load_state()
+            state["last_battery"] = {
+                "percentage": level,
+                "plugged": plugged,
+                "status": str(battery.get("status", "UNKNOWN")).upper(),
+                "charging": charging,
+                "temperature": battery.get("temperature"),
+                "checked_at": int(time.time()),
+            }
+            save_state(state)
 
             if charging or level < 0:
                 if charging:
-                    state = {"warning_sent": False, "critical_sent": False}
+                    state["warning_sent"] = False
+                    state["critical_sent"] = False
                     save_state(state)
             else:
                 if level <= CRITICAL_LEVEL and not state.get("critical_sent"):
