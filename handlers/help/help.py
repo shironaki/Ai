@@ -42,7 +42,9 @@ from main import (
     users,
 )
 
-from core.permissions import get_user_status
+from core.permissions import get_user_status, has_admin_role, has_moderator_role
+from core.identity import is_owner, resolve_role
+from core.role_transitions import available_role_targets
 from core.command_resolution import is_founder_scope_reply
 
 
@@ -657,95 +659,370 @@ async def founder_direct_command(message: types.Message):
     await _answer_ai(message, prompt)
 
 
-#Девборд
-@dp.message_handler(commands=['дев', 'dev'], commands_prefix='/!.')
+# Административная панель
+# The panel is the primary human UI. Direct legacy aliases remain hidden
+# compatibility entry points while their behavior is migrated into gateways.
+
+def _panel_role(user_id: int) -> str:
+    return resolve_role(user_id)
+
+
+def _panel_allowed(user_id: int, level: str = "Модератор") -> bool:
+    if level == "Модератор":
+        return has_moderator_role(user_id)
+    if level == "Администратор":
+        return has_admin_role(user_id)
+    return is_owner(user_id)
+
+
+def _panel_root(user_id: int):
+    role = _panel_role(user_id)
+    menu = InlineKeyboardMarkup(row_width=2)
+    if _panel_allowed(user_id, "Модератор"):
+        menu.add(
+            InlineKeyboardButton("👥 Пользователи", callback_data="panel:users"),
+            InlineKeyboardButton("🛡 Модерация", callback_data="panel:moderation"),
+        )
+    menu.add(
+        InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"),
+    )
+    if _panel_allowed(user_id, "Администратор"):
+        menu.add(InlineKeyboardButton("📨 Обращения", callback_data="panel:reports"))
+    if is_owner(user_id):
+        menu.add(InlineKeyboardButton("⚙️ Система", callback_data="panel:system"))
+    menu.add(InlineKeyboardButton("❌ Закрыть", callback_data="panel:close"))
+    return menu
+
+
+async def _panel_open(message: types.Message):
+    role = _panel_role(message.from_user.id)
+    if not _panel_allowed(message.from_user.id, "Модератор"):
+        await message.reply("⛔ Административная панель доступна только администрации.")
+        return
+    await message.answer(
+        "<b>🛠 ЦЕНТР УПРАВЛЕНИЯ АИ</b>\n\n"
+        f"Роль: <b>{escape_for_telegram_html(role)}</b>\n"
+        "Выберите раздел. Недоступные функции не отображаются.",
+        reply_markup=_panel_root(message.from_user.id),
+    )
+
+
+@dp.message_handler(commands=["dev", "дев"], commands_prefix="/!.")
 async def adm_ui(message):
-    admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
-    status_row = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
-    status = status_row[0] if status_row else None
-    if message.from_user.id in admins_list or str(status) == 'Система':
-        admin_menu = InlineKeyboardMarkup()
-        statistics_bt = InlineKeyboardButton(text = '📊 Статистика', callback_data = 'stat') # type: ignore
-        mail_bt = InlineKeyboardButton(text = '✉️ Рассылка', callback_data = 'rassilka') # type: ignore
-        mail_bt2 = InlineKeyboardButton(text = '💬 Чат рассылка', callback_data = 'chat_rassilka')
-        ping_bt = InlineKeyboardButton(text = '🖥 Ресурсы бота', callback_data = 'ping')
-        cancel_del_menu = InlineKeyboardMarkup()
-        cancel_del_bt = InlineKeyboardButton(text = '❌ Закрыть ❌', callback_data = 'cancel_del') # type: ignore
-        admin_menu.add(statistics_bt, ping_bt)
-        admin_menu.add(mail_bt, mail_bt2)
-        admin_menu.add(cancel_del_bt)
-        await message.answer('🛠 Выберите пункт меню:', reply_markup=admin_menu)
-    else:
-        await message.reply(f'Вы не разработчик!')
+    await _panel_open(message)
 
-@dp.callback_query_handler(text='cancel_del')
-async def handle_cdel_button(c: types.CallbackQuery):
-    status_row = users.cursor.execute("SELECT status from users where id = ?", (c.from_user.id,)).fetchone()
-    status = status_row[0] if status_row else None
-    if str(status) == 'Система':
-        await c.message.delete()
-    else:
-        pass
 
-@dp.callback_query_handler(text='stat')
-async def handle_stat_button(c: types.CallbackQuery):
-    status = users.cursor.execute("SELECT status from users where id = ?", (c.from_user.id,)).fetchone()
-    status = (status[0])
-    if str(status) == 'Система':
-        cancel_menu = InlineKeyboardMarkup()
-        cancel_bt = InlineKeyboardButton(text = '🚫 Отмена', callback_data = 'cancel')
-        cancel_menu.add(cancel_bt)
-        us = users.cursor.execute('SELECT * FROM users').fetchall()
-        ch = chats.cursor.execute('SELECT * FROM chats').fetchall()
-        ls = users.cursor.execute('SELECT * FROM users WHERE ls is 1').fetchall()
-        await c.message.edit_text(f"""#СТАТИСТИКА
-Юзеров: <b>{len(us)}</b> 👤
-Чатов: <b>{len(ch)}</b> 👥
-Л/С: <b>{len(ls)}</b> ✅""", reply_markup = cancel_menu)
-    else:
-        pass
+@dp.callback_query_handler(lambda c: c.data == "panel:close")
+async def panel_close(call: types.CallbackQuery):
+    await call.message.delete()
 
-@dp.callback_query_handler(text='ping')
-async def handle_ping_button(c: types.CallbackQuery):
-    status = users.cursor.execute("SELECT status from users where id = ?", (c.from_user.id,)).fetchone()
-    status = (status[0])
-    if str(status) == 'Система':
-        cancel_menu = InlineKeyboardMarkup()
-        cancel_bt = InlineKeyboardButton(text = '🚫 Отмена', callback_data = 'cancel')
-        cancel_menu.add(cancel_bt)
-        if psutil is None:
-            await c.message.edit_text(
-                'Проверка...\nСистемные метрики недоступны в текущем окружении.'
-            )
+
+@dp.callback_query_handler(lambda c: c.data == "panel:root")
+async def panel_root(call: types.CallbackQuery):
+    await call.message.edit_text(
+        "<b>🛠 ЦЕНТР УПРАВЛЕНИЯ АИ</b>\n\n"
+        f"Роль: <b>{escape_for_telegram_html(_panel_role(call.from_user.id))}</b>\n"
+        "Выберите раздел.",
+        reply_markup=_panel_root(call.from_user.id),
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:users")
+async def panel_users(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=1)
+    menu.add(InlineKeyboardButton("ℹ️ Информация о пользователе", callback_data="panel:user_info"))
+    if _panel_allowed(call.from_user.id, "Администратор") or is_owner(call.from_user.id):
+        menu.add(InlineKeyboardButton("🎖 Управление ролями", callback_data="panel:roles"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    await call.message.edit_text(
+        "<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\n"
+        "Функция выполняется относительно выбранного участника.\n"
+        "Ответьте на сообщение участника после выбора действия.",
+        reply_markup=menu,
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:moderation")
+async def panel_moderation(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=2)
+    menu.add(
+        InlineKeyboardButton("🔇 Мут", callback_data="panel:mod:mute"),
+        InlineKeyboardButton("🔊 Снять мут", callback_data="panel:mod:unmute"),
+        InlineKeyboardButton("🚫 Бан", callback_data="panel:mod:ban"),
+        InlineKeyboardButton("♻️ Снять бан", callback_data="panel:mod:unban"),
+    )
+    menu.add(InlineKeyboardButton("🤫 Тишина", callback_data="panel:silence"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    await call.message.edit_text(
+        "<b>🛡 МОДЕРАЦИЯ</b>\n\n"
+        "Все действия используют единый контур прав, целей, подтверждений и аудита.",
+        reply_markup=menu,
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("panel:mod:"))
+async def panel_moderation_action(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    action = call.data.rsplit(":", 1)[-1]
+    if action == "mute":
+        prompt = "🔇 Ответьте на сообщение пользователя и укажите срок мута, например: «на 30 минут»."
+    elif action == "ban":
+        prompt = "🚫 Ответьте на сообщение пользователя и укажите срок бана, например: «на 1 день»."
+    elif action == "unmute":
+        prompt = "🔊 Ответьте на сообщение пользователя следующим сообщением, чтобы снять мут."
+    else:
+        prompt = "♻️ Ответьте на сообщение пользователя следующим сообщением, чтобы снять бан."
+    await call.message.edit_text(
+        f"<b>{prompt}</b>",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("◀️ Модерация", callback_data="panel:moderation")
+        ),
+    )
+    _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "moderation", "action": action}
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:silence")
+async def panel_silence(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    await call.message.edit_text(
+        "<b>🤫 ТИШИНА</b>\n\n"
+        "Временно полностью закрывает отправку сообщений в текущем мире. "
+        "Это общий режим мира, а не мут отдельного участника.",
+        reply_markup=InlineKeyboardMarkup(row_width=1).add(
+            InlineKeyboardButton("🤫 Установить тишину", callback_data="panel:silence:on"),
+            InlineKeyboardButton("🔊 Снять тишину", callback_data="panel:silence:off"),
+            InlineKeyboardButton("◀️ Назад", callback_data="panel:moderation"),
+        ),
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("panel:silence:"))
+async def panel_silence_action(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    action = call.data.rsplit(":", 1)[-1]
+    phrase = "установить тишину" if action == "on" else "снять тишину"
+    await call.message.edit_text(
+        f"⚠️ <b>{phrase.capitalize()}</b> в текущем мире?\n\n"
+        "Действие будет выполнено через единый контур подтверждения.",
+        reply_markup=InlineKeyboardMarkup(row_width=2).add(
+            InlineKeyboardButton("✅ Подтвердить", callback_data=f"panel:silence:confirm:{action}"),
+            InlineKeyboardButton("❌ Отмена", callback_data="panel:moderation"),
+        ),
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("panel:silence:confirm:"))
+async def panel_silence_confirm(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    action = call.data.rsplit(":", 1)[-1]
+    value = "нет" if action == "on" else "да"
+    row = chats.cursor.execute("SELECT chat_id FROM chats WHERE chat_id = ?", (call.message.chat.id,)).fetchone()
+    if row is None:
+        await call.answer("Чат ещё не зарегистрирован.", show_alert=True)
+        return
+    chats.cursor.execute("UPDATE chats SET mod_cmd = ? WHERE chat_id = ?", (value, call.message.chat.id))
+    chats.connect.commit()
+    await call.message.edit_text(
+        "🤫 <b>Тишина включена.</b>" if action == "on" else "🔊 <b>Тишина снята.</b>",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("◀️ В панель", callback_data="panel:root")
+        ),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:info")
+async def panel_info(call: types.CallbackQuery):
+    menu = InlineKeyboardMarkup(row_width=1)
+    menu.add(
+        InlineKeyboardButton("👤 Моя информация", callback_data="panel:my_info"),
+        InlineKeyboardButton("💬 Информация о чате", callback_data="panel:chat_info"),
+    )
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    await call.message.edit_text(
+        "<b>ℹ️ ИНФОРМАЦИЯ</b>\n\n"
+        "Здесь отображаются только подтверждённые данные из Telegram и базы Системы.",
+        reply_markup=menu,
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system")
+async def panel_system(call: types.CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=2)
+    menu.add(
+        InlineKeyboardButton("🛰 Runtime", callback_data="panel:runtime"),
+        InlineKeyboardButton("📜 Логи", callback_data="panel:logs"),
+        InlineKeyboardButton("🧠 AI", callback_data="panel:ai"),
+        InlineKeyboardButton("🔧 Debug", callback_data="panel:debug"),
+    )
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    await call.message.edit_text(
+        "<b>⚙️ СИСТЕМА</b>\n\n"
+        "Системный уровень принадлежит AI. Человеческие роли здесь не выдаются.",
+        reply_markup=menu,
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:roles")
+async def panel_roles(call: types.CallbackQuery):
+    actor_is_owner = is_owner(call.from_user.id)
+    role = _panel_role(call.from_user.id)
+    targets = available_role_targets(role, actor_is_owner=actor_is_owner)
+    if not targets:
+        await call.answer("Для этой роли нет доступных назначений.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=1)
+    for target in targets:
+        menu.add(InlineKeyboardButton(f"🎖 {target}", callback_data=f"panel:role:{target}"))
+    menu.add(InlineKeyboardButton("◀️ Пользователи", callback_data="panel:users"))
+    await call.message.edit_text(
+        "<b>🎖 УПРАВЛЕНИЕ РОЛЯМИ</b>\n\n"
+        "Выберите роль, затем ответьте на сообщение участника.",
+        reply_markup=menu,
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("panel:role:"))
+async def panel_role_select(call: types.CallbackQuery):
+    target_role = call.data[len("panel:role:"):]
+    actor_role = _panel_role(call.from_user.id)
+    if target_role not in available_role_targets(actor_role, actor_is_owner=is_owner(call.from_user.id)):
+        await call.answer("Эта роль недоступна.", show_alert=True)
+        return
+    _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "role", "target_role": target_role}
+    await call.message.edit_text(
+        f"<b>🎖 {escape_for_telegram_html(target_role)}</b>\n\n"
+        "Теперь ответьте на сообщение участника, которому назначается роль.",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("◀️ Пользователи", callback_data="panel:users")
+        ),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data in {"panel:my_info", "panel:chat_info", "panel:runtime", "panel:logs", "panel:ai", "panel:debug", "panel:user_info", "panel:reports"})
+async def panel_info_actions(call: types.CallbackQuery):
+    if call.data == "panel:runtime" and not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    if call.data in {"panel:logs", "panel:ai", "panel:debug"} and not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    if call.data == "panel:reports" and not _panel_allowed(call.from_user.id, "Администратор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    if call.data in {"panel:user_info", "panel:my_info", "panel:chat_info"}:
+        if call.data == "panel:chat_info":
+            summary = chat_summary(call.message.chat.id)
+        elif call.data == "panel:my_info":
+            summary = user_summary(call.from_user.id)
+        else:
+            summary = "👤 Ответьте на сообщение пользователя после выбора этой функции."
+        await call.message.edit_text(
+            escape_for_telegram_html(str(summary)),
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton("◀️ Информация", callback_data="panel:info")
+            ),
+        )
+        return
+    if call.data == "panel:runtime":
+        summary = runtime_summary(call.message.chat.id)
+    elif call.data == "panel:logs":
+        summary = "📜 Для безопасности журнал будет показан отдельным диагностическим потоком."
+    elif call.data == "panel:ai":
+        status = ai_status()
+        summary = f"🧠 AI\nМодель: {status.get('model')}\nКлюч: {'задан' if status.get('configured') else 'не задан'}"
+    elif call.data == "panel:debug":
+        summary = "🔧 DEBUG: обработчик панели работает."
+    else:
+        summary = "📬 Центр обращений будет подключён к единому репорт-контуру."
+    await call.message.edit_text(
+        escape_for_telegram_html(str(summary)),
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("◀️ Система", callback_data="panel:system")
+            if call.data in {"panel:runtime", "panel:logs", "panel:ai", "panel:debug"}
+            else InlineKeyboardButton("◀️ Назад", callback_data="panel:root")
+        ),
+    )
+
+
+_PanelKey = tuple[int, int]
+_PANEL_PENDING: dict[_PanelKey, dict] = {}
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.reply_to_message
+        and (m.from_user.id, m.chat.id) in _PANEL_PENDING
+        and m.text
+        and not m.text.startswith("/")
+    )
+)
+async def panel_pending_action(message: types.Message):
+    pending = _PANEL_PENDING.pop((message.from_user.id, message.chat.id), None)
+    if not pending:
+        return
+    if pending["kind"] == "moderation":
+        action = pending["action"]
+        suffix = ""
+        if action in {"mute", "ban"}:
+            suffix = " " + message.text.strip()
+        else:
+            suffix = ""
+        phrase = {
+            "mute": "мут",
+            "unmute": "снять мут",
+            "ban": "бан",
+            "unban": "разбанить",
+        }[action] + suffix
+        handled = await request_moderation(message, phrase)
+        if not handled:
+            await message.reply("⚠️ Не удалось сформировать действие. Проверьте цель и параметры.")
+        return
+    if pending["kind"] == "role":
+        target = message.reply_to_message.from_user
+        target_role = pending["target_role"]
+        if target.id == message.from_user.id:
+            await message.reply("⛔ Нельзя назначить роль самому себе через административную панель.")
             return
-        cpu = psutil.cpu_percent()
-        mem = psutil.virtual_memory().percent
-        a = time.time()
-        bot_msg = await c.message.edit_text(text='Проверка...')
-        if bot_msg:
-            b = time.time()
-        await c.message.edit_text(f'Пинг: <b>{round((b-a)*1000, 2)}</b> мс\nОЗУ: <b>{mem}</b>% \nCPU: <b>{cpu}</b>%', reply_markup = cancel_menu)
-    else:
-        pass
+        if not await _apply_panel_role(message, target.id, target_role):
+            await message.reply("⛔ Роль не может быть назначена этому пользователю.")
+        return
 
-@dp.callback_query_handler(text='cancel')
-async def cancel_wnum_button_handler(c: types.callback_query):
-    status = users.cursor.execute("SELECT status from users where id = ?", (c.from_user.id,)).fetchone()
-    status = (status[0])
-    if str(status) == 'Система':
-        admin_menu = InlineKeyboardMarkup()
-        statistics_bt = InlineKeyboardButton(text = '📊 Статистика', callback_data = 'stat')
-        mail_bt = InlineKeyboardButton(text = '✉️ Рассылка', callback_data = 'rassilka')
-        mail_bt2 = InlineKeyboardButton(text = '💬 Чат рассылка', callback_data = 'chat_rassilka')
-        ping_bt = InlineKeyboardButton(text = '🖥 Ресурсы бота', callback_data = 'ping')
-        cancel_del_menu = InlineKeyboardMarkup()
-        cancel_del_bt = InlineKeyboardButton(text = '❌ Закрыть ❌', callback_data = 'cancel_del')
-        admin_menu.add(statistics_bt, ping_bt)
-        admin_menu.add(mail_bt, mail_bt2)
-        admin_menu.add(cancel_del_bt)
-        await c.message.edit_text('🛠 Выберите пункт меню:', reply_markup=admin_menu)
-    else:
-        pass
+
+async def _apply_panel_role(message: types.Message, target_user_id: int, target_role: str) -> bool:
+    actor_id = message.from_user.id
+    actor_role = _panel_role(actor_id)
+    if target_role not in available_role_targets(actor_role, actor_is_owner=is_owner(actor_id)):
+        return False
+    row = users.cursor.execute("SELECT id FROM users WHERE id = ?", (target_user_id,)).fetchone()
+    if row is None:
+        await message.reply("❗ Пользователь не зарегистрирован в Системе.")
+        return False
+    users.cursor.execute("UPDATE users SET status = ? WHERE id = ?", (target_role, target_user_id))
+    users.connect.commit()
+    await message.reply(
+        f"✅ Роль пользователя обновлена: <b>{escape_for_telegram_html(target_role)}</b>."
+    )
+    return True
 
 #chatinfo
 @dp.message_handler(commands=['chatinfo', 'чатинфо'], commands_prefix='/!.')
