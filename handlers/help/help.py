@@ -20,6 +20,7 @@ from services.issue_tracker import list_markers, render_marker
 from services.report_service import create_report, list_open, get_report, answer_report, reminder_loop
 from services.chat_members import sync_chat_admins
 from services.chat_roles import get_role, set_role
+from services.action_cancel import cancel_current_action
 
 
 from main import (
@@ -264,15 +265,8 @@ async def direct_ai_invocation(message: types.Message):
     )
 )
 async def cancel_pending_request(message: types.Message):
-    cancelled = cancel_pending(message.from_user.id, message.chat.id)
-    moderation_cancelled = False
-    if has_pending_moderation(message.from_user.id, message.chat.id):
-        from services.moderation_gateway import pop as pop_moderation
-        pop_moderation(message.from_user.id, message.chat.id)
-        moderation_cancelled = True
-    if cancelled or moderation_cancelled:
+    if cancel_current_action(message.from_user.id, message.chat.id):
         await message.reply("↩️ Ладно. Отставить. Незавершённый запрос отменён, ничего не выполняю.")
-        return True
 
 
 @dp.message_handler(
