@@ -118,3 +118,26 @@ def list_chat_admins(chat_id: int):
             """,
             (chat_id,),
         ).fetchall()
+
+
+async def sync_chat_admins(bot, chat_id: int) -> list:
+    """Refresh the local admin composition from Telegram for one chat."""
+    _ensure_table()
+    admins = await bot.get_chat_administrators(chat_id=chat_id)
+    current_ids = {admin.user.id for admin in admins}
+    with connect_db("users.db") as db:
+        db.execute("UPDATE chat_members SET is_chat_admin=0,is_chat_owner=0 WHERE chat_id=?", (chat_id,))
+        db.commit()
+    for admin in admins:
+        status = getattr(admin, "status", None)
+        user = admin.user
+        observe(
+            chat_id=chat_id,
+            user_id=user.id,
+            name=user.full_name,
+            username=user.username,
+            telegram_status=status or "administrator",
+            is_chat_owner=status == "creator",
+            is_chat_admin=True,
+        )
+    return admins
