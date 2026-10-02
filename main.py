@@ -331,7 +331,7 @@ async def start_dispatch(message: types.Message):
         now = datetime.now()
         regdata = now.strftime("%d.%m.%Y")
         ttime = (now - timedelta(seconds=18000)).strftime("%H:%M:%S")
-        first_name = message.from_user.first_name or "Игрок"
+        first_name = message.from_user.first_name or "Пользователь"
         username = message.from_user.username
 
         users.cursor.execute(
@@ -340,7 +340,7 @@ async def start_dispatch(message: types.Message):
                 user_id,
                 first_name,
                 username,
-                "Игрок",
+                "Пользователь",
                 0,
                 10,
                 0,
