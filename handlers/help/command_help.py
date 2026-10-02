@@ -119,7 +119,7 @@ async def _panel_edit(call, text: str, reply_markup=None, *, push_history: bool 
             _PANEL_HISTORY.setdefault(key, []).append(current)
     if call.data != "panel:back":
         _PANEL_CURRENT[key] = call.data
-    """    try:
+    try:
         await call.message.edit_text(text, reply_markup=reply_markup)
     except MessageToEditNotFound:
         await call.message.answer(text, reply_markup=reply_markup)
