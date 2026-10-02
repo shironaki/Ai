@@ -1,0 +1,60 @@
+import ast
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _handler_command_literals(path: Path):
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            name = decorator.func.attr if isinstance(decorator.func, ast.Attribute) else ""
+            if name != "message_handler":
+                continue
+            for keyword in decorator.keywords:
+                if keyword.arg != "commands":
+                    continue
+                if isinstance(keyword.value, (ast.List, ast.Tuple, ast.Set)):
+                    values = {
+                        elt.value.casefold()
+                        for elt in keyword.value.elts
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                    }
+                    found.append((node.name, values))
+    return found
+
+
+class DispatchRegressionTests(unittest.TestCase):
+    def test_help_command_has_single_authoritative_handler(self):
+        handlers = []
+        for path in (
+            ROOT / "main.py",
+            ROOT / "handlers" / "help" / "help.py",
+            ROOT / "handlers" / "help" / "command_help.py",
+            ROOT / "aboute.py",
+        ):
+            if path.exists():
+                for name, commands in _handler_command_literals(path):
+                    if {"help", "хелп", "команды"} & commands:
+                        handlers.append((path.relative_to(ROOT).as_posix(), name, commands))
+        self.assertEqual(len(handlers), 1, handlers)
+        self.assertEqual(handlers[0][0], "handlers/help/command_help.py")
+
+    def test_legacy_chat_broadcast_callback_uses_callback_user(self):
+        source = (ROOT / "aboute.py").read_text(encoding="utf-8")
+        marker = '@dp.callback_query_handler(text="chat_rassilka")'
+        start = source.index(marker)
+        end = source.index("@dp.message_handler", start)
+        block = source[start:end]
+        self.assertIn("call.from_user.id", block)
+        self.assertNotIn("message.from_user.id", block)
+
+
+if __name__ == "__main__":
+    unittest.main()
