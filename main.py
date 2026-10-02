@@ -663,6 +663,14 @@ import handlers.chat_groups  # noqa: E402,F401
 def start_bot():
     """Start polling after main.py has been imported as the real 'main' module."""
     log.info("Starting the bot...")
+    # Python 3.14 no longer creates a default event loop automatically.
+    # aiogram 2.x expects one to exist before executor.start_polling().
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
 
 
