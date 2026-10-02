@@ -737,6 +737,9 @@ async def panel_users(call: types.CallbackQuery):
     menu.add(InlineKeyboardButton("ℹ️ Информация о пользователе", callback_data="panel:user_info"))
     if _panel_allowed(call.from_user.id, "Администратор") or is_owner(call.from_user.id):
         menu.add(InlineKeyboardButton("🎖 Управление ролями", callback_data="panel:roles"))
+    menu.add(InlineKeyboardButton("👮 Админ-состав чата", callback_data="panel:admins"))
+    if is_owner(call.from_user.id):
+        menu.add(InlineKeyboardButton("🌐 Админы всех чатов", callback_data="panel:all_admins"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text(
         "<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\n"
@@ -744,6 +747,55 @@ async def panel_users(call: types.CallbackQuery):
         "Ответьте на сообщение участника после выбора действия.",
         reply_markup=menu,
     )
+
+
+@dp.callback_query_handler(lambda c: c.data in {"panel:admins", "panel:all_admins"})
+async def panel_admins(call: types.CallbackQuery):
+    if not _panel_allowed(call.from_user.id, "Модератор"):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    if call.data == "panel:all_admins" and not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    chat_ids = []
+    if call.data == "panel:all_admins":
+        rows = chats.cursor.execute("SELECT chat_id, chat_name, chat_username FROM chats ORDER BY chat_name").fetchall()
+        chat_ids = [(row[0], row[1], row[2]) for row in rows]
+    else:
+        chat_ids = [(call.message.chat.id, getattr(call.message.chat, "title", None), getattr(call.message.chat, "username", None))]
+
+    lines = ["<b>👮 АДМИНИСТРАТИВНЫЙ СОСТАВ</b>", ""]
+    for chat_id, title, username in chat_ids[:20]:
+        try:
+            admins = await bot.get_chat_administrators(chat_id=chat_id)
+        except Exception:
+            lines.append(f"💬 <b>{escape_for_telegram_html(str(title or chat_id))}</b> — состав недоступен")
+            continue
+        creators = []
+        regular = []
+        for admin in admins:
+            user = admin.user
+            if user.id == config.owner and not is_owner(call.from_user.id):
+                continue
+            name = escape_for_telegram_html(user.full_name)
+            tag = f"@{escape_for_telegram_html(user.username)}" if user.username else f"id {user.id}"
+            if getattr(admin, "status", "") == "creator":
+                creators.append(f"👑 {name} · {tag}")
+            else:
+                regular.append(f"🛡 {name} · {tag}")
+        lines.append(f"💬 <b>{escape_for_telegram_html(str(title or chat_id))}</b>")
+        if username:
+            lines.append(f"   @{escape_for_telegram_html(str(username))}")
+        lines.append("   Основатель чата:")
+        lines.extend(f"   {item}" for item in creators or ["   — не определён"])
+        lines.append("   Администраторы:")
+        lines.extend(f"   {item}" for item in regular or ["   — нет"])
+        lines.append("")
+
+    menu = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("◀️ Пользователи", callback_data="panel:users")
+    )
+    await call.message.edit_text("\n".join(lines)[:3900], reply_markup=menu)
 
 
 @dp.callback_query_handler(lambda c: c.data == "panel:moderation")
