@@ -78,7 +78,9 @@ class DispatchRegressionTests(unittest.TestCase):
             "panel:system", "panel:system:broadcast", "panel:broadcast:",
             "panel:system:names", "panel:names:", "panel:system:ai",
             "panel:system:stasis", "panel:system:stasis:apply",
-            "panel:system:issues", "panel:close",
+            "panel:system:issues", "panel:system:status", "panel:system:diagnostics", "panel:system:battery",
+            "panel:system:logs", "panel:system:debug", "panel:system:restart", "panel:back",
+            "panel:reports", "panel:close",
         )
         for value in required:
             self.assertIn(value, source, value)
