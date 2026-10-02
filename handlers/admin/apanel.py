@@ -2,6 +2,7 @@ from aiogram import types
 
 from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3
 from core.permissions import has_moderator_role
+from services.moderation_gateway import request as request_moderation
 
 #user_status
 @dp.message_handler(commands=['setstatus'])
@@ -153,147 +154,27 @@ async def moder_off(message):
 #кляп
 @dp.message_handler(commands=['мут', 'mute','дебафф'], commands_prefix='!?./', is_chat_admin=True)
 async def mute(message):
-    if not has_moderator_role(message.from_user.id):
-        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
-        return
-    msg = message
-    if not msg.reply_to_message:
-        await msg.reply("❗ | Ответьте на сообщение пользователя.")
-        return
-    name1 = msg.from_user.get_mention()
-    name2 = msg.reply_to_message.from_user.get_mention()
-    mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = mod_cmd[0] if mod_cmd else None
-    if str(mod_cmd) == 'да':
-        if not message.reply_to_message:
-            await message.reply("Укажи на дефективного!")
-            return
-        try:
-            muteint = int(message.text.split()[1])
-            mutetype = message.text.split()[2]
-            comment = " ".join(message.text.split()[3:])
-        except IndexError:
-            await message.reply('❎ | Учи заклинание')
-            return
-        if str(comment) != '':
-            if mutetype == "ч" or mutetype == "часов" or mutetype == "час" or mutetype == "часа":
-                await bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, types.ChatPermissions(False), until_date=timedelta(hours=muteint))
-                await message.answer(f'👤 | Система \n🔇 | Зачаровала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность мута: {muteint} {mutetype}\n💬 | Причина: {comment}')
-            if mutetype == "м" or mutetype == "минут" or mutetype == "минуты" or mutetype == "минута":
-                await bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, types.ChatPermissions(False), until_date=timedelta(minutes=muteint))
-                await message.answer(f'👤 | Система \n🔇 | Зачаровала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность мута: {muteint} {mutetype}\n💬 | Причина: {comment}')
-            if mutetype == "д" or mutetype == "дней" or mutetype == "день" or mutetype == "дня":
-                await bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, types.ChatPermissions(False), until_date=timedelta(days=muteint))
-                await message.answer(f'👤 | Система \n🔇 | Зачаровала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность мута: {muteint} {mutetype}\n💬 | Причина: {comment}')
-        else:
-            if mutetype == "ч" or mutetype == "часов" or mutetype == "час" or mutetype == "часа": 
-                await bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, types.ChatPermissions(False), until_date=timedelta(hours=muteint))
-                await message.answer(f'👤 | Система \n🔇 | Зачаровала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность мута: {muteint} {mutetype}')
-            if mutetype == "м" or mutetype == "минут" or mutetype == "минуты" or mutetype == "минута":
-                await bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, types.ChatPermissions(False), until_date=timedelta(minutes=muteint))
-                await message.answer(f'👤 | Система \n🔇 | Зачаровала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность мута: {muteint} {mutetype}')
-            if mutetype == "д" or mutetype == "дней" or mutetype == "день" or mutetype == "дня":
-                await bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, types.ChatPermissions(False), until_date=timedelta(days=muteint))
-                await message.answer(f'👤 | Система \n🔇 | Зачаровала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность мута: {muteint} {mutetype}')
-    else:
-        pass
+    """Compatibility wrapper; execution is centralized in moderation_gateway."""
+    await request_moderation(message, message.text.strip())
 
 #Анмут
 @dp.message_handler(commands=['андебафф', 'размут', 'unmute'], commands_prefix='!?./', is_chat_admin=True)
 async def unmute(message):
-    if not has_moderator_role(message.from_user.id):
-        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
-        return
-    msg = message
-    if not msg.reply_to_message:
-        await msg.reply("❗ | Ответьте на сообщение пользователя.")
-        return
-    name1 = msg.from_user.get_mention()
-    name2 = msg.reply_to_message.from_user.get_mention()
-    mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = mod_cmd[0] if mod_cmd else None
-    if str(mod_cmd) == 'да':
-        if not message.reply_to_message:
-            await message.reply("Укажи на исправившегося!")
-            return
-        await bot.restrict_chat_member(message.chat.id, message.reply_to_message.from_user.id, types.ChatPermissions(True, True, True, True))
-        await message.reply(f'👤 | Система \n📢 | Сняла чары с {name2}')
-        await bot.send_message(message.reply_to_message.from_user.id, f'✅ | Вы снова можете использовать свой голос @{message.chat.username}')
-    else:
-        pass
+    """Compatibility wrapper; execution is centralized in moderation_gateway."""
+    await request_moderation(message, message.text.strip())
 
 # Аннигиляция | Пинок Системы
 @dp.message_handler(commands=['аннигилировать', 'ban'], commands_prefix='!?./', is_chat_admin=True)
 async def ban(message):
-    if not has_moderator_role(message.from_user.id):
-        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
-        return
-    msg = message
-    if not msg.reply_to_message:
-        await msg.reply("❗ | Ответьте на сообщение пользователя.")
-        return
-    name1 = msg.from_user.get_mention()
-    name2 = msg.reply_to_message.from_user.get_mention()
-    mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = mod_cmd[0] if mod_cmd else None
-    if str(mod_cmd) == 'да':
-        if not message.reply_to_message:
-            await message.reply("Укажи на усеченного!")
-            return
-        try:
-            banint = int(message.text.split()[1])
-            bantype = message.text.split()[2]
-            comment = " ".join(message.text.split()[3:])
-        except IndexError:
-            await message.reply('❎ | Учи заклинание')
-            return
-        if str(comment) != '':
-            if bantype == "ч" or bantype == "часов" or bantype == "час" or bantype == "часа": 
-                await bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=timedelta(hours=banint))
-                await message.answer(f'👤 | Система \n🔇 | Аннигилировала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность бана: {banint} {bantype}\n💬 | Причина: {comment}')
-            if bantype == "м" or bantype == "минут" or bantype == "минуты" or bantype  == "минута":
-                await bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=timedelta(minutes=banint))
-                await message.answer(f'👤 | Система \n🔇 | Аннигилировала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность бана: {banint} {bantype}\n💬 | Причина: {comment}')
-            if bantype == "д" or bantype == "дней" or bantype == "день" or bantype == "дня":
-                await bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=timedelta(days=banint))
-                await message.answer(f'👤 | Система \n🔇 | Аннигилировала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность бана: {banint} {bantype}\n💬 | Причина: {comment}')
-        else:
-            if bantype == "ч" or bantype == "часов" or bantype == "час" or bantype == "часа":
-                await bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=timedelta(hours=banint))
-                await message.answer(f'👤 | Система \n🔇 | Аннигилировала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность бана: {banint} {bantype}')
-            if bantype == "м" or bantype == "минут" or bantype == "минуты" or bantype == "минута":
-                await bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=timedelta(minutes=banint))
-                await message.answer(f'👤 | Система \n🔇 | Аннигилировала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность бана: {banint} {bantype}')
-            if bantype == "д" or bantype == "дней" or bantype == "день" or bantype == "дня ":
-                await bot.ban_chat_member(message.chat.id, message.reply_to_message.from_user.id, until_date=timedelta(days=banint))
-                await message.answer(f'👤 | Система \n🔇 | Аннигилировала {name2}\n🛡 ️| ID наказуемого: <code>{message.reply_to_message.from_user.id}</code>\n🕰 | Длительность бана: {banint} {bantype}')
-    else:
-        pass
+    """Compatibility wrapper; execution is centralized in moderation_gateway."""
+    await request_moderation(message, message.text.strip())
 
 #Воскрешение
 @dp.message_handler(commands=['воскресить', 'unban'], commands_prefix='!?./', is_chat_admin=True)
 async def unban(message):
-    if not has_moderator_role(message.from_user.id):
-        await message.reply("🚫 | Простолюдинам запрещено вмешиваться в работу Системы.")
-        return
-    msg = message
-    if not msg.reply_to_message:
-        await msg.reply("❗ | Ответьте на сообщение пользователя.")
-        return
-    name1 = msg.from_user.get_mention()
-    name2 = msg.reply_to_message.from_user.get_mention()
-    mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-    mod_cmd = mod_cmd[0] if mod_cmd else None
-    if str(mod_cmd) == 'да':
-        if not msg.reply_to_message:
-            await msg.reply("Укажи на очищенного!")
-            return
-        await bot.unban_chat_member(msg.chat.id, msg.reply_to_message.from_user.id, only_if_banned=True)
-        await msg.reply(f'👤 | Система \n📢 | Воскресила {name2}')
-        await bot.send_message(message.reply_to_message.from_user.id, f'✅ | Вы были воскрешенны в мире @{message.chat.username}')
-    else:
-        pass
-    
+    """Compatibility wrapper; execution is centralized in moderation_gateway."""
+    await request_moderation(message, message.text.strip())
+
 #Выдать
 @dp.message_handler(regexp=r"(^Выдать|выдать) ?(\d+)?")
 async def vidat(message: types.Message):
