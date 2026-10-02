@@ -12,7 +12,7 @@ from services.chat_members import sync_chat_admins
 from services.silence_service import set_silent, is_silent
 from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
-from main import dp, bot, chats
+from main import dp, bot, chats, users
 
 
 def _role_for_message(message: types.Message) -> str:
@@ -159,7 +159,14 @@ async def panel_admins(call):
         lines = ["<b>💬 " + escape_for_telegram_html(name) + "</b> <code>" + str(chat_id) + "</code>"]
         for admin in admins:
             mark = "👑" if getattr(admin, "status", "") == "creator" else "🛡"
-            lines.append(mark + " " + escape_for_telegram_html(admin.user.full_name))
+            line = mark + " " + escape_for_telegram_html(admin.user.full_name)
+            from services.role_audit import latest_grant
+            grant = latest_grant(chat_id, admin.user.id)
+            if grant:
+                actor = users.cursor.execute("SELECT name FROM users WHERE id=?", (grant["actor_id"],)).fetchone()
+                actor_name = actor[0] if actor else str(grant["actor_id"])
+                line += " · роль: " + escape_for_telegram_html(str(grant["role"])) + " · выдал: " + escape_for_telegram_html(str(actor_name))
+            lines.append(line)
         sections.append("\n".join(lines))
     body = "\n\n".join(sections) or "Нет доступных данных."
     await call.message.edit_text("<b>👮 СОСТАВ АДМИНИСТРАТОРОВ</b>\n\n" + body, reply_markup=_panel_back())
