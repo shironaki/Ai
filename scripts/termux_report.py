@@ -80,6 +80,7 @@ def snapshot() -> str:
 ## Termux runtime
 timestamp: {time.strftime("%Y-%m-%d %H:%M:%S %z")}
 branch: {branch}
+git status: {git_status or "<clean>"}
 commit: {commit}
 health: {health or "<empty>"}
 ai: {"configured" if ai_configured else "UNCONFIGURED"} model={ai_model}
