@@ -89,7 +89,7 @@ def _panel_menu(user_id: int, chat_id: int) -> InlineKeyboardMarkup:
         menu.add(InlineKeyboardButton("🔨 Модерация", callback_data="panel:moderation"))
     menu.add(InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"))
     menu.add(InlineKeyboardButton("📬 Репорты", callback_data="panel:reports"))
-    menu.add(InlineKeyboardButton("↩️ Отменить текущее действие", callback_data="panel:cancel"))
+    menu.add(InlineKeyboardButton("↩️ Отменить текущее действие", callback_data="panel:back"))
     if is_owner(user_id):
         menu.add(InlineKeyboardButton("⚙️ Системное", callback_data="panel:system"))
     menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="panel:close"))
@@ -147,6 +147,71 @@ async def _render_panel_root_message(message: types.Message):
     )
 
 
+@dp.message_handler(commands=["panel"])
+async def panel_command(message: types.Message):
+    if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
+        await message.answer("⛔ Панель доступна только персоналу.")
+        return
+    await _render_panel_root_message(message)
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and m.text.casefold().strip() in {
+            "покажи панель",
+            "покажи мне панель",
+            "выведи панель",
+            "выведи мне панель",
+            "открой панель",
+            "открой мне панель",
+            "административную панель",
+        }
+        and (is_owner(m.from_user.id) or has_moderator_role(m.from_user.id, m.chat.id))
+    )
+)
+async def natural_panel_request(message: types.Message):
+    await _render_panel_root_message(message)
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:back")
+async def panel_back(call: types.CallbackQuery):
+    key = _panel_key(call)
+    history = _PANEL_HISTORY.get(key) or []
+    if history:
+        target = history.pop()
+        _PANEL_CURRENT[key] = target
+    else:
+        target = "panel:root"
+        _PANEL_CURRENT[key] = target
+
+    renderers = {
+        "panel:root": panel_root,
+        "panel:users": panel_users,
+        "panel:relation": panel_relation_menu,
+        "panel:role": panel_role_menu,
+        "panel:admins": panel_admins,
+        "panel:myinfo": panel_myinfo,
+        "panel:info": panel_info,
+        "panel:chatinfo": panel_chatinfo,
+        "panel:moderation": panel_moderation,
+        "panel:silence": panel_silence,
+        "panel:welcome": panel_welcome,
+        "panel:system": panel_system,
+        "panel:system:broadcast": panel_system_broadcast,
+        "panel:system:names": panel_system_names,
+        "panel:system:ai": panel_system_ai,
+        "panel:system:stasis": panel_system_stasis,
+        "panel:system:termux": panel_system_termux,
+        "panel:system:issues": panel_system_issues,
+    }
+    renderer = renderers.get(target, panel_root)
+    await renderer(call)
+    # The renderer receives panel:back, so it must not create a new history entry.
+    _PANEL_CURRENT[key] = target
+    await call.answer()
+
+
 @dp.callback_query_handler(lambda c: c.data == "panel:root")
 async def panel_root(call):
     from main import log
@@ -192,7 +257,7 @@ async def panel_users(call):
         menu.add(InlineKeyboardButton("🎭 Назначить роль", callback_data="panel:role"))
     if is_owner(call.from_user.id):
         menu.add(InlineKeyboardButton("🤝 Отношение Аи", callback_data="panel:relation"))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(call, "<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\nВыберите действие.", reply_markup=menu)
     await call.answer()
 
@@ -206,7 +271,7 @@ async def panel_relation_menu(call):
     for score, label in ((100, "💖 +100"), (50, "🙂 +50"), (0, "😐 0"), (-50, "🙁 -50"), (-100, "⛔ -100")):
         menu.insert(InlineKeyboardButton(label, callback_data=f"panel:relation:{score}"))
     menu.add(InlineKeyboardButton("🔕 -100 + блок вызова", callback_data="panel:relation:block"))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:users"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(call, 
         "<b>🤝 ОТНОШЕНИЕ АИ</b>\n\n"
         "Выберите уровень, затем ответьте на сообщение пользователя.",
@@ -253,7 +318,7 @@ async def panel_role_menu(call):
     menu = InlineKeyboardMarkup(row_width=1)
     for role in targets:
         menu.add(InlineKeyboardButton(role, callback_data="panel:role:" + role))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:users"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(call, 
         "<b>🎭 НАЗНАЧЕНИЕ РОЛИ</b>\n\nВыберите роль, затем ответьте на сообщение пользователя.",
         reply_markup=menu,
@@ -371,7 +436,7 @@ async def panel_info(call):
     menu.add(InlineKeyboardButton("💬 Информация о чате", callback_data="panel:chatinfo"))
     if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id):
         menu.add(InlineKeyboardButton("👮 Состав администраторов", callback_data="panel:admins"))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(call, "<b>ℹ️ ИНФОРМАЦИЯ</b>\n\nФактические данные. Профиль — будущий игровой слой.", reply_markup=menu)
     await call.answer()
 
@@ -408,7 +473,7 @@ async def panel_moderation(call):
         menu.insert(InlineKeyboardButton(label, callback_data="panel:mod:" + action))
     menu.add(InlineKeyboardButton("🔇 Тишина: " + ("вкл" if is_silent(call.message.chat.id) else "выкл"), callback_data="panel:silence"))
     menu.add(InlineKeyboardButton("👋 Приветствие", callback_data="panel:welcome"))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(call, "<b>🔨 МОДЕРАЦИЯ</b>\n\nВыберите действие.", reply_markup=menu)
     await call.answer()
 
@@ -436,7 +501,7 @@ async def panel_silence(call):
     menu = InlineKeyboardMarkup(row_width=2)
     menu.add(
         InlineKeyboardButton("✅ Подтвердить", callback_data="panel:silence:apply"),
-        InlineKeyboardButton("↩️ Отмена", callback_data="panel:moderation"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:back"),
     )
     await _panel_edit(call, 
         "<b>🔇 ТИШИНА</b>\\n\\nПодтвердите: <b>" + action + "</b> для всего чата?",
@@ -494,7 +559,7 @@ async def panel_welcome(call):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("🤖 Авто-Аи", callback_data="panel:welcome:auto"))
     menu.add(InlineKeyboardButton("✏️ Фиксированное", callback_data="panel:welcome:fixed"))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:moderation"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(call, "<b>👋 ПРИВЕТСТВИЕ</b>", reply_markup=menu)
     await call.answer()
 
@@ -535,7 +600,7 @@ async def panel_system_broadcast(call: types.CallbackQuery):
         InlineKeyboardButton("👤 Пользователям", callback_data="panel:broadcast:users"),
         InlineKeyboardButton("💬 Чатам", callback_data="panel:broadcast:chats"),
         InlineKeyboardButton("🌐 Всем", callback_data="panel:broadcast:all"),
-        InlineKeyboardButton("↩️ Отмена", callback_data="panel:system"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:back"),
     )
     await _panel_edit(call, 
         "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\nВыберите аудиторию.",
@@ -605,7 +670,7 @@ async def panel_system(call):
     menu.add(InlineKeyboardButton("🔄 Перезапуск", callback_data="panel:system:restart"))
     menu.add(InlineKeyboardButton("🧪 QA-метки", callback_data="panel:system:issues"))
     menu.add(InlineKeyboardButton("📱 Termux HA", callback_data="panel:system:termux"))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(call, "<b>⚙️ СИСТЕМНОЕ</b>", reply_markup=menu)
     await call.answer()
 
@@ -619,7 +684,7 @@ async def panel_system_names(call):
     menu.add(
         InlineKeyboardButton("🗣 Основные имена", callback_data="panel:names:primary"),
         InlineKeyboardButton("✨ Альтернативные", callback_data="panel:names:alternate"),
-        InlineKeyboardButton("◀️ Назад", callback_data="panel:system"),
+        InlineKeyboardButton("◀️ Назад", callback_data="panel:back"),
     )
     await _panel_edit(call, 
         "<b>🗣 ИМЕНА ВЫЗОВА АИ</b>\n\n"
@@ -665,7 +730,7 @@ async def panel_system_stasis(call):
     menu = InlineKeyboardMarkup(row_width=2)
     menu.add(
         InlineKeyboardButton("✅ Подтвердить", callback_data="panel:system:stasis:apply"),
-        InlineKeyboardButton("↩️ Отмена", callback_data="panel:system"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:back"),
     )
     await _panel_edit(call, 
         "<b>🛰 СТАЗИС</b>\\n\\nПодтвердите: <b>" + action + "</b>?",
@@ -697,7 +762,7 @@ async def panel_system_termux(call):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("🔁 ROLE — штатное переключение", callback_data="panel:system:termux:role"))
     menu.add(InlineKeyboardButton("🚨 FORCE — аварийный takeover", callback_data="panel:system:termux:force"))
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:system"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(
         call,
         "<b>📱 TERMUX HIGH AVAILABILITY</b>\\n\\n"
@@ -759,6 +824,9 @@ async def panel_system_issues(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:close")
 async def panel_close(call):
+    key = _panel_key(call)
+    _PANEL_HISTORY.pop(key, None)
+    _PANEL_CURRENT.pop(key, None)
     await call.message.delete()
     await call.answer()
 
