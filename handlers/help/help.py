@@ -107,7 +107,7 @@ class ThrottlingMiddleware(BaseMiddleware):
             
 
 #Обращение
-@dp.message_handler(commands=['обращение', 'q', 'вопрос'], commands_prefix='/!.')
+# LEGACY_Q_DISABLED: /q and /вопрос now resolve through the unified report flow.
 async def cmd_quest(message: types.Message):
     id = message.from_user.id
     await message.answer(f'📥 | <b>Отправьте текст/фото для обращения:</b>')
@@ -338,6 +338,8 @@ def _report_reason(message: types.Message) -> str | None:
         return text[7:].strip()
     if text.casefold().startswith("/r"):
         return text[2:].strip()
+    if text.casefold().startswith("/q"):
+        return text[2:].strip()
     if text.casefold().startswith("репорт"):
         return text[6:].strip(" :,-")
     if message.forward_from or message.forward_from_chat:
@@ -349,6 +351,7 @@ def _is_report_request(message: types.Message) -> bool:
     text = (message.text or "").strip().casefold()
     return (
         text.startswith("/report")
+        or text.startswith("/q ") or text == "/q"
         or text.startswith("/r ")
         or text == "/r"
         or text == "репорт"
