@@ -73,3 +73,11 @@ Continue working from TEST only. Verify fresh Termux telemetry after runtime cha
 - CI run #639 on the final fix completed successfully (67 tests).
 - Result: Founder scope clarification, moderation confirmation, cancellation, and moderation command routing no longer collide at this handler boundary.
 - Next QA stage: continue deterministic dispatch review around other shared natural-language handlers and confirmation/cancellation precedence; do not touch main/PROD.
+
+
+### Global dispatch hardening — 2026-10-02
+- Removed the duplicate legacy `/help` message handler from `aboute.py`; authoritative `/help` remains `handlers/help/command_help.py`.
+- Fixed the legacy `chat_rassilka` callback owner check to use `call.from_user.id` instead of an undefined `message` object.
+- Added `tests/test_dispatch_regression.py` covering single authoritative `/help` routing and the callback regression.
+- CI run #645 for this dispatch hardening commit completed successfully.
+- Next: continue the broad legacy-handler audit, prioritizing destructive/admin commands and deterministic natural-language routing. Main/PROD remains untouched.
