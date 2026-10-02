@@ -1,5 +1,5 @@
 from base import users
-from config.role_config import ADMIN_ROLES, MODERATOR_ROLES, ROLE_TAGS
+from config.role_config import ADMIN_ROLES, MODERATOR_ROLES
 from core.identity import is_owner, resolve_role
 
 
@@ -16,7 +16,8 @@ def get_display_role(user_id):
 
 
 def get_role_tag(user_id):
-    return ROLE_TAGS[get_display_role(user_id)]
+    from config.role_config import ROLE_TAGS
+    return ROLE_TAGS.get(get_display_role(user_id), ROLE_TAGS["Пользователь"])
 
 
 def format_user_tag(user_id, name=None):
