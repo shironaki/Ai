@@ -5,7 +5,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from base import config
 from core.command_help import render_help
-from core.permissions import get_user_status, has_moderator_role
+from core.permissions import get_user_status, has_moderator_role, has_admin_role
 from core.identity import is_owner
 from core.role_transitions import available_role_targets
 from services.chat_members import sync_chat_admins
@@ -260,6 +260,25 @@ async def panel_silence(call):
     if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
+    enabled = is_silent(call.message.chat.id)
+    action = "снять тишину" if enabled else "включить тишину"
+    menu = InlineKeyboardMarkup(row_width=2)
+    menu.add(
+        InlineKeyboardButton("✅ Подтвердить", callback_data="panel:silence:apply"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:moderation"),
+    )
+    await call.message.edit_text(
+        "<b>🔇 ТИШИНА</b>\\n\\nПодтвердите: <b>" + action + "</b> для всего чата?",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:silence:apply")
+async def panel_silence_apply(call):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
     try:
         from aiogram.types import ChatPermissions
         enabled = is_silent(call.message.chat.id)
@@ -336,6 +355,9 @@ async def panel_system(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:system:ai")
 async def panel_system_ai(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
     await call.answer("Диагностика: /aidiag (секреты не выводятся).", show_alert=True)
 
 
