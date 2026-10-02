@@ -51,5 +51,31 @@ class CommandHelpTests(unittest.TestCase):
         self.assertIn("async def natural_panel_request", panel)
 
 
+
+    def test_panel_routes_all_runtime_states_for_back_navigation(self):
+        from pathlib import Path
+        panel = Path("handlers/help/command_help.py").read_text(encoding="utf-8")
+        for value in (
+            '"panel:system:status": panel_system_status',
+            '"panel:system:diagnostics": panel_system_diagnostics',
+            '"panel:system:battery": panel_system_battery',
+            '"panel:system:logs": panel_system_logs',
+            '"panel:system:debug": panel_system_debug',
+            '"panel:system:restart": panel_system_restart',
+        ):
+            self.assertIn(value, panel)
+
+    def test_panel_does_not_ship_literal_backslash_n_in_visible_text(self):
+        from pathlib import Path
+        panel = Path("handlers/help/command_help.py").read_text(encoding="utf-8")
+        self.assertNotIn("\\\\n", panel)
+
+    def test_panel_diagnostics_uses_running_python_and_repo_root(self):
+        from pathlib import Path
+        panel = Path("handlers/help/command_help.py").read_text(encoding="utf-8")
+        self.assertIn("[sys.executable, script, \"--diagnostics\"]", panel)
+        self.assertIn("repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))", panel)
+
+
 if __name__ == "__main__":
     unittest.main()
