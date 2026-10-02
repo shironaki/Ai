@@ -342,21 +342,6 @@ class RuntimeRegressionTests(unittest.TestCase):
             source,
         )
 
-if __name__ == "__main__":
-    unittest.main()
- + '$" > "$SUPERVISOR_PID"', pid_lines)
-
-
-    def test_termux_update_self_heals_dependencies_while_bot_is_running(self):
-        source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
-        self.assertIn(
-            'import aiogram, aiohttp, requests',
-            source,
-        )
-        self.assertIn(
-            'while bot is running; reinstalling dependencies',
-            source,
-        )
 
 if __name__ == "__main__":
     unittest.main()
