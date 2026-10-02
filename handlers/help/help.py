@@ -55,7 +55,7 @@ from core.command_resolution import is_founder_scope_reply
 def _panel_role(user_id: int, chat_id: int | None = None) -> str:
     if is_owner(user_id):
         return "Создатель бота"
-    return get_role(chat_id, user_id) if chat_id and get_role(chat_id, user_id) else (get_user_status(user_id) or "Пользователь")
+    return (get_role(chat_id, user_id) if chat_id is not None else get_user_status(user_id)) or "Пользователь"
 
 
 class ChRass(StatesGroup):
