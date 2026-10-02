@@ -31,6 +31,7 @@ data/
 # Runtime PID files
 *.pid
 termux-*.pid
+termux-battery-watchdog.sha256
 
 # Termux runtime lock
 .termux-update.lock/
