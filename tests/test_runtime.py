@@ -189,56 +189,40 @@ class RuntimeRegressionTests(unittest.TestCase):
         import scripts.termux_control as control
 
         old_device = control.DEVICE_ID
-        old_request = control.request
+        old_read = control.read_lease
         try:
             control.DEVICE_ID = "phone2"
-
-            def fake_request(method, path, value=None):
-                self.assertEqual(method, "GET")
-                return {
-                    "content": "eyJvd25lciI6InBob25lMSIsImV4cGlyZXNfYXQiOjk5OTk5OTk5OTl9",
-                    "encoding": "base64",
-                    "sha": "lease-sha",
-                }
-
-            control.request = fake_request
+            control.read_lease = lambda: ({"owner": "phone1", "expires_at": 0}, "lease-sha")
             acquired, message = control.acquire_or_renew_lease()
             self.assertFalse(acquired)
-            self.assertIn("lease held by phone1", message)
+            self.assertEqual(message, "lease held by phone1")
         finally:
             control.DEVICE_ID = old_device
-            control.request = old_request
+            control.read_lease = old_read
 
-    def test_termux_lease_update_uses_compare_and_swap_sha(self):
+    def test_termux_lease_acquire_uses_remote_parent_and_cas_push(self):
         import scripts.termux_control as control
 
         old_device = control.DEVICE_ID
-        old_request = control.request
+        old_read = control.read_lease
+        old_write = control.write_lease
         calls = []
         try:
             control.DEVICE_ID = "phone2"
-
-            def fake_request(method, path, value=None):
-                calls.append((method, path, value))
-                if method == "GET":
-                    return {
-                        "content": "eyJvd25lciI6IiIsImV4cGlyZXNfYXQiOjB9",
-                        "encoding": "base64",
-                        "sha": "lease-sha",
-                    }
-                return {"ok": True}
-
-            control.request = fake_request
+            control.read_lease = lambda: ({"owner": ""}, "lease-sha")
+            def fake_write(lease, parent):
+                calls.append((lease, parent))
+                return True
+            control.write_lease = fake_write
             acquired, message = control.acquire_or_renew_lease()
             self.assertTrue(acquired)
-            self.assertIn("lease owner=phone2", message)
-            self.assertEqual(calls[0][0], "GET")
-            self.assertEqual(calls[1][0], "PUT")
-            self.assertEqual(calls[1][2]["sha"], "lease-sha")
-            self.assertEqual(calls[1][2]["branch"], control.LEASE_BRANCH)
+            self.assertEqual(message, "lease owner=phone2")
+            self.assertEqual(calls[0][1], "lease-sha")
+            self.assertEqual(calls[0][0]["owner"], "phone2")
         finally:
             control.DEVICE_ID = old_device
-            control.request = old_request
+            control.read_lease = old_read
+            control.write_lease = old_write
 
     def test_runtime_hardening_scripts_are_syntactically_valid(self):
         scripts = (
