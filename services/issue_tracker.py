@@ -192,6 +192,7 @@ def render_marker(marker) -> str:
     original = (message_text or "[текст сообщения не сохранён]").strip()
     sender = message_sender_name or "неизвестен"
     reporter = reporter_name or str(reporter_id)
+    resolution_text = resolution or "—"
     return (
         f"#{marker_id} · {state}{code_text}{diagnostic_text}\n"
         f"чат {chat_id} · сообщение {message_id}\n"
@@ -199,6 +200,6 @@ def render_marker(marker) -> str:
         f"отметил: {reporter}\n"
         f"сообщение:\n«{original}»\n"
         f"причина: {reason}"
-        f"\\nрешение: {resolution or \"—\"}"
+        f"\\nрешение: {resolution_text}"
         f"{diagnostic_details}"
     )
