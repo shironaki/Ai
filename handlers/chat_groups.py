@@ -81,6 +81,17 @@ async def chat_member_event(update: types.ChatMemberUpdated):
     left = new_status in {"left", "kicked"} and old_status not in {"left", "kicked"}
     if not (joined or left):
         return
+    if not chats.cursor.execute("SELECT chat_id FROM chats WHERE chat_id = ?", (update.chat.id,)).fetchone():
+        try:
+            chats.cursor.execute(
+                "INSERT INTO chats VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (update.chat.id, getattr(update.chat, "title", None), getattr(update.chat, "username", None),
+                 "разрешено", 0, datetime.now().strftime("%d.%m.%Y"), "Обычный",
+                 "Отсутствуют", "да", "Не указаны!", ""),
+            )
+            chats.connect.commit()
+        except Exception:
+            pass
     observe(
         chat_id=update.chat.id,
         user_id=member.id,
