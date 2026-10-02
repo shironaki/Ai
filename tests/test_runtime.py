@@ -195,7 +195,7 @@ class RuntimeRegressionTests(unittest.TestCase):
             control.read_lease = lambda: ({"owner": "phone1", "expires_at": int(__import__("time").time()) + 120}, "lease-sha")
             acquired, message = control.acquire_or_renew_lease()
             self.assertFalse(acquired)
-            self.assertEqual(message, "lease held by phone1")
+            self.assertIn("lease held by phone1 for", message)
         finally:
             control.DEVICE_ID = old_device
             control.read_lease = old_read
@@ -270,7 +270,10 @@ class RuntimeRegressionTests(unittest.TestCase):
             ROOT / "scripts" / "termux_boot.sh",
         )
         for path in scripts:
-            subprocess.run(["bash", "-n", str(path)], check=True)
+            if path.suffix == ".py":
+                subprocess.run([str(sys.executable), "-m", "py_compile", str(path)], check=True)
+            else:
+                subprocess.run(["bash", "-n", str(path)], check=True)
 
     def test_runtime_hardening_does_not_persist_git_credentials(self):
         boot = (ROOT / "codespace_boot.sh").read_text(encoding="utf-8")
