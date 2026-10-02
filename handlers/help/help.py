@@ -142,11 +142,39 @@ def _ai_intro(role: str) -> str:
 
 
 
+def _is_command_catalog_request(prompt: str) -> bool:
+    """Recognize deterministic requests for the authoritative command catalogue."""
+    normalized = " ".join((prompt or "").casefold().replace("ё", "е").split())
+    phrases = (
+        "покажи мне команды",
+        "покажи команды",
+        "покажи список команд",
+        "покажи мне список команд",
+        "выведи команды",
+        "выведи список команд",
+        "какие команды",
+        "какие есть команды",
+        "какие у меня команды",
+        "список команд",
+        "список доступных команд",
+        "доступные команды",
+        "команды бота",
+        "покажи доступные команды",
+    )
+    return normalized in phrases or any(
+        normalized.startswith(phrase + " ") for phrase in phrases
+    )
+
+
 async def _answer_ai(message: types.Message, prompt: str):
     role = _ai_role(message)
     text = (prompt or "").strip()
     if not text:
         await message.reply(_ai_intro(role))
+        return
+    if _is_command_catalog_request(text):
+        from core.command_help import render_help
+        await message.reply(render_help(role))
         return
     if await _handle_founder_command(message, text):
         return
