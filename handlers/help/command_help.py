@@ -20,7 +20,7 @@ def _role_for_message(message: types.Message) -> str:
         "Модератор",
     }:
         return status
-    return "Игрок"
+    return "Пользователь"
 
 
 @dp.message_handler(commands=["help", "хелп", "команды"], commands_prefix="/!.")
