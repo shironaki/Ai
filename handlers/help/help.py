@@ -393,10 +393,6 @@ def _report_reason(message: types.Message) -> str | None:
     text = (message.text or "").strip()
     if text.casefold().startswith("/report"):
         return text[7:].strip()
-    if text.casefold().startswith("/r"):
-        return text[2:].strip()
-    if text.casefold().startswith("/q"):
-        return text[2:].strip()
     if text.casefold().startswith("репорт"):
         return text[6:].strip(" :,-")
     if message.forward_from or message.forward_from_chat:
