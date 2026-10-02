@@ -27,9 +27,14 @@ class CommandSpec:
 
 COMMAND_REGISTRY = (
     CommandSpec("help", frozenset({"help"}), "system", "Пользователь", description="панель и справка"),
+    CommandSpec("panel", frozenset({"panel"}), "system", "Модератор", description="административная панель"),
     CommandSpec("ai", frozenset({"ai", "аи"}), "system", "Пользователь", description="обращение к Аи"),
     CommandSpec("start", frozenset({"start"}), "system", "Пользователь", "private", description="первичный запуск в личном чате"),
     CommandSpec("ai_diagnostic", frozenset({"aidiag"}), "system", "Создатель бота"),
+    CommandSpec("status", frozenset({"status"}), "system", "Создатель бота", "global", description="текущий runtime-статус"),
+    CommandSpec("diagnostics", frozenset({"diagnostics"}), "system", "Создатель бота", "global", description="сетевая и runtime-диагностика"),
+    CommandSpec("battery", frozenset({"battery", "charge"}), "system", "Создатель бота", "global", description="статус батареи второго телефона"),
+    CommandSpec("restart", frozenset({"restart"}), "system", "Создатель бота", "global", description="запросить перезапуск"),
     CommandSpec("logs", frozenset({"logs"}), "system", "Создатель бота", "global"),
     CommandSpec("debug", frozenset({"debug"}), "system", "Создатель бота", "global"),
     CommandSpec("stasis", frozenset({"stasis", "стазис"}), "runtime", "Создатель бота", "both"),
