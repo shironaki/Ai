@@ -22,3 +22,14 @@ def resolve_reply_target(message):
     """
     reply = getattr(message, "reply_to_message", None)
     return getattr(reply, "from_user", None) if reply is not None else None
+
+
+FOUNDER_SCOPE_PHRASES = frozenset({
+    "везде", "глобально", "во всех чатах", "весь бот", "повсеместно",
+    "в этом чате", "этот чат", "здесь", "только здесь", "в этом мире", "только в этом мире",
+})
+
+
+def is_founder_scope_reply(text: str | None) -> bool:
+    """Return True only for explicit founder scope replies."""
+    return (text or "").casefold().replace("ё", "е").strip() in FOUNDER_SCOPE_PHRASES
