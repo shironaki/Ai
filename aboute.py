@@ -29,6 +29,7 @@ from main import (
     sleep,
 )
 from core.permissions import get_role_tag
+from handlers.help.help import rate_limit
 
 
 #Передать
