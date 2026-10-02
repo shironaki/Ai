@@ -244,13 +244,13 @@ def _ai_invocation(text: str, *, include_alternates: bool = False) -> str | None
     if include_alternates:
         names = tuple(dict.fromkeys((*names, *alternate_names())))
     lowered = normalized.casefold()
-    for name in names:
-        if lowered.startswith("/" + name):
+    for prefix in ("/ai", *("/" + name for name in names)):
+        if lowered.startswith(prefix):
             parts = normalized.split(maxsplit=1)
             return parts[1].strip() if len(parts) > 1 else ""
     pattern = r"^(?:" + "|".join(re.escape(name) for name in names) + r")(?:[,,:]|\\s)"
     if re.match(pattern, normalized, re.IGNORECASE):
-        return re.sub(pattern + r"+", "", normalized, flags=re.IGNORECASE).strip()
+        return re.sub(pattern, "", normalized, count=1, flags=re.IGNORECASE).strip()
     return None
 
 
