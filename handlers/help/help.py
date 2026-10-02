@@ -21,7 +21,7 @@ from services.report_service import create_report, list_open, get_report, answer
 from services.chat_members import sync_chat_admins
 from services.chat_roles import get_role, set_role
 from services.action_cancel import cancel_current_action
-from services.ai_relationship import alternate_names, can_call, invocation_names, is_max_positive
+from services.ai_relationship import alternate_names, can_call, get_score, invocation_names, is_max_positive, set_calls_blocked, set_score
 
 
 from main import (
@@ -589,6 +589,27 @@ async def panel_pending_action(message: types.Message):
         chats.connect.commit()
         await message.reply("✅ Единое приветствие сохранено.")
         return
+    if pending["kind"] == "relation":
+        if not is_owner(message.from_user.id):
+            await message.reply("⛔ Только Основатель может менять отношение Аи.")
+            return
+        if not message.reply_to_message:
+            await message.reply("❗ Ответьте на сообщение пользователя, для которого меняется отношение.")
+            return
+        target_id = message.reply_to_message.from_user.id
+        if target_id == config.owner:
+            await message.reply("👑 Отношение к Основателю фиксировано на максимальном уровне.")
+            return
+        score = int(pending["score"])
+        value = set_score(target_id, score, config.owner)
+        if pending.get("block") is not None:
+            set_calls_blocked(target_id, pending["block"], config.owner)
+        await message.reply(
+            f"🤝 Отношение Аи обновлено: <b>{value}/100</b>."
+            + ("\n🔕 Вызовы Аи заблокированы." if pending.get("block") else "")
+        )
+        return
+
     if pending["kind"] == "role":
         target = message.reply_to_message.from_user
         target_role = pending["target_role"]
