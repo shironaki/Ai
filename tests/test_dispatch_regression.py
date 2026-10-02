@@ -58,6 +58,15 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertNotIn("ban_chat_member(", source)
         self.assertNotIn("unban_chat_member(", source)
 
+    def test_panel_callbacks_are_registered_and_callback_errors_are_visible(self):
+        help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn('callback_data="panel:root"', help_source)
+        self.assertIn('lambda c: c.data == "panel:root"', help_source)
+        self.assertIn("async def unhandled_callback", help_source)
+        self.assertIn('elif callback_query:', main_source)
+        self.assertIn('stage="callback_exception"', main_source)
+
     def test_legacy_broadcast_routes_are_removed_and_panel_route_is_authoritative(self):
         self.assertFalse((ROOT / "aboute.py").exists())
         help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
