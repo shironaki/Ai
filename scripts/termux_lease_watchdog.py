@@ -43,13 +43,14 @@ def bot_running() -> bool:
         return False
 
 
-def lease_is_owned() -> bool:
+def read_lease() -> tuple[str, int]:
     git("fetch", "origin", LEASE_BRANCH)
     raw = git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
     lease = json.loads(raw or "{}")
-    owner = str(lease.get("owner", "")).strip().casefold()
-    expires_at = int(lease.get("expires_at", 0) or 0)
-    return owner == DEVICE_ID and expires_at > int(time.time())
+    return (
+        str(lease.get("owner", "")).strip().casefold(),
+        int(lease.get("expires_at", 0) or 0),
+    )
 
 
 def stop_bot() -> None:
@@ -63,16 +64,22 @@ def stop_bot() -> None:
 
 def main() -> int:
     WATCHDOG_PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
+    last_expiry = 0
     try:
         while bot_running():
+            now = int(time.time())
             try:
-                if not lease_is_owned():
+                owner, expires_at = read_lease()
+                last_expiry = expires_at
+                if owner != DEVICE_ID or expires_at <= now:
                     stop_bot()
                     return 0
             except Exception:
-                # Network/GitHub outage is fail-closed: never kill the current bot
-                # merely because the lease cannot be checked.
-                pass
+                # If GitHub is unreachable, trust only the last successfully
+                # observed expiry. Once it passes, fence the stale bot locally.
+                if last_expiry and now >= last_expiry:
+                    stop_bot()
+                    return 0
             time.sleep(INTERVAL)
     finally:
         WATCHDOG_PIDFILE.unlink(missing_ok=True)
