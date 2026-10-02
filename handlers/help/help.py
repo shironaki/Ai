@@ -172,9 +172,14 @@ async def _answer_ai(message: types.Message, prompt: str):
     if not text:
         await message.reply(_ai_intro(role))
         return
-    if _is_command_catalog_request(text):
+    direct_action = detect_direct_action(text)
+    if direct_action == "help" or _is_command_catalog_request(text):
         from core.command_help import render_help
         await message.reply(render_help(role))
+        return
+    if direct_action == "panel":
+        from handlers.help.command_help import _render_panel_root_message
+        await _render_panel_root_message(message)
         return
     if await _handle_founder_command(message, text):
         return
@@ -751,3 +756,20 @@ async def info_msg(message):
     )
 
 
+
+
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and m.from_user.id == config.owner
+        and not m.text.startswith("/")
+        and not is_cancel_request(m.text)
+        and not has_pending(m.from_user.id, m.chat.id)
+        and not has_pending_moderation(m.from_user.id, m.chat.id)
+        and not (m.from_user.id, m.chat.id) in globals().get("_PANEL_PENDING", {})
+        and not (m.from_user.id, m.chat.id) in globals().get("_REPORT_PENDING", {})
+    )
+)
+async def founder_natural_ai(message: types.Message):
+    """Founder may address Аи naturally without a slash command or invocation name."""
+    await _answer_ai(message, message.text)
