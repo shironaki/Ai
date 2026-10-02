@@ -403,6 +403,25 @@ async def panel_system_stasis(call):
         await call.answer("Только Основатель.", show_alert=True)
         return
     enabled = bot_is_paused()
+    action = "снять глобальный стазис" if enabled else "активировать глобальный стазис"
+    menu = InlineKeyboardMarkup(row_width=2)
+    menu.add(
+        InlineKeyboardButton("✅ Подтвердить", callback_data="panel:system:stasis:apply"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:system"),
+    )
+    await call.message.edit_text(
+        "<b>🛰 СТАЗИС</b>\\n\\nПодтвердите: <b>" + action + "</b>?",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:stasis:apply")
+async def panel_system_stasis_apply(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    enabled = bot_is_paused()
     set_bot_paused(not enabled)
     await call.message.edit_text(
         "<b>🛰 СТАЗИС</b>\\n\\nСостояние: <b>" + ("активен" if not enabled else "снят") + "</b>",
