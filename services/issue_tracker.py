@@ -29,7 +29,8 @@ def _ensure_table() -> None:
                 fixed_by INTEGER,
                 created_at TEXT NOT NULL,
                 fixed_at TEXT,
-                diagnostic_id INTEGER
+                diagnostic_id INTEGER,
+                resolution TEXT
             )
             """
         )
@@ -39,6 +40,7 @@ def _ensure_table() -> None:
             ("message_text", "TEXT"),
             ("message_sender_name", "TEXT"),
             ("diagnostic_id", "INTEGER"),
+            ("resolution", "TEXT"),
         ):
             if name not in columns:
                 db.execute(f"ALTER TABLE issue_markers ADD COLUMN {name} {ddl}")
@@ -133,6 +135,20 @@ def list_markers(limit: int = 30):
         ).fetchall()
 
 
+def update_marker(marker_id: int, *, status: str, updated_by: int, resolution: str | None = None) -> bool:
+    if status not in {"open", "in_progress", "fixed", "broken"}:
+        return False
+    _ensure_table()
+    now = datetime.now(timezone.utc).isoformat()
+    with connect_db("users.db") as db:
+        cur = db.execute(
+            "UPDATE issue_markers SET status=?, fixed_by=?, fixed_at=?, resolution=? WHERE id=?",
+            (status, updated_by, now if status == "fixed" else None, (resolution or "")[:2000], marker_id),
+        )
+        db.commit()
+        return cur.rowcount > 0
+
+
 def mark_fixed(marker_id: int, fixed_by: int) -> bool:
     _ensure_table()
     now = datetime.now(timezone.utc).isoformat()
@@ -146,13 +162,13 @@ def mark_fixed(marker_id: int, fixed_by: int) -> bool:
 
 def render_marker(marker) -> str:
     values = list(marker)
-    while len(values) < 14:
+    while len(values) < 15:
         values.append(None)
     (
         marker_id, chat_id, message_id, reporter_id, reporter_name,
         message_text, message_sender_name, reason, code, status,
-        created_at, fixed_by, fixed_at, diagnostic_id
-    ) = values[:14]
+        created_at, fixed_by, fixed_at, diagnostic_id, resolution
+    ) = values[:15]
     state = "исправлено" if status == "fixed" else "открыто"
     code_text = f" · код {code}" if code is not None else ""
     diagnostic_text = f" · диагностика #{diagnostic_id}" if diagnostic_id else ""
@@ -183,5 +199,6 @@ def render_marker(marker) -> str:
         f"отметил: {reporter}\n"
         f"сообщение:\n«{original}»\n"
         f"причина: {reason}"
+        f"\\nрешение: {resolution or \"—\"}"
         f"{diagnostic_details}"
     )
