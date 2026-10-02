@@ -43,6 +43,7 @@ from main import (
 )
 
 from core.permissions import get_user_status
+from core.command_resolution import is_founder_scope_reply
 
 
 class ChRass(StatesGroup):
@@ -196,22 +197,13 @@ async def _handle_founder_command(message: types.Message, prompt: str):
     return False
 
 
-_FOUNDER_SCOPE_PHRASES = {
-    "везде", "глобально", "во всех чатах", "весь бот", "повсеместно",
-    "в этом чате", "этот чат", "здесь", "только здесь", "в этом мире", "только в этом мире",
-}
-
-
-def _is_founder_scope_reply(text: str) -> bool:
-    return (text or "").casefold().replace("ё", "е").strip() in _FOUNDER_SCOPE_PHRASES
-
 
 @dp.message_handler(
     lambda m: bool(
         m.text
         and m.from_user.id == config.owner
         and has_pending(m.from_user.id, m.chat.id)
-        and _is_founder_scope_reply(m.text)
+        and is_founder_scope_reply(m.text)
         and not m.text.startswith("/")
     )
 )
