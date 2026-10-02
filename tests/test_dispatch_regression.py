@@ -59,10 +59,8 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertNotIn("unban_chat_member(", source)
 
     def test_legacy_broadcast_routes_are_removed_and_panel_route_is_authoritative(self):
-        aboute = (ROOT / "aboute.py").read_text(encoding="utf-8")
+        self.assertFalse((ROOT / "aboute.py").exists())
         help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
-        self.assertNotIn('chat_rassilka', aboute)
-        self.assertNotIn('rassilka', aboute)
         self.assertIn('panel:system:broadcast', help_source)
         self.assertIn('from services.broadcast_service import broadcast_message', help_source)
 
