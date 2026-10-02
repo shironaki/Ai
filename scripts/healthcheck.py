@@ -45,6 +45,19 @@ def _network_diagnostics() -> list[str]:
     return lines
 
 
+def _telegram_get(url: str, attempts: int = 3):
+    """Retry short-lived Telegram transport failures before declaring health bad."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return requests.get(url, timeout=(5, 8))
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(attempt + 1)
+    raise last_error or RuntimeError("Telegram request failed")
+
+
 def main() -> int:
     diagnostics = "--diagnostics" in sys.argv
     token = os.getenv("BOT_TOKEN", "").strip()
@@ -69,10 +82,7 @@ def main() -> int:
         return 1
 
     try:
-        response = requests.get(
-            f"https://api.telegram.org/bot{token}/getMe",
-            timeout=8,
-        )
+        response = _telegram_get(f"https://api.telegram.org/bot{token}/getMe")
         response.raise_for_status()
         payload = response.json()
     except Exception as exc:
@@ -84,10 +94,7 @@ def main() -> int:
         return 1
 
     try:
-        webhook = requests.get(
-            f"https://api.telegram.org/bot{token}/getWebhookInfo",
-            timeout=8,
-        )
+        webhook = _telegram_get(f"https://api.telegram.org/bot{token}/getWebhookInfo")
         webhook.raise_for_status()
         webhook_payload = webhook.json()
     except Exception as exc:
