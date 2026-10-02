@@ -123,6 +123,8 @@ Completed in the current admin block:
 - New regression coverage added for broadcast, cancellation and AI relationship.
 - Latest verified CI run: run #897, green, all runtime regression tests passed.
 
+Latest callback fix (2026-10-02): panel callback dispatch is instrumented, callback exceptions now produce visible Telegram feedback + diagnostics, and unknown/obsolete inline callbacks are answered instead of silently ignored. CI #907 is green.
+
 Next required work:
 1. Fresh Termux/runtime verification of the latest TEST branch; do not claim live deployment until observed.
 2. Continue admin/security audit: role assignment paths, chat-founder/admin synchronization, report cadence/forwarded payloads, startup/update delivery.
