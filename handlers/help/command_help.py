@@ -20,6 +20,13 @@ from main import dp, bot, chats, users, bot_is_paused, set_bot_paused, ContentTy
 from services.broadcast_service import broadcast_message
 from services.action_cancel import cancel_current_action, register_runtime_action
 
+_PANEL_HISTORY = {}
+_PANEL_CURRENT = {}
+
+
+def _panel_key(call):
+    return (call.from_user.id, call.message.chat.id)
+
 
 def _role_for_message(message: types.Message) -> str:
     if message.from_user.id == config.owner:
@@ -89,13 +96,30 @@ def _panel_menu(user_id: int, chat_id: int) -> InlineKeyboardMarkup:
     return menu
 
 
-def _panel_back(parent: str = "panel:root"):
-    return InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data=parent))
+def _panel_back(parent: str = "panel:root", label: str = "◀️ Назад"):
+    # Navigation is stateful: the explicit parent is retained only for compatibility.
+    # The actual destination is the last panel state visited by this user/chat.
+    return InlineKeyboardMarkup().add(InlineKeyboardButton(label, callback_data="panel:back"))
 
 
-async def _panel_edit(call, text: str, reply_markup=None):
-    """Edit the current panel message, recreating it if Telegram no longer has it."""
-    try:
+def _panel_has_back(reply_markup) -> bool:
+    for row in getattr(reply_markup, "inline_keyboard", []) or []:
+        for button in row:
+            if getattr(button, "callback_data", None) == "panel:back":
+                return True
+    return False
+
+
+async def _panel_edit(call, text: str, reply_markup=None, *, push_history: bool = True):
+    """Edit the current panel message, preserving real navigation history."""
+    key = _panel_key(call)
+    if push_history and _panel_has_back(reply_markup) and call.data != "panel:back":
+        current = _PANEL_CURRENT.get(key)
+        if current and current != call.data:
+            _PANEL_HISTORY.setdefault(key, []).append(current)
+    if call.data != "panel:back":
+        _PANEL_CURRENT[key] = call.data
+    """    try:
         await call.message.edit_text(text, reply_markup=reply_markup)
     except MessageToEditNotFound:
         await call.message.answer(text, reply_markup=reply_markup)
@@ -111,6 +135,9 @@ async def _panel_edit(call, text: str, reply_markup=None):
 
 
 async def _render_panel_root_message(message: types.Message):
+    key = (message.from_user.id, message.chat.id)
+    _PANEL_HISTORY.pop(key, None)
+    _PANEL_CURRENT[key] = "panel:root"
     menu = _panel_menu(message.from_user.id, message.chat.id)
     await message.answer(
         "<b>🛠 АДМИНИСТРАТИВНАЯ ПАНЕЛЬ</b>\n\n"
@@ -123,6 +150,9 @@ async def _render_panel_root_message(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "panel:root")
 async def panel_root(call):
     from main import log
+    key = _panel_key(call)
+    _PANEL_HISTORY.pop(key, None)
+    _PANEL_CURRENT[key] = "panel:root"
     menu = _panel_menu(call.from_user.id, call.message.chat.id)
     log.info(
         "PANEL ROOT ENTER | user=%s chat=%s buttons=%s",
@@ -566,7 +596,13 @@ async def panel_system(call):
     menu.add(InlineKeyboardButton("🧠 AI diagnostic", callback_data="panel:system:ai"))
     menu.add(InlineKeyboardButton("📣 Рассылка", callback_data="panel:system:broadcast"))
     menu.add(InlineKeyboardButton("🗣 Имена вызова Аи", callback_data="panel:system:names"))
-    menu.add(InlineKeyboardButton("🛰 Стазис", callback_data="panel:system:stasis"))
+    menu.add(InlineKeyboardButton("🛰 Стазис / пробуждение", callback_data="panel:system:stasis"))
+    menu.add(InlineKeyboardButton("📊 Runtime статус", callback_data="panel:system:status"))
+    menu.add(InlineKeyboardButton("🩺 Диагностика", callback_data="panel:system:diagnostics"))
+    menu.add(InlineKeyboardButton("🔋 Батарея", callback_data="panel:system:battery"))
+    menu.add(InlineKeyboardButton("📜 Логи", callback_data="panel:system:logs"))
+    menu.add(InlineKeyboardButton("🧪 Debug", callback_data="panel:system:debug"))
+    menu.add(InlineKeyboardButton("🔄 Перезапуск", callback_data="panel:system:restart"))
     menu.add(InlineKeyboardButton("🧪 QA-метки", callback_data="panel:system:issues"))
     menu.add(InlineKeyboardButton("📱 Termux HA", callback_data="panel:system:termux"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
