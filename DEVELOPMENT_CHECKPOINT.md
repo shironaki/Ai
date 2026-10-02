@@ -62,3 +62,14 @@ Continue working from TEST only. Verify fresh Termux telemetry after runtime cha
 - Regression coverage added in `tests/test_command_resolution.py`.
 - CI run #616 for prior checkpoint was green; awaiting CI for this new resolver chain.
 - Next: inspect command dispatch wiring and confirmation handlers for cross-command pending-state collisions, then add regression coverage. Keep game commands isolated and main/PROD untouched.
+
+
+### QA continuation result — 2026-10-02
+- CI run #626 for f5f264de completed successfully.
+- Cross-command confirmation review found a real handler-level collision risk: a pending Founder scope handler matched arbitrary non-command text before moderation confirmation/action handlers, so a Founder with a pending scope clarification could consume подтверждаю or a new moderation request.
+- Fixed on TEST by restricting Founder scope dispatch to explicit scope phrases and centralizing the resolver in core/command_resolution.py (is_founder_scope_reply).
+- Added regression coverage in tests/test_security_regression.py; the first test attempt correctly exposed a CI-safe import problem because handlers.help imports the live-token main.py, so the test was moved to the pure shared resolver instead.
+- Final TEST commit: a96960f577b0a2c3a524e4cea110ea2a183abbd2.
+- CI run #639 on the final fix completed successfully (67 tests).
+- Result: Founder scope clarification, moderation confirmation, cancellation, and moderation command routing no longer collide at this handler boundary.
+- Next QA stage: continue deterministic dispatch review around other shared natural-language handlers and confirmation/cancellation precedence; do not touch main/PROD.
