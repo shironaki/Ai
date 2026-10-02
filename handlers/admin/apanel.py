@@ -50,7 +50,7 @@ async def set_status(message: types.Message):
 #deluser intentionally disabled; destructive deletion will be redesigned later.\n\n#chatwelcome
 @dp.message_handler(commands=["welcome"])
 async def rules_cmd(message: types.Message):
-    if not has_moderator_role(message.from_user.id):
+    if not has_moderator_role(message.from_user.id, message.chat.id):
         await message.answer("👮‍♂️ | У вас нет роли для управления этим миром.")
         return
     if message.chat.type == "supergroup" or message.chat.type == "group":
