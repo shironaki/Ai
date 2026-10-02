@@ -2,6 +2,7 @@ import asyncio
 import html
 import logging
 import os
+import threading
 import time
 
 import requests
@@ -25,6 +26,18 @@ _LAST_REQUEST = {}
 _LAST_ERROR = {"value": ""}
 _MAX_HISTORY_MESSAGES = 8
 _MIN_REQUEST_INTERVAL = 2.0
+_DEFAULT_MAX_TOKENS = 700
+_REQUEST_TIMEOUT = (8, 25)
+_HTTP = threading.local()
+
+
+def _http_session():
+    """Reuse HTTP/TLS connections per worker thread to reduce provider latency."""
+    session = getattr(_HTTP, "session", None)
+    if session is None:
+        session = requests.Session()
+        _HTTP.session = session
+    return session
 
 
 def _system_prompt(role: str) -> str:
@@ -82,8 +95,9 @@ def ai_status() -> dict:
     }
 
 
-def _request_sync(messages, model, api_key, *, max_tokens=900):
-    response = requests.post(
+def _request_sync(messages, model, api_key, *, max_tokens=_DEFAULT_MAX_TOKENS):
+    started = time.monotonic()
+    response = _http_session().post(
         GROQ_URL,
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -95,7 +109,13 @@ def _request_sync(messages, model, api_key, *, max_tokens=900):
             "temperature": 0.75,
             "max_tokens": max_tokens,
         },
-        timeout=30,
+        timeout=_REQUEST_TIMEOUT,
+    )
+    log.info(
+        "AI PROVIDER | model=%s status=%s duration_ms=%d",
+        model,
+        response.status_code,
+        round((time.monotonic() - started) * 1000),
     )
     if not response.ok:
         detail = redact(response.text, 400)
@@ -167,7 +187,7 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Пользов�
                 continuation_messages,
                 os.getenv("AI_MODEL", DEFAULT_MODEL),
                 api_key,
-                max_tokens=500,
+                max_tokens=350,
             )
             if continuation:
                 answer = answer.rstrip() + " " + continuation.lstrip()
