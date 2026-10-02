@@ -118,8 +118,57 @@ async def panel_users(call):
     menu.add(InlineKeyboardButton("👮 Состав администраторов", callback_data="panel:admins"))
     if is_owner(call.from_user.id) or _panel_role(call.from_user.id, call.message.chat.id) in {"Администратор", "Хелпер"}:
         menu.add(InlineKeyboardButton("🎭 Назначить роль", callback_data="panel:role"))
+    if is_owner(call.from_user.id):
+        menu.add(InlineKeyboardButton("🤝 Отношение Аи", callback_data="panel:relation"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text("<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\nВыберите действие.", reply_markup=menu)
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:relation")
+async def panel_relation_menu(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=2)
+    for score, label in ((100, "💖 +100"), (50, "🙂 +50"), (0, "😐 0"), (-50, "🙁 -50"), (-100, "⛔ -100")):
+        menu.insert(InlineKeyboardButton(label, callback_data=f"panel:relation:{score}"))
+    menu.add(InlineKeyboardButton("🔕 -100 + блок вызова", callback_data="panel:relation:block"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:users"))
+    await call.message.edit_text(
+        "<b>🤝 ОТНОШЕНИЕ АИ</b>\n\n"
+        "Выберите уровень, затем ответьте на сообщение пользователя.",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("panel:relation:"))
+async def panel_relation_select(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    raw = call.data.rsplit(":", 1)[-1]
+    if raw == "block":
+        score, block = -100, True
+    else:
+        try:
+            score = int(raw)
+        except ValueError:
+            await call.answer("Некорректный уровень.", show_alert=True)
+            return
+        block = None
+    from handlers.help.help import _PANEL_PENDING
+    _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {
+        "kind": "relation",
+        "score": score,
+        "block": block,
+    }
+    await call.message.edit_text(
+        "<b>🤝 ОТНОШЕНИЕ АИ</b>\n\n"
+        "Теперь ответьте на сообщение пользователя, которому назначается этот уровень.",
+        reply_markup=_panel_back(),
+    )
     await call.answer()
 
 
