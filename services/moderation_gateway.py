@@ -154,7 +154,7 @@ async def request(message: types.Message, text: str):
         logging.info("MODERATION SKIP | reason=not_group chat=%s", message.chat.id)
         return False
 
-    role = get_display_role(message.from_user.id)
+    role = get_display_role(message.from_user.id, message.chat.id)
     parsed = build_intent(message, text)
     if parsed is None:
         logging.info("MODERATION SKIP | reason=no_action text=%r", text)
@@ -202,7 +202,7 @@ async def confirm(message: types.Message, *, confirmed: bool = False):
     if intent is None:
         return False
 
-    role = get_display_role(message.from_user.id)
+    role = get_display_role(message.from_user.id, message.chat.id)
     decision = evaluate(intent, role, confirmed=confirmed)
     if not decision.allowed:
         await message.reply(f"⛔ {decision.reason}")
