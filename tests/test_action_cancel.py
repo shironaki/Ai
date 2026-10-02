@@ -33,6 +33,24 @@ class ActionCancelTests(unittest.TestCase):
         self.assertTrue(cancel_current_action(user_id, chat_id))
         self.assertFalse(is_paused())
 
+    def test_global_runtime_undo_is_not_limited_to_original_chat(self):
+        from core.runtime_state import is_paused, set_paused
+        from services.action_cancel import cancel_current_action, register_runtime_action
+
+        user_id = 910001
+        original_chat = 910002
+        other_chat = 910003
+        set_paused(False, scope="global")
+        register_runtime_action(
+            user_id,
+            original_chat,
+            previous_enabled=False,
+            scope="global",
+        )
+        set_paused(True, scope="global")
+        self.assertTrue(cancel_current_action(user_id, other_chat))
+        self.assertFalse(is_paused())
+
 
 if __name__ == "__main__":
     unittest.main()
