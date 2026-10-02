@@ -600,15 +600,24 @@ async def battery_status(message: types.Message):
             state = "🔋 <b>Не заряжается</b>"
 
         percentage = status.get("percentage", "?")
-        plugged = html.escape(str(status.get("plugged", "UNKNOWN")))
-        battery_status_text = html.escape(str(status.get("status", "UNKNOWN")))
+        plugged = str(status.get("plugged", "UNKNOWN")).upper()
+
+        if plugged in {"UNPLUGGED", "NONE", "UNKNOWN"}:
+            power_source = "Не подключено к зарядке"
+        elif plugged in {"USB", "USB_AC", "PLUGGED_USB"}:
+            power_source = "USB"
+        elif plugged in {"AC", "PLUGGED_AC"}:
+            power_source = "Сеть / адаптер"
+        elif plugged in {"WIRELESS", "PLUGGED_WIRELESS"}:
+            power_source = "Беспроводная зарядка"
+        else:
+            power_source = "Подключено к питанию"
 
         await message.answer(
             "🔋 <b>СТАТУС ЗАРЯДКИ</b>\n"
             f"Уровень: <b>{percentage}%</b>\n"
             f"Состояние: {state}\n"
-            f"Источник питания: <code>{plugged}</code>\n"
-            f"Статус Android: <code>{battery_status_text}</code>"
+            f"Источник питания: <b>{html.escape(power_source)}</b>"
         )
     except Exception as exc:
         log.exception("BATTERY STATUS | failed to read battery")
