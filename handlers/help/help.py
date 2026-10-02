@@ -131,7 +131,7 @@ def _ai_role(message: types.Message) -> str:
     if message.from_user.id == config.owner:
         return "Основатель"
     status = get_user_status(message.from_user.id)
-    if status in ("Администратор", "Система"):
+    if status == "Администратор":
         return "Администратор"
     if status == "Хелпер":
         return "Хелпер"
