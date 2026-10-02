@@ -1,22 +1,15 @@
-"""Centralized identity resolution for the Telegram command pipeline.
+"""Centralized identity and role resolution for the Telegram command pipeline.
 
-The owner is resolved from base.config only. No command handler should infer
-founder status from the users table.
+«Система» is the AI/service identity and is never a human role.
+The game-only «Игрок» role is not assigned by the administration layer.
 """
 
 from dataclasses import dataclass
 
 from base import config, users
+from config.role_config import OWNER_ROLE, ROLE_ORDER
 
-
-ROLE_ORDER = {
-    "Игрок": 10,
-    "Модератор": 20,
-    "Хелпер": 30,
-    "Администратор": 40,
-    "Создатель бота": 50,
-    "Система": 60,
-}
+ROLE_ORDER = dict(ROLE_ORDER)
 
 
 @dataclass(frozen=True)
@@ -28,18 +21,23 @@ class Identity:
 
 def resolve_role(user_id: int) -> str:
     if user_id == config.owner:
-        return "Создатель бота"
+        return OWNER_ROLE
     row = users.cursor.execute(
         "SELECT status FROM users WHERE id = ?",
         (user_id,),
     ).fetchone()
     status = row[0] if row else None
-    return status if status in ROLE_ORDER else "Игрок"
+    # Unknown/legacy/game-only statuses are ordinary users in the admin layer.
+    return status if status in ROLE_ORDER and status != OWNER_ROLE else "Пользователь"
 
 
 def resolve_identity(user_id: int) -> Identity:
     owner = user_id == config.owner
-    return Identity(user_id=user_id, role="Создатель бота" if owner else resolve_role(user_id), is_owner=owner)
+    return Identity(
+        user_id=user_id,
+        role=OWNER_ROLE if owner else resolve_role(user_id),
+        is_owner=owner,
+    )
 
 
 def is_owner(user_id: int) -> bool:
