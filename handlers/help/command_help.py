@@ -568,6 +568,7 @@ async def panel_system(call):
     menu.add(InlineKeyboardButton("🗣 Имена вызова Аи", callback_data="panel:system:names"))
     menu.add(InlineKeyboardButton("🛰 Стазис", callback_data="panel:system:stasis"))
     menu.add(InlineKeyboardButton("🧪 QA-метки", callback_data="panel:system:issues"))
+    menu.add(InlineKeyboardButton("📱 Termux HA", callback_data="panel:system:termux"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await _panel_edit(call, "<b>⚙️ СИСТЕМНОЕ</b>", reply_markup=menu)
     await call.answer()
@@ -650,6 +651,62 @@ async def panel_system_stasis_apply(call):
         reply_markup=_panel_back("panel:system"),
     )
     await call.answer("Стазис активирован." if not enabled else "Стазис снят.", show_alert=True)
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:termux")
+async def panel_system_termux(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=1)
+    menu.add(InlineKeyboardButton("🔁 ROLE — штатное переключение", callback_data="panel:system:termux:role"))
+    menu.add(InlineKeyboardButton("🚨 FORCE — аварийный takeover", callback_data="panel:system:termux:force"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:system"))
+    await _panel_edit(
+        call,
+        "<b>📱 TERMUX HIGH AVAILABILITY</b>\\n\\n"
+        "Управление выполняется через GitHub Issue #23.\\n"
+        "В каждый момент времени бот должен работать только на одном телефоне.",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:termux:role")
+async def panel_system_termux_role(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    await _panel_edit(
+        call,
+        "<b>🔁 ROLE — штатное переключение</b>\\n\\n"
+        "<code>ROLE phone1 ACTIVE</code>\\n"
+        "<code>ROLE phone1 STANDBY</code>\\n"
+        "<code>ROLE phone2 ACTIVE</code>\\n"
+        "<code>ROLE phone2 STANDBY</code>\\n\\n"
+        "Команду отправляйте отдельным комментарием в Issue #23. "
+        "Обычный ROLE ACTIVE не перехватывает активную lease другого телефона.",
+        reply_markup=_panel_back("panel:system:termux"),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:termux:force")
+async def panel_system_termux_force(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    await _panel_edit(
+        call,
+        "<b>🚨 FORCE — аварийное переключение</b>\\n\\n"
+        "<code>FORCE phone1 ACTIVE</code>\\n"
+        "<code>FORCE phone2 ACTIVE</code>\\n\\n"
+        "Используйте только при аварии, когда штатный ROLE не подходит. "
+        "Целевой телефон меняет центральную lease, ждёт fence-интервал и затем запускает бот. "
+        "После неуспешного healthcheck lease откатывается.",
+        reply_markup=_panel_back("panel:system:termux"),
+    )
+    await call.answer()
 
 
 @dp.callback_query_handler(lambda c: c.data == "panel:system:issues")
