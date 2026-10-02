@@ -864,6 +864,24 @@ async def panel_system_restart(call):
     if not is_owner(call.from_user.id):
         await call.answer("Только Основатель.", show_alert=True)
         return
+    menu = InlineKeyboardMarkup(row_width=2)
+    menu.add(
+        InlineKeyboardButton("🔄 Подтвердить", callback_data="panel:system:restart:apply"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:back"),
+    )
+    await _panel_edit(
+        call,
+        "<b>🔄 ПЕРЕЗАПУСК</b>\\n\\nПодтвердите перезапуск текущего процесса.",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:restart:apply")
+async def panel_system_restart_apply(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
     from main import HEALTH_DIR, log, asyncio, os
     request_path = os.path.join(HEALTH_DIR, "restart.request")
     try:
