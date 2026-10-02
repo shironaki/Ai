@@ -34,6 +34,8 @@ async def set_status(message: types.Message):
         await message.reply("❗ | Пользователь не зарегистрирован в Системе.")
         return
     users.cursor.execute("UPDATE users SET status = ? WHERE id = ?", (target_role, target_id))
+    from services.role_audit import record_role_grant
+    record_role_grant(chat_id=message.chat.id, actor_id=actor_id, target_id=target_id, role=target_role)
     users.connect.commit()
     await message.answer(
         f"✅ | Роль пользователя обновлена: <b>{target_role}</b>",
