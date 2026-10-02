@@ -615,6 +615,8 @@ async def _apply_panel_role(message: types.Message, target_user_id: int, target_
         await message.reply("❗ Пользователь не зарегистрирован в Системе.")
         return False
     users.cursor.execute("UPDATE users SET status = ? WHERE id = ?", (target_role, target_user_id))
+    from services.role_audit import record_role_grant
+    record_role_grant(chat_id=message.chat.id, actor_id=actor_id, target_id=target_user_id, role=target_role)
     users.connect.commit()
     await message.reply(
         f"✅ Роль пользователя обновлена: <b>{escape_for_telegram_html(target_role)}</b>."
