@@ -4,7 +4,7 @@ from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.exceptions import MessageToEditNotFound
+from aiogram.utils.exceptions import BadRequest, MessageToEditNotFound
 
 from base import config
 from core.command_help import render_help
@@ -99,9 +99,13 @@ async def _panel_edit(call, text: str, reply_markup=None):
         await call.message.edit_text(text, reply_markup=reply_markup)
     except MessageToEditNotFound:
         await call.message.answer(text, reply_markup=reply_markup)
-    except Exception as exc:
-        if "message to edit not found" in str(exc).lower():
+    except BadRequest as exc:
+        error_text = str(exc).lower()
+        if "message to edit not found" in error_text or "message can't be edited" in error_text:
             await call.message.answer(text, reply_markup=reply_markup)
+        elif "message is not modified" in error_text:
+            # The requested panel state is already displayed; do not create a duplicate.
+            return
         else:
             raise
 
