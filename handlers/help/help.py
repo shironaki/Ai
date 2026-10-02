@@ -486,8 +486,8 @@ async def panel_reports(call: types.CallbackQuery):
                 callback_data=f"report:view:{row['id']}",
             )
         )
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
-    await call.message.edit_text(
+    from handlers.help.command_help import _panel_edit, _panel_back
+    await _panel_edit(call,
         "<b>📬 ЦЕНТР ОБРАЩЕНИЙ</b>\n\n"
         + (f"Открытых репортов: <b>{len(rows)}</b>" if rows else "Открытых репортов нет."),
         reply_markup=menu,
@@ -520,8 +520,8 @@ async def report_view(call: types.CallbackQuery):
     menu = InlineKeyboardMarkup(row_width=1)
     if row["status"] == "open":
         menu.add(InlineKeyboardButton("✉️ Ответить", callback_data=f"report:answer:{row['id']}"))
-    menu.add(InlineKeyboardButton("◀️ Репорты", callback_data="panel:reports"))
-    await call.message.edit_text(text, reply_markup=menu)
+    from handlers.help.command_help import _panel_edit, _panel_back
+    await _panel_edit(call, text, reply_markup=menu.add(_panel_back("panel:reports").inline_keyboard[0][0]) if False else _panel_back("panel:reports"))
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith("report:answer:"))
