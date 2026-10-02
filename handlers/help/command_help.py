@@ -96,7 +96,7 @@ def _panel_back(parent: str = "panel:root"):
 async def _panel_edit(call, text: str, reply_markup=None):
     """Edit the current panel message, recreating it if Telegram no longer has it."""
     try:
-        await _panel_edit(call, text, reply_markup=reply_markup)
+        await call.message.edit_text(text, reply_markup=reply_markup)
     except MessageToEditNotFound:
         await call.message.answer(text, reply_markup=reply_markup)
     except Exception as exc:
