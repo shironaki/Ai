@@ -202,12 +202,16 @@ _FOUNDER_SCOPE_PHRASES = {
 }
 
 
+def _is_founder_scope_reply(text: str) -> bool:
+    return (text or "").casefold().replace("ё", "е").strip() in _FOUNDER_SCOPE_PHRASES
+
+
 @dp.message_handler(
     lambda m: bool(
         m.text
         and m.from_user.id == config.owner
         and has_pending(m.from_user.id, m.chat.id)
-        and m.text.casefold().replace("ё", "е").strip() in _FOUNDER_SCOPE_PHRASES
+        and _is_founder_scope_reply(m.text)
         and not m.text.startswith("/")
     )
 )
