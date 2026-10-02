@@ -12,7 +12,7 @@ from services.chat_members import sync_chat_admins
 from services.silence_service import set_silent, is_silent
 from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
-from main import dp, bot, chats, users
+from main import dp, bot, chats, users, bot_is_paused, set_bot_paused
 
 
 def _role_for_message(message: types.Message) -> str:
@@ -326,6 +326,7 @@ async def panel_system(call):
         return
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("🧠 AI diagnostic", callback_data="panel:system:ai"))
+    menu.add(InlineKeyboardButton("🛰 Стазис", callback_data="panel:system:stasis"))
     menu.add(InlineKeyboardButton("🧪 QA-метки", callback_data="panel:system:issues"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text("<b>⚙️ СИСТЕМНОЕ</b>", reply_markup=menu)
@@ -335,6 +336,20 @@ async def panel_system(call):
 @dp.callback_query_handler(lambda c: c.data == "panel:system:ai")
 async def panel_system_ai(call):
     await call.answer("Диагностика: /aidiag (секреты не выводятся).", show_alert=True)
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:stasis")
+async def panel_system_stasis(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    enabled = bot_is_paused()
+    set_bot_paused(not enabled)
+    await call.message.edit_text(
+        "<b>🛰 СТАЗИС</b>\\n\\nСостояние: <b>" + ("активен" if not enabled else "снят") + "</b>",
+        reply_markup=_panel_back(),
+    )
+    await call.answer("Стазис активирован." if not enabled else "Стазис снят.", show_alert=True)
 
 
 @dp.callback_query_handler(lambda c: c.data == "panel:system:issues")
