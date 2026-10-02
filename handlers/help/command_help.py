@@ -719,7 +719,20 @@ async def panel_system_ai(call):
     if not is_owner(call.from_user.id):
         await call.answer("Только Основатель.", show_alert=True)
         return
-    await call.answer("Диагностика: /aidiag (секреты не выводятся).", show_alert=True)
+    from services.ai_service import ai_status, _LAST_ERROR
+    status = ai_status()
+    configured = "✅ задан" if status["configured"] else "❌ НЕ задан"
+    last_error = _LAST_ERROR.get("value") or "нет — запросов с ошибкой ещё не было"
+    await _panel_edit(
+        call,
+        "<b>🧠 AI DIAGNOSTIC</b>\\n\\n"
+        f"Ключ: <b>{configured}</b>\\n"
+        f"Модель: <code>{escape_for_telegram_html(str(status['model']))}</code>\\n"
+        f"Последняя ошибка: <code>{escape_for_telegram_html(str(last_error)[:1500])}</code>\\n\\n"
+        "Для проверки ответа: <code>/ai привет</code>",
+        reply_markup=_panel_back("panel:system"),
+    )
+    await call.answer()
 
 
 @dp.callback_query_handler(lambda c: c.data == "panel:system:status")
