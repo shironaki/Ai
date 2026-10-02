@@ -478,14 +478,25 @@ async def log_update_error(update, exception):
     )
 
     message = getattr(update, "message", None)
+    callback_query = getattr(update, "callback_query", None)
     diagnostic_id = None
     marker_id = None
     try:
         diagnostic_id = record_diagnostic(
             update_id=update_id,
-            chat_id=getattr(message.chat, "id", None) if message else None,
-            user_id=getattr(message.from_user, "id", None) if message else None,
-            stage="exception",
+            chat_id=(
+                getattr(message.chat, "id", None)
+                if message
+                else getattr(getattr(callback_query, "message", None).chat, "id", None)
+                if callback_query and getattr(callback_query, "message", None) and getattr(callback_query.message, "chat", None)
+                else None
+            ),
+            user_id=(
+                getattr(message.from_user, "id", None)
+                if message
+                else getattr(callback_query.from_user, "id", None) if callback_query else None
+            ),
+            stage="callback_exception" if callback_query else "exception",
             result="unhandled_exception",
             exception=exception,
             context={
@@ -519,6 +530,14 @@ async def log_update_error(update, exception):
             )
         except Exception:
             log.exception("Could not send error notice to the user")
+    elif callback_query:
+        try:
+            await callback_query.answer(
+                "⚠️ Ошибка обработчика кнопки. Диагностика записана.",
+                show_alert=True,
+            )
+        except Exception:
+            log.exception("Could not answer failed callback query")
 
     if config.owner:
         try:
