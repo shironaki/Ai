@@ -314,6 +314,8 @@ async def debug_dispatch(message: types.Message):
     )
 )
 async def start_dispatch(message: types.Message):
+    if message.chat.type != "private":
+        return
     start_text = "<b>Система 'Аи' приветствует Вас!</b>"
     await message.answer(start_text)
 
@@ -516,9 +518,7 @@ BOT_COMMANDS = [
     types.BotCommand("start", "начать работу"),
     types.BotCommand("help", "актуальный список команд"),
     types.BotCommand("ai", "обратиться к Аи"),
-    types.BotCommand("chatinfo", "информация о текущем чате"),
     types.BotCommand("report", "отправить обращение/жалобу"),
-    types.BotCommand("q", "отправить обращение"),
 ]
 
 
