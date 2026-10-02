@@ -101,7 +101,8 @@ async def panel_users(call):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("👤 Моя информация", callback_data="panel:myinfo"))
     menu.add(InlineKeyboardButton("👮 Состав администраторов", callback_data="panel:admins"))
-    menu.add(InlineKeyboardButton("🎭 Назначить роль", callback_data="panel:role"))
+    if is_owner(call.from_user.id) or _panel_role(call.from_user.id) in {"Администратор", "Хелпер"}:
+        menu.add(InlineKeyboardButton("🎭 Назначить роль", callback_data="panel:role"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text("<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\nВыберите действие.", reply_markup=menu)
     await call.answer()
