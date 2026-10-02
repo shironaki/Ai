@@ -41,3 +41,21 @@ The panel only documents/organizes these controls; it does not silently execute 
 - Founder/runtime gateway, owner registration refresh, command registry/help, AI service hardening, moderation/report panels, and runtime health controls are already in the current branch history.
 - Return to bot feature development from the current branch; do not reopen the finished two-phone HA design unless a concrete defect is found.
 - Keep `main`/PROD untouched.
+
+
+## Administrative panel audit — 2026-10-03
+- Full command surface was audited against the runtime handlers and command registry.
+- Founder/administrator panel now exposes the operational runtime controls that previously existed only as slash commands: runtime status, diagnostics, battery, logs, debug, restart, AI diagnostic, stasis/awakening, broadcasts, invocation names, QA markers, and Termux HA.
+- Added explicit `/panel` and natural-language panel requests for authorized staff.
+- Panel navigation now keeps per-user/per-chat history; **Назад** returns to the actual previous panel state instead of a hard-coded menu.
+- Reports were moved onto the same navigation path so report list/view/answer screens participate in panel history.
+- Restart from the panel requires explicit confirmation.
+- Global runtime actions are registered with the unified undo system and can be cancelled from another chat; this fixes the case where global Stasis was active but the panel reported no last action.
+- Command registry now includes the runtime commands `/status`, `/diagnostics`, `/battery`, `/charge`, `/restart`, and `/panel`.
+- Regression coverage was expanded for panel callbacks, navigation, runtime undo, command catalog, and Termux supervisor PID syntax.
+- CI run `1143` on commit `bbe8d4280916b87f360329cbaa4b78813b00fb73` completed successfully: compile/import/runtime regression suite passed.
+- A hidden Termux supervisor PID regression was found during this audit and fixed: supervisor now writes its real shell PID using the shell PID variable.
+- Current branch head: `bbe8d4280916b87f360329cbaa4b78813b00fb73`.
+
+## Next development focus
+Return to bot feature work from this audited branch. Do not reopen the panel/Termux architecture unless a concrete regression appears.
