@@ -25,6 +25,7 @@ class AIRelationshipTests(unittest.TestCase):
         old = os.environ.get("AI_INVOCATION_NAMES")
         from database.connection import connect_db
         try:
+            invocation_names()
             with connect_db("users.db") as db:
                 db.execute("DELETE FROM ai_settings WHERE key='invocation_names'")
                 db.commit()
@@ -33,6 +34,7 @@ class AIRelationshipTests(unittest.TestCase):
             self.assertEqual(set_invocation_names("Аи, Система"), ("аи", "система"))
             self.assertEqual(invocation_names(), ("аи", "система"))
         finally:
+            invocation_names()
             with connect_db("users.db") as db:
                 db.execute("DELETE FROM ai_settings WHERE key='invocation_names'")
                 db.commit()
