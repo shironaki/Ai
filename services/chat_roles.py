@@ -39,3 +39,14 @@ def get_role(chat_id: int, user_id: int):
     with connect_db("users.db") as db:
         row=db.execute("SELECT role FROM chat_roles WHERE chat_id=? AND user_id=?", (chat_id,user_id)).fetchone()
         return row[0] if row else None
+
+
+def list_roles(chat_id: int):
+    """Return all bot-assigned human roles for one chat."""
+    _ensure()
+    with connect_db("users.db") as db:
+        return db.execute(
+            "SELECT chat_id,user_id,role,granted_by,updated_at "
+            "FROM chat_roles WHERE chat_id=? ORDER BY role DESC,user_id",
+            (chat_id,),
+        ).fetchall()
