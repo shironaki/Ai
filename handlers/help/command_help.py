@@ -19,7 +19,7 @@ from main import dp, bot, chats, users, bot_is_paused, set_bot_paused
 def _role_for_message(message: types.Message) -> str:
     if message.from_user.id == config.owner:
         return "Основатель"
-    status = get_user_status(message.from_user.id)
+    status = get_role(message.chat.id, message.from_user.id) or get_user_status(message.from_user.id)
     if status in {
         "Создатель бота",
         "Администратор",
@@ -39,7 +39,7 @@ async def authoritative_help(message: types.Message):
         InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"),
     )
     menu.add(InlineKeyboardButton("📬 Репорт", callback_data="help:report"))
-    if is_owner(message.from_user.id) or has_moderator_role(message.from_user.id):
+    if is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id):
         menu.add(InlineKeyboardButton("🛠 Панель", callback_data="panel:root"))
     await message.answer(
         "<b>📖 СИСТЕМА «АИ»</b>\n\n"
