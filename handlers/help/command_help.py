@@ -720,6 +720,153 @@ async def panel_system_ai(call):
     await call.answer("Диагностика: /aidiag (секреты не выводятся).", show_alert=True)
 
 
+@dp.callback_query_handler(lambda c: c.data == "panel:system:status")
+async def panel_system_status(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    from main import _runtime_status_snapshot
+    status = _runtime_status_snapshot()
+    heartbeat_age = status["heartbeat_age"]
+    heartbeat = f"{heartbeat_age:.1f}s назад" if heartbeat_age is not None else "нет"
+    uptime = status["process_uptime"]
+    uptime_text = "unknown" if uptime is None else f"{int(uptime // 3600)}ч {int((uptime % 3600) // 60)}м {int(uptime % 60)}с"
+    await _panel_edit(
+        call,
+        "<b>📊 FOUNDER RUNTIME STATUS</b>\\n"
+        f"Бот: <b>{'🟢 OK' if heartbeat_age is not None and heartbeat_age <= 30 else '🔴 STALE/MISSING'}</b>\\n"
+        f"Heartbeat: <code>{escape_for_telegram_html(heartbeat)}</code>\\n"
+        f"PID: <code>{status['pid']}</code>\\n"
+        f"Uptime: <code>{escape_for_telegram_html(uptime_text)}</code>\\n"
+        f"Commit: <code>{escape_for_telegram_html(status['commit'])}</code>",
+        reply_markup=_panel_back("panel:system"),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:diagnostics")
+async def panel_system_diagnostics(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    import os
+    import subprocess
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "scripts", "healthcheck.py")
+    script = os.path.abspath(script)
+    try:
+        result = subprocess.run(
+            [os.getenv("PYTHON", "python3"), script, "--diagnostics"],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=os.environ.copy(),
+        )
+        output = (result.stdout + "\\n" + result.stderr).strip() or "Диагностика не вернула текст."
+    except Exception as exc:
+        output = f"{type(exc).__name__}: {exc}"
+    if len(output) > 4500:
+        output = output[-4500:]
+    await _panel_edit(
+        call,
+        "<b>🩺 NETWORK / RUNTIME DIAGNOSTICS</b>\\n\\n<pre>"
+        + escape_for_telegram_html(output)
+        + "</pre>",
+        reply_markup=_panel_back("panel:system"),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:battery")
+async def panel_system_battery(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    from services.battery_status import get_battery_status
+    try:
+        status = get_battery_status()
+        charging = status.get("charging")
+        percentage = status.get("percentage", "?")
+        plugged = str(status.get("plugged", "UNKNOWN")).upper()
+        state = "⚡ Заряжается" if charging else "🔋 Не заряжается"
+        await _panel_edit(
+            call,
+            "<b>🔋 СТАТУС ЗАРЯДКИ</b>\\n"
+            f"Уровень: <b>{percentage}%</b>\\n"
+            f"Состояние: <b>{state}</b>\\n"
+            f"Источник: <b>{escape_for_telegram_html(plugged)}</b>",
+            reply_markup=_panel_back("panel:system"),
+        )
+    except Exception as exc:
+        await _panel_edit(
+            call,
+            "⚠️ <b>Ошибка батареи</b>\\n<code>"
+            + escape_for_telegram_html(f"{type(exc).__name__}: {exc}")
+            + "</code>",
+            reply_markup=_panel_back("panel:system"),
+        )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:logs")
+async def panel_system_logs(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    from main import LOG_FILE
+    import os
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as handle:
+            output = handle.read() or "bot.log пока пуст."
+    except Exception as exc:
+        output = f"{type(exc).__name__}: {exc}"
+    if len(output) > 4500:
+        output = output[-4500:]
+    await _panel_edit(
+        call,
+        "<b>📜 ПОСЛЕДНИЕ ЛОГИ</b>\\n\\n<pre>" + escape_for_telegram_html(output) + "</pre>",
+        reply_markup=_panel_back("panel:system"),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:debug")
+async def panel_system_debug(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    await _panel_edit(
+        call,
+        "🧪 <b>DEBUG</b>\\n\\nОбработчики сообщений активны.\\n"
+        "Полный dispatch-лог записывается автоматически.",
+        reply_markup=_panel_back("panel:system"),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:restart")
+async def panel_system_restart(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    from main import HEALTH_DIR, log, asyncio, os
+    request_path = os.path.join(HEALTH_DIR, "restart.request")
+    try:
+        os.makedirs(HEALTH_DIR, exist_ok=True)
+        with open(request_path, "w", encoding="utf-8") as handle:
+            handle.write(f"requested_at={__import__('time').time()}\\nrequested_by={call.from_user.id}\\n")
+        await call.answer("Перезапуск запрошен.", show_alert=True)
+        await call.message.edit_text(
+            "🔄 <b>ПЕРЕЗАПУСК ЗАПРОШЕН</b>\\n"
+            "Текущий процесс завершится, supervisor поднимет его заново."
+        )
+        log.warning("REMOTE RESTART | founder requested restart from panel")
+        await asyncio.sleep(0.3)
+        os._exit(0)
+    except Exception as exc:
+        await call.answer(f"Ошибка: {type(exc).__name__}", show_alert=True)
+
+
 @dp.callback_query_handler(lambda c: c.data == "panel:system:stasis")
 async def panel_system_stasis(call):
     if not is_owner(call.from_user.id):
