@@ -19,7 +19,7 @@ from main import dp, bot, chats, users, bot_is_paused, set_bot_paused
 def _role_for_message(message: types.Message) -> str:
     if message.from_user.id == config.owner:
         return "Основатель"
-    status = get_role(message.chat.id, message.from_user.id) or get_user_status(message.from_user.id)
+    status = get_role(message.chat.id, message.from_user.id)
     if status in {
         "Создатель бота",
         "Администратор",
@@ -67,7 +67,7 @@ async def help_report(call: types.CallbackQuery):
 def _panel_role(user_id, chat_id=None):
     if is_owner(user_id):
         return "Создатель бота"
-    return (get_role(chat_id, user_id) if chat_id else None) or get_user_status(user_id) or "Пользователь"
+    return (get_role(chat_id, user_id) if chat_id is not None else get_user_status(user_id)) or "Пользователь"
 
 
 def _panel_back():
@@ -198,7 +198,7 @@ async def panel_info(call):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("👤 Моя информация", callback_data="panel:myinfo"))
     menu.add(InlineKeyboardButton("💬 Информация о чате", callback_data="panel:chatinfo"))
-    if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id):
+    if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id):
         menu.add(InlineKeyboardButton("👮 Состав администраторов", callback_data="panel:admins"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text("<b>ℹ️ ИНФОРМАЦИЯ</b>\n\nФактические данные. Профиль — будущий игровой слой.", reply_markup=menu)
