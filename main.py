@@ -41,6 +41,7 @@ from services.security import redact
 from services.moderation_scheduler import expiry_loop
 from services.diagnostic_journal import record as record_diagnostic
 from services.issue_tracker import create_runtime_error_marker
+from services.report_service import reminder_loop
 
 LOG_FILE = "bot.log"
 BOT_PAUSED = False
@@ -526,6 +527,7 @@ async def on_startup(dispatcher):
     write_health_heartbeat()
     asyncio.create_task(runtime_heartbeat())
     asyncio.create_task(expiry_loop(bot))
+    asyncio.create_task(reminder_loop(bot, config.owner))
     from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
