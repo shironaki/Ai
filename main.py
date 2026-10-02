@@ -107,6 +107,11 @@ if not config.bot_heart:
 bot = Bot(token=config.bot_heart, parse_mode=types.ParseMode.HTML)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
+# Bootstrap the founder into the legacy users registry as well as the
+# authoritative config.owner identity. This prevents old profile/start
+# handlers from treating the founder as an unregistered ordinary user.
+users.ensure_owner_registered(config.owner)
+
 
 class MyStatesGroup(StatesGroup):
     START_STATE = State()
