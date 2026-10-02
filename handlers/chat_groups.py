@@ -68,10 +68,10 @@ async def left_chat_member(message: types.Message):
 
 async def echo_message(message: types.Message):
     if message.chat.type == "private" and message.text:
-        role = "Основатель" if message.from_user.id == config.owner else "Игрок"
+        role = "Основатель" if message.from_user.id == config.owner else "Пользователь"
         try:
             status = get_user_status(message.from_user.id)
-            if status in ("Администратор", "Система"):
+            if status in ("Администратор",):
                 role = "Администратор"
             elif status in ("Хелпер", "Модератор"):
                 role = status
