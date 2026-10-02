@@ -488,6 +488,7 @@ async def report_view(call: types.CallbackQuery):
         f"Причина: <b>{escape_for_telegram_html(str(row['reason']))}</b>\n"
         f"Создан: <code>{escape_for_telegram_html(str(row['created_at']))}</code>\n"
         f"Сообщение: <code>{escape_for_telegram_html(str(row['payload'] or 'не сохранено'))}</code>"
+        + (f"\nОтвет: <b>{escape_for_telegram_html(str(row['answer_text']))}</b>" if row['answer_text'] else "")
     )
     menu = InlineKeyboardMarkup(row_width=1)
     if row["status"] == "open":
