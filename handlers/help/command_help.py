@@ -9,6 +9,7 @@ from core.permissions import get_user_status, has_moderator_role
 from core.identity import is_owner
 from core.role_transitions import available_role_targets
 from services.chat_members import sync_chat_admins
+from services.chat_roles import get_role
 from services.silence_service import set_silent, is_silent
 from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
@@ -63,10 +64,10 @@ async def help_report(call: types.CallbackQuery):
     )
     await call.answer()
 
-def _panel_role(user_id):
+def _panel_role(user_id, chat_id=None):
     if is_owner(user_id):
         return "Создатель бота"
-    return get_user_status(user_id) or "Пользователь"
+    return (get_role(chat_id, user_id) if chat_id else None) or get_user_status(user_id) or "Пользователь"
 
 
 def _panel_back():
@@ -76,7 +77,7 @@ def _panel_back():
 @dp.callback_query_handler(lambda c: c.data == "panel:root")
 async def panel_root(call):
     menu = InlineKeyboardMarkup(row_width=2)
-    if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id):
+    if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id):
         menu.add(InlineKeyboardButton("👥 Пользователи", callback_data="panel:users"))
         menu.add(InlineKeyboardButton("🔨 Модерация", callback_data="panel:moderation"))
     menu.add(InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"))
@@ -86,7 +87,7 @@ async def panel_root(call):
     menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="panel:close"))
     await call.message.edit_text(
         "<b>🛠 АДМИНИСТРАТИВНАЯ ПАНЕЛЬ</b>\n\n"
-        "Уровень: <b>" + _panel_role(call.from_user.id) + "</b>\n"
+        "Уровень: <b>" + _panel_role(call.from_user.id, call.message.chat.id) + "</b>\n"
         "Показываются только доступные вашему уровню функции.",
         reply_markup=menu,
     )
