@@ -3,6 +3,7 @@ from aiogram import types
 from main import config, dp, bot, users, chats, datetime, random
 from services.ai_service import escape_for_telegram_html, generate_reply
 from services.chat_members import observe, sync_chat_admins
+from services.ai_relationship import can_call, is_max_positive
 
 
 @dp.message_handler(content_types=types.ContentTypes.NEW_CHAT_MEMBERS)
@@ -115,8 +116,12 @@ async def chat_member_event(update: types.ChatMemberUpdated):
 async def echo_message(message: types.Message):
     if message.chat.type == "private" and message.text:
         from handlers.help.help import _ai_invocation
-        invocation = _ai_invocation(message.text)
-        if message.from_user.id != config.owner and invocation is None:
+        user_id = message.from_user.id
+        max_positive = is_max_positive(user_id, config.owner)
+        if not can_call(user_id, config.owner):
+            return
+        invocation = _ai_invocation(message.text, include_alternates=max_positive)
+        if user_id != config.owner and invocation is None and not max_positive:
             return
         prompt = invocation if invocation is not None else message.text.strip()
         try:
