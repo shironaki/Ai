@@ -989,22 +989,22 @@ async def panel_info_actions(call: types.CallbackQuery):
                 rendered = "💬 Чат ещё не зарегистрирован в Системе."
             else:
                 rendered = (
-                    "<b>💬 ИНФОРМАЦИЯ О ЧАТЕ</b>\\n\\n"
-                    f"Название: <b>{escape_for_telegram_html(str(summary.get('name') or '—'))}</b>\\n"
-                    f"Username: <code>{escape_for_telegram_html(str(summary.get('username') or '—'))}</code>\\n"
-                    f"Статус Системы: <b>{escape_for_telegram_html(str(summary.get('status') or '—'))}</b>\\n"
-                    f"ID: <code>{summary.get('chat_id')}</code>\\n"
+                    "<b>💬 ИНФОРМАЦИЯ О ЧАТЕ</b>\n\n"
+                    f"Название: <b>{escape_for_telegram_html(str(summary.get('name') or '—'))}</b>\n"
+                    f"Username: <code>{escape_for_telegram_html(str(summary.get('username') or '—'))}</code>\n"
+                    f"Статус Системы: <b>{escape_for_telegram_html(str(summary.get('status') or '—'))}</b>\n"
+                    f"ID: <code>{summary.get('chat_id')}</code>\n"
                     f"Регистрация в Системе: <code>{escape_for_telegram_html(str(summary.get('system_registered_at') or '—'))}</code>"
                 )
         elif call.data == "panel:my_info":
             summary = user_summary(call.from_user.id)
             rendered = (
-                "<b>👤 МОЯ ИНФОРМАЦИЯ</b>\\n\\n"
-                f"Имя: <b>{escape_for_telegram_html(str(summary.get('name') if summary else '—'))}</b>\\n"
-                f"Username: <code>{escape_for_telegram_html(str(summary.get('username') if summary else '—'))}</code>\\n"
-                f"ID: <code>{summary.get('id') if summary else '—'}</code>\\n"
-                f"Роль: <b>{escape_for_telegram_html(str(summary.get('status') if summary else '—'))}</b>\\n"
-                f"Регистрация в Системе: <code>{escape_for_telegram_html(str(summary.get('system_registered_at') if summary else '—'))}</code>\\n"
+                "<b>👤 МОЯ ИНФОРМАЦИЯ</b>\n\n"
+                f"Имя: <b>{escape_for_telegram_html(str(summary.get('name') if summary else '—'))}</b>\n"
+                f"Username: <code>{escape_for_telegram_html(str(summary.get('username') if summary else '—'))}</code>\n"
+                f"ID: <code>{summary.get('id') if summary else '—'}</code>\n"
+                f"Роль: <b>{escape_for_telegram_html(str(summary.get('status') if summary else '—'))}</b>\n"
+                f"Регистрация в Системе: <code>{escape_for_telegram_html(str(summary.get('system_registered_at') if summary else '—'))}</code>\n"
                 "Регистрация в Telegram: <b>не предоставляется Telegram Bot API</b>"
             )
         else:
