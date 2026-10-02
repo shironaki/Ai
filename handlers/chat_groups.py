@@ -1,7 +1,6 @@
 from aiogram import types
 
 from main import config, dp, bot, users, chats, datetime, random
-from core.permissions import get_user_status
 from services.ai_service import escape_for_telegram_html, generate_reply
 from services.chat_members import observe, sync_chat_admins
 
@@ -120,14 +119,7 @@ async def echo_message(message: types.Message):
         if message.from_user.id != config.owner and invocation is None:
             return
         prompt = invocation if invocation is not None else message.text.strip()
-        role = "Основатель" if message.from_user.id == config.owner else "Пользователь"
         try:
-            status = get_user_status(message.from_user.id)
-            if status in ("Администратор",):
-                role = "Администратор"
-            elif status in ("Хелпер", "Модератор"):
-                role = status
-
             # Use the same assistant gateway as /ai and "Аи ...".
             # This is critical: ordinary private messages must not bypass
             # deterministic direct actions and fall straight into the LLM.
