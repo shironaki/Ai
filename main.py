@@ -345,6 +345,8 @@ async def enter_stasis(message: types.Message):
         return
 
     set_bot_paused(True)
+    from services.action_cancel import register_runtime_action
+    register_runtime_action(message.from_user.id, message.chat.id, previous_enabled=False, scope="global")
     log.warning("RUNTIME STATE | BOT ENTERED STASIS by founder id=%s", message.from_user.id)
     await message.answer(
         "🛰 <b>СТАЗИС АКТИВИРОВАН.</b>\n"
@@ -364,6 +366,8 @@ async def leave_stasis(message: types.Message):
         return
 
     set_bot_paused(False)
+    from services.action_cancel import register_runtime_action
+    register_runtime_action(message.from_user.id, message.chat.id, previous_enabled=True, scope="global")
     log.warning("RUNTIME STATE | BOT AWAKENED by founder id=%s", message.from_user.id)
     await message.answer(
         "⚡ <b>ПРОБУЖДЕНИЕ ЗАВЕРШЕНО.</b>\n"
