@@ -19,6 +19,8 @@ ROOT = Path(os.getenv("BOT_REPO_DIR", Path(__file__).resolve().parents[1]))
 PYTHON = Path(os.getenv("TERMUX_PYTHON", str(ROOT / ".venv/bin/python")))
 BOT = ROOT / "run.py"
 PIDFILE = ROOT / "termux-bot.pid"
+WATCHDOG_PIDFILE = ROOT / "termux-lease-watchdog.pid"
+WATCHDOG = ROOT / "scripts/termux_lease_watchdog.py"
 STATEFILE = ROOT / "data" / "test" / "runtime" / "termux-control-state.json"
 ROLEFILE = ROOT / "data" / "test" / "runtime" / "termux-role"
 DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()
@@ -222,6 +224,28 @@ def bot_running() -> bool:
         return False
 
 
+def stop_watchdog() -> None:
+    if not WATCHDOG_PIDFILE.exists():
+        return
+    try:
+        os.kill(int(WATCHDOG_PIDFILE.read_text(encoding="utf-8").strip()), 15)
+    except OSError:
+        pass
+    WATCHDOG_PIDFILE.unlink(missing_ok=True)
+
+
+def start_watchdog() -> None:
+    stop_watchdog()
+    subprocess.Popen(
+        [str(PYTHON), str(WATCHDOG)],
+        cwd=ROOT,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 def restart_bot() -> str:
     if bot_running():
         pid = PIDFILE.read_text(encoding="utf-8").strip()
@@ -233,6 +257,7 @@ def restart_bot() -> str:
             if not bot_running():
                 break
             time.sleep(1)
+    stop_watchdog()
     PIDFILE.unlink(missing_ok=True)
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +271,7 @@ def restart_bot() -> str:
             start_new_session=True,
         )
     PIDFILE.write_text(str(process.pid), encoding="utf-8")
+    start_watchdog()
     time.sleep(8)
     try:
         health = subprocess.check_output(
@@ -294,6 +320,7 @@ def set_role(role: str) -> str:
 
 def stop_bot_for_role() -> str:
     if not bot_running():
+        stop_watchdog()
         PIDFILE.unlink(missing_ok=True)
         return "bot already stopped"
     pid = PIDFILE.read_text(encoding="utf-8").strip()
@@ -305,6 +332,7 @@ def stop_bot_for_role() -> str:
         if not bot_running():
             break
         time.sleep(1)
+    stop_watchdog()
     PIDFILE.unlink(missing_ok=True)
     return "bot stopped"
 
