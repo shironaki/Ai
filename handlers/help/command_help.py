@@ -201,6 +201,12 @@ async def panel_back(call: types.CallbackQuery):
         "panel:welcome": panel_welcome,
         "panel:system": panel_system,
         "panel:system:broadcast": panel_system_broadcast,
+        "panel:system:status": panel_system_status,
+        "panel:system:diagnostics": panel_system_diagnostics,
+        "panel:system:battery": panel_system_battery,
+        "panel:system:logs": panel_system_logs,
+        "panel:system:debug": panel_system_debug,
+        "panel:system:restart": panel_system_restart,
         "panel:system:names": panel_system_names,
         "panel:system:ai": panel_system_ai,
         "panel:system:stasis": panel_system_stasis,
@@ -506,7 +512,7 @@ async def panel_silence(call):
         InlineKeyboardButton("↩️ Отмена", callback_data="panel:back"),
     )
     await _panel_edit(call, 
-        "<b>🔇 ТИШИНА</b>\\n\\nПодтвердите: <b>" + action + "</b> для всего чата?",
+        "<b>🔇 ТИШИНА</b>\n\nПодтвердите: <b>" + action + "</b> для всего чата?",
         reply_markup=menu,
     )
     await call.answer()
@@ -725,10 +731,10 @@ async def panel_system_ai(call):
     last_error = _LAST_ERROR.get("value") or "нет — запросов с ошибкой ещё не было"
     await _panel_edit(
         call,
-        "<b>🧠 AI DIAGNOSTIC</b>\\n\\n"
-        f"Ключ: <b>{configured}</b>\\n"
-        f"Модель: <code>{escape_for_telegram_html(str(status['model']))}</code>\\n"
-        f"Последняя ошибка: <code>{escape_for_telegram_html(str(last_error)[:1500])}</code>\\n\\n"
+        "<b>🧠 AI DIAGNOSTIC</b>\n\n"
+        f"Ключ: <b>{configured}</b>\n"
+        f"Модель: <code>{escape_for_telegram_html(str(status['model']))}</code>\n"
+        f"Последняя ошибка: <code>{escape_for_telegram_html(str(last_error)[:1500])}</code>\n\n"
         "Для проверки ответа: <code>/ai привет</code>",
         reply_markup=_panel_back("panel:system"),
     )
@@ -748,11 +754,11 @@ async def panel_system_status(call):
     uptime_text = "unknown" if uptime is None else f"{int(uptime // 3600)}ч {int((uptime % 3600) // 60)}м {int(uptime % 60)}с"
     await _panel_edit(
         call,
-        "<b>📊 FOUNDER RUNTIME STATUS</b>\\n"
-        f"Бот: <b>{'🟢 OK' if heartbeat_age is not None and heartbeat_age <= 30 else '🔴 STALE/MISSING'}</b>\\n"
-        f"Heartbeat: <code>{escape_for_telegram_html(heartbeat)}</code>\\n"
-        f"PID: <code>{status['pid']}</code>\\n"
-        f"Uptime: <code>{escape_for_telegram_html(uptime_text)}</code>\\n"
+        "<b>📊 FOUNDER RUNTIME STATUS</b>\n"
+        f"Бот: <b>{'🟢 OK' if heartbeat_age is not None and heartbeat_age <= 30 else '🔴 STALE/MISSING'}</b>\n"
+        f"Heartbeat: <code>{escape_for_telegram_html(heartbeat)}</code>\n"
+        f"PID: <code>{status['pid']}</code>\n"
+        f"Uptime: <code>{escape_for_telegram_html(uptime_text)}</code>\n"
         f"Commit: <code>{escape_for_telegram_html(status['commit'])}</code>",
         reply_markup=_panel_back("panel:system"),
     )
@@ -766,25 +772,26 @@ async def panel_system_diagnostics(call):
         return
     import os
     import subprocess
-    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "scripts", "healthcheck.py")
-    script = os.path.abspath(script)
+    import sys
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    script = os.path.join(repo_root, "scripts", "healthcheck.py")
     try:
         result = subprocess.run(
-            [os.getenv("PYTHON", "python3"), script, "--diagnostics"],
-            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            [sys.executable, script, "--diagnostics"],
+            cwd=repo_root,
             capture_output=True,
             text=True,
             timeout=20,
             env=os.environ.copy(),
         )
-        output = (result.stdout + "\\n" + result.stderr).strip() or "Диагностика не вернула текст."
+        output = (result.stdout + "\n" + result.stderr).strip() or "Диагностика не вернула текст."
     except Exception as exc:
         output = f"{type(exc).__name__}: {exc}"
     if len(output) > 4500:
         output = output[-4500:]
     await _panel_edit(
         call,
-        "<b>🩺 NETWORK / RUNTIME DIAGNOSTICS</b>\\n\\n<pre>"
+        "<b>🩺 NETWORK / RUNTIME DIAGNOSTICS</b>\n\n<pre>"
         + escape_for_telegram_html(output)
         + "</pre>",
         reply_markup=_panel_back("panel:system"),
@@ -806,16 +813,16 @@ async def panel_system_battery(call):
         state = "⚡ Заряжается" if charging else "🔋 Не заряжается"
         await _panel_edit(
             call,
-            "<b>🔋 СТАТУС ЗАРЯДКИ</b>\\n"
-            f"Уровень: <b>{percentage}%</b>\\n"
-            f"Состояние: <b>{state}</b>\\n"
+            "<b>🔋 СТАТУС ЗАРЯДКИ</b>\n"
+            f"Уровень: <b>{percentage}%</b>\n"
+            f"Состояние: <b>{state}</b>\n"
             f"Источник: <b>{escape_for_telegram_html(plugged)}</b>",
             reply_markup=_panel_back("panel:system"),
         )
     except Exception as exc:
         await _panel_edit(
             call,
-            "⚠️ <b>Ошибка батареи</b>\\n<code>"
+            "⚠️ <b>Ошибка батареи</b>\n<code>"
             + escape_for_telegram_html(f"{type(exc).__name__}: {exc}")
             + "</code>",
             reply_markup=_panel_back("panel:system"),
@@ -839,7 +846,7 @@ async def panel_system_logs(call):
         output = output[-4500:]
     await _panel_edit(
         call,
-        "<b>📜 ПОСЛЕДНИЕ ЛОГИ</b>\\n\\n<pre>" + escape_for_telegram_html(output) + "</pre>",
+        "<b>📜 ПОСЛЕДНИЕ ЛОГИ</b>\n\n<pre>" + escape_for_telegram_html(output) + "</pre>",
         reply_markup=_panel_back("panel:system"),
     )
     await call.answer()
@@ -852,7 +859,7 @@ async def panel_system_debug(call):
         return
     await _panel_edit(
         call,
-        "🧪 <b>DEBUG</b>\\n\\nОбработчики сообщений активны.\\n"
+        "🧪 <b>DEBUG</b>\n\nОбработчики сообщений активны.\n"
         "Полный dispatch-лог записывается автоматически.",
         reply_markup=_panel_back("panel:system"),
     )
@@ -871,7 +878,7 @@ async def panel_system_restart(call):
     )
     await _panel_edit(
         call,
-        "<b>🔄 ПЕРЕЗАПУСК</b>\\n\\nПодтвердите перезапуск текущего процесса.",
+        "<b>🔄 ПЕРЕЗАПУСК</b>\n\nПодтвердите перезапуск текущего процесса.",
         reply_markup=menu,
     )
     await call.answer()
@@ -887,10 +894,10 @@ async def panel_system_restart_apply(call):
     try:
         os.makedirs(HEALTH_DIR, exist_ok=True)
         with open(request_path, "w", encoding="utf-8") as handle:
-            handle.write(f"requested_at={__import__('time').time()}\\nrequested_by={call.from_user.id}\\n")
+            handle.write(f"requested_at={__import__('time').time()}\nrequested_by={call.from_user.id}\n")
         await call.answer("Перезапуск запрошен.", show_alert=True)
         await call.message.edit_text(
-            "🔄 <b>ПЕРЕЗАПУСК ЗАПРОШЕН</b>\\n"
+            "🔄 <b>ПЕРЕЗАПУСК ЗАПРОШЕН</b>\n"
             "Текущий процесс завершится, supervisor поднимет его заново."
         )
         log.warning("REMOTE RESTART | founder requested restart from panel")
@@ -913,7 +920,7 @@ async def panel_system_stasis(call):
         InlineKeyboardButton("↩️ Отмена", callback_data="panel:back"),
     )
     await _panel_edit(call, 
-        "<b>🛰 СТАЗИС</b>\\n\\nПодтвердите: <b>" + action + "</b>?",
+        "<b>🛰 СТАЗИС</b>\n\nПодтвердите: <b>" + action + "</b>?",
         reply_markup=menu,
     )
     await call.answer()
@@ -928,7 +935,7 @@ async def panel_system_stasis_apply(call):
     set_bot_paused(not enabled)
     register_runtime_action(call.from_user.id, call.message.chat.id, previous_enabled=enabled, scope="global")
     await _panel_edit(call, 
-        "<b>🛰 СТАЗИС</b>\\n\\nСостояние: <b>" + ("активен" if not enabled else "снят") + "</b>",
+        "<b>🛰 СТАЗИС</b>\n\nСостояние: <b>" + ("активен" if not enabled else "снят") + "</b>",
         reply_markup=_panel_back("panel:system"),
     )
     await call.answer("Стазис активирован." if not enabled else "Стазис снят.", show_alert=True)
@@ -945,8 +952,8 @@ async def panel_system_termux(call):
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     await _panel_edit(
         call,
-        "<b>📱 TERMUX HIGH AVAILABILITY</b>\\n\\n"
-        "Управление выполняется через GitHub Issue #23.\\n"
+        "<b>📱 TERMUX HIGH AVAILABILITY</b>\n\n"
+        "Управление выполняется через GitHub Issue #23.\n"
         "В каждый момент времени бот должен работать только на одном телефоне.",
         reply_markup=menu,
     )
@@ -960,11 +967,11 @@ async def panel_system_termux_role(call):
         return
     await _panel_edit(
         call,
-        "<b>🔁 ROLE — штатное переключение</b>\\n\\n"
-        "<code>ROLE phone1 ACTIVE</code>\\n"
-        "<code>ROLE phone1 STANDBY</code>\\n"
-        "<code>ROLE phone2 ACTIVE</code>\\n"
-        "<code>ROLE phone2 STANDBY</code>\\n\\n"
+        "<b>🔁 ROLE — штатное переключение</b>\n\n"
+        "<code>ROLE phone1 ACTIVE</code>\n"
+        "<code>ROLE phone1 STANDBY</code>\n"
+        "<code>ROLE phone2 ACTIVE</code>\n"
+        "<code>ROLE phone2 STANDBY</code>\n\n"
         "Команду отправляйте отдельным комментарием в Issue #23. "
         "Обычный ROLE ACTIVE не перехватывает активную lease другого телефона.",
         reply_markup=_panel_back("panel:system:termux"),
@@ -979,9 +986,9 @@ async def panel_system_termux_force(call):
         return
     await _panel_edit(
         call,
-        "<b>🚨 FORCE — аварийное переключение</b>\\n\\n"
-        "<code>FORCE phone1 ACTIVE</code>\\n"
-        "<code>FORCE phone2 ACTIVE</code>\\n\\n"
+        "<b>🚨 FORCE — аварийное переключение</b>\n\n"
+        "<code>FORCE phone1 ACTIVE</code>\n"
+        "<code>FORCE phone2 ACTIVE</code>\n\n"
         "Используйте только при аварии, когда штатный ROLE не подходит. "
         "Целевой телефон меняет центральную lease, ждёт fence-интервал и затем запускает бот. "
         "После неуспешного healthcheck lease откатывается.",
