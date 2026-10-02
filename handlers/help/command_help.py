@@ -625,3 +625,19 @@ async def panel_system_issues(call):
 async def panel_close(call):
     await call.message.delete()
     await call.answer()
+
+@dp.callback_query_handler()
+async def unhandled_callback(call: types.CallbackQuery):
+    """Never leave an unknown/obsolete inline button without feedback."""
+    from main import log
+    log.warning(
+        "CALLBACK UNHANDLED | user=%s chat=%s data=%s",
+        call.from_user.id,
+        getattr(getattr(call.message, "chat", None), "id", None),
+        call.data,
+    )
+    await call.answer(
+        "Эта кнопка устарела. Откройте /help и вызовите панель заново.",
+        show_alert=True,
+    )
+
