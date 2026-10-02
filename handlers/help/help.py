@@ -21,7 +21,7 @@ from services.report_service import create_report, list_open, get_report, answer
 from services.chat_members import sync_chat_admins
 from services.chat_roles import get_role, set_role
 from services.action_cancel import cancel_current_action
-from services.ai_relationship import alternate_names, can_call, get_score, invocation_names, is_max_positive, set_calls_blocked, set_score
+from services.ai_relationship import alternate_names, can_call, get_score, invocation_names, is_max_positive, set_alternate_names, set_calls_blocked, set_invocation_names, set_score
 
 
 from main import (
@@ -589,6 +589,22 @@ async def panel_pending_action(message: types.Message):
         chats.connect.commit()
         await message.reply("✅ Единое приветствие сохранено.")
         return
+    if pending["kind"] == "invocation_names":
+        if not is_owner(message.from_user.id):
+            await message.reply("⛔ Только Основатель может менять имена вызова Аи.")
+            return
+        value = (message.text or "").strip()
+        if not value:
+            await message.reply("❗ Укажите хотя бы одно имя.")
+            return
+        if pending["target"] == "primary":
+            names = set_invocation_names(value)
+            await message.reply("✅ Основные имена вызова: <b>" + escape_for_telegram_html(", ".join(names)) + "</b>")
+        else:
+            names = set_alternate_names(value)
+            await message.reply("✅ Альтернативные имена: <b>" + escape_for_telegram_html(", ".join(names)) + "</b>")
+        return
+
     if pending["kind"] == "relation":
         if not is_owner(message.from_user.id):
             await message.reply("⛔ Только Основатель может менять отношение Аи.")
