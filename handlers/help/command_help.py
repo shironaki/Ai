@@ -185,8 +185,10 @@ async def panel_back(call: types.CallbackQuery):
         target = "panel:root"
         _PANEL_CURRENT[key] = target
 
+    from handlers.help.help import panel_reports
     renderers = {
         "panel:root": panel_root,
+        "panel:reports": panel_reports,
         "panel:users": panel_users,
         "panel:relation": panel_relation_menu,
         "panel:role": panel_role_menu,
