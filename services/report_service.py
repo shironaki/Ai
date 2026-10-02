@@ -153,8 +153,8 @@ def mark_reminded(report_ids: list[int]) -> None:
         db.commit()
 
 
-async def reminder_loop(bot, owner_id: int) -> None:
-    """Remind the owner every two hours about unanswered reports."""
+async def reminder_loop(bot, owner_id: int, recipient_ids: tuple[int, ...] = ()) -> None:
+    """Remind founder and configured technical recipients every two hours."""
     while True:
         try:
             rows = due_reminders()
@@ -170,7 +170,12 @@ async def reminder_loop(bot, owner_id: int) -> None:
                         f"#{row['id']} · {row['reporter_name'] or row['reporter_id']} · "
                         f"{str(row['reason'])[:180]}"
                     )
-                await bot.send_message(owner_id, "\n".join(lines))
+                recipients = tuple(dict.fromkeys((owner_id, *recipient_ids)))
+                for recipient_id in recipients:
+                    try:
+                        await bot.send_message(recipient_id, "\n".join(lines))
+                    except Exception:
+                        continue
                 mark_reminded(ids)
         except Exception:
             # Reminder failure must never stop the bot's main loop.
