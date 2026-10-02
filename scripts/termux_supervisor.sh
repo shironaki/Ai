@@ -20,7 +20,9 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
-echo "$$" > "$SUPERVISOR_PID"
+SUPERVISOR_HEARTBEAT="$REPO/data/test/runtime/supervisor-heartbeat"
+echo "$" > "$SUPERVISOR_PID"
+mkdir -p "$(dirname "$SUPERVISOR_HEARTBEAT")"
 trap 'rm -f "$SUPERVISOR_PID"' EXIT
 
 report() {
@@ -59,6 +61,7 @@ ensure_battery_watchdog() {
 }
 
 while true; do
+    printf '%s\n' "$(date +%s.%N)" > "$SUPERVISOR_HEARTBEAT"
     ensure_battery_watchdog
 
     "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
