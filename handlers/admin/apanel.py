@@ -66,65 +66,7 @@ async def rules_cmd(message: types.Message):
     else:
         await message.answer("Эта заклинание работает только в мире!")
   
-#+барьер
-@dp.message_handler(lambda msg: msg.text.lower() == 'снять барьер')
-async def moder_on(message):
-    if not has_moderator_role(message.from_user.id):
-        await message.reply("👮‍♂️❎ | Эта команда доступна только Хелперам и администрации.")
-        return
-    name = message.from_user.get_mention()
-    chat_username = message.chat.username
-    admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
-    stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
-    status = stts[0] if stts else None
-    id = message.from_user.id
-    users.cursor.execute(f"SELECT id from users WHERE id = '{id}'")
-    if users.cursor.fetchone() is None:
-        await message.reply(f'Вы не существуете!\nВведите /start')
-    else:
-        if message.from_user.id in admins_list or message.from_user.id == config.owner:
-            mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-            mod_cmd = mod_cmd[0] if mod_cmd else None
-            if str(mod_cmd) == 'да':
-                await message.reply(f'❎ | С этого мира снят магический барьер!')
-            else:
-                chats.cursor.execute('UPDATE chats SET mod_cmd = ? WHERE chat_id = ?', ("да", message.chat.id))
-                chats.connect.commit()
-                await message.answer(f'✅ | В этом мире отсутствует магический барьер!')
-                await bot.send_message(config.owner, f'{name} снял магический барьер с мира @{chat_username}')
-        else:
-            await message.reply(f'👮‍♂️❎ | Вы не являетесь Хелпером этого мира!')
-
-#-барьер
-@dp.message_handler(lambda msg: msg.text.lower() == 'установить барьер')
-async def moder_off(message):
-    if not has_moderator_role(message.from_user.id):
-        await message.reply("👮‍♂️❎ | Эта команда доступна только Хелперам и администрации.")
-        return
-    name = message.from_user.get_mention()
-    chat_username = message.chat.username
-    admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
-    stts = users.cursor.execute("SELECT status from users where id = ?", (message.from_user.id,)).fetchone()
-    status = stts[0] if stts else None
-    id = message.from_user.id
-    users.cursor.execute(f"SELECT id from users WHERE id = '{id}'")
-    if users.cursor.fetchone() is None:
-        await message.reply(f'Вы не существуете!\nВведите /start')
-    else:
-        if message.from_user.id in admins_list or str(status) == 'Система':
-            mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
-            mod_cmd = mod_cmd[0] if mod_cmd else None
-            if str(mod_cmd) == 'нет':
-                await message.reply(f'❎ | В этом мире установлен магический барьер!')
-            else:
-                chats.cursor.execute('UPDATE chats SET mod_cmd = ? WHERE chat_id = ?', ("нет", message.chat.id))
-                chats.connect.commit()
-                await message.answer(f'✅ | В этом мире установлен магический барьер!')
-                await bot.send_message(config.owner, f'{name} установил магический барьер в мире @{chat_username}')
-        else:
-            await message.reply(f'👮‍♂️❎ | Вы не являетесь Хелпером!')
-
-#кляп
+# Legacy barrier commands removed: the unified «тишина» action is panel-only.\n\n#кляп
 @dp.message_handler(commands=['мут', 'mute','дебафф'], commands_prefix='!?./', is_chat_admin=True)
 async def mute(message):
     """Compatibility wrapper; execution is centralized in moderation_gateway."""
