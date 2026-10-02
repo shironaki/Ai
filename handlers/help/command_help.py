@@ -523,10 +523,48 @@ async def panel_system(call):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("🧠 AI diagnostic", callback_data="panel:system:ai"))
     menu.add(InlineKeyboardButton("📣 Рассылка", callback_data="panel:system:broadcast"))
+    menu.add(InlineKeyboardButton("🗣 Имена вызова Аи", callback_data="panel:system:names"))
     menu.add(InlineKeyboardButton("🛰 Стазис", callback_data="panel:system:stasis"))
     menu.add(InlineKeyboardButton("🧪 QA-метки", callback_data="panel:system:issues"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text("<b>⚙️ СИСТЕМНОЕ</b>", reply_markup=menu)
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:system:names")
+async def panel_system_names(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    menu = InlineKeyboardMarkup(row_width=1)
+    menu.add(
+        InlineKeyboardButton("🗣 Основные имена", callback_data="panel:names:primary"),
+        InlineKeyboardButton("✨ Альтернативные", callback_data="panel:names:alternate"),
+        InlineKeyboardButton("◀️ Назад", callback_data="panel:system"),
+    )
+    await call.message.edit_text(
+        "<b>🗣 ИМЕНА ВЫЗОВА АИ</b>\n\n"
+        "Основные имена работают всегда. Альтернативные разрешены при максимальном положительном отношении.",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("panel:names:"))
+async def panel_system_names_select(call):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    target = call.data.rsplit(":", 1)[-1]
+    from handlers.help.help import _PANEL_PENDING
+    _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {
+        "kind": "invocation_names",
+        "target": target,
+    }
+    await call.message.edit_text(
+        "🗣 Отправьте через запятую имена вызова Аи. Например: <code>Аи, Система</code>.",
+        reply_markup=_panel_back(),
+    )
     await call.answer()
 
 
