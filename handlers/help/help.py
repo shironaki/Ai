@@ -1323,40 +1323,29 @@ async def _apply_panel_role(message: types.Message, target_user_id: int, target_
 #chatinfo
 @dp.message_handler(commands=['chatinfo', 'чатинфо'], commands_prefix='/!.')
 async def chatinfo_cmd(message: types.Message):
-    msg = message
-    chat_row = chats.cursor.execute(
-        "SELECT chat_name, chat_username, chat_status, chat_games, game_rule, reg_data "
-        "FROM chats WHERE chat_id = ?",
-        (msg.chat.id,),
-    ).fetchone()
-    if chat_row is None:
-        await msg.reply("Этот чат ещё не зарегистрирован в Системе.")
+    summary = chat_summary(message.chat.id)
+    if summary is None:
+        await message.reply("Этот чат ещё не зарегистрирован в Системе.")
         return
-
-    chat_name, chat_username, chat_status, chat_games, game_rule, reg_data = chat_row
-    members = await message.chat.get_members_count()
-    admins_id = [(admin.user.id) for admin in await bot.get_chat_administrators(chat_id=message.chat.id)]
-    if str(chat_status) == 'Официальный':
-        stat = "✅"
-    elif str(chat_status) == 'Администраторский':
-        stat = "‍👨‍💻️"
-    elif str(chat_status) == 'VIP чат':
-        stat = "💎"
-    elif str(chat_status) == 'Обычный':
-        stat = "👥"
-    if str(game_rule) == 'разрешено':
-        rule = "✅"
-    elif str(game_rule) == 'запрещено':
-        rule = "❎"
-    await msg.answer(f"""Информация о мире:
-🗒️ | Название: {chat_name}
-📎 | Ссылка: @{chat_username}
-🕰 | Дата регистрации: {reg_data}
-{stat} | Статус: {chat_status}
-🎮 | Игр сыграно: {chat_games}
-{rule} | Играть в чате {game_rule}
-👤 | Количество участников: {members}
-👮‍♂️ | Администраторов в чате: {len(admins_id)}""")
+    try:
+        tg_chat = await bot.get_chat(message.chat.id)
+        members = await bot.get_chat_members_count(message.chat.id)
+        admins = await bot.get_chat_administrators(chat_id=message.chat.id)
+    except Exception:
+        tg_chat = message.chat
+        members = None
+        admins = []
+    admin_count = len(admins)
+    await message.answer(
+        "<b>💬 ИНФОРМАЦИЯ О ЧАТЕ</b>\n\n"
+        f"Название: <b>{escape_for_telegram_html(str(getattr(tg_chat, 'title', None) or summary.get('name') or '—'))}</b>\n"
+        f"Username: <code>{escape_for_telegram_html(str(getattr(tg_chat, 'username', None) or summary.get('username') or '—'))}</code>\n"
+        f"Тип: <b>{escape_for_telegram_html(str(getattr(tg_chat, 'type', '—')))}</b>\n"
+        f"ID: <code>{message.chat.id}</code>\n"
+        f"Участников по Telegram: <b>{members if members is not None else 'нет данных'}</b>\n"
+        f"Администраторов: <b>{admin_count}</b>\n"
+        f"Регистрация в Системе: <code>{escape_for_telegram_html(str(summary.get('system_registered_at') or '—'))}</code>"
+    )
 
 #profile_msg
 @dp.message_handler(lambda msg: bool(msg.text and msg.text.casefold().strip() == "инфа"))
