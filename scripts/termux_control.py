@@ -28,7 +28,7 @@ LEASE_BRANCH = os.getenv("TERMUX_LEASE_BRANCH", "termux-lease").strip()
 LEASE_PATH = os.getenv("TERMUX_LEASE_PATH", "lease.json").strip()
 LEASE_TTL = max(90, int(os.getenv("TERMUX_LEASE_TTL", "120")))
 LEASE_RENEW_BEFORE = max(30, int(os.getenv("TERMUX_LEASE_RENEW_BEFORE", "60")))
-AUTO_FAILOVER = os.getenv("TERMUX_AUTO_FAILOVER", "0").strip().casefold() in {"1", "true", "yes", "on"}
+AUTO_FAILOVER = os.getenv("TERMUX_AUTO_FAILOVER", "1").strip().casefold() in {"1", "true", "yes", "on"}
 LOG = ROOT / "termux-autoupdate.log"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
