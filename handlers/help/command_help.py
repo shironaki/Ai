@@ -159,7 +159,7 @@ async def panel_users(call):
     if is_owner(call.from_user.id):
         menu.add(InlineKeyboardButton("🤝 Отношение Аи", callback_data="panel:relation"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
-    await call.message.edit_text("<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\nВыберите действие.", reply_markup=menu)
+    await _panel_edit(call, "<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\nВыберите действие.", reply_markup=menu)
     await call.answer()
 
 
@@ -173,7 +173,7 @@ async def panel_relation_menu(call):
         menu.insert(InlineKeyboardButton(label, callback_data=f"panel:relation:{score}"))
     menu.add(InlineKeyboardButton("🔕 -100 + блок вызова", callback_data="panel:relation:block"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:users"))
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🤝 ОТНОШЕНИЕ АИ</b>\n\n"
         "Выберите уровень, затем ответьте на сообщение пользователя.",
         reply_markup=menu,
@@ -202,7 +202,7 @@ async def panel_relation_select(call):
         "score": score,
         "block": block,
     }
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🤝 ОТНОШЕНИЕ АИ</b>\n\n"
         "Теперь ответьте на сообщение пользователя, которому назначается этот уровень.",
         reply_markup=_panel_back("panel:users"),
@@ -220,7 +220,7 @@ async def panel_role_menu(call):
     for role in targets:
         menu.add(InlineKeyboardButton(role, callback_data="panel:role:" + role))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:users"))
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🎭 НАЗНАЧЕНИЕ РОЛИ</b>\n\nВыберите роль, затем ответьте на сообщение пользователя.",
         reply_markup=menu,
     )
@@ -235,7 +235,7 @@ async def panel_role_select(call):
         return
     from handlers.help.help import _PANEL_PENDING
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "role", "target_role": role}
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🎭 " + role + "</b>\nОтветьте на сообщение пользователя, которому назначается роль.",
         reply_markup=_panel_back("panel:users"),
     )
@@ -304,7 +304,7 @@ async def panel_admins(call):
         sections.append("\n".join(lines))
 
     body = "\n\n".join(sections) or "Нет доступных данных."
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>👮 СОСТАВ АДМИНИСТРАТОРОВ</b>\n\n" + body,
         reply_markup=_panel_back("panel:users"),
     )
@@ -317,7 +317,7 @@ async def panel_myinfo(call):
     if not data:
         await call.answer("Нет данных.", show_alert=True)
         return
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>👤 ИНФОРМАЦИЯ</b>\n\n"
         "Имя: <b>" + escape_for_telegram_html(str(data.get("name") or "—")) + "</b>\n"
         "Username: <code>" + escape_for_telegram_html(str(data.get("username") or "—")) + "</code>\n"
@@ -338,7 +338,7 @@ async def panel_info(call):
     if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id):
         menu.add(InlineKeyboardButton("👮 Состав администраторов", callback_data="panel:admins"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
-    await call.message.edit_text("<b>ℹ️ ИНФОРМАЦИЯ</b>\n\nФактические данные. Профиль — будущий игровой слой.", reply_markup=menu)
+    await _panel_edit(call, "<b>ℹ️ ИНФОРМАЦИЯ</b>\n\nФактические данные. Профиль — будущий игровой слой.", reply_markup=menu)
     await call.answer()
 
 
@@ -358,9 +358,9 @@ async def panel_chatinfo(call):
             "Участников по Telegram: <b>" + str(count) + "</b>\n"
             "Администраторов: <b>" + str(len(admins)) + "</b>"
         )
-        await call.message.edit_text(text, reply_markup=_panel_back("panel:info"))
+        await _panel_edit(call, text, reply_markup=_panel_back("panel:info"))
     except Exception:
-        await call.message.edit_text("⚠️ Telegram не предоставил данные этого чата.", reply_markup=_panel_back("panel:info"))
+        await _panel_edit(call, "⚠️ Telegram не предоставил данные этого чата.", reply_markup=_panel_back("panel:info"))
     await call.answer()
 
 
@@ -375,7 +375,7 @@ async def panel_moderation(call):
     menu.add(InlineKeyboardButton("🔇 Тишина: " + ("вкл" if is_silent(call.message.chat.id) else "выкл"), callback_data="panel:silence"))
     menu.add(InlineKeyboardButton("👋 Приветствие", callback_data="panel:welcome"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
-    await call.message.edit_text("<b>🔨 МОДЕРАЦИЯ</b>\n\nВыберите действие.", reply_markup=menu)
+    await _panel_edit(call, "<b>🔨 МОДЕРАЦИЯ</b>\n\nВыберите действие.", reply_markup=menu)
     await call.answer()
 
 
@@ -388,7 +388,7 @@ async def panel_mod_select(call):
     from handlers.help.help import _PANEL_PENDING
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "moderation", "action": action}
     extra = " и укажите длительность (например: 10м)" if action in {"mute", "ban"} else ""
-    await call.message.edit_text("Ответьте на сообщение цели" + extra + ".", reply_markup=_panel_back("panel:moderation"))
+    await _panel_edit(call, "Ответьте на сообщение цели" + extra + ".", reply_markup=_panel_back("panel:moderation"))
     await call.answer()
 
 
@@ -404,7 +404,7 @@ async def panel_silence(call):
         InlineKeyboardButton("✅ Подтвердить", callback_data="panel:silence:apply"),
         InlineKeyboardButton("↩️ Отмена", callback_data="panel:moderation"),
     )
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🔇 ТИШИНА</b>\\n\\nПодтвердите: <b>" + action + "</b> для всего чата?",
         reply_markup=menu,
     )
@@ -461,7 +461,7 @@ async def panel_welcome(call):
     menu.add(InlineKeyboardButton("🤖 Авто-Аи", callback_data="panel:welcome:auto"))
     menu.add(InlineKeyboardButton("✏️ Фиксированное", callback_data="panel:welcome:fixed"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:moderation"))
-    await call.message.edit_text("<b>👋 ПРИВЕТСТВИЕ</b>", reply_markup=menu)
+    await _panel_edit(call, "<b>👋 ПРИВЕТСТВИЕ</b>", reply_markup=menu)
     await call.answer()
 
 
@@ -472,7 +472,7 @@ async def panel_welcome_auto(call):
         return
     chats.cursor.execute("UPDATE chats SET welcome='' WHERE chat_id=?", (call.message.chat.id,))
     chats.connect.commit()
-    await call.message.edit_text("🤖 Авто-Аи включено.", reply_markup=_panel_back("panel:welcome"))
+    await _panel_edit(call, "🤖 Авто-Аи включено.", reply_markup=_panel_back("panel:welcome"))
     await call.answer()
 
 
@@ -483,7 +483,7 @@ async def panel_welcome_fixed(call):
         return
     from handlers.help.help import _PANEL_PENDING
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "welcome"}
-    await call.message.edit_text("✏️ Ответьте на это сообщение текстом фиксированного приветствия.", reply_markup=_panel_back("panel:welcome"))
+    await _panel_edit(call, "✏️ Ответьте на это сообщение текстом фиксированного приветствия.", reply_markup=_panel_back("panel:welcome"))
     await call.answer()
 
 
@@ -503,7 +503,7 @@ async def panel_system_broadcast(call: types.CallbackQuery):
         InlineKeyboardButton("🌐 Всем", callback_data="panel:broadcast:all"),
         InlineKeyboardButton("↩️ Отмена", callback_data="panel:system"),
     )
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\nВыберите аудиторию.",
         reply_markup=menu,
     )
@@ -520,7 +520,7 @@ async def panel_broadcast_target(call: types.CallbackQuery):
     state = FSMContext.current()
     await state.update_data(broadcast_target=target)
     labels = {"users": "пользователям", "chats": "чатам", "all": "пользователям и чатам"}
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\n"
         f"Отправьте следующим сообщением текст, фото или другое сообщение для рассылки {labels[target]}.",
         reply_markup=_panel_back("panel:system:broadcast"),
@@ -565,7 +565,7 @@ async def panel_system(call):
     menu.add(InlineKeyboardButton("🛰 Стазис", callback_data="panel:system:stasis"))
     menu.add(InlineKeyboardButton("🧪 QA-метки", callback_data="panel:system:issues"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
-    await call.message.edit_text("<b>⚙️ СИСТЕМНОЕ</b>", reply_markup=menu)
+    await _panel_edit(call, "<b>⚙️ СИСТЕМНОЕ</b>", reply_markup=menu)
     await call.answer()
 
 
@@ -580,7 +580,7 @@ async def panel_system_names(call):
         InlineKeyboardButton("✨ Альтернативные", callback_data="panel:names:alternate"),
         InlineKeyboardButton("◀️ Назад", callback_data="panel:system"),
     )
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🗣 ИМЕНА ВЫЗОВА АИ</b>\n\n"
         "Основные имена работают всегда. Альтернативные разрешены при максимальном положительном отношении.",
         reply_markup=menu,
@@ -599,7 +599,7 @@ async def panel_system_names_select(call):
         "kind": "invocation_names",
         "target": target,
     }
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "🗣 Отправьте через запятую имена вызова Аи. Например: <code>Аи, Система</code>.",
         reply_markup=_panel_back("panel:system:names"),
     )
@@ -626,7 +626,7 @@ async def panel_system_stasis(call):
         InlineKeyboardButton("✅ Подтвердить", callback_data="panel:system:stasis:apply"),
         InlineKeyboardButton("↩️ Отмена", callback_data="panel:system"),
     )
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🛰 СТАЗИС</b>\\n\\nПодтвердите: <b>" + action + "</b>?",
         reply_markup=menu,
     )
@@ -641,7 +641,7 @@ async def panel_system_stasis_apply(call):
     enabled = bot_is_paused()
     set_bot_paused(not enabled)
     register_runtime_action(call.from_user.id, call.message.chat.id, previous_enabled=enabled, scope="global")
-    await call.message.edit_text(
+    await _panel_edit(call, 
         "<b>🛰 СТАЗИС</b>\\n\\nСостояние: <b>" + ("активен" if not enabled else "снят") + "</b>",
         reply_markup=_panel_back("panel:system"),
     )
@@ -656,7 +656,7 @@ async def panel_system_issues(call):
     from services.issue_tracker import list_markers, render_marker
     rows = list_markers()
     body = "\n\n".join(escape_for_telegram_html(render_marker(row)) for row in rows) or "Список пуст."
-    await call.message.edit_text("<b>🧪 QA-МЕТКИ</b>\n\n" + body, reply_markup=_panel_back("panel:system"))
+    await _panel_edit(call, "<b>🧪 QA-МЕТКИ</b>\n\n" + body, reply_markup=_panel_back("panel:system"))
     await call.answer()
 
 
