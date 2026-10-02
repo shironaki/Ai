@@ -18,6 +18,7 @@ from services.moderation_gateway import (
 from services.ai_data import build_verified_context, chat_summary, system_summary, user_summary, runtime_summary
 from services.issue_tracker import list_markers, render_marker
 from services.report_service import create_report, list_open, get_report, answer_report, reminder_loop
+from services.chat_members import sync_chat_admins
 
 from main import (
     BaseMiddleware,
