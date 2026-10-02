@@ -28,76 +28,8 @@ from main import (
     users,
     sleep,
 )
-from handlers.help.help import ChRass, Rass, rate_limit
 from core.permissions import get_role_tag
 
-
-#Рассылка
-#Для юзеров
-@dp.callback_query_handler(text="rassilka")
-async def send_rass(call: types.CallbackQuery):
-    status = users.cursor.execute("SELECT status from users where id = ?", (call.from_user.id,)).fetchone()
-    status = (status[0])
-    if str(status) in ('Создатель бота', 'Система') or call.from_user.id == config.owner:
-        await call.message.edit_text(text='🖋 Введите текст/фото для рассылки:')
-        await Rass.msg.set()
-    else:
-        pass
-
-@dp.message_handler(content_types=ContentType.ANY, state=Rass.msg)
-async def rassilka_msgl(message: types.Message, state: FSMContext):
-    await state.finish()
-    users.cursor.execute(f"SELECT id FROM users")
-    users_query = users.cursor.fetchall()
-    user_ids = [user[0] for user in users_query]
-    nowtim = time.time()
-    confirm = []
-    decline = []
-    bot_msg = await message.answer(f'Рассылка началась...')
-    for i in user_ids:
-        try:
-            await message.copy_to(i)
-            confirm.append(i)
-        except:
-            decline.append(i)
-        await asyncio.sleep(0.15)
-    nowtime = time.time()
-    uptime = round(nowtime - nowtim)
-    uptimestr = str(time.strftime("%H:%M:%S", time.gmtime(int(uptime))))
-    await bot_msg.edit_text(f'📣 Рассылка завершена!\n\n✅ Успешно: {len(confirm)}\n❌ Неуспешно: {len(decline)}\n⌚ Время: {str(uptimestr)}')
-
-#Для чатов
-@dp.callback_query_handler(text="chat_rassilka")
-async def send_rass(call: types.CallbackQuery):
-    status = users.cursor.execute("SELECT status from users where id = ?", (call.from_user.id,)).fetchone()
-    status = (status[0])
-    if str(status) in ('Создатель бота', 'Система') or call.from_user.id == config.owner:
-        await call.message.edit_text(text='🖋 Введите текст/фото для рассылки:')
-        await ChRass.msg.set()
-    else:
-        pass
-
-@dp.message_handler(content_types=ContentType.ANY, state=ChRass.msg)
-async def rassilka_msgl(message: types.Message, state: FSMContext):
-    await state.finish()
-    chats.cursor.execute(f"SELECT chat_id FROM chats")
-    chats_query = chats.cursor.fetchall()
-    chat_ids = [chat[0] for chat in chats_query]
-    nowtim = time.time()
-    confirm = []
-    decline = []
-    bot_msg = await message.answer(f'Рассылка началась...')
-    for i in chat_ids:
-        try:
-            await message.copy_to(i)
-            confirm.append(i)
-        except:
-            decline.append(i)
-        await asyncio.sleep(0.15)
-    nowtime = time.time()
-    uptime = round(nowtime - nowtim)
-    uptimestr = str(time.strftime("%H:%M:%S", time.gmtime(int(uptime))))
-    await bot_msg.edit_text(f'📣 Рассылка завершена!\n\n✅ Успешно: {len(confirm)}\n❌ Неуспешно: {len(decline)}\n⌚ Время: {str(uptimestr)}')
 
     #helpui legacy callback controls are retained below; /help is owned by handlers.help.help.
 @dp.callback_query_handler(text='cancel_help')
