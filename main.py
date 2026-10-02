@@ -1,11 +1,13 @@
 import asyncio
 import html
+import json
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 import random
 import re
 import sqlite3
+import subprocess
 import time
 from random import randint
 from asyncio import sleep
@@ -42,6 +44,7 @@ from services.moderation_scheduler import expiry_loop
 from services.diagnostic_journal import record as record_diagnostic
 from services.issue_tracker import create_runtime_error_marker
 from services.report_service import reminder_loop
+from services.battery_status import get_battery_status
 
 LOG_FILE = "bot.log"
 BOT_PAUSED = False
@@ -584,6 +587,37 @@ async def log_update_error(update, exception):
     return True
 
 
+@dp.message_handler(commands=["battery", "charge"])
+async def battery_status(message: types.Message):
+    if message.from_user.id != config.owner:
+        return
+
+    try:
+        status = get_battery_status()
+        if status.get("charging"):
+            state = "⚡ <b>Заряжается</b>"
+        else:
+            state = "🔋 <b>Не заряжается</b>"
+
+        percentage = status.get("percentage", "?")
+        plugged = html.escape(str(status.get("plugged", "UNKNOWN")))
+        battery_status_text = html.escape(str(status.get("status", "UNKNOWN")))
+
+        await message.answer(
+            "🔋 <b>СТАТУС ЗАРЯДКИ</b>\n"
+            f"Уровень: <b>{percentage}%</b>\n"
+            f"Состояние: {state}\n"
+            f"Источник питания: <code>{plugged}</code>\n"
+            f"Статус Android: <code>{battery_status_text}</code>"
+        )
+    except Exception as exc:
+        log.exception("BATTERY STATUS | failed to read battery")
+        await message.answer(
+            "⚠️ Не удалось получить статус батареи второго телефона.\n"
+            f"<code>{html.escape(type(exc).__name__)}: {html.escape(str(exc)[:500])}</code>"
+        )
+
+
 @dp.message_handler(commands=['logs'])
 async def send_logs(message: types.Message):
     if message.from_user.id != config.owner:
@@ -617,6 +651,7 @@ BOT_COMMANDS = [
     types.BotCommand("help", "актуальный список команд"),
     types.BotCommand("ai", "обратиться к Аи"),
     types.BotCommand("report", "отправить обращение/жалобу"),
+    types.BotCommand("battery", "статус батареи второго телефона"),
 ]
 
 
