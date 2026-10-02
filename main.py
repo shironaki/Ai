@@ -527,7 +527,7 @@ async def on_startup(dispatcher):
     write_health_heartbeat()
     asyncio.create_task(runtime_heartbeat())
     asyncio.create_task(expiry_loop(bot))
-    asyncio.create_task(reminder_loop(bot, config.owner))
+    asyncio.create_task(reminder_loop(bot, config.owner, config.tech_team_ids))
     from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
