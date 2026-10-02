@@ -69,16 +69,20 @@ def main() -> int:
         return 2
 
     data_dir = os.getenv("BOT_DATA_DIR", "data/test")
-    heartbeat = Path(data_dir) / "runtime" / "heartbeat"
+    runtime_dir = Path(data_dir) / "runtime"
+    role_file = runtime_dir / "termux-role"
+    role = role_file.read_text(encoding="utf-8").strip().casefold() if role_file.exists() else "active"
+    heartbeat_name = "supervisor-heartbeat" if role == "standby" else "heartbeat"
+    heartbeat = runtime_dir / heartbeat_name
     try:
         timestamp = float(heartbeat.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
-        print("HEALTH FAIL: heartbeat missing or invalid", file=sys.stderr)
+        print(f"HEALTH FAIL: {heartbeat_name} missing or invalid", file=sys.stderr)
         return 1
 
     age = time.time() - timestamp
     if age < 0 or age > 30:
-        print(f"HEALTH FAIL: heartbeat age={age:.1f}s", file=sys.stderr)
+        print(f"HEALTH FAIL: {heartbeat_name} age={age:.1f}s", file=sys.stderr)
         return 1
 
     try:
@@ -133,7 +137,9 @@ def main() -> int:
     ai_state = "ready" if ai_ready else "unconfigured"
     if diagnostics:
         print(f"NETWORK TELEGRAM getMe: OK username=@{username}")
-    print(f"HEALTH OK: heartbeat={age:.1f}s telegram=@{username} polling=ready ai={ai_state}")
+    state = "supervisor" if role == "standby" else "bot"
+    polling = "standby" if role == "standby" else "ready"
+    print(f"HEALTH OK: {state}_heartbeat={age:.1f}s role={role} telegram=@{username} polling={polling} ai={ai_state}")
     return 0
 
 
