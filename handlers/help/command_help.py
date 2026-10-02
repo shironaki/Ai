@@ -89,7 +89,7 @@ def _panel_menu(user_id: int, chat_id: int) -> InlineKeyboardMarkup:
         menu.add(InlineKeyboardButton("🔨 Модерация", callback_data="panel:moderation"))
     menu.add(InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"))
     menu.add(InlineKeyboardButton("📬 Репорты", callback_data="panel:reports"))
-    menu.add(InlineKeyboardButton("↩️ Отменить текущее действие", callback_data="panel:back"))
+    menu.add(InlineKeyboardButton("↩️ Отменить текущее действие", callback_data="panel:cancel"))
     if is_owner(user_id):
         menu.add(InlineKeyboardButton("⚙️ Системное", callback_data="panel:system"))
     menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="panel:close"))
