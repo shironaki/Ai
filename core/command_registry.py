@@ -42,7 +42,7 @@ COMMAND_REGISTRY = (
     CommandSpec("ban", frozenset({"ban", "аннигилировать"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("unban", frozenset({"unban", "воскресить"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("setstatus", frozenset({"setstatus", "выдай статус"}), "administration", "Администратор", "chat", True, True),
-    CommandSpec("info", frozenset({"инфо", "инфа", "профиль"}), "information", "Пользователь"),
+    CommandSpec("info", frozenset({"инфо", "инфа"}), "information", "Пользователь"),
     CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Пользователь"),
     CommandSpec("report", frozenset({"report", "репорт"}), "communication", "Пользователь"),
     CommandSpec("cancel", frozenset({"cancel", "отмена"}), "control", "Пользователь", description="отменить текущее действие"),
