@@ -158,6 +158,62 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         else:
             log.info("UPDATE other | update_id=%s", getattr(update, "update_id", "?"))
 
+    async def on_pre_process_callback_query(self, callback_query, data):
+        data["diagnostic_callback_data"] = getattr(callback_query, "data", None)
+        log.info(
+            "UPDATE callback | update_id=%s user=%s chat=%s data=%s",
+            getattr(callback_query, "id", "?"),
+            getattr(callback_query.from_user, "id", "?"),
+            getattr(getattr(callback_query, "message", None), "chat", None).id
+            if getattr(callback_query, "message", None) and getattr(callback_query.message, "chat", None)
+            else None,
+            redact(getattr(callback_query, "data", "") or ""),
+        )
+        try:
+            record_diagnostic(
+                update_id=getattr(callback_query, "id", None),
+                chat_id=getattr(getattr(callback_query, "message", None), "chat", None).id
+                if getattr(callback_query, "message", None) and getattr(callback_query.message, "chat", None)
+                else None,
+                user_id=getattr(callback_query.from_user, "id", None),
+                stage="callback_received",
+                result="received",
+                context={"callback_data": redact(getattr(callback_query, "data", "") or "")},
+            )
+        except Exception:
+            log.exception("DIAGNOSTIC JOURNAL | failed to record callback")
+
+    async def on_process_callback_query(self, callback_query, data):
+        handler = current_handler.get()
+        handler_name = getattr(handler, "__name__", repr(handler)) if handler else None
+        log.info(
+            "CALLBACK DISPATCH | data=%s handler=%s",
+            redact(getattr(callback_query, "data", "") or ""),
+            handler_name,
+        )
+        try:
+            record_diagnostic(
+                update_id=getattr(callback_query, "id", None),
+                chat_id=getattr(getattr(callback_query, "message", None), "chat", None).id
+                if getattr(callback_query, "message", None) and getattr(callback_query.message, "chat", None)
+                else None,
+                user_id=getattr(callback_query.from_user, "id", None),
+                handler=handler_name,
+                stage="callback_dispatch",
+                result="handler_selected" if handler else "no_handler",
+                context={"callback_data": redact(getattr(callback_query, "data", "") or "")},
+            )
+        except Exception:
+            log.exception("DIAGNOSTIC JOURNAL | failed to record callback dispatch")
+
+    async def on_post_process_callback_query(self, callback_query, results, data):
+        handler = current_handler.get()
+        log.info(
+            "CALLBACK DONE | data=%s handler=%s",
+            redact(getattr(callback_query, "data", "") or ""),
+            getattr(handler, "__name__", repr(handler)) if handler else None,
+        )
+
     async def on_process_message(self, message, data):
         handler = current_handler.get()
         handler_name = getattr(handler, "__name__", repr(handler)) if handler else None
