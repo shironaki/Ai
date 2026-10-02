@@ -190,7 +190,7 @@ async def cancel_help_button_handler(c: types.callback_query):
 
 
     #Передать
-@dp.message_handler(regexp=r"(^Передать|передать) ?(\d+)?")
+# GAME_DISABLED: @dp.message_handler(regexp=r"(^Передать|передать) ?(\d+)?")
 async def send_money(message: types.Message):
     command_parse = re.compile(r"(^Передать|передать) ?(\d+)?")
     parsed = command_parse.match(message.text)
@@ -227,7 +227,7 @@ async def send_money(message: types.Message):
             users.connect.commit()
 
 #Отдать
-@dp.message_handler(regexp=r"(^Отдать|отдать) ?(\d+)?")
+# GAME_DISABLED: @dp.message_handler(regexp=r"(^Отдать|отдать) ?(\d+)?")
 async def send_money(message: types.Message):
     balance = users.cursor.execute("SELECT balance from users where id = ?", (message.from_user.id,)).fetchone()
     balance = (balance[0])
@@ -260,7 +260,7 @@ async def send_money(message: types.Message):
 
 
 #work
-@dp.message_handler(commands=['work', 'работа', 'работать'], commands_prefix='/+!.')
+# GAME_DISABLED: @dp.message_handler(commands=['work', 'работа', 'работать'], commands_prefix='/+!.')
 async def work_cmd(message: types.Message):
     emoji = random.choice(["😴", "😶‍🌫️", "🫠", "🥶", "🤥", "🫡", "🤨", "😐", "🗿"])
     user_id = message['from']['id']
@@ -305,7 +305,7 @@ async def chatwelcome_msg(message):
         await message.answer("Эта команда работает только в чатах!")
 
 #Растить хуй
-@dp.message_handler(commands=['хуй', 'член', 'dick'], commands_prefix='/+!.')
+# GAME_DISABLED: @dp.message_handler(commands=['хуй', 'член', 'dick'], commands_prefix='/+!.')
 async def dick_cmd(message: types.Message):
     msg = message
     name = users.cursor.execute("SELECT name from users where id = ?",(msg.from_user.id,)).fetchone()
@@ -348,7 +348,7 @@ async def dick_cmd(message: types.Message):
         await msg.reply(f'{emoji} | Увеличивать член можно раз в 2 часа, приходи позже!\n🍆 | Сейчас его длина: <b>{dick} см.</b>', parse_mode='html')
 
 #Установить ставку
-@dp.message_handler(commands=['setstavka'])
+# GAME_DISABLED: @dp.message_handler(commands=['setstavka'])
 async def setbal(message: types.Message):
     args = (message.get_args() or "").strip()
     if not args.isdigit():
@@ -381,7 +381,7 @@ async def setbal(message: types.Message):
         return await message.reply(f"❗ | У вас недостаточно прав для того, чтобы взаимодействовать со ставками пользователей!")
 
 #Установить хуй
-@dp.message_handler(commands=['setdick'])
+# GAME_DISABLED: @dp.message_handler(commands=['setdick'])
 async def setdick(message: types.Message):
     args = (message.get_args() or "").strip()
     if not args.isdigit():
@@ -414,7 +414,7 @@ async def setdick(message: types.Message):
         return await message.reply(f"❗ | У вас недостаточно прав для того, чтобы взаимодействовать с хуями пользователей! 🙂")
 
 #Своя рп
-@dp.message_handler(commands=['rp'])
+# GAME_DISABLED: @dp.message_handler(commands=['rp'])
 async def custom_rp(message: types.Message):
     args = message.get_args()
     reply = message.reply_to_message
@@ -489,7 +489,7 @@ async def bio_text(message: types.Message):
             await message.reply(f'Данная команда доступна лишь пользователям с VIP статусом 💎')
 
 #profile_msg
-@dp.message_handler(lambda msg: ((msg.text.lower() == 'инфа') or (msg.text.lower() == "профиль")))
+# GAME_DISABLED: @dp.message_handler(lambda msg: ((msg.text.lower() == 'инфа') or (msg.text.lower() == "профиль")))
 async def profile_msg(message):
     balance = (users.cursor.execute("SELECT balance from users where id = ?", (message.from_user.id,)).fetchone())[0]
     name = (users.cursor.execute("SELECT name from users where id = ?", (message.from_user.id,)).fetchone())[0]
@@ -516,7 +516,7 @@ async def profile_msg(message):
 🕰 Дата регистрации: {regdata}""", parse_mode='html')
 
 #stata_msg
-@dp.message_handler(lambda msg: msg.text.lower() == 'стата')
+# GAME_DISABLED: @dp.message_handler(lambda msg: msg.text.lower() == 'стата')
 async def stata_msg(message):
     msg = message
     balance = users.cursor.execute("SELECT balance from users where id = ?", (msg.from_user.id,)).fetchone()
@@ -635,7 +635,7 @@ async def set_name(message: types.Message):
         await msg.reply('❎ | Максимальная длина ника должна составлять 15 символов!')
 
 #статусы
-@dp.message_handler(lambda msg: msg.text.lower() == 'статусы')
+# GAME_DISABLED: @dp.message_handler(lambda msg: msg.text.lower() == 'статусы')
 async def statuses_msg(message):
     msg = message
     name = msg.from_user.get_mention
@@ -655,7 +655,7 @@ async def statuses_msg(message):
 
 
 #Статистика игр
-@dp.message_handler(lambda msg: msg.text.lower() == 'мои игры')
+# GAME_DISABLED: @dp.message_handler(lambda msg: msg.text.lower() == 'мои игры')
 async def mygames(message):
     id = message.from_user.id
     users.cursor.execute(f"SELECT id from users WHERE id = '{id}'")
@@ -689,7 +689,7 @@ async def mygames(message):
 Слоты: <b>{slots}</b> 🧩""")
 
 #Рандом
-@dp.message_handler(regexp=r"(^Выбери|выбери) (^От|от) ?(\d+)? (^До|до) ?(\d+)?")
+# GAME_DISABLED: @dp.message_handler(regexp=r"(^Выбери|выбери) (^От|от) ?(\d+)? (^До|до) ?(\d+)?")
 async def random_vybor(message: types.Message):
 
     name1 = message.from_user.get_mention(as_html=True)
@@ -709,7 +709,7 @@ async def random_vybor(message: types.Message):
         return
 
 #Слоты
-@dp.message_handler(regexp=r"^(?:Слоты|слоты)\s+(\d+)\s*$")
+# GAME_DISABLED: @dp.message_handler(regexp=r"^(?:Слоты|слоты)\s+(\d+)\s*$")
 async def slots(message: types.Message):
     msg = message
     name1 = message.from_user.get_mention(as_html=True)
@@ -1071,7 +1071,7 @@ def get_casino_result(dice, bet, bonus_users):
 
 #Казино (@Penggrin)
 @rate_limit(limit=1.5)
-@dp.message_handler(regexp=r"(^Казино|казино) ?(\d+)?")
+# GAME_DISABLED: @dp.message_handler(regexp=r"(^Казино|казино) ?(\d+)?")
 async def kazino(message: types.Message):
     stavka = int((users.cursor.execute("SELECT stavka from users where id = ?", (message.from_user.id,)).fetchone())[0])
     balance = int((users.cursor.execute("SELECT balance from users where id = ?", (message.from_user.id,)).fetchone())[0])
@@ -1143,7 +1143,7 @@ async def kazino(message: types.Message):
 
 
 #Куб
-@dp.message_handler(regexp=r"^(?:Куб|куб)\s+(\d+)\s+(\d+)\s*$")
+# GAME_DISABLED: @dp.message_handler(regexp=r"^(?:Куб|куб)\s+(\d+)\s+(\d+)\s*$")
 async def kub(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Куб|куб) ?(\d+)? ?(\d+)?")
@@ -1274,7 +1274,7 @@ async def kub(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Дартс
-@dp.message_handler(regexp=r"^(?:Дартс|дартс)\s+(\d+)\s*$")
+# GAME_DISABLED: @dp.message_handler(regexp=r"^(?:Дартс|дартс)\s+(\d+)\s*$")
 async def darts(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Дартс|дартс) ?(\d+)?")
@@ -1365,7 +1365,7 @@ async def darts(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Боул
-@dp.message_handler(regexp=r"^(?:Боул|боул)\s+(\d+)\s*$")
+# GAME_DISABLED: @dp.message_handler(regexp=r"^(?:Боул|боул)\s+(\d+)\s*$")
 async def boul(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Боул|боул) ?(\d+)?")
@@ -1461,7 +1461,7 @@ async def boul(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Фут
-@dp.message_handler(regexp=r"^(?:Фут|фут)\s+(\d+)\s*$")
+# GAME_DISABLED: @dp.message_handler(regexp=r"^(?:Фут|фут)\s+(\d+)\s*$")
 async def football(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Фут|фут) ?(\d+)?")
@@ -1540,7 +1540,7 @@ async def football(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Баскет
-@dp.message_handler(regexp=r"^(?:Бас|бас|Баскет|баскет)\s+(\d+)\s*$")
+# GAME_DISABLED: @dp.message_handler(regexp=r"^(?:Бас|бас|Баскет|баскет)\s+(\d+)\s*$")
 async def basket(message: types.Message):
     msg = message
     command_parse = re.compile(r"(^Бас|бас|Баскет|баскет) ?(\d+)?")
@@ -1631,7 +1631,7 @@ async def basket(message: types.Message):
 
 #Охота
 @rate_limit(limit=1.5)
-@dp.message_handler(regexp=r"(^Охота|охота) ?(\d+)?")
+# GAME_DISABLED: @dp.message_handler(regexp=r"(^Охота|охота) ?(\d+)?")
 async def nc(message: types.Message):
     name1 = message.from_user.get_mention(as_html=True)
     args = message.text.lower().split()
@@ -1784,7 +1784,7 @@ async def nc(message: types.Message):
             await message.reply(f'🚫 | В этом чате запрещено играть!')
 
 #Пополнить
-@dp.message_handler(regexp=r"(^Пополнить счёт|пополнить счёт|^Пополнить счет|пополнить счет) ?(\d+)?")
+# GAME_DISABLED: @dp.message_handler(regexp=r"(^Пополнить счёт|пополнить счёт|^Пополнить счет|пополнить счет) ?(\d+)?")
 async def bankplus(message: types.Message):
     balance = users.cursor.execute("SELECT balance from users where id = ?", (message.from_user.id,)).fetchone()
     balance = (balance[0])
@@ -1809,7 +1809,7 @@ async def bankplus(message: types.Message):
         await message.reply(f"У вас недостаточно монет для пополнения счёта!", parse_mode='html')
 
 #Снять
-@dp.message_handler(regexp=r"(^Снять со счёта|снять со счёта|^Снять со счета|снять со счета) ?(\d+)?")
+# GAME_DISABLED: @dp.message_handler(regexp=r"(^Снять со счёта|снять со счёта|^Снять со счета|снять со счета) ?(\d+)?")
 async def bankminus(message: types.Message):
     balance = users.cursor.execute("SELECT balance from users where id = ?", (message.from_user.id,)).fetchone()
     balance = (balance[0])
@@ -1964,7 +1964,7 @@ async def admins_cmd(message: types.Message):
     else:
         pass
     #Разрешить игры
-@dp.message_handler(lambda msg: msg.text.lower() == 'разрешить игры')
+# GAME_DISABLED: @dp.message_handler(lambda msg: msg.text.lower() == 'разрешить игры')
 async def games_on(message):
     name = message.from_user.get_mention()
     chat_username = message.chat.username
@@ -1990,7 +1990,7 @@ async def games_on(message):
             await message.reply(f'👮‍♂️❎ | Вы не являетесь администратором этого чата!')
 
 #Запретить игры
-@dp.message_handler(lambda msg: msg.text.lower() == 'запретить игры')
+# GAME_DISABLED: @dp.message_handler(lambda msg: msg.text.lower() == 'запретить игры')
 async def games_off(message):
     name = message.from_user.get_mention()
     chat_username = message.chat.username
