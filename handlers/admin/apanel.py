@@ -82,7 +82,7 @@ async def moder_on(message):
     if users.cursor.fetchone() is None:
         await message.reply(f'Вы не существуете!\nВведите /start')
     else:
-        if message.from_user.id in admins_list or str(status) == 'Система':
+        if message.from_user.id in admins_list or message.from_user.id == config.owner:
             mod_cmd = chats.cursor.execute("SELECT mod_cmd from chats where chat_id = ?", (message.chat.id,)).fetchone()
             mod_cmd = mod_cmd[0] if mod_cmd else None
             if str(mod_cmd) == 'да':
