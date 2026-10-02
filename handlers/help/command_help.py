@@ -17,6 +17,7 @@ from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
 from main import dp, bot, chats, users, bot_is_paused, set_bot_paused, ContentType
 from services.broadcast_service import broadcast_message
+from services.action_cancel import cancel_current_action
 
 
 def _role_for_message(message: types.Message) -> str:
@@ -85,6 +86,7 @@ async def panel_root(call):
         menu.add(InlineKeyboardButton("🔨 Модерация", callback_data="panel:moderation"))
     menu.add(InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"))
     menu.add(InlineKeyboardButton("📬 Репорты", callback_data="panel:reports"))
+    menu.add(InlineKeyboardButton("↩️ Отменить текущее действие", callback_data="panel:cancel"))
     if is_owner(call.from_user.id):
         menu.add(InlineKeyboardButton("⚙️ Системное", callback_data="panel:system"))
     menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="panel:close"))
@@ -95,6 +97,15 @@ async def panel_root(call):
         reply_markup=menu,
     )
     await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:cancel")
+async def panel_cancel(call: types.CallbackQuery):
+    cancelled = cancel_current_action(call.from_user.id, call.message.chat.id)
+    await call.answer(
+        "Текущее действие отменено." if cancelled else "Незавершённого действия нет.",
+        show_alert=True,
+    )
 
 
 @dp.callback_query_handler(lambda c: c.data == "panel:users")
