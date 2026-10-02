@@ -122,6 +122,25 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertFalse(is_paused(1002))
         set_paused(False, scope="chat", chat_id=1001)
 
+    def test_founder_interpret_uses_deterministic_path_before_ai(self):
+        import services.command_gateway as command_gateway
+
+        async def forbidden_classifier(*args, **kwargs):
+            raise AssertionError("AI classifier should not be called for known Founder commands")
+
+        old_classifier = command_gateway.classify_command
+        try:
+            command_gateway.classify_command = forbidden_classifier
+            result = asyncio.run(
+                command_gateway.interpret("стазис включи в этом чате")
+            )
+            self.assertEqual(
+                result,
+                {"command": "stasis", "action": "enable", "scope": "chat"},
+            )
+        finally:
+            command_gateway.classify_command = old_classifier
+
     def test_founder_command_fallback_recognizes_scopes(self):
         from services.command_gateway import _extract_fallback
         self.assertEqual(
