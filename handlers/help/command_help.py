@@ -15,7 +15,6 @@ def _role_for_message(message: types.Message) -> str:
         return "Основатель"
     status = get_user_status(message.from_user.id)
     if status in {
-        "Система",
         "Создатель бота",
         "Администратор",
         "Хелпер",
