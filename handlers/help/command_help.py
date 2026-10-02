@@ -9,7 +9,7 @@ from core.permissions import get_user_status, has_moderator_role, has_admin_role
 from core.identity import is_owner
 from core.role_transitions import available_role_targets
 from services.chat_members import sync_chat_admins
-from services.chat_roles import get_role
+from services.chat_roles import get_role, list_roles
 from services.silence_service import set_silent, is_silent
 from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
@@ -151,26 +151,62 @@ async def panel_admins(call):
         targets = [(int(r[0]), str(r[1] or r[0])) for r in rows]
     else:
         targets = [(call.message.chat.id, str(getattr(call.message.chat, "title", None) or call.message.chat.id))]
+
     sections = []
     for chat_id, name in targets:
         try:
             admins = await sync_chat_admins(bot, chat_id)
         except Exception:
-            continue
-        lines = ["<b>💬 " + escape_for_telegram_html(name) + "</b> <code>" + str(chat_id) + "</code>"]
-        for admin in admins:
-            mark = "👑" if getattr(admin, "status", "") == "creator" else "🛡"
-            line = mark + " " + escape_for_telegram_html(admin.user.full_name)
-            from services.role_audit import latest_grant
-            grant = latest_grant(chat_id, admin.user.id)
-            if grant:
-                actor = users.cursor.execute("SELECT name FROM users WHERE id=?", (grant["actor_id"],)).fetchone()
-                actor_name = actor[0] if actor else str(grant["actor_id"])
-                line += " · роль: " + escape_for_telegram_html(str(grant["role"])) + " · выдал: " + escape_for_telegram_html(str(actor_name))
+            admins = []
+        admin_by_id = {admin.user.id: admin for admin in admins}
+        role_rows = list_roles(chat_id)
+        role_by_id = {int(row["user_id"]): row for row in role_rows}
+        user_ids = list(dict.fromkeys([*admin_by_id.keys(), *role_by_id.keys()]))
+        lines = [
+            "<b>💬 " + escape_for_telegram_html(name) + "</b> <code>" + str(chat_id) + "</code>"
+        ]
+        if not user_ids:
+            lines.append("Нет данных о составе.")
+        for user_id in user_ids:
+            admin = admin_by_id.get(user_id)
+            role_row = role_by_id.get(user_id)
+            if admin:
+                mark = "👑" if getattr(admin, "status", "") == "creator" else "🛡"
+                display_name = admin.user.full_name
+                telegram_part = (
+                    "создатель Telegram-чата"
+                    if getattr(admin, "status", "") == "creator"
+                    else "администратор Telegram"
+                )
+            else:
+                mark = "🤖"
+                user = users.cursor.execute(
+                    "SELECT name,username FROM users WHERE id=?", (user_id,)
+                ).fetchone()
+                display_name = user["name"] if user else str(user_id)
+                telegram_part = "роль Аи без статуса Telegram-администратора"
+
+            line = (
+                mark + " " + escape_for_telegram_html(str(display_name))
+                + " · " + escape_for_telegram_html(telegram_part)
+            )
+            if role_row:
+                actor = users.cursor.execute(
+                    "SELECT name FROM users WHERE id=?", (role_row["granted_by"],)
+                ).fetchone()
+                actor_name = actor["name"] if actor else str(role_row["granted_by"])
+                line += (
+                    " · роль Аи: <b>" + escape_for_telegram_html(str(role_row["role"])) + "</b>"
+                    " · выдал: " + escape_for_telegram_html(str(actor_name))
+                )
             lines.append(line)
         sections.append("\n".join(lines))
+
     body = "\n\n".join(sections) or "Нет доступных данных."
-    await call.message.edit_text("<b>👮 СОСТАВ АДМИНИСТРАТОРОВ</b>\n\n" + body, reply_markup=_panel_back())
+    await call.message.edit_text(
+        "<b>👮 СОСТАВ АДМИНИСТРАТОРОВ</b>\n\n" + body,
+        reply_markup=_panel_back(),
+    )
     await call.answer()
 
 
