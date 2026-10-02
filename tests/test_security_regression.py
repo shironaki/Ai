@@ -39,6 +39,14 @@ class SecurityRegressionTests(unittest.TestCase):
         finally:
             command_gateway.cancel_pending(1001, 2001)
 
+    def test_founder_scope_handler_does_not_consume_confirmation_words(self):
+        from handlers.help.help import _is_founder_scope_reply
+
+        self.assertTrue(_is_founder_scope_reply("в этом чате"))
+        self.assertTrue(_is_founder_scope_reply("ГЛОБАЛЬНО"))
+        for text in ("подтверждаю", "отмена", "замуть его на 30 минут", "аи статус"):
+            self.assertFalse(_is_founder_scope_reply(text))
+
     def test_audit_event_contains_metadata_only(self):
         from services.audit_service import record
 
