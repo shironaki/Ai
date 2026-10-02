@@ -311,6 +311,7 @@ async def direct_ai_invocation(message: types.Message):
         and (
             has_pending(m.from_user.id, m.chat.id)
             or has_pending_moderation(m.from_user.id, m.chat.id)
+            or has_runtime_action(m.from_user.id, m.chat.id)
         )
     )
 )
