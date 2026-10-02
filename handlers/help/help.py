@@ -52,6 +52,10 @@ from core.role_transitions import available_role_targets
 from core.command_resolution import is_founder_scope_reply
 
 
+def _is_report_operator(user_id: int) -> bool:
+    return is_owner(user_id) or user_id in getattr(config, "tech_team_ids", ())
+
+
 def _panel_role(user_id: int, chat_id: int | None = None) -> str:
     if is_owner(user_id):
         return "Создатель бота"
@@ -456,7 +460,7 @@ async def unified_report_request(message: types.Message):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:reports")
 async def panel_reports(call: types.CallbackQuery):
-    if not is_owner(call.from_user.id) and not has_admin_role(call.from_user.id, call.message.chat.id):
+    if not _is_report_operator(call.from_user.id) and not has_admin_role(call.from_user.id, call.message.chat.id):
         await call.answer("Нет доступа.", show_alert=True)
         return
     rows = list_open()
@@ -478,8 +482,8 @@ async def panel_reports(call: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("report:view:"))
 async def report_view(call: types.CallbackQuery):
-    if not is_owner(call.from_user.id):
-        await call.answer("Только Основатель.", show_alert=True)
+    if not _is_report_operator(call.from_user.id):
+        await call.answer("Нет доступа к центру обращений.", show_alert=True)
         return
     try:
         report_id = int(call.data.rsplit(":", 1)[-1])
@@ -508,8 +512,8 @@ async def report_view(call: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("report:answer:"))
 async def report_answer_start(call: types.CallbackQuery):
-    if not is_owner(call.from_user.id):
-        await call.answer("Только Основатель.", show_alert=True)
+    if not _is_report_operator(call.from_user.id):
+        await call.answer("Нет доступа к центру обращений.", show_alert=True)
         return
     try:
         report_id = int(call.data.rsplit(":", 1)[-1])
