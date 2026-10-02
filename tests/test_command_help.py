@@ -13,10 +13,6 @@ class CommandHelpTests(unittest.TestCase):
         self.assertNotIn("/logout", result)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_founder_system_panel_documents_termux_ha_commands(self):
         from pathlib import Path
         panel = Path("handlers/help/command_help.py").read_text(encoding="utf-8")
@@ -25,3 +21,7 @@ if __name__ == "__main__":
         self.assertIn("ROLE phone2 STANDBY", panel)
         self.assertIn("FORCE phone1 ACTIVE", panel)
         self.assertIn("FORCE phone2 ACTIVE", panel)
+
+
+if __name__ == "__main__":
+    unittest.main()
