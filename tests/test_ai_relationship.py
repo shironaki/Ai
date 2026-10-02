@@ -20,12 +20,14 @@ class AIRelationshipTests(unittest.TestCase):
         self.assertFalse(can_call(user_id))
 
     def test_invocation_names_are_configurable(self):
-        from services.ai_relationship import invocation_names
+        from services.ai_relationship import invocation_names, set_invocation_names
 
         old = os.environ.get("AI_INVOCATION_NAMES")
         try:
             os.environ["AI_INVOCATION_NAMES"] = "система, оператор"
             self.assertEqual(invocation_names(), ("система", "оператор"))
+            self.assertEqual(set_invocation_names("Аи, Система"), ("аи", "система"))
+            self.assertEqual(invocation_names(), ("аи", "система"))
         finally:
             if old is None:
                 os.environ.pop("AI_INVOCATION_NAMES", None)
