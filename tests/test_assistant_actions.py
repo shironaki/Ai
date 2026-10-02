@@ -44,6 +44,14 @@ class AssistantActionTests(unittest.TestCase):
             detect_direct_action("Покажи доступные мне команды"),
             "help",
         )
+        self.assertEqual(detect_direct_action("Покажи мне команды"), "help")
+        self.assertEqual(detect_direct_action("Выведи мне команды"), "help")
+
+    def test_panel_is_direct_action(self):
+        from services.assistant_actions import detect_direct_action
+
+        self.assertEqual(detect_direct_action("Покажи мне панель"), "panel")
+        self.assertEqual(detect_direct_action("Выведи панель"), "panel")
 
     def test_settings_are_reported_as_unsupported(self):
         from services.assistant_actions import detect_direct_action
