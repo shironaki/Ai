@@ -70,6 +70,38 @@ async def left_chat_member(message: types.Message):
     await message.answer(escape_for_telegram_html(random.choice(goodbye)))
 
 
+@dp.chat_member_handler()
+async def chat_member_event(update: types.ChatMemberUpdated):
+    if update.chat.type not in {"group", "supergroup", "channel"}:
+        return
+    member = update.new_chat_member.user
+    old_status = getattr(update.old_chat_member, "status", None)
+    new_status = getattr(update.new_chat_member, "status", None)
+    joined = new_status in {"member", "administrator", "creator"} and old_status in {"left", "kicked", None}
+    left = new_status in {"left", "kicked"} and old_status not in {"left", "kicked"}
+    if not (joined or left):
+        return
+    observe(
+        chat_id=update.chat.id,
+        user_id=member.id,
+        name=member.full_name,
+        username=member.username,
+        telegram_status=new_status,
+        joined=joined,
+        left=left,
+    )
+    if left and update.chat.type in {"group", "supergroup"}:
+        await update.chat.bot.send_message(
+            update.chat.id,
+            escape_for_telegram_html(
+                random.choice((
+                    f"Прощай, {member.full_name}. Аи заметила ваш уход — возвращайтесь, если захотите.",
+                    f"{member.full_name} покинул(а) нас. Аи оставляет дверь открытой.",
+                ))
+            ),
+        )
+
+
 async def echo_message(message: types.Message):
     if message.chat.type == "private" and message.text:
         from handlers.help.help import _ai_invocation
