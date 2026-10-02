@@ -152,6 +152,25 @@ def _ai_intro(role: str) -> str:
     return "👤 ПОЛЬЗОВАТЕЛЬ · Я слушаю. Обращайтесь ко мне через «Аи» или «Система»."
 
 
+
+async def _answer_ai(message: types.Message, prompt: str):
+    role = _ai_role(message)
+    text = (prompt or "").strip()
+    if not text:
+        await message.reply(_ai_intro(role))
+        return
+    if await _handle_founder_command(message, text):
+        return
+    context = build_verified_context(message.from_user.id, message.chat.id, text, role=role)
+    answer = await generate_reply(message.from_user.id, text, role, verified_context=context)
+    if answer:
+        await message.reply(escape_for_telegram_html(answer))
+    else:
+        await message.reply("🧠 AI-модуль сейчас недоступен. Проверьте конфигурацию или используйте /help.")
+
+
+
+
 @dp.message_handler(commands=["aidiag"])
 async def ai_diagnostic(message: types.Message):
     """Owner-only AI runtime diagnostic; never reveals the API key."""
@@ -232,12 +251,19 @@ def _ai_invocation(text: str) -> str | None:
     normalized = (text or "").strip()
     if not normalized:
         return None
-    if normalized.startswith("/аи") or normalized.startswith("/ai"):
-        parts = normalized.split(maxsplit=1)
-        return parts[1].strip() if len(parts) > 1 else ""
-    if re.match(r"^аи(?:[,,:]|\\s)", normalized, re.IGNORECASE):
-        return re.sub(r"^аи(?:[,,:]|\\s)+", "", normalized, flags=re.IGNORECASE).strip()
+    lowered = normalized.casefold()
+    for prefix in ("/аи", "/ai", "/система"):
+        if lowered.startswith(prefix):
+            parts = normalized.split(maxsplit=1)
+            return parts[1].strip() if len(parts) > 1 else ""
+    if re.match(r"^(?:аи|система)(?:[,,:]|\\s)", normalized, re.IGNORECASE):
+        return re.sub(r"^(?:аи|система)(?:[,,:]|\\s)+", "", normalized, flags=re.IGNORECASE).strip()
     return None
+
+
+@dp.message_handler(lambda m: bool(m.text and _ai_invocation(m.text) is not None))
+async def direct_ai_invocation(message: types.Message):
+    await _answer_ai(message, _ai_invocation(message.text) or "")
 
 
 @dp.message_handler(
