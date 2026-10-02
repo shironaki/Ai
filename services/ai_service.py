@@ -91,7 +91,7 @@ def _request_sync(messages, model, api_key):
             "model": model,
             "messages": messages,
             "temperature": 0.75,
-            "max_tokens": 350,
+            "max_tokens": 700,
         },
         timeout=30,
     )
