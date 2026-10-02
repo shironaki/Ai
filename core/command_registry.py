@@ -37,14 +37,26 @@ COMMAND_REGISTRY = (
     CommandSpec("moderation", frozenset({"модерация"}), "administration", "Модератор"),
     CommandSpec("silence", frozenset({"тишина"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("welcome", frozenset({"приветствие"}), "administration", "Модератор", "chat", True, True),
+    CommandSpec("mute", frozenset({"мут", "mute", "дебафф"}), "moderation", "Модератор", "chat", True, True),
+    CommandSpec("unmute", frozenset({"размут", "unmute", "андебафф"}), "moderation", "Модератор", "chat", True, True),
+    CommandSpec("ban", frozenset({"ban", "аннигилировать"}), "moderation", "Модератор", "chat", True, True),
+    CommandSpec("unban", frozenset({"unban", "воскресить"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("setstatus", frozenset({"setstatus", "выдай статус"}), "administration", "Администратор", "chat", True, True),
-    CommandSpec("info", frozenset({"инфо", "инфа"}), "information", "Пользователь"),
+    CommandSpec("info", frozenset({"инфо", "инфа", "профиль"}), "information", "Пользователь"),
     CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Пользователь"),
     CommandSpec("report", frozenset({"report", "репорт"}), "communication", "Пользователь"),
     CommandSpec("cancel", frozenset({"cancel", "отмена"}), "control", "Пользователь", description="отменить текущее действие"),
     CommandSpec("issue_mark", frozenset({"метка"}), "qa", "Пользователь", description="зарегистрировать найденную проблему"),
     CommandSpec("issue_list", frozenset({"список меток"}), "qa", "Создатель бота", "global", description="показать состояние QA-меток"),
 )
+
+
+def is_legacy_game_alias(value: str) -> bool:
+    return normalize_alias(value) in {
+        "выбери", "слоты", "казино", "куб", "дартс", "боул", "фут",
+        "бас", "баскет", "охота", "пополнить счёт", "пополнить счет",
+        "снять со счёта", "снять со счета", "setstavka", "setdick",
+    }
 
 
 def _build_alias_index():
