@@ -148,32 +148,4 @@ async def unban(message):
     """Compatibility wrapper; execution is centralized in moderation_gateway."""
     await request_moderation(message, message.text.strip())
 
-# Game economy is disabled until the dedicated game subsystem is reintroduced.\n\n#репорт
-@dp.message_handler(commands=['r', 'report'])
-async def cmd_report(message: types.Message):
-    try:
-        if message.text == '/report' or message.text == '/r' or not message.reply_to_message:
-            await bot.send_message(message.chat.id, '📖 Введите причину репорта отвечая на сообщение с нарушением, пример: \n<code>/report спам/реклама</code>')
-        else:
-            members = await message.chat.get_member(message.reply_to_message.from_user.id)
-            info = await bot.get_chat_member(message.chat.id, message.from_user.id)
-            report = message.text.replace('/r ', '')
-            report = report.replace('/report ', '')
-            admins = await bot.get_chat_administrators('@' + message.chat.username)
-            send = 0
-            for admin in admins:
-                if admin.user.username != 'Аи':
-                    try:
-                        await bot.send_message(config.owner, f'📬 Репорт по причине: ' + str(report) + f'\n\nhttps://t.me/{message.chat.username}/{message.reply_to_message.message_id}')
-                    except:
-                        pass
-                    send += 1
-
-            if send == 0:
-                await bot.send_message(message.chat.id, '👮Админы не оповещены, для отправки им репортов надо чтобы они запустили меня в лс!')
-            else:
-                await bot.send_message(message.chat.id, '👮Админы оповещены!')
-    except:
-        pass
-
-# /System is intentionally removed: AI/SYSTEM is a service identity, never a user status.\n
+# Game economy is disabled until the dedicated game subsystem is reintroduced.\n\n# Unified reports live in handlers/help/help.py and services/report_service.py.\n
