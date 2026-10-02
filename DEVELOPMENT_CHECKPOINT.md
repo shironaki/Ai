@@ -125,6 +125,14 @@ Completed in the current admin block:
 
 Latest callback fix (2026-10-02): panel callback dispatch is instrumented, callback exceptions now produce visible Telegram feedback + diagnostics, and unknown/obsolete inline callbacks are answered instead of silently ignored. CI #907 is green.
 
+Runtime/UI verification block completed (2026-10-02):
+- All panel callback families statically audited; every current callback has a matching handler/answer path, with explicit fallback for obsolete callbacks.
+- Natural-language command-list requests are deterministic and render the authoritative registry instead of going to the LLM.
+- AI response ceiling increased from 350 to 700 tokens and prompt now requires complete thoughts; typing indicator added during provider generation.
+- Runtime diagnostics now record handler/callback duration_ms.
+- run.py now uses a per-environment non-blocking PID/file lock to prevent duplicate polling instances.
+- CI #925 green; runtime regression suite remains green (88 tests in preceding full run).
+
 Next required work:
 1. Fresh Termux/runtime verification of the latest TEST branch; do not claim live deployment until observed.
 2. Continue admin/security audit: role assignment paths, chat-founder/admin synchronization, report cadence/forwarded payloads, startup/update delivery.
