@@ -82,7 +82,7 @@ def ai_status() -> dict:
     }
 
 
-def _request_sync(messages, model, api_key):
+def _request_sync(messages, model, api_key, *, max_tokens=900, return_meta=False):
     response = requests.post(
         GROQ_URL,
         headers={
@@ -93,7 +93,7 @@ def _request_sync(messages, model, api_key):
             "model": model,
             "messages": messages,
             "temperature": 0.75,
-            "max_tokens": 700,
+            "max_tokens": max_tokens,
         },
         timeout=30,
     )
@@ -107,7 +107,20 @@ def _request_sync(messages, model, api_key):
     content = choices[0].get("message", {}).get("content")
     if not content:
         raise RuntimeError("Groq returned an empty response")
-    return content.strip()
+    content = content.strip()
+    if return_meta:
+        return content, choices[0].get("finish_reason")
+    return content
+
+
+def _looks_incomplete(text: str) -> bool:
+    """Conservative check for provider output that visibly stops mid-thought."""
+    value = (text or "").rstrip()
+    if not value:
+        return True
+    if len(value) < 24:
+        return False
+    return value[-1] not in ".!?…:;)]}>»\"'"
 
 
 async def generate_reply(user_id: int, prompt: str, role: str = "Пользователь", verified_context: str | None = None):
@@ -135,12 +148,33 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Пользов�
     messages.extend(candidate_history)
 
     try:
-        answer = await asyncio.to_thread(
+        answer, finish_reason = await asyncio.to_thread(
             _request_sync,
             messages,
             os.getenv("AI_MODEL", DEFAULT_MODEL),
             api_key,
+            max_tokens=900,
+            return_meta=True,
         )
+        if finish_reason == "length" or _looks_incomplete(answer):
+            continuation_messages = list(messages)
+            continuation_messages.append({"role": "assistant", "content": answer})
+            continuation_messages.append({
+                "role": "user",
+                "content": (
+                    "Продолжи ответ с места остановки. Не повторяй уже написанное. "
+                    "Заверши мысль полностью и не обрывай предложение."
+                ),
+            })
+            continuation = await asyncio.to_thread(
+                _request_sync,
+                continuation_messages,
+                os.getenv("AI_MODEL", DEFAULT_MODEL),
+                api_key,
+                max_tokens=500,
+            )
+            if continuation:
+                answer = answer.rstrip() + " " + continuation.lstrip()
     except Exception as exc:
         _LAST_ERROR["value"] = html.escape(redact(f"{type(exc).__name__}: {exc}"), quote=False)
         log.exception("AI provider request failed for user_id=%s", user_id)
