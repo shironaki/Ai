@@ -635,9 +635,9 @@ async def ai_command(message: types.Message):
     await _answer_ai(message, (message.get_args() or "").strip())
 
 
-@dp.message_handler(lambda m: bool(m.text and (m.text.lower() in ("мила", "аи", "ai") or m.text.lower().startswith(("мила ", "аи ", "ai ", "мила,", "аи,", "ai,")))))
+@dp.message_handler(lambda m: bool(m.text and (m.text.lower() in ("аи", "ai", "система") or m.text.lower().startswith(("аи ", "ai ", "система ", "аи,", "ai,", "система,")))))
 async def bot_msg(message: types.Message):
-    match = re.match(r"^(?:мила|аи|ai)\b[\s,:-]*(.*)$", message.text, re.IGNORECASE)
+    match = re.match(r"^(?:аи|ai|система)\b[\s,:-]*(.*)$", message.text, re.IGNORECASE)
     prompt = match.group(1).strip() if match else ""
     await _answer_ai(message, prompt)
 
