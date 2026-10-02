@@ -185,6 +185,61 @@ class RuntimeRegressionTests(unittest.TestCase):
             self.assertEqual(len(paths), 2)
             self.assertTrue(all(Path(path).parent == Path(tmp) for path in paths))
 
+    def test_termux_lease_denies_another_live_owner(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_request = control.request
+        try:
+            control.DEVICE_ID = "phone2"
+
+            def fake_request(method, path, value=None):
+                self.assertEqual(method, "GET")
+                return {
+                    "content": "eyJvd25lciI6InBob25lMSIsImV4cGlyZXNfYXQiOjk5OTk5OTk5OTl9",
+                    "encoding": "base64",
+                    "sha": "lease-sha",
+                }
+
+            control.request = fake_request
+            acquired, message = control.acquire_or_renew_lease()
+            self.assertFalse(acquired)
+            self.assertIn("lease held by phone1", message)
+        finally:
+            control.DEVICE_ID = old_device
+            control.request = old_request
+
+    def test_termux_lease_update_uses_compare_and_swap_sha(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_request = control.request
+        calls = []
+        try:
+            control.DEVICE_ID = "phone2"
+
+            def fake_request(method, path, value=None):
+                calls.append((method, path, value))
+                if method == "GET":
+                    return {
+                        "content": "eyJvd25lciI6IiIsImV4cGlyZXNfYXQiOjB9",
+                        "encoding": "base64",
+                        "sha": "lease-sha",
+                    }
+                return {"ok": True}
+
+            control.request = fake_request
+            acquired, message = control.acquire_or_renew_lease()
+            self.assertTrue(acquired)
+            self.assertIn("lease owner=phone2", message)
+            self.assertEqual(calls[0][0], "GET")
+            self.assertEqual(calls[1][0], "PUT")
+            self.assertEqual(calls[1][2]["sha"], "lease-sha")
+            self.assertEqual(calls[1][2]["branch"], control.LEASE_BRANCH)
+        finally:
+            control.DEVICE_ID = old_device
+            control.request = old_request
+
     def test_runtime_hardening_scripts_are_syntactically_valid(self):
         scripts = (
             ROOT / "autoupdate.sh",
