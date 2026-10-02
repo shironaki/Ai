@@ -67,6 +67,54 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('elif callback_query:', main_source)
         self.assertIn('stage="callback_exception"', main_source)
 
+    def test_all_panel_callback_families_have_handlers(self):
+        source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        required = (
+            "help:ai", "help:report", "panel:root", "panel:cancel", "panel:users",
+            "panel:relation", "panel:relation:", "panel:role", "panel:role:",
+            "panel:admins", "panel:myinfo", "panel:info", "panel:chatinfo",
+            "panel:moderation", "panel:mod:", "panel:silence", "panel:silence:apply",
+            "panel:welcome", "panel:welcome:auto", "panel:welcome:fixed",
+            "panel:system", "panel:system:broadcast", "panel:broadcast:",
+            "panel:system:names", "panel:names:", "panel:system:ai",
+            "panel:system:stasis", "panel:system:stasis:apply",
+            "panel:system:issues", "panel:close",
+        )
+        for value in required:
+            self.assertIn(value, source, value)
+        handler_patterns = (
+            'c.data == "help:ai"', 'c.data == "help:report"', 'c.data == "panel:root"',
+            'c.data == "panel:cancel"', 'c.data == "panel:users"', 'c.data == "panel:relation"',
+            'c.data.startswith("panel:relation:")', 'c.data == "panel:role"',
+            'c.data.startswith("panel:role:")', 'c.data == "panel:admins"',
+            'c.data == "panel:myinfo"', 'c.data == "panel:info"', 'c.data == "panel:chatinfo"',
+            'c.data == "panel:moderation"', 'c.data.startswith("panel:mod:")',
+            'c.data == "panel:silence"', 'c.data == "panel:silence:apply"',
+            'c.data == "panel:welcome"', 'c.data == "panel:welcome:auto"',
+            'c.data == "panel:welcome:fixed"', 'c.data == "panel:system"',
+            'c.data == "panel:system:broadcast"', 'c.data.startswith("panel:broadcast:")',
+            'c.data == "panel:system:names"', 'c.data.startswith("panel:names:")',
+            'c.data == "panel:system:ai"', 'c.data == "panel:system:stasis"',
+            'c.data == "panel:system:stasis:apply"', 'c.data == "panel:system:issues"',
+            'c.data == "panel:close"',
+        )
+        for pattern in handler_patterns:
+            self.assertIn(pattern, source, pattern)
+
+    def test_natural_command_catalog_request_is_deterministic(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        self.assertIn("def _is_command_catalog_request", source)
+        self.assertIn("render_help(role)", source)
+        self.assertIn("_is_command_catalog_request(text)", source)
+
+    def test_runtime_latency_and_single_instance_guards_exist(self):
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        run_source = (ROOT / "run.py").read_text(encoding="utf-8")
+        self.assertIn("duration_ms", main_source)
+        self.assertIn("time.perf_counter()", main_source)
+        self.assertIn("fcntl.flock", run_source)
+        self.assertIn("LOCK_EX | fcntl.LOCK_NB", run_source)
+
     def test_legacy_broadcast_routes_are_removed_and_panel_route_is_authoritative(self):
         self.assertFalse((ROOT / "aboute.py").exists())
         help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
