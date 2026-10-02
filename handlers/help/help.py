@@ -179,6 +179,10 @@ async def _answer_ai(message: types.Message, prompt: str):
     if await _handle_founder_command(message, text):
         return
     context = build_verified_context(message.from_user.id, message.chat.id, text, role=role)
+    try:
+        await bot.send_chat_action(message.chat.id, "typing")
+    except Exception:
+        pass
     answer = await generate_reply(message.from_user.id, text, role, verified_context=context)
     if answer:
         await message.reply(escape_for_telegram_html(answer))
