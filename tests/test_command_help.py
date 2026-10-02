@@ -11,10 +11,11 @@ class CommandHelpTests(unittest.TestCase):
         self.assertNotIn("/settings", result)
         self.assertNotIn("/invite", result)
         self.assertNotIn("/logout", result)
-        self.assertIn("/status", result)
-        self.assertIn("/diagnostics", result)
-        self.assertIn("/battery, /charge", result)
-        self.assertIn("/restart", result)
+        founder_result = render_help("Создатель бота")
+        self.assertIn("/status", founder_result)
+        self.assertIn("/diagnostics", founder_result)
+        self.assertIn("/battery, /charge", founder_result)
+        self.assertIn("/restart", founder_result)
 
 
     def test_founder_system_panel_documents_termux_ha_commands(self):
