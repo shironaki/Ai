@@ -17,7 +17,7 @@ async def set_status(message: types.Message):
     from core.permissions import get_user_status
 
     actor_id = message.from_user.id
-    actor_role = resolve_role(actor_id)
+    actor_role = get_user_status(actor_id, message.chat.id) or resolve_role(actor_id)
     target_role = (message.get_args() or "").strip()
     allowed = available_role_targets(actor_role, actor_is_owner=is_owner(actor_id))
     if target_role not in allowed:
