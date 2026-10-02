@@ -96,13 +96,13 @@ async def panel_root(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:users")
 async def panel_users(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("👤 Моя информация", callback_data="panel:myinfo"))
     menu.add(InlineKeyboardButton("👮 Состав администраторов", callback_data="panel:admins"))
-    if is_owner(call.from_user.id) or _panel_role(call.from_user.id) in {"Администратор", "Хелпер"}:
+    if is_owner(call.from_user.id) or _panel_role(call.from_user.id, call.message.chat.id) in {"Администратор", "Хелпер"}:
         menu.add(InlineKeyboardButton("🎭 Назначить роль", callback_data="panel:role"))
     menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
     await call.message.edit_text("<b>👥 ПОЛЬЗОВАТЕЛИ</b>\n\nВыберите действие.", reply_markup=menu)
@@ -111,10 +111,10 @@ async def panel_users(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:role")
 async def panel_role_menu(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
-    targets = available_role_targets(_panel_role(call.from_user.id), actor_is_owner=is_owner(call.from_user.id))
+    targets = available_role_targets(_panel_role(call.from_user.id, call.message.chat.id), actor_is_owner=is_owner(call.from_user.id))
     menu = InlineKeyboardMarkup(row_width=1)
     for role in targets:
         menu.add(InlineKeyboardButton(role, callback_data="panel:role:" + role))
@@ -129,7 +129,7 @@ async def panel_role_menu(call):
 @dp.callback_query_handler(lambda c: c.data.startswith("panel:role:"))
 async def panel_role_select(call):
     role = call.data.split(":", 2)[2]
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     from handlers.help.help import _PANEL_PENDING
@@ -143,7 +143,7 @@ async def panel_role_select(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:admins")
 async def panel_admins(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     if is_owner(call.from_user.id):
@@ -229,7 +229,7 @@ async def panel_chatinfo(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:moderation")
 async def panel_moderation(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     menu = InlineKeyboardMarkup(row_width=2)
@@ -245,7 +245,7 @@ async def panel_moderation(call):
 @dp.callback_query_handler(lambda c: c.data.startswith("panel:mod:"))
 async def panel_mod_select(call):
     action = call.data.rsplit(":", 1)[-1]
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     from handlers.help.help import _PANEL_PENDING
@@ -257,7 +257,7 @@ async def panel_mod_select(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:silence")
 async def panel_silence(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     try:
@@ -284,7 +284,7 @@ async def panel_silence(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:welcome")
 async def panel_welcome(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     if call.message.chat.type not in {"group", "supergroup"}:
@@ -300,7 +300,7 @@ async def panel_welcome(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:welcome:auto")
 async def panel_welcome_auto(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     chats.cursor.execute("UPDATE chats SET welcome='' WHERE chat_id=?", (call.message.chat.id,))
@@ -311,7 +311,7 @@ async def panel_welcome_auto(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:welcome:fixed")
 async def panel_welcome_fixed(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id)):
+    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
     from handlers.help.help import _PANEL_PENDING
