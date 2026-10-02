@@ -7,6 +7,7 @@ Health is considered good only when:
 """
 
 import os
+import socket
 import sys
 import time
 from pathlib import Path
@@ -14,8 +15,42 @@ from pathlib import Path
 import requests
 
 
+def _network_diagnostics() -> list[str]:
+    """Measure the network path to Telegram without exposing the bot token."""
+    lines = []
+    host = "api.telegram.org"
+    try:
+        started = time.perf_counter()
+        addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        dns_ms = (time.perf_counter() - started) * 1000
+        ips = sorted({item[4][0] for item in addresses})
+        lines.append(f"NETWORK DNS: OK {dns_ms:.0f}ms ips={','.join(ips[:4])}")
+    except Exception as exc:
+        lines.append(f"NETWORK DNS: FAIL {type(exc).__name__}: {str(exc)[:180]}")
+    try:
+        started = time.perf_counter()
+        with socket.create_connection((host, 443), timeout=5):
+            tcp_ms = (time.perf_counter() - started) * 1000
+        lines.append(f"NETWORK TCP443: OK {tcp_ms:.0f}ms")
+    except Exception as exc:
+        lines.append(f"NETWORK TCP443: FAIL {type(exc).__name__}: {str(exc)[:180]}")
+    try:
+        started = time.perf_counter()
+        response = requests.get("https://api.telegram.org/", timeout=(5, 8))
+        https_ms = (time.perf_counter() - started) * 1000
+        lines.append(f"NETWORK HTTPS: OK {https_ms:.0f}ms status={response.status_code}")
+    except Exception as exc:
+        https_ms = (time.perf_counter() - started) * 1000
+        lines.append(f"NETWORK HTTPS: FAIL {https_ms:.0f}ms {type(exc).__name__}: {str(exc)[:180]}")
+    return lines
+
+
 def main() -> int:
+    diagnostics = "--diagnostics" in sys.argv
     token = os.getenv("BOT_TOKEN", "").strip()
+    if diagnostics:
+        for line in _network_diagnostics():
+            print(line)
     if not token:
         print("HEALTH FAIL: BOT_TOKEN missing", file=sys.stderr)
         return 2
@@ -41,7 +76,7 @@ def main() -> int:
         response.raise_for_status()
         payload = response.json()
     except Exception as exc:
-        print(f"HEALTH FAIL: Telegram API unavailable ({type(exc).__name__})", file=sys.stderr)
+        print(f"HEALTH FAIL: Telegram API unavailable ({type(exc).__name__}: {str(exc)[:180]})", file=sys.stderr)
         return 1
 
     if not payload.get("ok"):
@@ -89,6 +124,8 @@ def main() -> int:
     username = payload.get("result", {}).get("username", "unknown")
     ai_ready = bool(os.getenv("GROQ_API_KEY", "").strip())
     ai_state = "ready" if ai_ready else "unconfigured"
+    if diagnostics:
+        print(f"NETWORK TELEGRAM getMe: OK username=@{username}")
     print(f"HEALTH OK: heartbeat={age:.1f}s telegram=@{username} polling=ready ai={ai_state}")
     return 0
 
