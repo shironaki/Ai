@@ -21,6 +21,7 @@ from services.report_service import create_report, list_open, get_report, answer
 from services.chat_members import sync_chat_admins
 from services.chat_roles import get_role, set_role
 from services.action_cancel import cancel_current_action
+from services.ai_relationship import alternate_names, can_call, invocation_names, is_max_positive
 
 
 from main import (
@@ -235,23 +236,35 @@ async def founder_command_scope(message: types.Message):
     if result:
         await message.reply(result)
 
-def _ai_invocation(text: str) -> str | None:
+def _ai_invocation(text: str, *, include_alternates: bool = False) -> str | None:
     normalized = (text or "").strip()
     if not normalized:
         return None
+    names = invocation_names()
+    if include_alternates:
+        names = tuple(dict.fromkeys((*names, *alternate_names())))
     lowered = normalized.casefold()
-    for prefix in ("/аи", "/ai", "/система"):
-        if lowered.startswith(prefix):
+    for name in names:
+        if lowered.startswith("/" + name):
             parts = normalized.split(maxsplit=1)
             return parts[1].strip() if len(parts) > 1 else ""
-    if re.match(r"^(?:аи|система)(?:[,,:]|\\s)", normalized, re.IGNORECASE):
-        return re.sub(r"^(?:аи|система)(?:[,,:]|\\s)+", "", normalized, flags=re.IGNORECASE).strip()
+    pattern = r"^(?:" + "|".join(re.escape(name) for name in names) + r")(?:[,,:]|\\s)"
+    if re.match(pattern, normalized, re.IGNORECASE):
+        return re.sub(pattern + r"+", "", normalized, flags=re.IGNORECASE).strip()
     return None
 
 
 @dp.message_handler(lambda m: bool(m.text and _ai_invocation(m.text) is not None))
 async def direct_ai_invocation(message: types.Message):
-    await _answer_ai(message, _ai_invocation(message.text) or "")
+    user_id = message.from_user.id
+    if not can_call(user_id, config.owner):
+        return
+    invocation = _ai_invocation(
+        message.text,
+        include_alternates=is_max_positive(user_id, config.owner),
+    )
+    if invocation is not None:
+        await _answer_ai(message, invocation)
 
 
 @dp.message_handler(
