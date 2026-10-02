@@ -385,6 +385,8 @@ def main() -> int:
             with LOG.open("a", encoding="utf-8") as fh:
                 fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
             return 1
+        if bot_running() and not WATCHDOG_PIDFILE.exists():
+            start_watchdog()
 
     elif AUTO_FAILOVER:
         try:
