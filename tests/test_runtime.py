@@ -192,7 +192,7 @@ class RuntimeRegressionTests(unittest.TestCase):
         old_read = control.read_lease
         try:
             control.DEVICE_ID = "phone2"
-            control.read_lease = lambda: ({"owner": "phone1", "expires_at": 0}, "lease-sha")
+            control.read_lease = lambda: ({"owner": "phone1", "expires_at": int(__import__("time").time()) + 120}, "lease-sha")
             acquired, message = control.acquire_or_renew_lease()
             self.assertFalse(acquired)
             self.assertEqual(message, "lease held by phone1")
@@ -252,7 +252,7 @@ class RuntimeRegressionTests(unittest.TestCase):
             control.write_lease = fake_write
             acquired, message = control.acquire_or_renew_lease()
             self.assertTrue(acquired)
-            self.assertEqual(message, "lease owner=phone2")
+            self.assertIn("lease acquired owner=phone2", message)
             self.assertEqual(calls[0][1], "lease-sha")
             self.assertEqual(calls[0][0]["owner"], "phone2")
         finally:
@@ -266,6 +266,7 @@ class RuntimeRegressionTests(unittest.TestCase):
             ROOT / "codespace_boot.sh",
             ROOT / "scripts" / "termux_update.sh",
             ROOT / "scripts" / "termux_supervisor.sh",
+            ROOT / "scripts" / "termux_lease_watchdog.py",
             ROOT / "scripts" / "termux_boot.sh",
         )
         for path in scripts:
