@@ -115,7 +115,20 @@ async def execute(
     if command not in {"stasis", "awakening"}:
         return None
 
+    previous_enabled = False
+    from services.action_cancel import register_runtime_action
+    if command == "stasis":
+        previous_enabled = True if scope == "global" and False else False
+    else:
+        from core.runtime_state import is_paused
+        previous_enabled = is_paused(chat_id) if scope == "chat" else is_paused()
     set_paused(command == "stasis", scope=scope, chat_id=chat_id)
+    register_runtime_action(
+        user_id,
+        chat_id,
+        previous_enabled=previous_enabled,
+        scope=scope,
+    )
     result = (
         "🛰 <b>СТАЗИС АКТИВИРОВАН.</b>\n"
         + (
