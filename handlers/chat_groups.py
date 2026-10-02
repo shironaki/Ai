@@ -3,13 +3,17 @@ from aiogram import types
 from main import config, dp, bot, users, chats, datetime, random
 from core.permissions import get_user_status
 from services.ai_service import escape_for_telegram_html, generate_reply
-from services.chat_members import observe
+from services.chat_members import observe, sync_chat_admins
 
 
 @dp.message_handler(content_types=types.ContentTypes.NEW_CHAT_MEMBERS)
 async def new_chat_member(message: types.Message):
     if message.chat.type not in {"group", "supergroup"}:
         return
+    try:
+        await sync_chat_admins(bot, message.chat.id)
+    except Exception:
+        pass
     for member in message.new_chat_members:
         observe(
             chat_id=message.chat.id, user_id=member.id, name=member.full_name,
@@ -68,6 +72,11 @@ async def left_chat_member(message: types.Message):
 
 async def echo_message(message: types.Message):
     if message.chat.type == "private" and message.text:
+        from handlers.help.help import _ai_invocation
+        invocation = _ai_invocation(message.text)
+        if message.from_user.id != config.owner and invocation is None:
+            return
+        prompt = invocation if invocation is not None else message.text.strip()
         role = "Основатель" if message.from_user.id == config.owner else "Пользователь"
         try:
             status = get_user_status(message.from_user.id)
@@ -80,7 +89,7 @@ async def echo_message(message: types.Message):
             # This is critical: ordinary private messages must not bypass
             # deterministic direct actions and fall straight into the LLM.
             from handlers.help.help import _answer_ai
-            await _answer_ai(message, message.text.strip())
+            await _answer_ai(message, prompt)
             return
         except Exception:
             answer = None
