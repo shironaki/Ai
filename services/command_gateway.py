@@ -56,7 +56,16 @@ def _extract_fallback(prompt: str):
 
 
 async def interpret(prompt: str):
-    return await classify_command(prompt, role="Основатель") or _extract_fallback(prompt)
+    """Interpret Founder runtime commands with a deterministic fast path first.
+
+    These commands have a deliberately tiny, closed vocabulary. Calling the
+    external LLM before the local parser only adds network/model latency and
+    makes a known command dependent on provider availability.
+    """
+    fallback = _extract_fallback(prompt)
+    if fallback is not None:
+        return fallback
+    return await classify_command(prompt, role="Основатель")
 
 
 def _intent_from_dict(data: dict) -> CommandIntent:
