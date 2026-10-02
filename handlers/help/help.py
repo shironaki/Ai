@@ -17,6 +17,7 @@ from services.moderation_gateway import (
 )
 from services.ai_data import build_verified_context, chat_summary, system_summary, user_summary, runtime_summary
 from services.issue_tracker import parse_marker, parse_fixed, create_marker, list_markers, mark_fixed, render_marker
+from services.report_service import create_report, list_open, get_report, answer_report, reminder_loop
 
 from main import (
     BaseMiddleware,
@@ -962,6 +963,185 @@ async def panel_info_actions(call: types.CallbackQuery):
             else InlineKeyboardButton("◀️ Назад", callback_data="panel:root")
         ),
     )
+
+
+_REPORT_PENDING: dict[tuple[int, int], int] = {}
+
+
+def _report_reason(message: types.Message) -> str | None:
+    text = (message.text or "").strip()
+    if text.casefold().startswith("/report"):
+        return text[7:].strip()
+    if text.casefold().startswith("/r"):
+        return text[2:].strip()
+    if text.casefold().startswith("репорт"):
+        return text[6:].strip(" :,-")
+    if message.forward_from or message.forward_from_chat:
+        return (message.caption or "").strip()
+    return None
+
+
+def _is_report_request(message: types.Message) -> bool:
+    text = (message.text or "").strip().casefold()
+    return (
+        text.startswith("/report")
+        or text.startswith("/r ")
+        or text == "/r"
+        or text == "репорт"
+        or text.startswith("репорт ")
+        or bool(message.forward_from or message.forward_from_chat) and not text
+    )
+
+
+@dp.message_handler(
+    lambda m: bool(m.content_type and _is_report_request(m))
+)
+async def unified_report_request(message: types.Message):
+    reason = _report_reason(message)
+    if message.forward_from or message.forward_from_chat:
+        payload = message.text or message.caption or "Пересланное сообщение"
+        target_id = getattr(message.forward_from, "id", None)
+    else:
+        payload = message.reply_to_message.text if message.reply_to_message else None
+        target_id = (
+            message.reply_to_message.from_user.id
+            if message.reply_to_message and message.reply_to_message.from_user
+            else None
+        )
+    if not reason and not message.reply_to_message and not (message.forward_from or message.forward_from_chat):
+        await message.reply(
+            "📬 Укажите суть обращения. Можно написать «репорт <текст>» "
+            "или ответить «репорт» на сообщение."
+        )
+        return
+    report_id = create_report(
+        reporter_id=message.from_user.id,
+        reporter_name=message.from_user.full_name,
+        source_chat_id=message.chat.id,
+        source_message_id=message.message_id,
+        target_user_id=target_id,
+        reason=reason or "Жалоба по сообщению",
+        payload=payload,
+    )
+    try:
+        await bot.send_message(
+            config.owner,
+            "<b>📬 НОВЫЙ РЕПОРТ</b>\n"
+            f"ID: <code>#{report_id}</code>\n"
+            f"От: <b>{escape_for_telegram_html(message.from_user.full_name)}</b> "
+            f"(<code>{message.from_user.id}</code>)\n"
+            f"Причина: <b>{escape_for_telegram_html(reason or 'Жалоба по сообщению')}</b>",
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton("📖 Открыть репорт", callback_data=f"report:view:{report_id}")
+            ),
+        )
+    except Exception:
+        logging.exception("Could not notify owner about report")
+    await message.reply(f"📬 Репорт #{report_id} принят. Ответ будет направлен отдельно.")
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:reports")
+async def panel_reports(call: types.CallbackQuery):
+    if not is_owner(call.from_user.id) and not has_admin_role(call.from_user.id):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    rows = list_open()
+    menu = InlineKeyboardMarkup(row_width=1)
+    for row in rows:
+        menu.add(
+            InlineKeyboardButton(
+                f"#{row['id']} · {str(row['reason'])[:42]}",
+                callback_data=f"report:view:{row['id']}",
+            )
+        )
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:root"))
+    await call.message.edit_text(
+        "<b>📬 ЦЕНТР ОБРАЩЕНИЙ</b>\n\n"
+        + (f"Открытых репортов: <b>{len(rows)}</b>" if rows else "Открытых репортов нет."),
+        reply_markup=menu,
+    )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("report:view:"))
+async def report_view(call: types.CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    try:
+        report_id = int(call.data.rsplit(":", 1)[-1])
+    except ValueError:
+        await call.answer("Некорректный ID.", show_alert=True)
+        return
+    row = get_report(report_id)
+    if row is None:
+        await call.answer("Репорт не найден.", show_alert=True)
+        return
+    text = (
+        "<b>📬 РЕПОРТ #" + str(row["id"]) + "</b>\n\n"
+        f"Статус: <b>{row['status']}</b>\n"
+        f"Автор: <b>{escape_for_telegram_html(str(row['reporter_name'] or row['reporter_id']))}</b>\n"
+        f"Причина: <b>{escape_for_telegram_html(str(row['reason']))}</b>\n"
+        f"Создан: <code>{escape_for_telegram_html(str(row['created_at']))}</code>\n"
+        f"Сообщение: <code>{escape_for_telegram_html(str(row['payload'] or 'не сохранено'))}</code>"
+    )
+    menu = InlineKeyboardMarkup(row_width=1)
+    if row["status"] == "open":
+        menu.add(InlineKeyboardButton("✉️ Ответить", callback_data=f"report:answer:{row['id']}"))
+    menu.add(InlineKeyboardButton("◀️ Репорты", callback_data="panel:reports"))
+    await call.message.edit_text(text, reply_markup=menu)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("report:answer:"))
+async def report_answer_start(call: types.CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    try:
+        report_id = int(call.data.rsplit(":", 1)[-1])
+    except ValueError:
+        await call.answer("Некорректный ID.", show_alert=True)
+        return
+    row = get_report(report_id)
+    if row is None or row["status"] != "open":
+        await call.answer("Репорт уже закрыт или не найден.", show_alert=True)
+        return
+    _REPORT_PENDING[(call.from_user.id, call.message.chat.id)] = report_id
+    await call.message.edit_text(
+        f"✉️ <b>Ответ на репорт #{report_id}</b>\n\n"
+        "Отправьте следующим сообщением текст ответа. "
+        "Он будет направлен автору репорта.",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("◀️ Отмена", callback_data="panel:reports")
+        ),
+    )
+    await call.answer()
+
+
+@dp.message_handler(
+    lambda m: bool((m.from_user.id, m.chat.id) in _REPORT_PENDING and m.text and not m.text.startswith("/"))
+)
+async def report_answer_message(message: types.Message):
+    report_id = _REPORT_PENDING.pop((message.from_user.id, message.chat.id), None)
+    if report_id is None:
+        return
+    row = get_report(report_id)
+    if row is None or row["status"] != "open":
+        await message.reply("⚠️ Репорт уже закрыт или не найден.")
+        return
+    try:
+        await bot.send_message(
+            row["reporter_id"],
+            f"📬 <b>Ответ по вашему репорту #{report_id}</b>\n\n"
+            + escape_for_telegram_html(message.text.strip()),
+        )
+    except Exception:
+        await message.reply(
+            "⚠️ Не удалось доставить ответ в личные сообщения автору. "
+            "Попросите его открыть личный чат с Аи."
+        )
+        return
+    answer_report(report_id, message.from_user.id, message.text.strip())
+    await message.reply(f"✅ Ответ по репорту #{report_id} отправлен.")
 
 
 _PanelKey = tuple[int, int]
