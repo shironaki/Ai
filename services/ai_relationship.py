@@ -81,13 +81,19 @@ def alternate_names() -> tuple[str, ...]:
     )
 
 
-def set_invocation_names(value: str) -> tuple[str, ...]:
+def set_invocation_names(value: str, *, actor_id: int | None = None) -> tuple[str, ...]:
+    from base import config
+    if actor_id != config.owner:
+        raise PermissionError("Invocation names require founder actor context")
     names = _split_names(value, DEFAULT_INVOCATION_NAMES)
     _set_setting("invocation_names", ",".join(names))
     return names
 
 
-def set_alternate_names(value: str) -> tuple[str, ...]:
+def set_alternate_names(value: str, *, actor_id: int | None = None) -> tuple[str, ...]:
+    from base import config
+    if actor_id != config.owner:
+        raise PermissionError("Alternate invocation names require founder actor context")
     names = _split_names(value, DEFAULT_ALTERNATE_NAMES)
     _set_setting("alternate_names", ",".join(names))
     return names
@@ -120,8 +126,16 @@ def get_score(user_id: int, owner_id: int | None = None) -> int:
     return int(row["score"]) if row else 0
 
 
-def set_score(user_id: int, score: int, owner_id: int | None = None) -> int:
-    value = MAX_SCORE if owner_id is not None and user_id == owner_id else max(MIN_SCORE, min(MAX_SCORE, int(score)))
+def set_score(
+    user_id: int,
+    score: int,
+    owner_id: int | None = None,
+    *,
+    actor_id: int | None = None,
+) -> int:
+    if owner_id is None or actor_id != owner_id:
+        raise PermissionError("AI relationship changes require founder actor context")
+    value = MAX_SCORE if user_id == owner_id else max(MIN_SCORE, min(MAX_SCORE, int(score)))
     _ensure_table()
     with connect_db("users.db") as db:
         db.execute(
@@ -136,8 +150,16 @@ def set_score(user_id: int, score: int, owner_id: int | None = None) -> int:
     return value
 
 
-def set_calls_blocked(user_id: int, blocked: bool, owner_id: int | None = None) -> bool:
-    value = False if owner_id is not None and user_id == owner_id else bool(blocked)
+def set_calls_blocked(
+    user_id: int,
+    blocked: bool,
+    owner_id: int | None = None,
+    *,
+    actor_id: int | None = None,
+) -> bool:
+    if owner_id is None or actor_id != owner_id:
+        raise PermissionError("AI call blocking changes require founder actor context")
+    value = False if user_id == owner_id else bool(blocked)
     _ensure_table()
     with connect_db("users.db") as db:
         db.execute(
