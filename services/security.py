@@ -26,3 +26,10 @@ def redact(text: object, limit: int = 800) -> str:
 def redact_exception(exc: BaseException, limit: int = 1200) -> str:
     """Return a bounded, credential-redacted exception summary."""
     return redact(f"{type(exc).__name__}: {exc}", limit=limit)
+
+
+class RedactingFormatter(__import__("logging").Formatter):
+    """Logging formatter that redacts credentials from messages and tracebacks."""
+
+    def format(self, record):
+        return redact(super().format(record), 12000)
