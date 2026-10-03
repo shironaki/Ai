@@ -37,8 +37,20 @@ def bot_running() -> bool:
         return False
     try:
         pid = int(BOT_PIDFILE.read_text(encoding="utf-8").strip())
+        if pid <= 1:
+            return False
         os.kill(pid, 0)
-        return True
+        cmdline_path = Path(f"/proc/{pid}/cmdline")
+        if cmdline_path.exists():
+            cmdline = cmdline_path.read_bytes().replace(b"\\x00", b" ").decode(errors="replace")
+            return str(ROOT / "run.py") in cmdline
+        command = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "command="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+        )
+        return str(ROOT / "run.py") in command
     except Exception:
         return False
 
@@ -54,12 +66,14 @@ def read_lease() -> tuple[str, int]:
 
 
 def stop_bot() -> None:
-    if BOT_PIDFILE.exists():
-        try:
-            os.kill(int(BOT_PIDFILE.read_text(encoding="utf-8").strip()), signal.SIGTERM)
-        except Exception:
-            pass
+    if not bot_running():
         BOT_PIDFILE.unlink(missing_ok=True)
+        return
+    try:
+        os.kill(int(BOT_PIDFILE.read_text(encoding="utf-8").strip()), signal.SIGTERM)
+    except Exception:
+        pass
+    BOT_PIDFILE.unlink(missing_ok=True)
 
 
 def main() -> int:
