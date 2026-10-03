@@ -27,5 +27,8 @@ def connect_db(filename: str) -> sqlite3.Connection:
     path = DB_DIR / filename
     connection = sqlite3.connect(path, timeout=10)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("PRAGMA busy_timeout=10000")
+    connection.execute("PRAGMA secure_delete=ON")
     _lock_down_path(path)
     return connection
