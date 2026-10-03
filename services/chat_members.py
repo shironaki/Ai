@@ -12,6 +12,16 @@ from datetime import datetime, timezone
 from database.connection import connect_db
 
 
+ADMIN_STATUSES = {"administrator", "creator"}
+
+
+def admin_status_changed(old_status: str | None, new_status: str | None) -> bool:
+    """Return whether a membership event changed chat-admin authority."""
+    return old_status != new_status and (
+        old_status in ADMIN_STATUSES or new_status in ADMIN_STATUSES
+    )
+
+
 def _ensure_table() -> None:
     with connect_db("users.db") as db:
         db.execute(
