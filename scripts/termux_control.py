@@ -280,6 +280,11 @@ def start_watchdog() -> None:
 
 
 def restart_bot() -> str:
+    # Re-check the central lease at the exact process-start boundary.
+    # The caller's earlier check is intentionally not sufficient: another
+    # device may have won the lease while we were stopping the old process.
+    if not has_active_lease():
+        return "restart denied: active lease is no longer owned"
     if bot_running():
         pid = PIDFILE.read_text(encoding="utf-8").strip()
         try:
