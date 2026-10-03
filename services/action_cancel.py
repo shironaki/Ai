@@ -45,11 +45,10 @@ def has_runtime_action(user_id: int, chat_id: int) -> bool:
 
 
 def cancel_current_action(user_id: int, chat_id: int) -> bool:
-    """Cancel the most recent reversible action in this chat."""
-    cancelled = cancel_pending(user_id, chat_id)
-    moderation_cancelled = False
+    """Cancel exactly one pending/reversible action in this chat."""
+    if cancel_pending(user_id, chat_id):
+        return True
     if has_pending_moderation(user_id, chat_id):
         pop_moderation(user_id, chat_id)
-        moderation_cancelled = True
-    runtime_cancelled = _cancel_runtime_action(user_id, chat_id)
-    return bool(cancelled or moderation_cancelled or runtime_cancelled)
+        return True
+    return _cancel_runtime_action(user_id, chat_id)
