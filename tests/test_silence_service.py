@@ -38,12 +38,14 @@ class SilenceStateTests(unittest.TestCase):
             "can_invite_users": True,
             "can_pin_messages": False,
         }
-        set_silent(123, True, previous)
+        with patch("services.silence_service.has_moderator_role", return_value=True):
+            set_silent(123, True, previous, actor_id=1)
 
         self.assertTrue(is_silent(123))
         self.assertEqual(get_previous_permissions(123), previous)
 
-        set_silent(123, False)
+        with patch("services.silence_service.has_moderator_role", return_value=True):
+            set_silent(123, False, actor_id=1)
         self.assertFalse(is_silent(123))
         self.assertIsNone(get_previous_permissions(123))
 
