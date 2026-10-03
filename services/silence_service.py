@@ -2,6 +2,7 @@
 import json
 
 from database.connection import connect_db
+from core.permissions import has_moderator_role
 
 
 _FIELDS = (
@@ -63,7 +64,6 @@ def set_silent(
     *,
     actor_id: int,
 ) -> None:
-    from core.permissions import has_moderator_role
     if not has_moderator_role(actor_id, chat_id):
         raise PermissionError("Chat silence changes require moderator actor context")
     _ensure_table()
