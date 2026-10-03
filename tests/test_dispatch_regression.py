@@ -44,9 +44,17 @@ class DispatchRegressionTests(unittest.TestCase):
                 name = decorator.func.attr if isinstance(decorator.func, ast.Attribute) else ""
                 if name != "message_handler":
                     continue
-                source = ast.get_source_segment(main_source, decorator) or ""
-                if "/start" in source or "start" in source:
-                    start_handlers.append(node.name)
+                for keyword in decorator.keywords:
+                    if keyword.arg != "commands":
+                        continue
+                    if isinstance(keyword.value, (ast.List, ast.Tuple, ast.Set)):
+                        values = {
+                            elt.value.casefold()
+                            for elt in keyword.value.elts
+                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                        }
+                        if "start" in values:
+                            start_handlers.append(node.name)
         self.assertEqual(start_handlers, ["start_dispatch"])
         self.assertIn("users.ensure_owner_registered(config.owner)", main_source)
         self.assertIn('re.match(r"^/start(?:@[A-Za-z0-9_]+)?(?:\\s|$)"', main_source)
@@ -56,7 +64,7 @@ class DispatchRegressionTests(unittest.TestCase):
         source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         self.assertIn("async def profile_msg(message):", source)
         self.assertIn('if row is None:', source)
-        self.assertIn("Введите /start", source)
+        self.assertIn("Откройте личный чат и выполните первичный запуск.", source)
 
     def test_help_command_has_single_authoritative_handler(self):
         handlers = []
