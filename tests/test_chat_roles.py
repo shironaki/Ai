@@ -23,8 +23,11 @@ class ChatRoleIsolationTests(unittest.TestCase):
     def test_same_user_can_have_different_roles_per_chat(self):
         from services.chat_roles import set_role, get_role
 
-        self.assertTrue(set_role(100, 7, "Администратор", 1))
-        self.assertTrue(set_role(200, 7, "Модератор", 1))
+        with patch("core.identity.is_owner", return_value=True), patch(
+            "core.permissions.get_display_role", return_value="Создатель бота"
+        ):
+            self.assertTrue(set_role(100, 7, "Администратор", 1))
+            self.assertTrue(set_role(200, 7, "Модератор", 1))
 
         self.assertEqual(get_role(100, 7), "Администратор")
         self.assertEqual(get_role(200, 7), "Модератор")
