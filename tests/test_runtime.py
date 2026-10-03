@@ -472,7 +472,7 @@ class RuntimeRegressionTests(unittest.TestCase):
         try:
             control.DEVICE_ID = "phone2"
             control.read_lease = lambda: (
-                {"owner": "phone1", "expires_at": int(__import__("time").time()) + control.LEASE_RENEW_BEFORE - 1},
+                {"owner": "phone2", "expires_at": int(__import__("time").time()) + control.LEASE_RENEW_BEFORE - 1},
                 "parent-a",
             )
             control.write_lease = lambda lease, parent: False
