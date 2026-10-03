@@ -320,16 +320,20 @@ def _ai_invocation(text: str, *, include_alternates: bool = False) -> str | None
     if include_alternates:
         names = tuple(dict.fromkeys((*names, *alternate_names())))
     slash_names = ("ai", *names)
-    slash_pattern = r"^/(?:"
+    slash_pattern = (
+        r"^/(?:"
         + "|".join(re.escape(name) for name in slash_names)
-        + r")(?:\\s|$)"
+        + r")(?:\s|$)"
+    )
     slash_match = re.match(slash_pattern, normalized, re.IGNORECASE)
     if slash_match:
         return normalized[slash_match.end():].strip()
 
-    natural_pattern = r"^(?:"
+    natural_pattern = (
+        r"^(?:"
         + "|".join(re.escape(name) for name in names)
-        + r")(?:[,,:]|\\s|$)"
+        + r")(?:[,,:]|\s|$)"
+    )
     natural_match = re.match(natural_pattern, normalized, re.IGNORECASE)
     if natural_match:
         return normalized[natural_match.end():].strip()
