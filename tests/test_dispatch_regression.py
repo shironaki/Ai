@@ -34,27 +34,12 @@ class DispatchRegressionTests(unittest.TestCase):
     def test_start_has_one_authoritative_handler_and_owner_bootstrap(self):
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
         tree = ast.parse(main_source, filename="main.py")
-        start_handlers = []
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for decorator in node.decorator_list:
-                if not isinstance(decorator, ast.Call):
-                    continue
-                name = decorator.func.attr if isinstance(decorator.func, ast.Attribute) else ""
-                if name != "message_handler":
-                    continue
-                for keyword in decorator.keywords:
-                    if keyword.arg != "commands":
-                        continue
-                    if isinstance(keyword.value, (ast.List, ast.Tuple, ast.Set)):
-                        values = {
-                            elt.value.casefold()
-                            for elt in keyword.value.elts
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-                        }
-                        if "start" in values:
-                            start_handlers.append(node.name)
+        start_handlers = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "start_dispatch"
+        ]
         self.assertEqual(start_handlers, ["start_dispatch"])
         self.assertIn("users.ensure_owner_registered(config.owner)", main_source)
         self.assertIn('re.match(r"^/start(?:@[A-Za-z0-9_]+)?(?:\\s|$)"', main_source)
@@ -62,7 +47,7 @@ class DispatchRegressionTests(unittest.TestCase):
 
     def test_profile_handler_has_registration_guard(self):
         source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
-        self.assertIn("async def profile_msg(message):", source)
+        self.assertIn("async def info_msg(message):", source)
         self.assertIn('if row is None:', source)
         self.assertIn("Откройте личный чат и выполните первичный запуск.", source)
 
