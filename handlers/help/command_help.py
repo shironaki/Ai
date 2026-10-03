@@ -974,7 +974,7 @@ async def panel_system_ai(call):
         "<b>🧠 AI DIAGNOSTIC</b>\n\n"
         f"Ключ: <b>{configured}</b>\n"
         f"Модель: <code>{escape_for_telegram_html(str(status['model']))}</code>\n"
-        f"Последняя ошибка: <code>{escape_for_telegram_html(str(last_error)[:1500])}</code>\n\n"
+        f"Последняя ошибка: <code>{str(last_error)[:1500]}</code>\n\n"
         "Для проверки ответа: <code>/ai привет</code>",
         reply_markup=_panel_back("panel:system"),
     )
