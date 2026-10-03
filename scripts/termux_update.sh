@@ -206,8 +206,26 @@ rollback() {
 
 if [[ "$LOCAL" != "$REMOTE" ]]; then
     log "UPDATE: $LOCAL -> $REMOTE"
+    if is_active_role && ! has_fresh_active_lease; then
+        log "STOP: refusing update because active device has no fresh lease"
+        exit 1
+    fi
+    if is_active_role; then
+        stop_bot
+        if ! has_fresh_active_lease; then
+            log "FENCE: lease lost after stopping bot; update aborted"
+            exit 1
+        fi
+    fi
     if ! git pull --ff-only origin "$BRANCH" >> "$LOG" 2>&1; then
-        log "STOP: fast-forward update failed; keeping $LOCAL"
+        log "STOP: fast-forward update failed"
+        if is_active_role && has_fresh_active_lease; then
+            start_bot || true
+        fi
+        exit 1
+    fi
+    if is_active_role && ! has_fresh_active_lease; then
+        log "FENCE: lease lost after code update; bot remains stopped"
         exit 1
     fi
 
