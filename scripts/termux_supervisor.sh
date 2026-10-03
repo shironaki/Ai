@@ -88,21 +88,12 @@ ensure_battery_watchdog() {
             running_hash="$(cat "$BATTERY_HASHFILE" 2>/dev/null || true)"
 
             if [[ -n "$current_hash" && "$running_hash" == "$current_hash" ]]; then
-                if battery_cache_fresh; then
-                    return 0
-                fi
-
-                local started_at=0
-                started_at="$(stat -c %Y "$BATTERY_PIDFILE" 2>/dev/null || echo 0)"
-                if [[ "$started_at" =~ ^[0-9]+$ ]]; then
-                    local since_start
-                    since_start=$(( $(date +%s) - started_at ))
-                    if (( since_start < BATTERY_START_GRACE )); then
-                        return 0
-                    fi
-                fi
-
-                echo "BATTERY WATCHDOG: stale cache; restarting pid=$pid" >> "$REPO/termux-battery-watchdog.log"
+                # The watchdog is responsible for handling transient Termux:API
+                # failures/timeouts. A stale battery cache alone must not cause the
+                # supervisor to restart a healthy watchdog: the API can legitimately
+                # take longer than the cache window on some Android devices.
+                # Only process identity and code hash determine whether we restart it.
+                return 0
             fi
 
             stop_battery_watchdog "$pid"
