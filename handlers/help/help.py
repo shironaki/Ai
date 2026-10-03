@@ -249,7 +249,7 @@ async def ai_diagnostic(message: types.Message):
         "<b>🧠 AI DIAGNOSTIC</b>\n"
         f"Ключ: {configured}\n"
         f"Модель: <code>{status['model']}</code>\n"
-        f"Последняя ошибка: <code>{last_error[:1500]}</code>\n\n"
+        f"Последняя ошибка: <code>{escape_for_telegram_html(redact(last_error, 1500))}</code>\n\n"
         "Для проверки ответа отправьте: <code>/ai привет</code>"
     )
 
