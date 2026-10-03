@@ -739,11 +739,27 @@ async def battery_status(message: types.Message):
         else:
             power_source = "Подключено к питанию"
 
+        age = int(status.get("age_seconds", 0))
+        if status.get("stale"):
+            if age >= 60:
+                minutes = age // 60
+                age_text = f"{minutes} мин. назад"
+            else:
+                age_text = f"{age} сек. назад"
+            freshness = (
+                "\n⚠️ <b>Последние известные данные</b> "
+                f"(обновлены {age_text}).\n"
+                "Termux:API сейчас не отдал свежий ответ."
+            )
+        else:
+            freshness = ""
+
         await message.answer(
             "🔋 <b>СТАТУС ЗАРЯДКИ</b>\n"
             f"Уровень: <b>{percentage}%</b>\n"
             f"Состояние: {state}\n"
             f"Источник питания: <b>{html.escape(power_source)}</b>"
+            f"{freshness}"
         )
     except Exception as exc:
         log.exception("BATTERY STATUS | failed to read battery")
