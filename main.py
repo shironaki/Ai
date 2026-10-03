@@ -77,8 +77,16 @@ def bot_is_paused(chat_id=None) -> bool:
     return is_paused(chat_id)
 
 
-def set_bot_paused(value: bool, scope: str = "global", chat_id=None) -> None:
-    """Set global or chat-scoped stasis state."""
+def set_bot_paused(
+    value: bool,
+    scope: str = "global",
+    chat_id=None,
+    *,
+    actor_id: int,
+) -> None:
+    """Set global or chat-scoped stasis state after founder authorization."""
+    if actor_id != config.owner:
+        raise PermissionError("Runtime state changes require founder actor context")
     global BOT_PAUSED
     set_paused(value, scope=scope, chat_id=chat_id)
     BOT_PAUSED = is_paused(None)
@@ -353,7 +361,7 @@ async def enter_stasis(message: types.Message):
         )
         return
 
-    set_bot_paused(True)
+    set_bot_paused(True, actor_id=message.from_user.id)
     from services.action_cancel import register_runtime_action
     register_runtime_action(message.from_user.id, message.chat.id, previous_enabled=False, scope="global")
     log.warning("RUNTIME STATE | BOT ENTERED STASIS by founder id=%s", message.from_user.id)
@@ -374,7 +382,7 @@ async def leave_stasis(message: types.Message):
         await message.answer("⚡ <b>СИСТЕМА УЖЕ В АКТИВНОМ РЕЖИМЕ.</b>")
         return
 
-    set_bot_paused(False)
+    set_bot_paused(False, actor_id=message.from_user.id)
     from services.action_cancel import register_runtime_action
     register_runtime_action(message.from_user.id, message.chat.id, previous_enabled=True, scope="global")
     log.warning("RUNTIME STATE | BOT AWAKENED by founder id=%s", message.from_user.id)
