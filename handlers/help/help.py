@@ -179,7 +179,16 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
     if direct_action == "panel":
         from handlers.help.command_help import _render_panel_root_message
+        if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
+            await message.reply("⛔ Панель доступна только персоналу.")
+            return
         await _render_panel_root_message(message)
+        return
+    if direct_action == "profile":
+        await info_msg(message)
+        return
+    if direct_action == "chatinfo":
+        await chatinfo_cmd(message)
         return
     if await _handle_founder_command(message, text):
         return
