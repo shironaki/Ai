@@ -157,3 +157,21 @@ Next required work:
 - Main/PROD не изменялся; рабочая ветка остаётся `test-global-assistant-upgrade`.
 
 Следующий крупный блок протокола: финальный сквозной аудит Termux supervisor/watchdog/update/control на предмет оставшихся race-window между lease renewal, healthcheck, process PID и GitHub outage, затем live TEST verification.
+
+
+## Final runtime race-window checkpoint — 2026-10-03
+
+Сквозной аудит supervisor/watchdog/control/update завершён.
+
+- scripts/termux_supervisor.sh: добавлен singleton lock; повторный supervisor не запускается.
+- Singleton lock имеет stale-lock recovery только после проверки существующего PID и command line; случайный PID не считается живым supervisor.
+- scripts/termux_lease_watchdog.py: PID из termux-bot.pid теперь проверяется по command line (run.py) до SIGTERM; stale/reused PID не позволяет убить посторонний процесс.
+- scripts/termux_control.py: restart_bot() повторно проверяет центральный lease непосредственно перед запуском процесса, закрывая TOCTOU между первоначальной проверкой команды и Popen.
+- Existing lease watchdog остаётся последним локальным fencing-механизмом: при потере lease или истечении последнего достоверно наблюдённого expiry бот останавливается; при невозможности получить initial lease watchdog fail-closed.
+- run.py сохраняет локальный file lock против двух polling-process на одном устройстве.
+- scripts/termux_update.sh остаётся fenced на каждом restart boundary и не запускает standby; rollback использует pre-update commit.
+- Последний CI: Python integrity check #1349 (37129298543) — SUCCESS; job check 111221021327; runtime/security suite: 151 tests, OK.
+- Дополнительный duplicate CI #1348 также SUCCESS.
+- Main/PROD не изменялся; рабочая ветка test-global-assistant-upgrade.
+
+Следующая точка: live TEST verification на двух физических Termux runtime — active/standby, lease renewal, controlled failover, return of old device, UPDATE и healthcheck. Кодовый race-аудит завершён.
