@@ -17,6 +17,7 @@ from services.chat_roles import get_role, list_roles
 from services.silence_service import set_silent, is_silent
 from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
+from services.security import redact
 from main import dp, bot, chats, users, bot_is_paused, set_bot_paused, ContentType
 from services.broadcast_service import broadcast_message
 from services.action_cancel import cancel_current_action, register_runtime_action
@@ -1023,9 +1024,9 @@ async def panel_system_diagnostics(call):
             timeout=20,
             env=os.environ.copy(),
         )
-        output = (result.stdout + "\n" + result.stderr).strip() or "Диагностика не вернула текст."
+        output = redact((result.stdout + "\n" + result.stderr).strip() or "Диагностика не вернула текст.", 4500)
     except Exception as exc:
-        output = f"{type(exc).__name__}: {exc}"
+        output = redact(f"{type(exc).__name__}: {exc}", 4500)
     if len(output) > 4500:
         output = output[-4500:]
     await _panel_edit(
