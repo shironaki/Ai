@@ -652,5 +652,14 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn('restart denied: active lease is no longer owned', source)
 
 
+    def test_termux_supervisor_recovers_stale_lock_only_after_pid_validation(self):
+        source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
+        lock_pos = source.index('if ! mkdir "$SUPERVISOR_LOCKDIR"')
+        pid_check = source.index('supervisor_process_matches "$existing_pid"', lock_pos)
+        remove_pos = source.index('rm -rf "$SUPERVISOR_LOCKDIR"', pid_check)
+        self.assertLess(pid_check, remove_pos)
+        self.assertIn('termux_supervisor.sh', source)
+
+
 if __name__ == "__main__":
     unittest.main()
