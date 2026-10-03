@@ -17,3 +17,7 @@ For a suspected vulnerability, do not publish the secret or exploit details in a
 - Sensitive diagnostics redact common credential formats.
 - AI prompts are credential-redacted before leaving the bot process.
 - Runtime data and logs are excluded from Git.
+
+## Known dependency migration
+
+The current Telegram adapter is based on legacy aiogram 2.x. A full dependency audit may report vulnerable transitive aiohttp versions because that legacy adapter constrains aiohttp below current secure releases. This is tracked as a migration item rather than being hidden with vulnerability suppressions. The direct dependency audit remains blocking, while the full transitive audit remains visible as a CI warning until the aiogram migration is completed.
