@@ -154,6 +154,12 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("await _render_help_root(message, role=role)", source)
         self.assertIn("_is_command_catalog_request(text)", source)
 
+    def test_ai_invocation_has_safe_boundaries(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        self.assertIn('r")(?:\\s|$)"', source)
+        self.assertIn('r")(?:[,,:]|\\s|$)"', source)
+        self.assertIn('return normalized[slash_match.end():].strip()', source)
+
     def test_runtime_latency_and_single_instance_guards_exist(self):
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
         run_source = (ROOT / "run.py").read_text(encoding="utf-8")
