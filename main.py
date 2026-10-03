@@ -46,7 +46,14 @@ from services.issue_tracker import create_runtime_error_marker
 from services.report_service import reminder_loop
 from services.battery_status import get_battery_status
 
-LOG_FILE = "bot.log"
+DATA_DIR = os.path.abspath(os.getenv("BOT_DATA_DIR", os.path.join("data", "test")))
+os.makedirs(DATA_DIR, exist_ok=True)
+if os.name != "nt":
+    try:
+        os.chmod(DATA_DIR, 0o700)
+    except OSError:
+        pass
+LOG_FILE = os.path.join(DATA_DIR, "bot.log")
 BOT_PAUSED = False
 HEALTH_DIR = os.path.join(os.getenv("BOT_DATA_DIR", "data/test"), "runtime")
 HEARTBEAT_FILE = os.path.join(HEALTH_DIR, "heartbeat")
@@ -102,6 +109,11 @@ _file_handler = RotatingFileHandler(
 )
 _file_handler.setLevel(logging.INFO)
 _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+if os.name != "nt":
+    try:
+        os.chmod(LOG_FILE, 0o600)
+    except OSError:
+        pass
 
 _console_handler = logging.StreamHandler()
 _console_handler.setLevel(logging.INFO)
