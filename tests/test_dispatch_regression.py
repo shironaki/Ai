@@ -338,3 +338,25 @@ def test_admin_log_view_redacts_credentials_before_rendering():
     source = Path("handlers/help/command_help.py").read_text(encoding="utf-8")
     marker = 'output = redact(handle.read() or "bot.log пока пуст.", 4500)'
     assert marker in source
+
+
+def test_telegram_exfiltration_surfaces_redact_sensitive_runtime_output():
+    from pathlib import Path
+    security = Path("services/security.py").read_text(encoding="utf-8")
+    main = Path("main.py").read_text(encoding="utf-8")
+    help_source = Path("handlers/help/help.py").read_text(encoding="utf-8")
+    assert "class RedactingFormatter" in security
+    assert "RedactingFormatter(" in main
+    assert 'content = redact(log_file.read(), 12000)' in help_source
+    assert 'redact(str(exception), 1200)' in main
+    assert 'redact(f"{type(exception).__name__}: {exception}", 500)' in main
+    assert 'redact((result.stdout + "\\n" + result.stderr).strip(), 5000)' in help_source
+
+def test_runtime_logs_use_protected_bot_data_directory():
+    from pathlib import Path
+    autoupdate = Path("autoupdate.sh").read_text(encoding="utf-8")
+    termux = Path("scripts/termux_update.sh").read_text(encoding="utf-8")
+    assert 'export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"' in autoupdate
+    assert 'LOG="$DATA_DIR/autoupdate.log"' in autoupdate
+    assert 'LOG="$DATA_DIR/termux-autoupdate.log"' in termux
+    assert '>> "$DATA_DIR/bot.log" 2>&1' in termux
