@@ -1198,7 +1198,7 @@ async def panel_system_stasis_apply(call):
         await call.answer("Состояние уже изменилось. Откройте стазис заново.", show_alert=True)
         return
     _PANEL_CONFIRMATIONS.pop(key, None)
-    set_bot_paused(not enabled)
+    set_bot_paused(not enabled, actor_id=call.from_user.id)
     register_runtime_action(call.from_user.id, call.message.chat.id, previous_enabled=enabled, scope="global")
     await _panel_edit(
         call,
