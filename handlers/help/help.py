@@ -356,7 +356,7 @@ async def direct_ai_invocation(message: types.Message):
 )
 async def cancel_pending_request(message: types.Message):
     if cancel_current_action(message.from_user.id, message.chat.id):
-        await message.reply("↩️ Ладно. Отставить. Незавершённый запрос отменён, ничего не выполняю.")
+        await message.reply("↩️ Ладно. Отставить. Текущее действие отменено. Ничего не выполняю.")
 
 
 @dp.message_handler(
