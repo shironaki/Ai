@@ -8,13 +8,18 @@ BOT="$REPO/run.py"
 PIDFILE="$REPO/termux-bot.pid"
 ROLEFILE="$REPO/data/test/runtime/termux-role"
 LOCKDIR="$REPO/.termux-update.lock"
-LOG="$REPO/termux-autoupdate.log"
 LEASE_BRANCH="${TERMUX_LEASE_BRANCH:-termux-lease}"
 LEASE_PATH="${TERMUX_LEASE_PATH:-lease.json}"
 DEVICE_ID=""
 
 export BOT_ENV="${BOT_ENV:-test}"
 export BOT_DATA_DIR="${BOT_DATA_DIR:-$REPO/data/${BOT_ENV}}"
+DATA_DIR="$BOT_DATA_DIR"
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR" 2>/dev/null || true
+LOG="$DATA_DIR/termux-autoupdate.log"
+touch "$LOG"
+chmod 600 "$LOG" 2>/dev/null || true
 APPLY_UPDATED="${TERMUX_UPDATE_APPLY:-0}"
 ROLLBACK_COMMIT="${TERMUX_UPDATE_ROLLBACK_COMMIT:-}"
 
@@ -186,7 +191,7 @@ start_bot() {
     if is_running; then
         return 0
     fi
-    nohup "$PYTHON" "$BOT" >> "$REPO/bot.log" 2>&1 < /dev/null &
+    nohup "$PYTHON" "$BOT" >> "$DATA_DIR/bot.log" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
     sleep 8
     "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1
