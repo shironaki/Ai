@@ -366,6 +366,20 @@ class RuntimeRegressionTests(unittest.TestCase):
             control.read_lease = old_read
             control.write_lease = old_write
 
+    def test_termux_control_runtime_commands_require_active_lease(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_read = control.read_lease
+        try:
+            control.DEVICE_ID = "phone2"
+            control.read_lease = lambda: ({"owner": "phone1", "expires_at": int(__import__("time").time()) + 120}, "lease-sha")
+            self.assertEqual(control.execute("RESTART"), "ignored: command requires active device lease")
+            self.assertEqual(control.execute("UPDATE"), "ignored: command requires active device lease")
+            self.assertEqual(control.execute("STATUS"), "ignored: command requires active device lease")
+        finally:
+            control.DEVICE_ID = old_device
+            control.read_lease = old_read
     def test_termux_force_command_requires_target_device_and_active(self):
         import scripts.termux_control as control
 
