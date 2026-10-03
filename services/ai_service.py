@@ -213,7 +213,7 @@ async def generate_reply(
                 if continuation:
                     answer = answer.rstrip() + " " + continuation.lstrip()
     except Exception as exc:
-        _LAST_ERROR["value"] = html.escape(redact(f"{type(exc).__name__}: {exc}"), quote=False)
+        _LAST_ERROR["value"] = redact(f"{type(exc).__name__}: {exc}", 1200)
         log.exception("AI provider request failed for user_id=%s", user_id)
         return None
 
@@ -284,6 +284,6 @@ scope:
             scope = "unknown"
         return {"command": command, "action": action, "scope": scope}
     except Exception as exc:
-        _LAST_ERROR["value"] = redact(f"{type(exc).__name__}: {exc}")
+        _LAST_ERROR["value"] = redact(f"{type(exc).__name__}: {exc}", 1200)
         log.exception("AI command classification failed")
         return None
