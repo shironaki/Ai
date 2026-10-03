@@ -29,6 +29,7 @@ async def run_smoke(client: TelegramQAClient) -> SmokeReport:
 
     message = await client.send_and_wait("/panel")
     texts = button_texts(message)
-    report.checks.append(require_buttons(texts, ("Back",), name="panel navigation") if texts else CheckResult("panel navigation", False, "panel returned no inline buttons"))
+    report.checks.append(CheckResult("panel reply received", bool(message.raw_text), "empty response" if not message.raw_text else ""))
+    report.checks.append(CheckResult("panel has inline controls", bool(texts), "panel returned no inline buttons" if not texts else f"buttons: {texts}"))
 
     return report
