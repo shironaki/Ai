@@ -175,3 +175,17 @@ Next required work:
 - Main/PROD не изменялся; рабочая ветка test-global-assistant-upgrade.
 
 Следующая точка: live TEST verification на двух физических Termux runtime — active/standby, lease renewal, controlled failover, return of old device, UPDATE и healthcheck. Кодовый race-аудит завершён.
+
+
+## Security: data/storage privacy hardening — 2026-10-03
+
+- SQLite runtime data remains outside Git and under `BOT_DATA_DIR`.
+- SQLite connections enable `foreign_keys`, busy timeout and `secure_delete=ON`.
+- Runtime `bot.log` is stored inside `BOT_DATA_DIR` and is chmod 600 on POSIX; data directory is chmod 700.
+- Diagnostic journal is bounded to 14 days / 5000 rows and stores redacted exception/context data.
+- QA issue markers retain only bounded history; fixed/broken entries expire after 30 days / 3000 rows, and stored message/reason text is credential-redacted.
+- User reports retain open cases; answered cases expire after 90 days / 5000 rows, with reason/payload credential-redaction.
+- Git ignores SQLite, WAL/SHM, logs, runtime data, secrets and PID/lock files.
+- Admin log viewer already redacts credential patterns before Telegram rendering.
+- TEST/PROD data paths remain isolated through `BOT_ENV` / `BOT_DATA_DIR`.
+- Next security block: compromise recovery / backup hygiene and remaining privacy paths.
