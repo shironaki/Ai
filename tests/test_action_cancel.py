@@ -16,6 +16,24 @@ class ActionCancelTests(unittest.TestCase):
         self.assertNotIn((user_id, chat_id), _PENDING)
         self.assertFalse(cancel_current_action(user_id, chat_id))
 
+    def test_cancel_phrase_covers_last_action_wording(self):
+        from services.command_gateway import is_cancel_request
+
+        for phrase in (
+            "отмени последнее действие",
+            "отменить последнее действие",
+            "забудь последнее действие",
+        ):
+            self.assertTrue(is_cancel_request(phrase), phrase)
+
+    def test_cancel_is_idempotent_after_pending_action_is_consumed(self):
+        from services.command_gateway import remember, pop_pending, cancel_pending
+
+        user_id, chat_id = 110001, -110002
+        remember(user_id, chat_id, {"command": "stasis"})
+        self.assertIsNotNone(pop_pending(user_id, chat_id))
+        self.assertFalse(cancel_pending(user_id, chat_id))
+
     def test_runtime_action_can_be_undone(self):
         from core.runtime_state import is_paused, set_paused
         from services.action_cancel import cancel_current_action, has_runtime_action, register_runtime_action
