@@ -138,6 +138,33 @@ class RuntimeRegressionTests(unittest.TestCase):
             else:
                 os.environ["GROQ_API_KEY"] = old_key
 
+    def test_ai_request_throttle_isolated_between_chats(self):
+        import services.ai_service as ai_service
+
+        user_id = 987654324
+        chat_a, chat_b = -10003, -10004
+        old_key = os.environ.get("GROQ_API_KEY")
+        old_request = ai_service._request_sync
+        old_last_request = dict(ai_service._LAST_REQUEST)
+        try:
+            os.environ["GROQ_API_KEY"] = "test-key"
+            ai_service._LAST_REQUEST.clear()
+            ai_service._request_sync = lambda *args, **kwargs: "ответ"
+            first = asyncio.run(ai_service.generate_reply(user_id, "запрос A", chat_id=chat_a))
+            second = asyncio.run(ai_service.generate_reply(user_id, "запрос B", chat_id=chat_b))
+            self.assertEqual(first, "ответ")
+            self.assertEqual(second, "ответ")
+            self.assertIn((user_id, chat_a), ai_service._LAST_REQUEST)
+            self.assertIn((user_id, chat_b), ai_service._LAST_REQUEST)
+        finally:
+            ai_service._request_sync = old_request
+            ai_service._LAST_REQUEST.clear()
+            ai_service._LAST_REQUEST.update(old_last_request)
+            if old_key is None:
+                os.environ.pop("GROQ_API_KEY", None)
+            else:
+                os.environ["GROQ_API_KEY"] = old_key
+
     def test_handlers_do_not_index_missing_fetchone_results(self):
         handler_paths = (
             ROOT / "handlers" / "help" / "help.py",
