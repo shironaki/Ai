@@ -156,8 +156,8 @@ async def help_ai(call: types.CallbackQuery):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("◀️ Разделы", callback_data="help:root"))
     await call.message.edit_text(
-        "<b>🧠 АИ</b>\\n\\n"
-        "Обратитесь ко мне через «Аи, ...» или «Система, ...».\\n"
+        "<b>🧠 АИ</b>\n\n"
+        "Обратитесь ко мне через «Аи, ...» или «Система, ...».\n"
         "Для быстрых действий используйте разделы справки.",
         reply_markup=menu,
     )
@@ -169,9 +169,9 @@ async def help_report(call: types.CallbackQuery):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("◀️ Разделы", callback_data="help:root"))
     await call.message.edit_text(
-        "<b>📬 РЕПОРТ</b>\\n\\n"
+        "<b>📬 РЕПОРТ</b>\n\n"
         "Для жалобы или обращения: ответьте словом «репорт» на сообщение "
-        "или используйте <code>/report</code> с текстом обращения.\\n\\n"
+        "или используйте <code>/report</code> с текстом обращения.\n\n"
         "Технические ошибки не отправляются как пользовательские репорты — "
         "они фиксируются во внутреннем QA-контуре.",
         reply_markup=menu,
