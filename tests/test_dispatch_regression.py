@@ -60,6 +60,23 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("await chatinfo_cmd(message)", source)
         self.assertIn("from main import debug_dispatch, send_logs, ai_diagnostic", source)
 
+    def test_public_health_command_is_independent_and_registered(self):
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        registry_source = (ROOT / "core" / "command_registry.py").read_text(encoding="utf-8")
+        self.assertIn('@dp.message_handler(commands=["health", "проверка"])', main_source)
+        self.assertIn("async def health_check(message: types.Message):", main_source)
+        start = main_source.index("async def health_check(")
+        end = main_source.find("\n@dp.", start)
+        block = main_source[start:] if end == -1 else main_source[start:end]
+        self.assertIn("await bot.get_me()", block)
+        self.assertIn('users.cursor.execute("SELECT 1")', block)
+        self.assertIn('chats.cursor.execute("SELECT 1")', block)
+        self.assertIn("PROCESS_STARTED_AT", block)
+        self.assertIn("bot_is_paused()", block)
+        self.assertIn('CommandSpec("health"', registry_source)
+        self.assertIn('"health", "проверка"', registry_source)
+
+
     def test_help_command_has_single_authoritative_handler(self):
         handlers = []
         for path in (
