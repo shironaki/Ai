@@ -319,14 +319,20 @@ def _ai_invocation(text: str, *, include_alternates: bool = False) -> str | None
     names = invocation_names()
     if include_alternates:
         names = tuple(dict.fromkeys((*names, *alternate_names())))
-    lowered = normalized.casefold()
-    for prefix in ("/ai", *("/" + name for name in names)):
-        if lowered.startswith(prefix):
-            parts = normalized.split(maxsplit=1)
-            return parts[1].strip() if len(parts) > 1 else ""
-    pattern = r"^(?:" + "|".join(re.escape(name) for name in names) + r")(?:[,,:]|\\s)"
-    if re.match(pattern, normalized, re.IGNORECASE):
-        return re.sub(pattern, "", normalized, count=1, flags=re.IGNORECASE).strip()
+    slash_names = ("ai", *names)
+    slash_pattern = r"^/(?:"
+        + "|".join(re.escape(name) for name in slash_names)
+        + r")(?:\\s|$)"
+    slash_match = re.match(slash_pattern, normalized, re.IGNORECASE)
+    if slash_match:
+        return normalized[slash_match.end():].strip()
+
+    natural_pattern = r"^(?:"
+        + "|".join(re.escape(name) for name in names)
+        + r")(?:[,,:]|\\s|$)"
+    natural_match = re.match(natural_pattern, normalized, re.IGNORECASE)
+    if natural_match:
+        return normalized[natural_match.end():].strip()
     return None
 
 
