@@ -24,8 +24,27 @@ fi
 
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
 SUPERVISOR_LOCKDIR="$REPO/.termux-supervisor.lock"
+
+supervisor_process_matches() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$pid" -gt 1 ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+        local cmdline
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        [[ "$cmdline" == *"termux_supervisor.sh"* ]] && return 0
+    fi
+    return 1
+}
+
 if ! mkdir "$SUPERVISOR_LOCKDIR" 2>/dev/null; then
-    exit 0
+    existing_pid="$(cat "$SUPERVISOR_PID" 2>/dev/null || true)"
+    if supervisor_process_matches "$existing_pid"; then
+        exit 0
+    fi
+    rm -rf "$SUPERVISOR_LOCKDIR" 2>/dev/null || exit 0
+    mkdir "$SUPERVISOR_LOCKDIR" 2>/dev/null || exit 0
 fi
 SUPERVISOR_HEARTBEAT="$REPO/data/test/runtime/supervisor-heartbeat"
 echo "$$" > "$SUPERVISOR_PID"
