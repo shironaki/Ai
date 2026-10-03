@@ -15,7 +15,7 @@ LEASE_PATH = os.getenv("TERMUX_LEASE_PATH", "lease.json").strip()
 DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()
 BOT_PIDFILE = ROOT / "termux-bot.pid"
 WATCHDOG_PIDFILE = ROOT / "termux-lease-watchdog.pid"
-INTERVAL = max(5, int(os.getenv("TERMUX_LEASE_WATCHDOG_INTERVAL", "15")))
+INTERVAL = max(3, int(os.getenv("TERMUX_LEASE_WATCHDOG_INTERVAL", "5")))
 
 
 def git(*args: str) -> str:
@@ -66,6 +66,12 @@ def main() -> int:
     WATCHDOG_PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
     last_expiry = 0
     try:
+        # Fail closed if the watchdog cannot establish a valid lease before watching.
+        try:
+            _, last_expiry = read_lease()
+        except Exception:
+            stop_bot()
+            return 1
         while bot_running():
             now = int(time.time())
             try:
