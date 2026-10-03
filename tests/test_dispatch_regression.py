@@ -100,6 +100,12 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)', source)
         self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)\n    history = _PANEL_HISTORY.get(key)', source)
 
+    def test_legacy_admin_callback_names_are_not_reintroduced(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        source += "\n" + (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        for legacy in ("callback_data='stat'", 'callback_data="stat"', "callback_data='rassilka'", 'callback_data="rassilka"', "callback_data='chat_rassilka'", 'callback_data="chat_rassilka"', "callback_data='cancel_del'", 'callback_data="cancel_del"'):
+            self.assertNotIn(legacy, source, legacy)
+
     def test_panel_navigation_and_action_returns_are_state_safe(self):
         source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
         self.assertIn("state: str | None = None", source)
