@@ -11,7 +11,7 @@ LOCKDIR="$REPO/.termux-update.lock"
 LOG="$REPO/termux-autoupdate.log"
 LEASE_BRANCH="${TERMUX_LEASE_BRANCH:-termux-lease}"
 LEASE_PATH="${TERMUX_LEASE_PATH:-lease.json}"
-DEVICE_ID="${TERMUX_DEVICE_ID:-}"
+DEVICE_ID=""
 
 export BOT_ENV="${BOT_ENV:-test}"
 export BOT_DATA_DIR="${BOT_DATA_DIR:-$REPO/data/${BOT_ENV}}"
@@ -23,6 +23,8 @@ if [ -f "$ENV_FILE" ]; then
     . "$ENV_FILE"
     set +a
 fi
+
+DEVICE_ID="${TERMUX_DEVICE_ID:-}"
 
 cd "$REPO"
 
@@ -165,6 +167,16 @@ install_dependencies() {
     "$PYTHON" -m pip install pytest >> "$LOG" 2>&1
 }
 
+require_fresh_lease() {
+    if ! is_active_role; then return 0; fi
+    if ! has_fresh_active_lease; then
+        log "FENCE: active runtime lost its fresh lease"
+        stop_bot || true
+        return 1
+    fi
+    return 0
+}
+
 start_bot() {
     if ! has_fresh_active_lease; then
         log "STOP: refusing to start bot without a fresh active lease"
@@ -209,9 +221,25 @@ if [[ "$LOCAL" != "$REMOTE" ]]; then
     exec env TERMUX_UPDATE_APPLY=1 bash "$REPO/scripts/termux_update.sh"
 
 elif [[ "$APPLY_UPDATED" == "1" ]]; then
+    if ! is_active_role; then
+        stop_bot
+        log "UPDATE: standby skips dependency installation and keeps bot stopped"
+        exit 0
+    fi
+    if ! has_fresh_active_lease; then
+        stop_bot
+        log "FENCE: active lease lost before dependency installation"
+        exit 1
+    fi
     if ! install_dependencies; then
         rollback "$LOCAL"
         exit 0
+    fi
+
+    if ! has_fresh_active_lease; then
+        stop_bot
+        log "FENCE: lease lost after dependency installation"
+        exit 1
     fi
 
     if ! "$PYTHON" -m pytest -q >> "$LOG" 2>&1; then
@@ -219,13 +247,17 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
         exit 0
     fi
 
-    if ! is_active_role; then
+    if ! has_fresh_active_lease; then
         stop_bot
-        log "UPDATE: revision installed; standby role keeps bot stopped"
-        exit 0
+        log "FENCE: lease lost after tests"
+        exit 1
     fi
 
     stop_bot
+    if ! has_fresh_active_lease; then
+        log "FENCE: lease lost before restart"
+        exit 1
+    fi
     if ! start_bot; then
         log "UPDATE: new revision failed health check"
         rollback "$LOCAL"
