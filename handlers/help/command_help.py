@@ -22,6 +22,7 @@ from services.action_cancel import cancel_current_action, register_runtime_actio
 
 _PANEL_HISTORY = {}
 _PANEL_CURRENT = {}
+_PANEL_CONFIRMATIONS = {}
 
 
 def _panel_key(call):
@@ -871,6 +872,11 @@ async def panel_system_restart(call):
     if not is_owner(call.from_user.id):
         await call.answer("Только Основатель.", show_alert=True)
         return
+    key = _panel_key(call)
+    _PANEL_CONFIRMATIONS[key] = {
+        "kind": "restart",
+        "message_id": call.message.message_id,
+    }
     menu = InlineKeyboardMarkup(row_width=2)
     menu.add(
         InlineKeyboardButton("🔄 Подтвердить", callback_data="panel:system:restart:apply"),
@@ -890,6 +896,12 @@ async def panel_system_restart_apply(call):
         await call.answer("Только Основатель.", show_alert=True)
         return
     from main import HEALTH_DIR, log, asyncio, os
+    key = _panel_key(call)
+    confirmation = _PANEL_CONFIRMATIONS.get(key)
+    if not confirmation or confirmation.get("kind") != "restart" or confirmation.get("message_id") != call.message.message_id:
+        await call.answer("Это подтверждение устарело. Откройте перезапуск заново.", show_alert=True)
+        return
+    _PANEL_CONFIRMATIONS.pop(key, None)
     request_path = os.path.join(HEALTH_DIR, "restart.request")
     try:
         os.makedirs(HEALTH_DIR, exist_ok=True)
@@ -913,6 +925,12 @@ async def panel_system_stasis(call):
         await call.answer("Только Основатель.", show_alert=True)
         return
     enabled = bot_is_paused()
+    key = _panel_key(call)
+    _PANEL_CONFIRMATIONS[key] = {
+        "kind": "stasis",
+        "message_id": call.message.message_id,
+        "expected_enabled": enabled,
+    }
     action = "снять глобальный стазис" if enabled else "активировать глобальный стазис"
     menu = InlineKeyboardMarkup(row_width=2)
     menu.add(
@@ -931,7 +949,17 @@ async def panel_system_stasis_apply(call):
     if not is_owner(call.from_user.id):
         await call.answer("Только Основатель.", show_alert=True)
         return
+    key = _panel_key(call)
+    confirmation = _PANEL_CONFIRMATIONS.get(key)
+    if not confirmation or confirmation.get("kind") != "stasis" or confirmation.get("message_id") != call.message.message_id:
+        await call.answer("Это подтверждение устарело. Откройте стазис заново.", show_alert=True)
+        return
     enabled = bot_is_paused()
+    if enabled != confirmation.get("expected_enabled"):
+        _PANEL_CONFIRMATIONS.pop(key, None)
+        await call.answer("Состояние уже изменилось. Откройте стазис заново.", show_alert=True)
+        return
+    _PANEL_CONFIRMATIONS.pop(key, None)
     set_bot_paused(not enabled)
     register_runtime_action(call.from_user.id, call.message.chat.id, previous_enabled=enabled, scope="global")
     await _panel_edit(call, 
@@ -1014,6 +1042,7 @@ async def panel_close(call):
     key = _panel_key(call)
     _PANEL_HISTORY.pop(key, None)
     _PANEL_CURRENT.pop(key, None)
+    _PANEL_CONFIRMATIONS.pop(key, None)
     await call.message.delete()
     await call.answer()
 
