@@ -178,6 +178,7 @@ async def natural_panel_request(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "panel:back")
 async def panel_back(call: types.CallbackQuery):
     key = _panel_key(call)
+    _PANEL_CONFIRMATIONS.pop(key, None)
     history = _PANEL_HISTORY.get(key) or []
     if history:
         target = history.pop()
