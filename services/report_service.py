@@ -10,6 +10,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from database.connection import connect_db
+from base import config
 
 
 REMINDER_HOURS = 2
@@ -101,6 +102,8 @@ def list_open(limit: int = 30):
 
 
 def answer_report(report_id: int, answered_by: int, answer_text: str) -> bool:
+    if answered_by != config.owner and answered_by not in getattr(config, "tech_team_ids", ()):
+        raise PermissionError("Report replies require operator actor context")
     _ensure_table()
     now = datetime.now(timezone.utc).isoformat()
     with connect_db("users.db") as db:
