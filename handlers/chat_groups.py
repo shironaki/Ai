@@ -2,7 +2,7 @@ from aiogram import types
 
 from main import config, dp, bot, users, chats, datetime, random
 from services.ai_service import escape_for_telegram_html, generate_reply
-from services.chat_members import observe, sync_chat_admins
+from services.chat_members import admin_status_changed, observe, sync_chat_admins
 from services.ai_relationship import can_call, is_max_positive
 
 
@@ -79,6 +79,11 @@ async def chat_member_event(update: types.ChatMemberUpdated):
     new_status = getattr(update.new_chat_member, "status", None)
     joined = new_status in {"member", "administrator", "creator"} and old_status in {"left", "kicked", None}
     left = new_status in {"left", "kicked"} and old_status not in {"left", "kicked"}
+    if admin_status_changed(old_status, new_status):
+        try:
+            await sync_chat_admins(bot, update.chat.id)
+        except Exception:
+            pass
     if not (joined or left):
         return
     if not chats.cursor.execute("SELECT chat_id FROM chats WHERE chat_id = ?", (update.chat.id,)).fetchone():
