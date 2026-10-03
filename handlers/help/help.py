@@ -190,6 +190,36 @@ async def _answer_ai(message: types.Message, prompt: str):
     if direct_action == "chatinfo":
         await chatinfo_cmd(message)
         return
+    if direct_action in {"system_stats", "system_info"}:
+        if not (is_owner(message.from_user.id) or has_admin_role(message.from_user.id, message.chat.id)):
+            await message.reply("⛔ Системная статистика доступна только персоналу.")
+            return
+        summary = system_summary()
+        await message.reply(
+            "<b>🛰 ИНФОРМАЦИЯ О СИСТЕМЕ</b>\n\n"
+            f"Пользователей: <b>{summary['registered_users']}</b>\n"
+            f"Активных личных чатов: <b>{summary['private_users']}</b>\n"
+            f"Зарегистрированных чатов: <b>{summary['registered_chats']}</b>"
+        )
+        return
+    if direct_action == "runtime":
+        from core.runtime_state import is_paused
+        global_state = "активен" if not is_paused() else "стазис"
+        chat_state = "активен" if not is_paused(message.chat.id) else "стазис"
+        await message.reply(
+            "<b>🛰 RUNTIME</b>\n\n"
+            f"Глобально: <b>{global_state}</b>\n"
+            f"Этот чат: <b>{chat_state}</b>"
+        )
+        return
+    if direct_action in {"debug", "logs", "ai_diagnostic"}:
+        if not is_owner(message.from_user.id):
+            await message.reply("⛔ Эта диагностическая функция доступна только Основателю.")
+            return
+        from main import debug_dispatch, send_logs, ai_diagnostic
+        handler = {"debug": debug_dispatch, "logs": send_logs, "ai_diagnostic": ai_diagnostic}[direct_action]
+        await handler(message)
+        return
     if await _handle_founder_command(message, text):
         return
     context = build_verified_context(message.from_user.id, message.chat.id, text, role=role)
