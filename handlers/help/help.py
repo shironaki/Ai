@@ -617,9 +617,15 @@ async def report_answer_start(call: types.CallbackQuery):
     lambda m: bool((m.from_user.id, m.chat.id) in _REPORT_PENDING and m.text and not m.text.startswith("/"))
 )
 async def report_answer_message(message: types.Message):
-    report_id = _REPORT_PENDING.pop((message.from_user.id, message.chat.id), None)
+    key = (message.from_user.id, message.chat.id)
+    report_id = _REPORT_PENDING.get(key)
     if report_id is None:
         return
+    if not _is_report_operator(message.from_user.id):
+        _REPORT_PENDING.pop(key, None)
+        await message.reply("⛔ Доступ к центру обращений больше не подтверждён.")
+        return
+    _REPORT_PENDING.pop(key, None)
     row = get_report(report_id)
     if row is None or row["status"] != "open":
         await message.reply("⚠️ Репорт уже закрыт или не найден.")
@@ -674,6 +680,12 @@ async def panel_pending_action(message: types.Message):
             await message.reply("⚠️ Не удалось сформировать действие. Проверьте цель и параметры.")
         return
     if pending["kind"] == "welcome":
+        if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
+            await message.reply("⛔ Доступ к настройке приветствия больше не подтверждён.")
+            return
+        if pending.get("chat_id") != message.chat.id:
+            await message.reply("⛔ Это действие относится к другому чату и было отменено.")
+            return
         if message.chat.type not in {"group", "supergroup"}:
             await message.reply("⛔ Приветствие можно установить только в группе или супергруппе.")
             return
