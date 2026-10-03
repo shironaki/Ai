@@ -387,6 +387,8 @@ async def leave_stasis(message: types.Message):
 # It is intentionally registered before the imported catch-all handlers.
 @dp.message_handler(commands=['debug'])
 async def debug_dispatch(message: types.Message):
+    if message.from_user.id != config.owner:
+        return
     await message.answer("DEBUG: обработчик сообщений работает.")
 
 
