@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 class TestBroadcastService(unittest.TestCase):
     def test_broadcast_deduplicates_recipients_and_counts_failures(self):
         from services.broadcast_service import broadcast_message
+        from base import config
 
         message = type("Message", (), {})()
         calls = []
@@ -18,7 +19,7 @@ class TestBroadcastService(unittest.TestCase):
         message.copy_to = copy_to
 
         sent, failed = asyncio.run(
-            broadcast_message(message, [1, 2, 2, 3, 1], delay=0)
+            broadcast_message(message, [1, 2, 2, 3, 1], actor_id=config.owner, delay=0)
         )
 
         self.assertEqual(calls, [1, 2, 3])
