@@ -87,6 +87,14 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertNotIn("ban_chat_member(", source)
         self.assertNotIn("unban_chat_member(", source)
 
+    def test_panel_destructive_confirmations_have_stale_state_guards(self):
+        source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        self.assertIn("_PANEL_CONFIRMATIONS = {}", source)
+        self.assertIn('confirmation.get("message_id") != call.message.message_id', source)
+        self.assertIn('confirmation.get("expected_enabled")', source)
+        self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)', source)
+        self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)\n    history = _PANEL_HISTORY.get(key)', source)
+
     def test_panel_callbacks_are_registered_and_callback_errors_are_visible(self):
         help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
