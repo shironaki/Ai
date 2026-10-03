@@ -83,6 +83,15 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertNotIn("menu = _moderation_menu(call)", block)
         self.assertIn('callback_data="panel:mod:" + action', block)
         self.assertIn('callback_data="panel:silence"', block)
+    def test_runtime_and_silence_state_mutations_require_actor_context(self):
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        silence_source = (ROOT / "services" / "silence_service.py").read_text(encoding="utf-8")
+        self.assertIn("actor_id: int,", main_source)
+        self.assertIn("Runtime state changes require founder actor context", main_source)
+        self.assertIn("set_bot_paused(True, actor_id=message.from_user.id)", main_source)
+        self.assertIn("set_bot_paused(False, actor_id=message.from_user.id)", main_source)
+        self.assertIn("actor_id: int,", silence_source)
+        self.assertIn("Chat silence changes require moderator actor context", silence_source)
     def test_public_health_command_is_independent_and_registered(self):
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
         registry_source = (ROOT / "core" / "command_registry.py").read_text(encoding="utf-8")
