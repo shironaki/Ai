@@ -313,3 +313,10 @@ class DispatchRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_admin_log_view_redacts_credentials_before_rendering():
+    from pathlib import Path
+    source = Path("handlers/help/command_help.py").read_text(encoding="utf-8")
+    marker = 'output = redact(handle.read() or "bot.log пока пуст.", 4500)'
+    assert marker in source
