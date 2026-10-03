@@ -159,12 +159,13 @@ async def generate_reply(
         return None
 
     now = time.monotonic()
-    previous = _LAST_REQUEST.get(user_id, 0.0)
+    request_key = (user_id, chat_id) if chat_id is not None else user_id
+    previous = _LAST_REQUEST.get(request_key, 0.0)
     if now - previous < _MIN_REQUEST_INTERVAL:
         return "Не торопись, простолюдин. Даже Системе нужно мгновение, чтобы подумать."
-    _LAST_REQUEST[user_id] = now
+    _LAST_REQUEST[request_key] = now
 
-    history_key = (user_id, chat_id) if chat_id is not None else user_id
+    history_key = request_key
     history = _HISTORY.setdefault(history_key, [])
     candidate_history = (history + [{"role": "user", "content": prompt}])[
         -_MAX_HISTORY_MESSAGES:
