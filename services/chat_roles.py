@@ -20,7 +20,18 @@ def _ensure():
 
 
 def set_role(chat_id: int, user_id: int, role: str, granted_by: int):
+    """Assign a chat-local human role after re-checking the actor boundary."""
     if role not in ROLE_ORDER or role in {"Создатель бота", "Система", "Основатель"}:
+        return False
+    if user_id == granted_by:
+        return False
+    from core.identity import is_owner
+    from core.permissions import get_display_role
+    from core.role_transitions import can_assign
+    if user_id == __import__("base").config.owner:
+        return False
+    actor_role = get_display_role(granted_by, chat_id)
+    if not can_assign(actor_role, role, actor_is_owner=is_owner(granted_by)):
         return False
     from datetime import datetime, timezone
     _ensure()
