@@ -50,6 +50,7 @@ LOG_FILE = "bot.log"
 BOT_PAUSED = False
 HEALTH_DIR = os.path.join(os.getenv("BOT_DATA_DIR", "data/test"), "runtime")
 HEARTBEAT_FILE = os.path.join(HEALTH_DIR, "heartbeat")
+PROCESS_STARTED_AT = time.monotonic()
 
 
 def write_health_heartbeat() -> None:
@@ -381,6 +382,48 @@ async def leave_stasis(message: types.Message):
         "⚡ <b>ПРОБУЖДЕНИЕ ЗАВЕРШЕНО.</b>\n"
         "Контуры связи восстановлены. Бот снова принимает сигналы."
     )
+
+
+@dp.message_handler(commands=["health", "проверка"])
+async def health_check(message: types.Message):
+    """Public, dependency-light bot health check."""
+    checks = []
+    try:
+        await bot.get_me()
+        checks.append(("Telegram API", True))
+    except Exception:
+        checks.append(("Telegram API", False))
+
+    try:
+        users.cursor.execute("SELECT 1")
+        chats.cursor.execute("SELECT 1")
+        checks.append(("База данных", True))
+    except Exception:
+        checks.append(("База данных", False))
+
+    heartbeat_ok = False
+    try:
+        age = time.time() - os.path.getmtime(HEARTBEAT_FILE)
+        heartbeat_ok = age <= 30
+    except (OSError, TypeError):
+        pass
+    checks.append(("Runtime", heartbeat_ok))
+
+    healthy = all(ok for _, ok in checks)
+    uptime_seconds = max(0, int(time.monotonic() - PROCESS_STARTED_AT))
+    uptime = str(timedelta(seconds=uptime_seconds))
+    paused = bot_is_paused()
+
+    lines = [
+        f'{"🟢" if healthy else "⚠️"} <b>ПРОВЕРКА БОТА</b>',
+        f'Состояние: <b>{"работоспособен" if healthy else "есть проблемы"}</b>',
+        f'Время работы: <b>{uptime}</b>',
+        "",
+    ]
+    for label, ok in checks:
+        lines.append(f'{"✅" if ok else "❌"} {label}')
+    lines.append(f'{"⏸️" if paused else "▶️"} Стазис: <b>{"активен" if paused else "выключен"}</b>')
+    await message.answer("\n".join(lines))
 
 
 # Diagnostic handler: proves that aiogram is dispatching /debug and /start.
