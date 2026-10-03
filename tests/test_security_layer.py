@@ -10,6 +10,20 @@ class SecurityLayerTests(unittest.TestCase):
         self.assertNotIn("another-secret", value)
         self.assertIn("[REDACTED]", value)
 
+    def test_redactor_hides_common_platform_credentials(self):
+        from services.security import redact
+        value = redact("xoxb-very-secret github_pat-super-secret glpat-secret")
+        self.assertNotIn("xoxb-very-secret", value)
+        self.assertNotIn("github_pat-super-secret", value)
+        self.assertNotIn("glpat-secret", value)
+
+    def test_diagnostic_journal_redacts_exception_and_context(self):
+        import services.diagnostic_journal as journal
+        event = journal.record(stage="security-test", exception=RuntimeError("Bearer super-secret-token"), context={"callback_data": "api_key=another-secret"})
+        row = journal.latest(event)
+        self.assertNotIn("super-secret-token", str(row))
+        self.assertNotIn("another-secret", str(row))
+
     def test_command_policy_rejects_unknown_and_insufficient_role(self):
         from core.command_models import CommandIntent
         from core.command_policy import evaluate
