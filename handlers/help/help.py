@@ -174,8 +174,8 @@ async def _answer_ai(message: types.Message, prompt: str):
         return
     direct_action = detect_direct_action(text)
     if direct_action == "help" or _is_command_catalog_request(text):
-        from core.command_help import render_help
-        await message.reply(render_help(role))
+        from handlers.help.command_help import _render_help_root
+        await _render_help_root(message, role=role)
         return
     if direct_action == "panel":
         from handlers.help.command_help import _render_panel_root_message
