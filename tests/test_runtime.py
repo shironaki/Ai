@@ -463,5 +463,60 @@ class RuntimeRegressionTests(unittest.TestCase):
         )
 
 
+    def test_termux_lease_race_rejects_concurrent_renewal_or_acquisition(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_read = control.read_lease
+        old_write = control.write_lease
+        try:
+            control.DEVICE_ID = "phone2"
+            control.read_lease = lambda: (
+                {"owner": "phone1", "expires_at": int(__import__("time").time()) + control.LEASE_RENEW_BEFORE - 1},
+                "parent-a",
+            )
+            control.write_lease = lambda lease, parent: False
+            acquired, message = control.acquire_or_renew_lease()
+            self.assertFalse(acquired)
+            self.assertIn("renewal conflict", message)
+        finally:
+            control.DEVICE_ID = old_device
+            control.read_lease = old_read
+            control.write_lease = old_write
+
+    def test_termux_force_takeover_fences_only_after_cas_success(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_read = control.read_lease
+        old_write = control.write_lease
+        old_role = control.ROLEFILE
+        try:
+            control.DEVICE_ID = "phone2"
+            control.read_lease = lambda: (
+                {"owner": "phone1", "expires_at": int(__import__("time").time()) + 120},
+                "parent-a",
+            )
+            control.write_lease = lambda lease, parent: False
+            self.assertIn("lease changed concurrently", control.force_takeover())
+        finally:
+            control.DEVICE_ID = old_device
+            control.read_lease = old_read
+            control.write_lease = old_write
+            control.ROLEFILE = old_role
+
+    def test_termux_watchdog_fails_closed_without_initial_lease(self):
+        source = (ROOT / "scripts" / "termux_lease_watchdog.py").read_text(encoding="utf-8")
+        self.assertIn("Fail closed if the watchdog cannot establish a valid lease", source)
+        self.assertIn("stop_bot()", source)
+        self.assertIn("INTERVAL = max(3", source)
+
+    def test_termux_update_refuses_bot_start_without_fresh_lease(self):
+        source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
+        self.assertIn("has_fresh_active_lease()", source)
+        self.assertIn('git fetch origin "$LEASE_BRANCH"', source)
+        self.assertIn('STOP: refusing to start bot without a fresh active lease', source)
+
+
 if __name__ == "__main__":
     unittest.main()
