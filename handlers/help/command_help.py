@@ -759,8 +759,14 @@ async def panel_welcome_fixed(call):
     if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
+    if call.message.chat.type not in {"group", "supergroup"}:
+        await call.answer("Приветствие доступно только группам.", show_alert=True)
+        return
     from handlers.help.help import _PANEL_PENDING
-    _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "welcome"}
+    _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {
+        "kind": "welcome",
+        "chat_id": call.message.chat.id,
+    }
     await _panel_edit(call, "✏️ Ответьте на это сообщение текстом фиксированного приветствия.", reply_markup=_panel_back("panel:welcome"))
     await call.answer()
 
@@ -797,16 +803,57 @@ async def panel_broadcast_target(call: types.CallbackQuery):
     if target not in {"users", "chats", "all"}:
         await call.answer("Неизвестная аудитория.", show_alert=True)
         return
+    key = _panel_key(call)
+    _PANEL_CONFIRMATIONS[key] = {
+        "kind": "broadcast_target",
+        "message_id": call.message.message_id,
+        "target": target,
+    }
+    labels = {"users": "пользователям", "chats": "чатам", "all": "пользователям и чатам"}
+    menu = InlineKeyboardMarkup(row_width=2)
+    menu.add(
+        InlineKeyboardButton("📣 Продолжить", callback_data="panel:broadcast:apply"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:back"),
+    )
+    await _panel_edit(
+        call,
+        "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\n"
+        f"Целевая аудитория: <b>{labels[target]}</b>.\n"
+        "После подтверждения следующим сообщением можно будет выбрать содержимое рассылки.",
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "panel:broadcast:apply")
+async def panel_broadcast_apply(call: types.CallbackQuery):
+    if not is_owner(call.from_user.id):
+        await call.answer("Только Основатель.", show_alert=True)
+        return
+    key = _panel_key(call)
+    confirmation = _PANEL_CONFIRMATIONS.get(key)
+    if not confirmation or confirmation.get("kind") != "broadcast_target" or confirmation.get("message_id") != call.message.message_id:
+        await call.answer("Это подтверждение устарело. Выберите аудиторию заново.", show_alert=True)
+        return
+    target = confirmation.get("target")
+    if target not in {"users", "chats", "all"}:
+        _PANEL_CONFIRMATIONS.pop(key, None)
+        await call.answer("Неизвестная аудитория.", show_alert=True)
+        return
+    _PANEL_CONFIRMATIONS.pop(key, None)
     await BroadcastState.target.set()
     state = FSMContext.current()
     await state.update_data(broadcast_target=target)
     labels = {"users": "пользователям", "chats": "чатам", "all": "пользователям и чатам"}
-    await _panel_edit(call, 
+    await _panel_edit(
+        call,
         "<b>📣 ЕДИНАЯ РАССЫЛКА</b>\n\n"
         f"Отправьте следующим сообщением текст, фото или другое сообщение для рассылки {labels[target]}.",
         reply_markup=_panel_back("panel:system:broadcast"),
+        push_history=False,
+        state="panel:system:broadcast",
     )
-    await call.answer()
+    await call.answer("Аудитория подтверждена.", show_alert=True)
 
 
 @dp.message_handler(content_types=ContentType.ANY, state=BroadcastState.target)
