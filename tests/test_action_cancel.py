@@ -2,7 +2,7 @@ import unittest
 
 
 class ActionCancelTests(unittest.TestCase):
-    def test_unified_cancel_clears_command_and_moderation_pending(self):
+    def test_unified_cancel_clears_only_one_pending_action(self):
         from services.action_cancel import cancel_current_action
         from services.command_gateway import remember, has_pending
         from services.moderation_gateway import _PENDING
@@ -13,6 +13,8 @@ class ActionCancelTests(unittest.TestCase):
 
         self.assertTrue(cancel_current_action(user_id, chat_id))
         self.assertFalse(has_pending(user_id, chat_id))
+        self.assertIn((user_id, chat_id), _PENDING)
+        self.assertTrue(cancel_current_action(user_id, chat_id))
         self.assertNotIn((user_id, chat_id), _PENDING)
         self.assertFalse(cancel_current_action(user_id, chat_id))
 
