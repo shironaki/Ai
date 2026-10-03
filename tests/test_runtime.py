@@ -580,5 +580,40 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertLess(stop_pos, standby_pos)
 
 
+    def test_termux_update_fences_lease_at_each_restart_boundary(self):
+        source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
+        self.assertIn('if is_active_role && ! has_fresh_active_lease; then', source)
+        self.assertIn('FENCE: lease lost after dependency installation', source)
+        self.assertIn('FENCE: lease lost after tests', source)
+        self.assertIn('FENCE: lease lost before restart', source)
+        self.assertIn('STOP: refusing to start bot without a fresh active lease', source)
+
+    def test_termux_update_loads_device_id_after_termux_env(self):
+        source = (ROOT / "scripts/termux_update.sh").read_text(encoding="utf-8")
+        env_pos = source.index('set +a')
+        device_pos = source.index('DEVICE_ID="${TERMUX_DEVICE_ID:-}"', env_pos)
+        self.assertLess(env_pos, device_pos)
+
+    def test_termux_update_never_installs_dependencies_on_standby(self):
+        source = (ROOT / "scripts/termux_update.sh").read_text(encoding="utf-8")
+        standby_pos = source.index('log "UPDATE: standby skips dependency installation')
+        deps_pos = source.index('install_dependencies', standby_pos)
+        self.assertLess(standby_pos, deps_pos)
+
+    def test_termux_update_stops_active_runtime_before_code_pull(self):
+        source = (ROOT / "scripts/termux_update.sh").read_text(encoding="utf-8")
+        update_pos = source.index('log "UPDATE: $LOCAL -> $REMOTE"')
+        stop_pos = source.index('stop_bot', update_pos)
+        pull_pos = source.index('git pull --ff-only origin "$BRANCH"', stop_pos)
+        self.assertLess(stop_pos, pull_pos)
+
+    def test_termux_update_github_failure_can_only_restart_with_fresh_lease(self):
+        source = (ROOT / "scripts/termux_update.sh").read_text(encoding="utf-8")
+        fail_pos = source.index('log "STOP: fast-forward update failed"')
+        lease_pos = source.index('has_fresh_active_lease', fail_pos)
+        start_pos = source.index('start_bot', lease_pos)
+        self.assertLess(lease_pos, start_pos)
+
+
 if __name__ == "__main__":
     unittest.main()
