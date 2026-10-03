@@ -518,5 +518,67 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn('STOP: refusing to start bot without a fresh active lease', source)
 
 
+    def test_termux_returning_old_active_device_cannot_reclaim_live_lease(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_read = control.read_lease
+        old_write = control.write_lease
+        try:
+            # phone1 returns after phone2 already became active.
+            control.DEVICE_ID = "phone1"
+            control.read_lease = lambda: (
+                {"owner": "phone2", "expires_at": int(__import__("time").time()) + 120},
+                "parent-phone2",
+            )
+            writes = []
+            control.write_lease = lambda lease, parent: writes.append((lease, parent)) or True
+            acquired, message = control.acquire_or_renew_lease()
+            self.assertFalse(acquired)
+            self.assertIn("lease held by phone2", message)
+            self.assertEqual(writes, [])
+        finally:
+            control.DEVICE_ID = old_device
+            control.read_lease = old_read
+            control.write_lease = old_write
+
+    def test_termux_auto_failover_only_promotes_when_lease_is_acquirable(self):
+        import scripts.termux_control as control
+
+        old_device = control.DEVICE_ID
+        old_read = control.read_lease
+        old_write = control.write_lease
+        try:
+            control.DEVICE_ID = "phone2"
+            control.read_lease = lambda: (
+                {"owner": "phone1", "expires_at": int(__import__("time").time()) + 90},
+                "parent-phone1",
+            )
+            writes = []
+            control.write_lease = lambda lease, parent: writes.append((lease, parent)) or True
+            acquired, message = control.acquire_or_renew_lease()
+            self.assertFalse(acquired)
+            self.assertIn("lease held by phone1", message)
+            self.assertEqual(writes, [])
+        finally:
+            control.DEVICE_ID = old_device
+            control.read_lease = old_read
+            control.write_lease = old_write
+
+    def test_termux_standby_role_stops_runtime_before_releasing_lease(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        stop_pos = source.index("stopped = stop_bot_for_role()")
+        release_pos = source.index("released, lease_message = release_lease()", stop_pos)
+        self.assertLess(stop_pos, release_pos)
+
+    def test_termux_active_role_is_fenced_when_lease_acquisition_fails(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        acquire_pos = source.index("acquired, lease_message = acquire_or_renew_lease()")
+        stop_pos = source.index("stop_bot_for_role()", acquire_pos)
+        standby_pos = source.index('ROLEFILE.write_text("standby\\n"', stop_pos)
+        self.assertLess(acquire_pos, stop_pos)
+        self.assertLess(stop_pos, standby_pos)
+
+
 if __name__ == "__main__":
     unittest.main()
