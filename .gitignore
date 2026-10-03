@@ -45,3 +45,7 @@ bot.log.*
 .DS_Store
 .vscode/
 .idea/
+
+# Telegram live QA session files
+telegram_qa/*.session
+telegram_qa/*.session-journal
