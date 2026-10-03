@@ -151,7 +151,7 @@ class DispatchRegressionTests(unittest.TestCase):
     def test_natural_command_catalog_request_is_deterministic(self):
         source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         self.assertIn("def _is_command_catalog_request", source)
-        self.assertIn("render_help(role)", source)
+        self.assertIn("await _render_help_root(message, role=role)", source)
         self.assertIn("_is_command_catalog_request(text)", source)
 
     def test_runtime_latency_and_single_instance_guards_exist(self):
