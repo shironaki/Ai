@@ -60,6 +60,29 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("await chatinfo_cmd(message)", source)
         self.assertIn("from main import debug_dispatch, send_logs, ai_diagnostic", source)
 
+    def test_service_permission_boundaries_are_enforced(self):
+        role_source = (ROOT / "services" / "chat_roles.py").read_text(encoding="utf-8")
+        ai_source = (ROOT / "services" / "ai_relationship.py").read_text(encoding="utf-8")
+        broadcast_source = (ROOT / "services" / "broadcast_service.py").read_text(encoding="utf-8")
+        report_source = (ROOT / "services" / "report_service.py").read_text(encoding="utf-8")
+        self.assertIn("can_assign(actor_role, role, actor_is_owner=is_owner(granted_by))", role_source)
+        self.assertIn("if user_id == __import__(\"base\").config.owner:", role_source)
+        self.assertIn("actor_id: int | None = None", ai_source)
+        self.assertIn("AI relationship changes require founder actor context", ai_source)
+        self.assertIn("AI call blocking changes require founder actor context", ai_source)
+        self.assertIn("if actor_id != config.owner:", ai_source)
+        self.assertIn("actor_id: int,", broadcast_source)
+        self.assertIn("Broadcast execution requires founder actor context", broadcast_source)
+        self.assertIn("Report replies require operator actor context", report_source)
+
+    def test_moderation_menu_renderer_is_not_recursive(self):
+        source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        start = source.index("def _moderation_menu(call):")
+        end = source.find("\n\n@dp.callback_query_handler", start)
+        block = source[start:end]
+        self.assertNotIn("menu = _moderation_menu(call)", block)
+        self.assertIn('callback_data="panel:mod:" + action', block)
+        self.assertIn('callback_data="panel:silence"', block)
     def test_public_health_command_is_independent_and_registered(self):
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
         registry_source = (ROOT / "core" / "command_registry.py").read_text(encoding="utf-8")
