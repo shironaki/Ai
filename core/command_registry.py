@@ -27,6 +27,7 @@ class CommandSpec:
 
 COMMAND_REGISTRY = (
     CommandSpec("help", frozenset({"help"}), "system", "Пользователь", description="панель и справка"),
+    CommandSpec("health", frozenset({"health", "проверка"}), "system", "Пользователь", "chat", description="быстрая проверка работоспособности бота"),
     CommandSpec("panel", frozenset({"panel"}), "system", "Модератор", description="административная панель"),
     CommandSpec("ai", frozenset({"ai", "аи"}), "system", "Пользователь", description="обращение к Аи"),
     CommandSpec("start", frozenset({"start"}), "system", "Пользователь", "private", description="первичный запуск в личном чате"),
