@@ -5,16 +5,16 @@ BRANCH="test-global-assistant-upgrade"
 PYTHON="$REPO/.venv/bin/python"
 BOT="$REPO/run.py"
 PIDFILE="$REPO/bot.pid"
+HEALTHCHECK="$PYTHON $REPO/scripts/healthcheck.py"
+cd "$REPO" || exit 1
+export BOT_ENV="${BOT_ENV:-test}"
+export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"
 DATA_DIR="${BOT_DATA_DIR:-$REPO/data/${BOT_ENV}}"
 mkdir -p "$DATA_DIR"
 chmod 700 "$DATA_DIR" 2>/dev/null || true
 LOG="$DATA_DIR/autoupdate.log"
 touch "$LOG"
 chmod 600 "$LOG" 2>/dev/null || true
-HEALTHCHECK="$PYTHON $REPO/scripts/healthcheck.py"
-cd "$REPO" || exit 1
-export BOT_ENV="${BOT_ENV:-test}"
-export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"; }
 bot_running() {
     [ -f "$PIDFILE" ] || return 1
