@@ -15,7 +15,7 @@ class AIRelationshipTests(unittest.TestCase):
         from services.ai_relationship import set_score, relationship_state, can_call
 
         user_id = 778899
-        set_score(user_id, -80)
+        set_score(user_id, -80, 1057867710, actor_id=1057867710)
         self.assertEqual(relationship_state(user_id), "negative")
         self.assertFalse(can_call(user_id))
 
@@ -31,7 +31,7 @@ class AIRelationshipTests(unittest.TestCase):
                 db.commit()
             os.environ["AI_INVOCATION_NAMES"] = "система, оператор"
             self.assertEqual(invocation_names(), ("система", "оператор"))
-            self.assertEqual(set_invocation_names("Аи, Система"), ("аи", "система"))
+            self.assertEqual(set_invocation_names("Аи, Система", actor_id=1057867710), ("аи", "система"))
             self.assertEqual(invocation_names(), ("аи", "система"))
         finally:
             invocation_names()
