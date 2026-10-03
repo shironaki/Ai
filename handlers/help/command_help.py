@@ -178,6 +178,16 @@ async def help_report(call: types.CallbackQuery):
     )
     await call.answer()
 
+def _panel_guard(call, *, moderator: bool = True) -> bool:
+    """Reject panel callbacks that are clicked by users outside the staff scope."""
+    allowed = is_owner(call.from_user.id)
+    if moderator:
+        allowed = allowed or has_moderator_role(call.from_user.id, call.message.chat.id)
+    if allowed:
+        return True
+    return False
+
+
 def _panel_role(user_id, chat_id=None):
     if is_owner(user_id):
         return "Создатель бота"
@@ -285,6 +295,9 @@ async def natural_panel_request(message: types.Message):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:back")
 async def panel_back(call: types.CallbackQuery):
+    if not _panel_guard(call):
+        await call.answer("Нет доступа к административной панели.", show_alert=True)
+        return
     key = _panel_key(call)
     _PANEL_CONFIRMATIONS.pop(key, None)
     history = _PANEL_HISTORY.get(key) or []
@@ -332,6 +345,9 @@ async def panel_back(call: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:root")
 async def panel_root(call):
+    if not _panel_guard(call):
+        await call.answer("Нет доступа к административной панели.", show_alert=True)
+        return
     from main import log
     key = _panel_key(call)
     _PANEL_HISTORY.pop(key, None)
@@ -356,6 +372,13 @@ async def panel_root(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:cancel")
 async def panel_cancel(call: types.CallbackQuery):
+    if not _panel_guard(call):
+        await call.answer("Нет доступа к административной панели.", show_alert=True)
+        return
+    # Clear panel-specific reply actions as well as the shared cancellation gateway.
+    from handlers.help.help import _PANEL_PENDING
+    _PANEL_PENDING.pop((call.from_user.id, call.message.chat.id), None)
+    _PANEL_CONFIRMATIONS.pop(_panel_key(call), None)
     cancelled = cancel_current_action(call.from_user.id, call.message.chat.id)
     await call.answer(
         "Текущее действие отменено." if cancelled else "Незавершённого действия нет.",
@@ -450,6 +473,13 @@ async def panel_role_select(call):
     if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
+    allowed_roles = available_role_targets(
+        _panel_role(call.from_user.id, call.message.chat.id),
+        actor_is_owner=is_owner(call.from_user.id),
+    )
+    if role not in allowed_roles:
+        await call.answer("Эта роль недоступна для вашего уровня.", show_alert=True)
+        return
     from handlers.help.help import _PANEL_PENDING
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {"kind": "role", "target_role": role}
     await _panel_edit(call, 
@@ -530,6 +560,9 @@ async def panel_admins(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:myinfo")
 async def panel_myinfo(call):
+    if not _panel_guard(call):
+        await call.answer("Нет доступа к административной панели.", show_alert=True)
+        return
     data = user_summary(call.from_user.id)
     if not data:
         await call.answer("Нет данных.", show_alert=True)
@@ -549,6 +582,9 @@ async def panel_myinfo(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:info")
 async def panel_info(call):
+    if not _panel_guard(call):
+        await call.answer("Нет доступа к административной панели.", show_alert=True)
+        return
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("👤 Моя информация", callback_data="panel:myinfo"))
     menu.add(InlineKeyboardButton("💬 Информация о чате", callback_data="panel:chatinfo"))
@@ -561,6 +597,9 @@ async def panel_info(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:chatinfo")
 async def panel_chatinfo(call):
+    if not _panel_guard(call):
+        await call.answer("Нет доступа к административной панели.", show_alert=True)
+        return
     try:
         chat = await bot.get_chat(call.message.chat.id)
         count = await bot.get_chat_members_count(call.message.chat.id)
@@ -604,6 +643,9 @@ async def panel_moderation(call):
 @dp.callback_query_handler(lambda c: c.data.startswith("panel:mod:"))
 async def panel_mod_select(call):
     action = call.data.rsplit(":", 1)[-1]
+    if action not in {"mute", "unmute", "ban", "unban"}:
+        await call.answer("Неизвестное действие.", show_alert=True)
+        return
     if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
@@ -752,6 +794,9 @@ async def panel_broadcast_target(call: types.CallbackQuery):
         await call.answer("Только Основатель.", show_alert=True)
         return
     target = call.data.rsplit(":", 1)[-1]
+    if target not in {"users", "chats", "all"}:
+        await call.answer("Неизвестная аудитория.", show_alert=True)
+        return
     await BroadcastState.target.set()
     state = FSMContext.current()
     await state.update_data(broadcast_target=target)
@@ -837,6 +882,9 @@ async def panel_system_names_select(call):
         await call.answer("Только Основатель.", show_alert=True)
         return
     target = call.data.rsplit(":", 1)[-1]
+    if target not in {"primary", "alternate"}:
+        await call.answer("Неизвестный тип имени.", show_alert=True)
+        return
     from handlers.help.help import _PANEL_PENDING
     _PANEL_PENDING[(call.from_user.id, call.message.chat.id)] = {
         "kind": "invocation_names",
@@ -1170,6 +1218,9 @@ async def panel_system_issues(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:close")
 async def panel_close(call):
+    if not _panel_guard(call):
+        await call.answer("Нет доступа к административной панели.", show_alert=True)
+        return
     key = _panel_key(call)
     _PANEL_HISTORY.pop(key, None)
     _PANEL_CURRENT.pop(key, None)
