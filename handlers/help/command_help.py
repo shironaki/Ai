@@ -713,7 +713,7 @@ async def panel_silence_apply(call):
                     can_invite_users=previous.get("can_invite_users", True),
                 ),
             )
-            set_silent(call.message.chat.id, True, previous)
+            set_silent(call.message.chat.id, True, previous, actor_id=call.from_user.id)
         else:
             previous = get_previous_permissions(call.message.chat.id)
             restore = previous or {"can_send_messages": True}
@@ -721,7 +721,7 @@ async def panel_silence_apply(call):
                 call.message.chat.id,
                 ChatPermissions(**restore),
             )
-            set_silent(call.message.chat.id, False)
+            set_silent(call.message.chat.id, False, actor_id=call.from_user.id)
         await call.answer("Тишина снята." if enabled else "Тишина включена.", show_alert=True)
         # Action completed: return to the moderation menu without adding the
         # confirmation/action state to Back history.
