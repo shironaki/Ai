@@ -129,12 +129,16 @@ async def help_category(call: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "help:root")
 async def help_root_callback(call: types.CallbackQuery):
     role = _role_for_message(call.message)
+    menu = _help_menu(role)
+    if is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id):
+        menu.add(InlineKeyboardButton("🛠 Админ-панель", callback_data="panel:root"))
+    menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="help:close"))
     await call.message.edit_text(
         "<b>📖 СИСТЕМА «АИ»</b>\n\n"
         f"Уровень: <b>{role}</b>\n"
         "Выберите раздел — команды будут показаны внутри него.\n"
         "Навигация остаётся в одном сообщении.",
-        reply_markup=_help_menu(role),
+        reply_markup=menu,
     )
     await call.answer()
 
