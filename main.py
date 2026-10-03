@@ -39,7 +39,7 @@ from aiogram.utils.markdown import hbold, hcode
 
 from base import config, chats, users
 from core.runtime_state import is_paused, set_paused
-from services.security import redact
+from services.security import RedactingFormatter, redact
 from services.moderation_scheduler import expiry_loop
 from services.diagnostic_journal import record as record_diagnostic
 from services.issue_tracker import create_runtime_error_marker
@@ -108,7 +108,7 @@ _file_handler = RotatingFileHandler(
     encoding="utf-8",
 )
 _file_handler.setLevel(logging.INFO)
-_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+_file_handler.setFormatter(RedactingFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
 if os.name != "nt":
     try:
         os.chmod(LOG_FILE, 0o600)
@@ -641,7 +641,7 @@ async def log_update_error(update, exception):
                 "🚨 <b>BOT ERROR</b>\n"
                 f"update_id: <code>{html.escape(str(update_id))}</code>\n"
                 f"type: <code>{html.escape(type(exception).__name__)}</code>\n"
-                f"error: <code>{html.escape(str(exception)[:1200])}</code>\n"
+                f"error: <code>{html.escape(redact(str(exception), 1200))}</code>\n"
             )
             if message:
                 details += (
