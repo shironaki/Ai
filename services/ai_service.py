@@ -141,8 +141,18 @@ def _looks_incomplete(text: str) -> bool:
     return value[-1] not in ".!?…:;)]}>»\"'"
 
 
-async def generate_reply(user_id: int, prompt: str, role: str = "Пользователь", verified_context: str | None = None):
-    """Generate a reply using Groq when GROQ_API_KEY is configured."""
+async def generate_reply(
+    user_id: int,
+    prompt: str,
+    role: str = "Пользователь",
+    verified_context: str | None = None,
+    chat_id: int | None = None,
+):
+    """Generate a reply using Groq when GROQ_API_KEY is configured.
+
+    Conversation history is isolated by chat when the caller provides chat_id.
+    The user-only key remains supported for non-Telegram callers and tests.
+    """
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key or not api_key.strip():
         _LAST_ERROR["value"] = "GROQ_API_KEY is not present in the running process."
@@ -154,7 +164,8 @@ async def generate_reply(user_id: int, prompt: str, role: str = "Пользов�
         return "Не торопись, простолюдин. Даже Системе нужно мгновение, чтобы подумать."
     _LAST_REQUEST[user_id] = now
 
-    history = _HISTORY.setdefault(user_id, [])
+    history_key = (user_id, chat_id) if chat_id is not None else user_id
+    history = _HISTORY.setdefault(history_key, [])
     candidate_history = (history + [{"role": "user", "content": prompt}])[
         -_MAX_HISTORY_MESSAGES:
     ]
