@@ -87,6 +87,11 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertNotIn("ban_chat_member(", source)
         self.assertNotIn("unban_chat_member(", source)
 
+    def test_registry_information_and_cancel_aliases_have_direct_handlers(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        self.assertIn('@dp.message_handler(commands=["info", "инфо", "инфа"]', source)
+        self.assertIn('@dp.message_handler(commands=["cancel"]', source)
+
     def test_panel_destructive_confirmations_have_stale_state_guards(self):
         source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
         self.assertIn("_PANEL_CONFIRMATIONS = {}", source)
