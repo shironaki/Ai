@@ -23,10 +23,14 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
+SUPERVISOR_LOCKDIR="$REPO/.termux-supervisor.lock"
+if ! mkdir "$SUPERVISOR_LOCKDIR" 2>/dev/null; then
+    exit 0
+fi
 SUPERVISOR_HEARTBEAT="$REPO/data/test/runtime/supervisor-heartbeat"
 echo "$$" > "$SUPERVISOR_PID"
 mkdir -p "$(dirname "$SUPERVISOR_HEARTBEAT")"
-trap 'rm -f "$SUPERVISOR_PID"' EXIT
+trap 'rm -f "$SUPERVISOR_PID"; rmdir "$SUPERVISOR_LOCKDIR" 2>/dev/null || true' EXIT
 
 report() {
     "$PYTHON" "$REPO/scripts/termux_report.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
