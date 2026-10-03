@@ -60,10 +60,10 @@ class TelegramQAClient:
         while True:
             messages = await self.client.get_messages(self.config.target, limit=10)
             for message in reversed(messages):
-                if message.id > after_id and message.out:
+                if message.id > after_id and not message.out:
                     return message
             if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError(f"No outgoing bot reply after message {after_id}")
+                raise TimeoutError(f"No incoming bot reply after message {after_id}")
             await asyncio.sleep(0.5)
 
     async def send_and_wait(self, text: str, *, timeout: float = 15.0) -> Message:
@@ -71,11 +71,15 @@ class TelegramQAClient:
         return await self.wait_for_reply(after_id=sent.id, timeout=timeout)
 
     async def click(self, message: Message, row: int, column: int) -> Message:
+        before_id = message.id
         result = await message.click(row=row, column=column)
         if isinstance(result, Message):
             return result
-        messages = await self.client.get_messages(self.config.target, limit=5)
-        for candidate in messages:
-            if candidate.out:
-                return candidate
-        raise RuntimeError("Callback click produced no observable outgoing message")
+        deadline = asyncio.get_running_loop().time() + 10.0
+        while asyncio.get_running_loop().time() < deadline:
+            messages = await self.client.get_messages(self.config.target, limit=5)
+            for candidate in messages:
+                if candidate.id >= before_id and not candidate.out:
+                    return candidate
+            await asyncio.sleep(0.5)
+        raise RuntimeError("Callback click produced no observable incoming bot message")
