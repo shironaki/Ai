@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+DIAGNOSTIC_RETENTION_DAYS = 14
+DIAGNOSTIC_MAX_ROWS = 5000
 
 from database.connection import connect_db
 from services.security import redact
@@ -30,6 +33,15 @@ def _ensure_table() -> None:
             )
             """
         )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_diagnostic_events_created_at ON diagnostic_events(created_at)")
+        db.commit()
+
+
+def _purge_old() -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=DIAGNOSTIC_RETENTION_DAYS)).isoformat()
+    with connect_db("users.db") as db:
+        db.execute("DELETE FROM diagnostic_events WHERE created_at < ?", (cutoff,))
+        db.execute("DELETE FROM diagnostic_events WHERE id NOT IN (SELECT id FROM diagnostic_events ORDER BY id DESC LIMIT ?)", (DIAGNOSTIC_MAX_ROWS,))
         db.commit()
 
 
@@ -45,6 +57,7 @@ def record(
     context: dict | None = None,
 ) -> int:
     _ensure_table()
+    _purge_old()
     now = datetime.now(timezone.utc).isoformat()
     exception_type = type(exception).__name__ if exception else None
     exception_text = redact(exception, 4000) if exception else None
