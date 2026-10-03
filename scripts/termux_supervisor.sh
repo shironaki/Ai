@@ -5,10 +5,13 @@ REPO="${BOT_REPO_DIR:-$HOME/Ai}"
 PYTHON="${TERMUX_PYTHON:-$REPO/.venv/bin/python}"
 INTERVAL="${TERMUX_UPDATE_INTERVAL:-15}"
 REPORT_INTERVAL="${TERMUX_REPORT_INTERVAL:-300}"
+BATTERY_MAX_CACHE_AGE="${TERMUX_BATTERY_CACHE_MAX_AGE:-120}"
+BATTERY_START_GRACE="${TERMUX_BATTERY_START_GRACE:-45}"
 REPORT_ELAPSED=0
 BATTERY_WATCHDOG="$REPO/scripts/termux_battery_watchdog.py"
 BATTERY_PIDFILE="$REPO/termux-battery-watchdog.pid"
 BATTERY_HASHFILE="$REPO/termux-battery-watchdog.sha256"
+BATTERY_STATEFILE="$REPO/data/test/runtime/battery_watchdog.json"
 
 cd "$REPO" || exit 1
 
@@ -29,6 +32,45 @@ report() {
     "$PYTHON" "$REPO/scripts/termux_report.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
 }
 
+battery_process_matches() {
+    local pid="$1"
+    local cmdline=""
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$pid" -gt 1 ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        [[ "$cmdline" == *"termux_battery_watchdog.py"* ]] && return 0
+    fi
+
+    return 1
+}
+
+battery_cache_fresh() {
+    local now mtime age
+    [[ -f "$BATTERY_STATEFILE" ]] || return 1
+
+    now="$(date +%s)"
+    mtime="$(stat -c %Y "$BATTERY_STATEFILE" 2>/dev/null || echo 0)"
+    [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+    [[ "$mtime" -gt 0 ]] || return 1
+
+    age=$((now - mtime))
+    (( age >= 0 && age <= BATTERY_MAX_CACHE_AGE ))
+}
+
+stop_battery_watchdog() {
+    local pid="$1"
+    kill "$pid" 2>/dev/null || true
+    for _ in {1..10}; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 1
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+}
+
 ensure_battery_watchdog() {
     if [[ ! -f "$BATTERY_WATCHDOG" ]]; then
         return 0
@@ -38,20 +80,34 @@ ensure_battery_watchdog() {
     current_hash="$(sha256sum "$BATTERY_WATCHDOG" 2>/dev/null | awk '{print $1}')"
 
     if [[ -f "$BATTERY_PIDFILE" ]]; then
-        local pid
+        local pid=""
         pid="$(cat "$BATTERY_PIDFILE" 2>/dev/null || true)"
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+
+        if battery_process_matches "$pid"; then
             local running_hash=""
             running_hash="$(cat "$BATTERY_HASHFILE" 2>/dev/null || true)"
+
             if [[ -n "$current_hash" && "$running_hash" == "$current_hash" ]]; then
-                return 0
+                if battery_cache_fresh; then
+                    return 0
+                fi
+
+                local started_at=0
+                started_at="$(stat -c %Y "$BATTERY_PIDFILE" 2>/dev/null || echo 0)"
+                if [[ "$started_at" =~ ^[0-9]+$ ]]; then
+                    local since_start
+                    since_start=$(( $(date +%s) - started_at ))
+                    if (( since_start < BATTERY_START_GRACE )); then
+                        return 0
+                    fi
+                fi
+
+                echo "BATTERY WATCHDOG: stale cache; restarting pid=$pid" >> "$REPO/termux-battery-watchdog.log"
             fi
-            kill "$pid" 2>/dev/null || true
-            for _ in {1..10}; do
-                kill -0 "$pid" 2>/dev/null || break
-                sleep 1
-            done
+
+            stop_battery_watchdog "$pid"
         fi
+
         rm -f "$BATTERY_PIDFILE" "$BATTERY_HASHFILE"
     fi
 
