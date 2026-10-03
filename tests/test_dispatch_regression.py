@@ -92,6 +92,11 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("set_bot_paused(False, actor_id=message.from_user.id)", main_source)
         self.assertIn("actor_id: int,", silence_source)
         self.assertIn("Chat silence changes require moderator actor context", silence_source)
+    def test_termux_control_only_executes_runtime_commands_for_active_lease(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        self.assertIn("def has_active_lease()", source)
+        self.assertIn('if command in {"STATUS", "RESTART", "UPDATE"} and not has_active_lease():', source)
+        self.assertIn('ignored: command requires active device lease', source)
     def test_public_health_command_is_independent_and_registered(self):
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
         registry_source = (ROOT / "core" / "command_registry.py").read_text(encoding="utf-8")
