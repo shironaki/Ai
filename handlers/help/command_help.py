@@ -212,15 +212,23 @@ def _panel_has_back(reply_markup) -> bool:
     return False
 
 
-async def _panel_edit(call, text: str, reply_markup=None, *, push_history: bool = True):
-    """Edit the current panel message, preserving real navigation history."""
+async def _panel_edit(
+    call,
+    text: str,
+    reply_markup=None,
+    *,
+    push_history: bool = True,
+    state: str | None = None,
+):
+    """Edit the current panel message, preserving navigation history."""
     key = _panel_key(call)
+    destination = state or call.data
     if push_history and _panel_has_back(reply_markup) and call.data != "panel:back":
         current = _PANEL_CURRENT.get(key)
-        if current and current != call.data:
+        if current and current != destination:
             _PANEL_HISTORY.setdefault(key, []).append(current)
     if call.data != "panel:back":
-        _PANEL_CURRENT[key] = call.data
+        _PANEL_CURRENT[key] = destination
     try:
         await call.message.edit_text(text, reply_markup=reply_markup)
     except MessageToEditNotFound:
@@ -230,7 +238,6 @@ async def _panel_edit(call, text: str, reply_markup=None, *, push_history: bool 
         if "message to edit not found" in error_text or "message can't be edited" in error_text:
             await call.message.answer(text, reply_markup=reply_markup)
         elif "message is not modified" in error_text:
-            # The requested panel state is already displayed; do not create a duplicate.
             return
         else:
             raise
@@ -574,6 +581,11 @@ async def panel_chatinfo(call):
     await call.answer()
 
 
+def _moderation_menu(call):
+    menu = _moderation_menu(call)
+    return menu
+
+
 @dp.callback_query_handler(lambda c: c.data == "panel:moderation")
 async def panel_moderation(call):
     if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
@@ -654,7 +666,15 @@ async def panel_silence_apply(call):
             )
             set_silent(call.message.chat.id, False)
         await call.answer("Тишина снята." if enabled else "Тишина включена.", show_alert=True)
-        await panel_moderation(call)
+        # Action completed: return to the moderation menu without adding the
+        # confirmation/action state to Back history.
+        await _panel_edit(
+            call,
+            "<b>🔨 МОДЕРАЦИЯ</b>\n\nВыберите действие.",
+            reply_markup=_moderation_menu(call),
+            push_history=False,
+            state="panel:moderation",
+        )
     except Exception:
         await call.answer("Telegram не разрешил изменить права чата.", show_alert=True)
 
@@ -682,7 +702,13 @@ async def panel_welcome_auto(call):
         return
     chats.cursor.execute("UPDATE chats SET welcome='' WHERE chat_id=?", (call.message.chat.id,))
     chats.connect.commit()
-    await _panel_edit(call, "🤖 Авто-Аи включено.", reply_markup=_panel_back("panel:welcome"))
+    await _panel_edit(
+        call,
+        "🤖 Авто-Аи включено.",
+        reply_markup=_panel_back("panel:welcome"),
+        push_history=False,
+        state="panel:welcome",
+    )
     await call.answer()
 
 
@@ -1064,9 +1090,12 @@ async def panel_system_stasis_apply(call):
     _PANEL_CONFIRMATIONS.pop(key, None)
     set_bot_paused(not enabled)
     register_runtime_action(call.from_user.id, call.message.chat.id, previous_enabled=enabled, scope="global")
-    await _panel_edit(call, 
+    await _panel_edit(
+        call,
         "<b>🛰 СТАЗИС</b>\n\nСостояние: <b>" + ("активен" if not enabled else "снят") + "</b>",
         reply_markup=_panel_back("panel:system"),
+        push_history=False,
+        state="panel:system",
     )
     await call.answer("Стазис активирован." if not enabled else "Стазис снят.", show_alert=True)
 
