@@ -7,6 +7,7 @@ import traceback
 from datetime import datetime, timezone
 
 from database.connection import connect_db
+from services.security import redact
 
 
 def _ensure_table() -> None:
@@ -46,9 +47,9 @@ def record(
     _ensure_table()
     now = datetime.now(timezone.utc).isoformat()
     exception_type = type(exception).__name__ if exception else None
-    exception_text = str(exception)[:4000] if exception else None
-    tb = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))[-12000:] if exception else None
-    context_json = json.dumps(context or {}, ensure_ascii=False, default=str)
+    exception_text = redact(exception, 4000) if exception else None
+    tb = redact("".join(traceback.format_exception(type(exception), exception, exception.__traceback__)), 12000) if exception else None
+    context_json = redact(json.dumps(context or {}, ensure_ascii=False, default=str), 4000)
     with connect_db("users.db") as db:
         cur = db.execute(
             """
