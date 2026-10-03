@@ -167,13 +167,18 @@ async def generate_reply(
 
     history_key = request_key
     history = _HISTORY.setdefault(history_key, [])
-    candidate_history = (history + [{"role": "user", "content": prompt}])[
+    safe_prompt = redact(prompt, 4000)
+    candidate_history = (history + [{"role": "user", "content": safe_prompt}])[
         -_MAX_HISTORY_MESSAGES:
+    ]
+    candidate_history = [
+        {"role": item.get("role", "user"), "content": redact(item.get("content", ""), 4000)}
+        for item in candidate_history
     ]
 
     system_content = _system_prompt(role)
     if verified_context:
-        system_content += "\n\n" + verified_context
+        system_content += "\n\n" + redact(verified_context, 6000)
     messages = [{"role": "system", "content": system_content}]
     messages.extend(candidate_history)
 
@@ -219,7 +224,7 @@ async def generate_reply(
 
     _LAST_ERROR["value"] = ""
     history[:] = candidate_history
-    history.append({"role": "assistant", "content": answer})
+    history.append({"role": "assistant", "content": redact(answer, 4000)})
     history[:] = history[-_MAX_HISTORY_MESSAGES:]
     return answer
 
@@ -252,7 +257,7 @@ scope:
 
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": prompt[:1000]},
+        {"role": "user", "content": redact(prompt, 1000)},
     ]
     try:
         raw = await asyncio.to_thread(
