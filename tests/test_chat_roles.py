@@ -25,7 +25,7 @@ class ChatRoleIsolationTests(unittest.TestCase):
 
         with patch("core.identity.is_owner", return_value=True), patch(
             "core.permissions.get_display_role", return_value="Создатель бота"
-        ):
+        ), patch("base.config.owner", 999999):
             self.assertTrue(set_role(100, 7, "Администратор", 1))
             self.assertTrue(set_role(200, 7, "Модератор", 1))
 
