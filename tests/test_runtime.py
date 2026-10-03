@@ -94,6 +94,50 @@ class RuntimeRegressionTests(unittest.TestCase):
             else:
                 os.environ["GROQ_API_KEY"] = old_key
 
+    def test_ai_history_isolated_between_chats(self):
+        import services.ai_service as ai_service
+
+        user_id = 987654323
+        chat_a, chat_b = -10001, -10002
+        old_key = os.environ.get("GROQ_API_KEY")
+        old_request = ai_service._request_sync
+        old_history = dict(ai_service._HISTORY)
+        old_last_request = dict(ai_service._LAST_REQUEST)
+        try:
+            os.environ["GROQ_API_KEY"] = "test-key"
+            ai_service._HISTORY.clear()
+            ai_service._LAST_REQUEST.clear()
+            captured = []
+
+            def successful_request(messages, model, api_key, **kwargs):
+                captured.append(messages)
+                return "ответ"
+
+            ai_service._request_sync = successful_request
+            asyncio.run(ai_service.generate_reply(user_id, "сообщение A", chat_id=chat_a))
+            ai_service._LAST_REQUEST.clear()
+            asyncio.run(ai_service.generate_reply(user_id, "сообщение B", chat_id=chat_b))
+
+            self.assertEqual(
+                ai_service._HISTORY[(user_id, chat_a)][0]["content"],
+                "сообщение A",
+            )
+            self.assertEqual(
+                ai_service._HISTORY[(user_id, chat_b)][0]["content"],
+                "сообщение B",
+            )
+            self.assertNotIn("сообщение A", str(captured[1]))
+        finally:
+            ai_service._request_sync = old_request
+            ai_service._HISTORY.clear()
+            ai_service._HISTORY.update(old_history)
+            ai_service._LAST_REQUEST.clear()
+            ai_service._LAST_REQUEST.update(old_last_request)
+            if old_key is None:
+                os.environ.pop("GROQ_API_KEY", None)
+            else:
+                os.environ["GROQ_API_KEY"] = old_key
+
     def test_handlers_do_not_index_missing_fetchone_results(self):
         handler_paths = (
             ROOT / "handlers" / "help" / "help.py",
