@@ -139,3 +139,21 @@ Next required work:
 3. Only after admin block remains green and runtime-verified, continue AI relationship refinement if needed, then AI character/personality block.
 4. Keep game/economy/profile disabled and keep Main/PROD untouched.
 
+
+
+## UPDATE × HA checkpoint — 2026-10-03
+
+Продолжение протокола после lease/failover hardening.
+
+- `scripts/termux_update.sh` теперь загружает `TERMUX_DEVICE_ID` после `termux.env`, поэтому device identity не теряется при bootstrap.
+- Active runtime перед code update останавливается; обновление и последующий restart допускаются только при свежем центральном lease.
+- Lease перепроверяется после code update, установки зависимостей, тестов и непосредственно перед restart.
+- Standby может синхронизировать код, но не устанавливает runtime dependencies и не запускает бота.
+- При GitHub/update failure active runtime может быть поднят обратно только при свежем lease; standby не запускается.
+- Rollback теперь получает именно pre-update commit через `TERMUX_UPDATE_ROLLBACK_COMMIT`; прежний дефект, при котором rollback мог указывать на уже обновлённый `HEAD`, устранён.
+- Потеря lease во время update оставляет runtime остановленным; старый/вернувшийся телефон не может самовольно восстановить active состояние.
+- Если второй телефон становится active во время update, следующая lease-проверка fencing останавливает старый runtime и запрещает restart.
+- Последний CI: Python integrity check run #1335 (`37123124349`) — SUCCESS; job `check` `111202997005`, runtime regression suite: 148 tests, OK.
+- Main/PROD не изменялся; рабочая ветка остаётся `test-global-assistant-upgrade`.
+
+Следующий крупный блок протокола: финальный сквозной аудит Termux supervisor/watchdog/update/control на предмет оставшихся race-window между lease renewal, healthcheck, process PID и GitHub outage, затем live TEST verification.
