@@ -14,6 +14,8 @@ from pathlib import Path
 
 import requests
 
+from services.security import redact
+
 
 def _network_diagnostics() -> list[str]:
     """Measure the network path to Telegram without exposing the bot token."""
@@ -26,7 +28,7 @@ def _network_diagnostics() -> list[str]:
         ips = sorted({item[4][0] for item in addresses})
         lines.append(f"NETWORK DNS: OK {dns_ms:.0f}ms ips={','.join(ips[:4])}")
     except Exception as exc:
-        lines.append(f"NETWORK DNS: FAIL {type(exc).__name__}: {str(exc)[:180]}")
+        lines.append(f"NETWORK DNS: FAIL {type(exc).__name__}: {redact(exc, 180)}")
     try:
         started = time.perf_counter()
         with socket.create_connection((host, 443), timeout=5):
