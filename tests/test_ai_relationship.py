@@ -19,6 +19,15 @@ class AIRelationshipTests(unittest.TestCase):
         self.assertEqual(relationship_state(user_id), "negative")
         self.assertFalse(can_call(user_id))
 
+    def test_ai_invocation_accepts_whitespace_and_rejects_prefix_collisions(self):
+        from handlers.help.help import _ai_invocation
+
+        self.assertEqual(_ai_invocation("Аи привет"), "привет")
+        self.assertEqual(_ai_invocation("/ai привет"), "привет")
+        self.assertEqual(_ai_invocation("Аи, привет"), "привет")
+        self.assertEqual(_ai_invocation("Аии привет"), None)
+        self.assertEqual(_ai_invocation("/aidebug"), None)
+
     def test_invocation_names_are_configurable(self):
         from services.ai_relationship import invocation_names, set_invocation_names
 
