@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+ISSUE_RETENTION_DAYS = 30
+ISSUE_MAX_ROWS = 3000
 
 from database.connection import connect_db
 from services.security import redact
@@ -45,6 +48,15 @@ def _ensure_table() -> None:
         ):
             if name not in columns:
                 db.execute(f"ALTER TABLE issue_markers ADD COLUMN {name} {ddl}")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_issue_markers_created_at ON issue_markers(created_at)")
+        db.commit()
+
+
+def _purge_old() -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=ISSUE_RETENTION_DAYS)).isoformat()
+    with connect_db("users.db") as db:
+        db.execute("DELETE FROM issue_markers WHERE status IN ('fixed', 'broken') AND created_at < ?", (cutoff,))
+        db.execute("DELETE FROM issue_markers WHERE id NOT IN (SELECT id FROM issue_markers ORDER BY id DESC LIMIT ?)", (ISSUE_MAX_ROWS,))
         db.commit()
 
 
@@ -75,6 +87,7 @@ def create_marker(
     diagnostic_id: int | None = None,
 ) -> int:
     _ensure_table()
+    _purge_old()
     now = datetime.now(timezone.utc).isoformat()
     with connect_db("users.db") as db:
         cur = db.execute(
@@ -89,9 +102,9 @@ def create_marker(
                 message_id,
                 reporter_id,
                 reporter_name,
-                message_text[:4000] if message_text else None,
+                redact(message_text, 4000) if message_text else None,
                 message_sender_name,
-                reason[:1000],
+                redact(reason, 1000),
                 code,
                 now,
                 diagnostic_id,
