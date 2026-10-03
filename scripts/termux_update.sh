@@ -16,6 +16,7 @@ DEVICE_ID=""
 export BOT_ENV="${BOT_ENV:-test}"
 export BOT_DATA_DIR="${BOT_DATA_DIR:-$REPO/data/${BOT_ENV}}"
 APPLY_UPDATED="${TERMUX_UPDATE_APPLY:-0}"
+ROLLBACK_COMMIT="${TERMUX_UPDATE_ROLLBACK_COMMIT:-}"
 
 ENV_FILE="${TERMUX_ENV_FILE:-$HOME/.config/ai/termux.env}"
 if [ -f "$ENV_FILE" ]; then
@@ -236,7 +237,7 @@ if [[ "$LOCAL" != "$REMOTE" ]]; then
     # freshly loaded updater can acquire the lock instead of self-skipping.
     trap - EXIT
     cleanup
-    exec env TERMUX_UPDATE_APPLY=1 bash "$REPO/scripts/termux_update.sh"
+    exec env TERMUX_UPDATE_APPLY=1 TERMUX_UPDATE_ROLLBACK_COMMIT="$LOCAL" bash "$REPO/scripts/termux_update.sh"
 
 elif [[ "$APPLY_UPDATED" == "1" ]]; then
     if ! is_active_role; then
@@ -250,8 +251,12 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
         exit 1
     fi
     if ! install_dependencies; then
-        rollback "$LOCAL"
-        exit 0
+        if [[ -n "$ROLLBACK_COMMIT" ]]; then
+            rollback "$ROLLBACK_COMMIT" || true
+        else
+            log "ROLLBACK: no previous commit available; bot remains stopped"
+        fi
+        exit 1
     fi
 
     if ! has_fresh_active_lease; then
@@ -261,8 +266,12 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
     fi
 
     if ! "$PYTHON" -m pytest -q >> "$LOG" 2>&1; then
-        rollback "$LOCAL"
-        exit 0
+        if [[ -n "$ROLLBACK_COMMIT" ]]; then
+            rollback "$ROLLBACK_COMMIT" || true
+        else
+            log "ROLLBACK: no previous commit available; bot remains stopped"
+        fi
+        exit 1
     fi
 
     if ! has_fresh_active_lease; then
@@ -278,8 +287,12 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
     fi
     if ! start_bot; then
         log "UPDATE: new revision failed health check"
-        rollback "$LOCAL"
-        exit 0
+        if [[ -n "$ROLLBACK_COMMIT" ]]; then
+            rollback "$ROLLBACK_COMMIT" || true
+        else
+            log "ROLLBACK: no previous commit available; bot remains stopped"
+        fi
+        exit 1
     fi
     log "UPDATE: bot restarted and health-verified"
 
