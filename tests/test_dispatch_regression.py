@@ -349,7 +349,7 @@ def test_telegram_exfiltration_surfaces_redact_sensitive_runtime_output():
     assert "RedactingFormatter(" in main
     assert 'content = redact(log_file.read(), 12000)' in help_source
     assert 'redact(str(exception), 1200)' in main
-    assert 'redact(f"{type(exception).__name__}: {exception}", 500)' in main
+    assert 'redact(str(exc), 500)' in main
     assert 'redact((result.stdout + "\\n" + result.stderr).strip(), 5000)' in help_source
 
 def test_runtime_logs_use_protected_bot_data_directory():
