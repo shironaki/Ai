@@ -343,6 +343,14 @@ async def direct_ai_invocation(message: types.Message):
         await _answer_ai(message, invocation)
 
 
+@dp.message_handler(commands=["cancel"], commands_prefix="/!.")
+async def slash_cancel_pending_request(message: types.Message):
+    if cancel_current_action(message.from_user.id, message.chat.id):
+        await message.reply("↩️ Ладно. Отставить. Текущее действие отменено. Ничего не выполняю.")
+    else:
+        await message.reply("ℹ️ Сейчас нет действия, которое можно отменить.")
+
+
 @dp.message_handler(
     lambda m: bool(
         m.text
@@ -780,6 +788,7 @@ async def chatinfo_cmd(message: types.Message):
     )
 
 #profile_msg
+@dp.message_handler(commands=["info", "инфо", "инфа"], commands_prefix="/!.")
 @dp.message_handler(lambda msg: bool(msg.text and msg.text.casefold().strip() == "инфа"))
 async def info_msg(message):
     summary = user_summary(message.from_user.id)
