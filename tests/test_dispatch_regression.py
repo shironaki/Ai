@@ -315,6 +315,24 @@ if __name__ == "__main__":
     unittest.main()
 
 
+def test_storage_privacy_boundaries_are_present():
+    from pathlib import Path
+    connection = Path("database/connection.py").read_text(encoding="utf-8")
+    main = Path("main.py").read_text(encoding="utf-8")
+    diagnostic = Path("services/diagnostic_journal.py").read_text(encoding="utf-8")
+    reports = Path("services/report_service.py").read_text(encoding="utf-8")
+    issues = Path("services/issue_tracker.py").read_text(encoding="utf-8")
+    assert 'PRAGMA secure_delete=ON' in connection
+    assert 'LOG_FILE = os.path.join(DATA_DIR, "bot.log")' in main
+    assert 'os.chmod(LOG_FILE, 0o600)' in main
+    assert 'DIAGNOSTIC_RETENTION_DAYS = 14' in diagnostic
+    assert 'DIAGNOSTIC_MAX_ROWS = 5000' in diagnostic
+    assert 'REPORT_RETENTION_DAYS = 90' in reports
+    assert 'ISSUE_RETENTION_DAYS = 30' in issues
+    assert 'redact(payload, 6000)' in reports
+    assert 'redact(message_text, 4000)' in issues
+
+
 def test_admin_log_view_redacts_credentials_before_rendering():
     from pathlib import Path
     source = Path("handlers/help/command_help.py").read_text(encoding="utf-8")
