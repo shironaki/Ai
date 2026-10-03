@@ -56,7 +56,16 @@ def get_previous_permissions(chat_id: int) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
-def set_silent(chat_id: int, enabled: bool, previous_permissions: dict | None = None) -> None:
+def set_silent(
+    chat_id: int,
+    enabled: bool,
+    previous_permissions: dict | None = None,
+    *,
+    actor_id: int,
+) -> None:
+    from core.permissions import has_moderator_role
+    if not has_moderator_role(actor_id, chat_id):
+        raise PermissionError("Chat silence changes require moderator actor context")
     _ensure_table()
     payload = json.dumps(previous_permissions, ensure_ascii=False, sort_keys=True) if previous_permissions else None
     with connect_db("users.db") as db:
