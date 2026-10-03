@@ -5,7 +5,12 @@ BRANCH="test-global-assistant-upgrade"
 PYTHON="$REPO/.venv/bin/python"
 BOT="$REPO/run.py"
 PIDFILE="$REPO/bot.pid"
-LOG="$REPO/autoupdate.log"
+DATA_DIR="${BOT_DATA_DIR:-$REPO/data/${BOT_ENV}}"
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR" 2>/dev/null || true
+LOG="$DATA_DIR/autoupdate.log"
+touch "$LOG"
+chmod 600 "$LOG" 2>/dev/null || true
 HEALTHCHECK="$PYTHON $REPO/scripts/healthcheck.py"
 cd "$REPO" || exit 1
 export BOT_ENV="${BOT_ENV:-test}"
@@ -45,7 +50,8 @@ stop_bot() {
 }
 start_bot() {
     if [ -z "${BOT_TOKEN:-}" ]; then log "STOP: BOT_TOKEN missing; bot not started"; return 1; fi
-    nohup "$PYTHON" "$BOT" >> "$REPO/bot.log" 2>&1 < /dev/null &
+    mkdir -p "$DATA_DIR"
+    nohup "$PYTHON" "$BOT" >> "$DATA_DIR/bot.log" 2>&1 < /dev/null &
     NEW_PID=$!
     echo "$NEW_PID" > "$PIDFILE"
     i=0
