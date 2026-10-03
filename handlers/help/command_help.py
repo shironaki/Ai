@@ -888,7 +888,7 @@ async def panel_broadcast_message(message: types.Message, state: FSMContext):
         chat_ids = [int(row[0]) for row in chats.cursor.execute("SELECT chat_id FROM chats").fetchall()]
     recipients = user_ids + chat_ids
     status = await message.answer("📣 Рассылка началась…")
-    sent, failed = await broadcast_message(message, recipients)
+    sent, failed = await broadcast_message(message, recipients, actor_id=message.from_user.id)
     await status.edit_text(
         "📣 <b>Рассылка завершена.</b>\n\n"
         f"✅ Успешно: <b>{sent}</b>\n"
