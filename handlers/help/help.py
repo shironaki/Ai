@@ -227,7 +227,7 @@ async def _answer_ai(message: types.Message, prompt: str):
         await bot.send_chat_action(message.chat.id, "typing")
     except Exception:
         pass
-    answer = await generate_reply(message.from_user.id, text, role, verified_context=context)
+    answer = await generate_reply(message.from_user.id, text, role, verified_context=context, chat_id=message.chat.id)
     if answer:
         await message.reply(escape_for_telegram_html(answer))
     else:
