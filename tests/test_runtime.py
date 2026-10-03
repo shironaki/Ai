@@ -631,5 +631,26 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn('has_fresh_active_lease', source)
 
 
+    def test_termux_supervisor_is_singleton(self):
+        source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
+        self.assertIn('SUPERVISOR_LOCKDIR="$REPO/.termux-supervisor.lock"', source)
+        self.assertIn('if ! mkdir "$SUPERVISOR_LOCKDIR" 2>/dev/null; then', source)
+        self.assertIn('rmdir "$SUPERVISOR_LOCKDIR"', source)
+
+    def test_termux_watchdog_verifies_pid_identity_before_fencing(self):
+        source = (ROOT / "scripts" / "termux_lease_watchdog.py").read_text(encoding="utf-8")
+        self.assertIn('/proc/{pid}/cmdline', source)
+        self.assertIn('str(ROOT / "run.py") in cmdline', source)
+        self.assertIn('if not bot_running():', source)
+
+    def test_termux_restart_rechecks_lease_at_process_start_boundary(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        restart_pos = source.index('def restart_bot() -> str:')
+        lease_pos = source.index('if not has_active_lease():', restart_pos)
+        spawn_pos = source.index('subprocess.Popen(', restart_pos)
+        self.assertLess(lease_pos, spawn_pos)
+        self.assertIn('restart denied: active lease is no longer owned', source)
+
+
 if __name__ == "__main__":
     unittest.main()
