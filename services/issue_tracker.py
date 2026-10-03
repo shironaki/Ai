@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timezone
 
 from database.connection import connect_db
+from services.security import redact
 
 _MARK_RE = re.compile(r"^(?:отметь|исправить)\b\s*(?:код\s*(\d+)\b)?\s*(.*)$", re.I)
 _FIXED_RE = re.compile(r"^(?:исправлено|исправить)\s+#?(\d+)\s*$", re.I)
@@ -113,7 +114,7 @@ def create_runtime_error_marker(
         chat_id=chat_id,
         message_id=message_id,
         reporter_id=reporter_id,
-        reason=f"Автоматическая диагностика: {exception_type}: {exception_text}"[:1000],
+        reason=redact(f"Автоматическая диагностика: {exception_type}: {exception_text}", 1000),
         message_text=message_text,
         message_sender_name="runtime",
         reporter_name="SYSTEM QA",
