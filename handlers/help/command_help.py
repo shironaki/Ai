@@ -8,6 +8,7 @@ from aiogram.utils.exceptions import BadRequest, MessageToEditNotFound
 
 from base import config
 from core.command_help import render_help
+from core.command_registry import commands_for_role, _CATEGORY_LABELS
 from core.permissions import get_user_status, has_moderator_role, has_admin_role
 from core.identity import is_owner
 from core.role_transitions import available_role_targets
@@ -46,21 +47,104 @@ def _role_for_message(message: types.Message) -> str:
 @dp.message_handler(commands=["help", "хелп", "команды"], commands_prefix="/!.")
 async def authoritative_help(message: types.Message):
     role = _role_for_message(message)
+    await _render_help_root(message, role=role)
+
+
+def _help_categories(role: str):
+    groups = []
+    seen = set()
+    for spec in commands_for_role(role):
+        if spec.category in seen:
+            continue
+        seen.add(spec.category)
+        groups.append(spec.category)
+    return groups
+
+
+def _help_menu(role: str) -> InlineKeyboardMarkup:
     menu = InlineKeyboardMarkup(row_width=2)
-    menu.add(
-        InlineKeyboardButton("🧠 Аи", callback_data="help:ai"),
-        InlineKeyboardButton("ℹ️ Информация", callback_data="panel:info"),
-    )
+    labels = {
+        "system": "⚙️ Система",
+        "runtime": "🛰 Runtime",
+        "information": "ℹ️ Информация",
+        "administration": "🛡 Управление",
+        "moderation": "🔨 Модерация",
+        "chat": "💬 Чат",
+        "profile": "👤 Профиль",
+        "communication": "📬 Связь",
+        "control": "↩️ Управление действием",
+        "qa": "🧪 QA",
+    }
+    for category in _help_categories(role):
+        menu.insert(InlineKeyboardButton(labels.get(category, category.title()), callback_data=f"help:cat:{category}"))
+    menu.add(InlineKeyboardButton("🧠 Аи", callback_data="help:ai"))
     menu.add(InlineKeyboardButton("📬 Репорт", callback_data="help:report"))
+    if is_owner(role == "Основатель" and config.owner or 0) if False else False:
+        pass
+    return menu
+
+
+async def _render_help_root(message: types.Message, role: str | None = None):
+    role = role or _role_for_message(message)
+    menu = _help_menu(role)
     if is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id):
-        menu.add(InlineKeyboardButton("🛠 Панель", callback_data="panel:root"))
+        menu.add(InlineKeyboardButton("🛠 Админ-панель", callback_data="panel:root"))
+    menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="help:close"))
     await message.answer(
         "<b>📖 СИСТЕМА «АИ»</b>\n\n"
-        f"Ваш уровень: <b>{role}</b>\n"
-        "Основной интерфейс — кнопки и прямое обращение к «Аи» или «Система».\n"
-        "Служебные slash-команды не являются основным пользовательским интерфейсом.",
+        f"Уровень: <b>{role}</b>\n"
+        "Выберите раздел — команды будут показаны внутри него.\n"
+        "Навигация остаётся в одном сообщении.",
         reply_markup=menu,
     )
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("help:cat:"))
+async def help_category(call: types.CallbackQuery):
+    role = _role_for_message(call.message)
+    category = call.data.rsplit(":", 1)[-1]
+    allowed = {spec.category for spec in commands_for_role(role)}
+    if category not in allowed:
+        await call.answer("Раздел недоступен для вашей роли.", show_alert=True)
+        return
+    specs = [spec for spec in commands_for_role(role) if spec.category == category]
+    labels = {
+        "system": "⚙️ СИСТЕМА", "runtime": "🛰 RUNTIME", "information": "ℹ️ ИНФОРМАЦИЯ",
+        "administration": "🛡 УПРАВЛЕНИЕ", "moderation": "🔨 МОДЕРАЦИЯ", "chat": "💬 ЧАТ",
+        "profile": "👤 ПРОФИЛЬ", "communication": "📬 СВЯЗЬ", "control": "↩️ ДЕЙСТВИЯ", "qa": "🧪 QA",
+    }
+    lines = [f"<b>{labels.get(category, category.upper())}</b>", ""]
+    for spec in specs:
+        aliases = ", ".join("/" + a if " " not in a else a for a in sorted(spec.aliases))
+        if spec.description:
+            lines.append(f"• <code>{escape_for_telegram_html(aliases)}</code> — {escape_for_telegram_html(spec.description)}")
+        else:
+            lines.append(f"• <code>{escape_for_telegram_html(aliases)}</code>")
+    menu = InlineKeyboardMarkup(row_width=1)
+    menu.add(InlineKeyboardButton("◀️ Разделы", callback_data="help:root"))
+    await call.message.edit_text("\n".join(lines), reply_markup=menu)
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "help:root")
+async def help_root_callback(call: types.CallbackQuery):
+    role = _role_for_message(call.message)
+    await call.message.edit_text(
+        "<b>📖 СИСТЕМА «АИ»</b>\n\n"
+        f"Уровень: <b>{role}</b>\n"
+        "Выберите раздел — команды будут показаны внутри него.\n"
+        "Навигация остаётся в одном сообщении.",
+        reply_markup=_help_menu(role),
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "help:close")
+async def help_close(call: types.CallbackQuery):
+    try:
+        await call.message.edit_text("📖 Справка закрыта.")
+    finally:
+        await call.answer()
 
 
 @dp.callback_query_handler(lambda c: c.data == "help:ai")
