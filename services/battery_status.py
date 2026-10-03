@@ -33,14 +33,15 @@ def get_battery_status() -> dict:
         raise RuntimeError("battery watchdog sample has no timestamp")
 
     age = max(0, int(time.time()) - checked_at)
-    if age > MAX_CACHE_AGE:
-        raise RuntimeError(f"battery watchdog cache is stale ({age}s)")
-
-    return {
+    # A stale sample is still useful when Termux:API is intermittently unavailable.
+    # The watchdog records the last successful sample and continues retrying.
+    # Do not turn a temporary Android socket failure into a hard /battery failure.
+        return {
         "percentage": int(battery.get("percentage", -1)),
         "plugged": str(battery.get("plugged", "UNKNOWN")).upper(),
         "status": str(battery.get("status", "UNKNOWN")).upper(),
         "charging": bool(battery.get("charging", False)),
         "temperature": battery.get("temperature"),
         "age_seconds": age,
+        "stale": age > MAX_CACHE_AGE,
     }
