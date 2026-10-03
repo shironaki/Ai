@@ -615,5 +615,21 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertLess(lease_pos, start_pos)
 
 
+    def test_termux_update_carries_pre_update_commit_into_rollback(self):
+        source = (ROOT / "scripts/termux_update.sh").read_text(encoding="utf-8")
+        self.assertIn('ROLLBACK_COMMIT="${TERMUX_UPDATE_ROLLBACK_COMMIT:-}"', source)
+        self.assertIn('TERMUX_UPDATE_ROLLBACK_COMMIT="$LOCAL"', source)
+        self.assertIn('rollback "$ROLLBACK_COMMIT"', source)
+        self.assertNotIn('rollback "$LOCAL"', source)
+
+    def test_termux_update_fences_after_failed_restart_before_rollback_start(self):
+        source = (ROOT / "scripts/termux_update.sh").read_text(encoding="utf-8")
+        restart_pos = source.index('if ! start_bot; then')
+        rollback_pos = source.index('rollback "$ROLLBACK_COMMIT"', restart_pos)
+        self.assertLess(restart_pos, rollback_pos)
+        self.assertIn('start_bot() {', source)
+        self.assertIn('has_fresh_active_lease', source)
+
+
 if __name__ == "__main__":
     unittest.main()
