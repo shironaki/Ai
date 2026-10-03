@@ -51,6 +51,15 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('if row is None:', source)
         self.assertIn("Откройте личный чат и выполните первичный запуск.", source)
 
+    def test_deterministic_assistant_actions_reach_real_handlers(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        for action in ("profile", "chatinfo", "system_stats", "system_info", "runtime"):
+            self.assertIn('if direct_action == "' + action + '"', source) if action in ("profile", "chatinfo", "runtime") else self.assertIn('direct_action in {"system_stats", "system_info"}', source)
+        self.assertIn('direct_action in {"debug", "logs", "ai_diagnostic"}', source)
+        self.assertIn("await info_msg(message)", source)
+        self.assertIn("await chatinfo_cmd(message)", source)
+        self.assertIn("from main import debug_dispatch, send_logs, ai_diagnostic", source)
+
     def test_help_command_has_single_authoritative_handler(self):
         handlers = []
         for path in (
