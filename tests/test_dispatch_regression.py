@@ -205,6 +205,50 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("fcntl.flock", run_source)
         self.assertIn("LOCK_EX | fcntl.LOCK_NB", run_source)
 
+    def test_founder_only_debug_has_direct_command_guard(self):
+        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        start = source.index("async def debug_dispatch(")
+        end = source.find("\n@dp.", start)
+        block = source[start:] if end == -1 else source[start:end]
+        self.assertIn("if message.from_user.id != config.owner:", block)
+
+
+    def test_pending_welcome_rechecks_role_and_chat_scope(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        start = source.index('if pending["kind"] == "welcome":')
+        end = source.find('\n    if pending["kind"] == "invocation_names":', start)
+        block = source[start:end]
+        self.assertIn("has_moderator_role(message.from_user.id, message.chat.id)", block)
+        self.assertIn('pending.get("chat_id") != message.chat.id', block)
+
+
+    def test_report_reply_rechecks_operator_scope(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        start = source.index("async def report_answer_message(")
+        end = source.find("\n\n_PanelKey", start)
+        block = source[start:end]
+        self.assertIn("_is_report_operator(message.from_user.id)", block)
+        self.assertIn("_REPORT_PENDING.pop(key, None)", block)
+
+
+    def test_broadcast_requires_fresh_owner_confirmation_before_fsm(self):
+        source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        start = source.index("async def panel_broadcast_target(")
+        end = source.find("\n@dp.callback_query_handler", start + 10)
+        target_block = source[start:end]
+        self.assertIn('"kind": "broadcast_target"', target_block)
+        self.assertIn('"message_id": call.message.message_id', target_block)
+        self.assertNotIn("await BroadcastState.target.set()", target_block)
+
+        start = source.index("async def panel_broadcast_apply(")
+        end = source.find("\n@dp.message_handler", start)
+        apply_block = source[start:end]
+        self.assertIn('confirmation.get("kind") != "broadcast_target"', apply_block)
+        self.assertIn('confirmation.get("message_id") != call.message.message_id', apply_block)
+        self.assertIn('target not in {"users", "chats", "all"}', apply_block)
+        self.assertIn("await BroadcastState.target.set()", apply_block)
+
+
     def test_legacy_broadcast_routes_are_removed_and_panel_route_is_authoritative(self):
         self.assertFalse((ROOT / "aboute.py").exists())
         help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
