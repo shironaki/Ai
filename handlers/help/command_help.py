@@ -8,7 +8,7 @@ from aiogram.utils.exceptions import BadRequest, MessageToEditNotFound
 
 from base import config
 from core.command_help import render_help
-from core.command_registry import commands_for_role, _CATEGORY_LABELS
+from core.command_registry import commands_for_role
 from core.permissions import get_user_status, has_moderator_role, has_admin_role
 from core.identity import is_owner
 from core.role_transitions import available_role_targets
