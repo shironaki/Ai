@@ -138,6 +138,41 @@ class RuntimeRegressionTests(unittest.TestCase):
             else:
                 os.environ["GROQ_API_KEY"] = old_key
 
+    def test_ai_continuation_failure_keeps_initial_answer(self):
+        import services.ai_service as ai_service
+
+        user_id = 987654325
+        old_key = os.environ.get("GROQ_API_KEY")
+        old_request = ai_service._request_sync
+        old_history = dict(ai_service._HISTORY)
+        old_last_request = dict(ai_service._LAST_REQUEST)
+        try:
+            os.environ["GROQ_API_KEY"] = "test-key"
+            ai_service._HISTORY.clear()
+            ai_service._LAST_REQUEST.clear()
+            calls = {"count": 0}
+
+            def request_with_failed_continuation(messages, model, api_key, **kwargs):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    return "Это достаточно длинный ответ, который обрывается"
+                raise RuntimeError("continuation unavailable")
+
+            ai_service._request_sync = request_with_failed_continuation
+            result = asyncio.run(ai_service.generate_reply(user_id, "продолжи", chat_id=-10005))
+            self.assertEqual(result, "Это достаточно длинный ответ, который обрывается")
+            self.assertEqual(ai_service._HISTORY[(user_id, -10005)][-1]["content"], result)
+        finally:
+            ai_service._request_sync = old_request
+            ai_service._HISTORY.clear()
+            ai_service._HISTORY.update(old_history)
+            ai_service._LAST_REQUEST.clear()
+            ai_service._LAST_REQUEST.update(old_last_request)
+            if old_key is None:
+                os.environ.pop("GROQ_API_KEY", None)
+            else:
+                os.environ["GROQ_API_KEY"] = old_key
+
     def test_ai_request_throttle_isolated_between_chats(self):
         import services.ai_service as ai_service
 
