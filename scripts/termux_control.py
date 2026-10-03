@@ -370,6 +370,18 @@ def stop_bot_for_role() -> str:
     return "bot stopped"
 
 
+def has_active_lease() -> bool:
+    if not DEVICE_ID:
+        return False
+    try:
+        lease, _ = read_lease()
+    except Exception:
+        return False
+    owner = str(lease.get("owner", "")).strip().casefold()
+    expires_at = int(lease.get("expires_at", 0) or 0)
+    return owner == DEVICE_ID and expires_at > int(time.time())
+
+
 def execute(command: str) -> str:
     if command.startswith("FORCE "):
         parts = command.split()
@@ -387,6 +399,8 @@ def execute(command: str) -> str:
         if not DEVICE_ID or target != DEVICE_ID:
             return "ignored: command targets another device"
         return set_role(role)
+    if command in {"STATUS", "RESTART", "UPDATE"} and not has_active_lease():
+        return "ignored: command requires active device lease"
     if command == "STATUS":
         report = subprocess.run(
             [str(PYTHON), str(ROOT / "scripts/termux_report.py")],
