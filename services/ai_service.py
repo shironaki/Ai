@@ -218,7 +218,7 @@ async def generate_reply(
                 if continuation:
                     answer = answer.rstrip() + " " + continuation.lstrip()
     except Exception as exc:
-        _LAST_ERROR["value"] = redact(f"{type(exc).__name__}: {exc}", 1200)
+        _LAST_ERROR["value"] = html.escape(redact(f"{type(exc).__name__}: {exc}", 1200), quote=False)
         log.exception("AI provider request failed for user_id=%s", user_id)
         return None
 
