@@ -9,6 +9,9 @@ PIDFILE="$REPO/termux-bot.pid"
 ROLEFILE="$REPO/data/test/runtime/termux-role"
 LOCKDIR="$REPO/.termux-update.lock"
 LOG="$REPO/termux-autoupdate.log"
+LEASE_BRANCH="${TERMUX_LEASE_BRANCH:-termux-lease}"
+LEASE_PATH="${TERMUX_LEASE_PATH:-lease.json}"
+DEVICE_ID="${TERMUX_DEVICE_ID:-}"
 
 export BOT_ENV="${BOT_ENV:-test}"
 export BOT_DATA_DIR="${BOT_DATA_DIR:-$REPO/data/${BOT_ENV}}"
@@ -25,6 +28,20 @@ cd "$REPO"
 
 is_active_role() {
     [[ ! -f "$ROLEFILE" ]] || [[ "$(cat "$ROLEFILE" 2>/dev/null || true)" == "active" ]]
+}
+
+has_fresh_active_lease() {
+    [[ -n "$DEVICE_ID" ]] || return 1
+    git fetch origin "$LEASE_BRANCH" >> "$LOG" 2>&1 || return 1
+    local raw owner expires now
+    raw="$(git show "origin/$LEASE_BRANCH:$LEASE_PATH" 2>/dev/null || true)"
+    [[ -n "$raw" ]] || return 1
+    owner="$(printf "%s\n" "$raw" | "$PYTHON" -c 'import json,sys; print(str(json.load(sys.stdin).get("owner","")).strip().casefold())' 2>/dev/null || true)"
+    expires="$(printf "%s\n" "$raw" | "$PYTHON" -c 'import json,sys; print(int(json.load(sys.stdin).get("expires_at",0) or 0))' 2>/dev/null || true)"
+    now="$(date +%s)"
+    [[ "$owner" == "${DEVICE_ID,,}" ]] || return 1
+    [[ "$expires" =~ ^[0-9]+$ ]] || return 1
+    (( expires > now ))
 }
 
 
@@ -149,6 +166,10 @@ install_dependencies() {
 }
 
 start_bot() {
+    if ! has_fresh_active_lease; then
+        log "STOP: refusing to start bot without a fresh active lease"
+        return 1
+    fi
     if is_running; then
         return 0
     fi
