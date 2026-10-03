@@ -621,7 +621,22 @@ async def panel_chatinfo(call):
 
 
 def _moderation_menu(call):
-    menu = _moderation_menu(call)
+    menu = InlineKeyboardMarkup(row_width=2)
+    for action, label in (
+        ("mute", "🔇 Мут"),
+        ("unmute", "🔊 Размут"),
+        ("ban", "🔴 Бан"),
+        ("unban", "🟢 Разбан"),
+    ):
+        menu.insert(InlineKeyboardButton(label, callback_data="panel:mod:" + action))
+    menu.add(
+        InlineKeyboardButton(
+            "🔇 Тишина: " + ("вкл" if is_silent(call.message.chat.id) else "выкл"),
+            callback_data="panel:silence",
+        )
+    )
+    menu.add(InlineKeyboardButton("👋 Приветствие", callback_data="panel:welcome"))
+    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
     return menu
 
 
