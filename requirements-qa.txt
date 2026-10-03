@@ -1,0 +1,2 @@
+# Live Telegram QA runner dependencies
+Telethon>=1.40,<2
