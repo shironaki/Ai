@@ -11,9 +11,12 @@ from datetime import datetime, timedelta, timezone
 
 from database.connection import connect_db
 from base import config
+from services.security import redact
 
 
 REMINDER_HOURS = 2
+REPORT_RETENTION_DAYS = 90
+REPORT_MAX_ROWS = 5000
 
 
 def _ensure_table() -> None:
@@ -41,6 +44,15 @@ def _ensure_table() -> None:
         columns = {row[1] for row in db.execute("PRAGMA table_info(user_reports)").fetchall()}
         if "answer_text" not in columns:
             db.execute("ALTER TABLE user_reports ADD COLUMN answer_text TEXT")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_user_reports_created_at ON user_reports(created_at)")
+        db.commit()
+
+
+def _purge_old() -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=REPORT_RETENTION_DAYS)).isoformat()
+    with connect_db("users.db") as db:
+        db.execute("DELETE FROM user_reports WHERE status='answered' AND created_at < ?", (cutoff,))
+        db.execute("DELETE FROM user_reports WHERE id NOT IN (SELECT id FROM user_reports ORDER BY id DESC LIMIT ?)", (REPORT_MAX_ROWS,))
         db.commit()
 
 
@@ -55,6 +67,7 @@ def create_report(
     target_user_id: int | None = None,
 ) -> int:
     _ensure_table()
+    _purge_old()
     now = datetime.now(timezone.utc).isoformat()
     with connect_db("users.db") as db:
         cur = db.execute(
@@ -70,8 +83,8 @@ def create_report(
                 source_chat_id,
                 source_message_id,
                 target_user_id,
-                reason[:2000],
-                payload[:6000] if payload else None,
+                redact(reason, 2000),
+                redact(payload, 6000) if payload else None,
                 now,
             ),
         )
