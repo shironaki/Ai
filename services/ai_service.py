@@ -194,15 +194,24 @@ async def generate_reply(
                     "Заверши мысль полностью и не обрывай предложение."
                 ),
             })
-            continuation = await asyncio.to_thread(
-                _request_sync,
-                continuation_messages,
-                os.getenv("AI_MODEL", DEFAULT_MODEL),
-                api_key,
-                max_tokens=350,
-            )
-            if continuation:
-                answer = answer.rstrip() + " " + continuation.lstrip()
+            try:
+                continuation = await asyncio.to_thread(
+                    _request_sync,
+                    continuation_messages,
+                    os.getenv("AI_MODEL", DEFAULT_MODEL),
+                    api_key,
+                    max_tokens=350,
+                )
+            except Exception as exc:
+                # A failed continuation must not discard an otherwise valid first answer.
+                log.warning(
+                    "AI continuation failed for user_id=%s: %s",
+                    user_id,
+                    redact(f"{type(exc).__name__}: {exc}"),
+                )
+            else:
+                if continuation:
+                    answer = answer.rstrip() + " " + continuation.lstrip()
     except Exception as exc:
         _LAST_ERROR["value"] = html.escape(redact(f"{type(exc).__name__}: {exc}"), quote=False)
         log.exception("AI provider request failed for user_id=%s", user_id)
