@@ -100,6 +100,37 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)', source)
         self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)\n    history = _PANEL_HISTORY.get(key)', source)
 
+    def test_panel_navigation_and_action_returns_are_state_safe(self):
+        source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        self.assertIn("state: str | None = None", source)
+        self.assertIn('push_history=False,\n            state="panel:moderation"', source)
+        self.assertIn('push_history=False,\n        state="panel:system"', source)
+        self.assertIn('push_history=False,\n        state="panel:welcome"', source)
+        self.assertIn("def _moderation_menu(call):", source)
+
+    def test_panel_callbacks_have_staff_guard_and_validate_callback_arguments(self):
+        source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        self.assertIn("def _panel_guard(call", source)
+        for name in ("panel_back", "panel_root", "panel_cancel", "panel_myinfo", "panel_info", "panel_chatinfo", "panel_close"):
+            start = source.index("async def " + name + "(")
+            end = source.find("\n@dp.", start)
+            block = source[start:] if end == -1 else source[start:end]
+            self.assertIn("if not _panel_guard(call)", block, name)
+        self.assertIn('if role not in allowed_roles:', source)
+        self.assertIn('if action not in {"mute", "unmute", "ban", "unban"}:', source)
+        self.assertIn('if target not in {"users", "chats", "all"}:', source)
+        self.assertIn('if target not in {"primary", "alternate"}:', source)
+
+    def test_unified_panel_cancel_clears_panel_pending_state(self):
+        source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        start = source.index("async def panel_cancel(")
+        end = source.find("\n@dp.", start)
+        block = source[start:] if end == -1 else source[start:end]
+        self.assertIn("from handlers.help.help import _PANEL_PENDING", block)
+        self.assertIn("_PANEL_PENDING.pop((call.from_user.id, call.message.chat.id), None)", block)
+        self.assertIn("_PANEL_CONFIRMATIONS.pop(_panel_key(call), None)", block)
+        self.assertIn("cancel_current_action(call.from_user.id, call.message.chat.id)", block)
+
     def test_panel_callbacks_are_registered_and_callback_errors_are_visible(self):
         help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
