@@ -706,10 +706,10 @@ async def panel_pending_action(message: types.Message):
             await message.reply("❗ Укажите хотя бы одно имя.")
             return
         if pending["target"] == "primary":
-            names = set_invocation_names(value)
+            names = set_invocation_names(value, actor_id=message.from_user.id)
             await message.reply("✅ Основные имена вызова: <b>" + escape_for_telegram_html(", ".join(names)) + "</b>")
         else:
-            names = set_alternate_names(value)
+            names = set_alternate_names(value, actor_id=message.from_user.id)
             await message.reply("✅ Альтернативные имена: <b>" + escape_for_telegram_html(", ".join(names)) + "</b>")
         return
 
@@ -725,9 +725,9 @@ async def panel_pending_action(message: types.Message):
             await message.reply("👑 Отношение к Основателю фиксировано на максимальном уровне.")
             return
         score = int(pending["score"])
-        value = set_score(target_id, score, config.owner)
+        value = set_score(target_id, score, config.owner, actor_id=message.from_user.id)
         if pending.get("block") is not None:
-            set_calls_blocked(target_id, pending["block"], config.owner)
+            set_calls_blocked(target_id, pending["block"], config.owner, actor_id=message.from_user.id)
         await message.reply(
             f"🤝 Отношение Аи обновлено: <b>{value}/100</b>."
             + ("\n🔕 Вызовы Аи заблокированы." if pending.get("block") else "")
