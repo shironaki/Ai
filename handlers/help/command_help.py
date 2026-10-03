@@ -1079,7 +1079,7 @@ async def panel_system_logs(call):
     import os
     try:
         with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as handle:
-            output = handle.read() or "bot.log пока пуст."
+            output = redact(handle.read() or "bot.log пока пуст.", 4500)
     except Exception as exc:
         output = f"{type(exc).__name__}: {exc}"
     if len(output) > 4500:
