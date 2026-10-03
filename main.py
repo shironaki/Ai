@@ -830,7 +830,7 @@ async def battery_status(message: types.Message):
         log.exception("BATTERY STATUS | failed to read battery")
         await message.answer(
             "⚠️ Не удалось получить статус батареи второго телефона.\n"
-            f"<code>{html.escape(type(exc).__name__)}: {html.escape(str(exc)[:500])}</code>"
+            f"<code>{html.escape(type(exc).__name__ + \": \")}{html.escape(redact(str(exc), 500))}</code>"
         )
 
 
