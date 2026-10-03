@@ -31,6 +31,33 @@ def _handler_command_literals(path: Path):
 
 
 class DispatchRegressionTests(unittest.TestCase):
+    def test_start_has_one_authoritative_handler_and_owner_bootstrap(self):
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        tree = ast.parse(main_source, filename="main.py")
+        start_handlers = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call):
+                    continue
+                name = decorator.func.attr if isinstance(decorator.func, ast.Attribute) else ""
+                if name != "message_handler":
+                    continue
+                source = ast.get_source_segment(main_source, decorator) or ""
+                if "/start" in source or "start" in source:
+                    start_handlers.append(node.name)
+        self.assertEqual(start_handlers, ["start_dispatch"])
+        self.assertIn("users.ensure_owner_registered(config.owner)", main_source)
+        self.assertIn('re.match(r"^/start(?:@[A-Za-z0-9_]+)?(?:\\s|$)"', main_source)
+        self.assertIn('if message.chat.type != "private":', main_source)
+
+    def test_profile_handler_has_registration_guard(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        self.assertIn("async def profile_msg(message):", source)
+        self.assertIn('if row is None:', source)
+        self.assertIn("Введите /start", source)
+
     def test_help_command_has_single_authoritative_handler(self):
         handlers = []
         for path in (
