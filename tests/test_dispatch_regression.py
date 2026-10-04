@@ -269,7 +269,7 @@ class DispatchRegressionTests(unittest.TestCase):
         start = source.index("async def debug_dispatch(")
         end = source.find("\n@dp.", start)
         block = source[start:] if end == -1 else source[start:end]
-        self.assertIn("if message.from_user.id != config.owner:", block)
+        self.assertIn("await _founder_command_guard(", block)
 
 
     def test_pending_welcome_rechecks_role_and_chat_scope(self):
@@ -319,7 +319,7 @@ class DispatchRegressionTests(unittest.TestCase):
         source = (ROOT / "main.py").read_text(encoding="utf-8")
         self.assertIn("async def _founder_command_guard(message: types.Message, text: str) -> bool:", source)
         self.assertIn("await bot.send_message(message.chat.id, text)", source)
-        for command in ("stasis", "awakening", "debug_dispatch", "runtime_diagnostics", "runtime_status", "remote_restart", "battery_status", "send_logs"):
+        for command in ("enter_stasis", "leave_stasis", "debug_dispatch", "runtime_diagnostics", "runtime_status", "remote_restart", "battery_status", "send_logs"):
             start = source.index("async def " + command + "(")
             end = source.find("\n@dp.", start)
             block = source[start:] if end == -1 else source[start:end]
