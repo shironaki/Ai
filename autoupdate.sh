@@ -5,7 +5,7 @@ BRANCH="test-global-assistant-upgrade"
 PYTHON="$REPO/.venv/bin/python"
 BOT="$REPO/run.py"
 PIDFILE="$REPO/bot.pid"
-HEALTHCHECK="$PYTHON $REPO/scripts/healthcheck.py"
+HEALTHCHECK="PYTHONPATH=$REPO${PYTHONPATH:+:$PYTHONPATH} $PYTHON $REPO/scripts/healthcheck.py"
 cd "$REPO" || exit 1
 export BOT_ENV="${BOT_ENV:-test}"
 export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"
