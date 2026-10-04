@@ -6,6 +6,7 @@ from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.exceptions import Throttled
 
 from services.ai_service import ai_status, escape_for_telegram_html, generate_reply, _LAST_ERROR
+from services.ai_memory import clear_history
 from services.command_gateway import execute, has_pending, interpret, pending_prompt, pop_pending, remember, is_cancel_request, cancel_pending
 from services.security import redact
 from services.assistant_actions import detect_direct_action
@@ -166,9 +167,33 @@ def _is_command_catalog_request(prompt: str) -> bool:
     )
 
 
+def _is_memory_clear_request(prompt: str) -> bool:
+    normalized = " ".join((prompt or "").casefold().replace("ё", "е").split())
+    phrases = (
+        "забудь мою историю",
+        "забудь историю",
+        "очисти мою историю",
+        "очисти историю",
+        "удали мою историю",
+        "удали историю",
+        "забудь все обо мне",
+        "забудь всё обо мне",
+    )
+    return normalized in phrases
+
+
 async def _answer_ai(message: types.Message, prompt: str):
     role = _ai_role(message)
     text = (prompt or "").strip()
+    if _is_memory_clear_request(text):
+        removed = clear_history(message.from_user.id, message.chat.id)
+        from services.ai_service import _HISTORY
+        _HISTORY.pop((message.from_user.id, message.chat.id), None)
+        await message.reply(
+            "🧠 Память этого диалога очищена. "
+            f"Удалено записей: <b>{removed}</b>."
+        )
+        return
     if not text:
         await message.reply(_ai_intro(role))
         return
@@ -351,6 +376,18 @@ async def direct_ai_invocation(message: types.Message):
     )
     if invocation is not None:
         await _answer_ai(message, invocation)
+
+
+@dp.message_handler(commands=["forget"], commands_prefix="/!.")
+async def slash_forget_ai_memory(message: types.Message):
+    """Let a user erase only their own AI memory, without affecting anyone else."""
+    removed = clear_history(message.from_user.id, message.chat.id)
+    from services.ai_service import _HISTORY
+    _HISTORY.pop((message.from_user.id, message.chat.id), None)
+    await message.reply(
+        "🧠 Память этого диалога очищена. "
+        f"Удалено записей: <b>{removed}</b>."
+    )
 
 
 @dp.message_handler(commands=["cancel"], commands_prefix="/!.")
