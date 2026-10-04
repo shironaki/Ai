@@ -398,20 +398,12 @@ async def slash_cancel_pending_request(message: types.Message):
         await message.reply("ℹ️ Сейчас нет действия, которое можно отменить.")
 
 
-@dp.message_handler(
-    lambda m: bool(
-        m.text
-        and is_cancel_request(m.text)
-        and (
-            has_pending(m.from_user.id, m.chat.id)
-            or has_pending_moderation(m.from_user.id, m.chat.id)
-            or has_runtime_action(m.from_user.id, m.chat.id)
-        )
-    )
-)
+@dp.message_handler(lambda m: bool(m.text and is_cancel_request(m.text)))
 async def cancel_pending_request(message: types.Message):
     if cancel_current_action(message.from_user.id, message.chat.id):
         await message.reply("↩️ Ладно. Отставить. Текущее действие отменено. Ничего не выполняю.")
+    else:
+        await message.reply("ℹ️ Сейчас нет действия, которое можно отменить.")
 
 
 @dp.message_handler(
