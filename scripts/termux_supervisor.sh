@@ -13,6 +13,8 @@ BATTERY_HASHFILE="$REPO/termux-battery-watchdog.sha256"
 UPDATE_PIDFILE="$REPO/termux-update.pid"
 CONTROL_PIDFILE="$REPO/termux-control.pid"
 CONTROL_HEARTBEAT="$REPO/data/test/runtime/control-heartbeat"
+QA_PIDFILE="$REPO/qa-agent.pid"
+QA_ENV_FILE="${QA_ENV_FILE:-$HOME/.config/ai/qa_agent.env}"
 
 cd "$REPO" || exit 1
 
@@ -138,6 +140,42 @@ reap_control() {
     rm -f "$CONTROL_PIDFILE"
 }
 
+
+qa_process_matches() {
+    pid="$1"
+    case "$pid" in ''|*[!0-9]*) return 1;; esac
+    [ "$pid" -gt 1 ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [ -r "/proc/$pid/cmdline" ]; then
+        grep -aq 'scripts/qa_agent.py' "/proc/$pid/cmdline" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+start_qa_agent() {
+    [ -f "$QA_ENV_FILE" ] || return 0
+    [ -f "$REPO/scripts/qa_agent.py" ] || return 0
+    if [ -f "$QA_PIDFILE" ]; then
+        pid="$(cat "$QA_PIDFILE" 2>/dev/null || true)"
+        qa_process_matches "$pid" && return 0
+        rm -f "$QA_PIDFILE"
+    fi
+    set -a
+    . "$QA_ENV_FILE"
+    set +a
+    QA_RUNNER="\${QA_PYTHON:-$HOME/Ai/qa_client/.venv/bin/python}"
+    [ -x "$QA_RUNNER" ] || return 0
+    nohup "$QA_RUNNER" "$REPO/scripts/qa_agent.py" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
+    echo $! > "$QA_PIDFILE"
+}
+
+reap_qa_agent() {
+    pid="$(cat "$QA_PIDFILE" 2>/dev/null || true)"
+    [ -n "$pid" ] || return 0
+    kill -0 "$pid" 2>/dev/null && return 0
+    rm -f "$QA_PIDFILE"
+}
+
 start_update() {
     existing_pid="$(cat "$UPDATE_PIDFILE" 2>/dev/null || true)"
     if update_process_matches "$existing_pid"; then
@@ -160,7 +198,9 @@ while true; do
     ensure_battery_watchdog
     reap_control
     reap_update
+    reap_qa_agent
     start_control
+    start_qa_agent
     start_update
 
     REPORT_ELAPSED=$((REPORT_ELAPSED + INTERVAL))
