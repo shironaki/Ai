@@ -31,6 +31,7 @@ LEASE_RENEW_BEFORE = max(30, int(os.getenv("TERMUX_LEASE_RENEW_BEFORE", "60")))
 FORCE_FENCE_WAIT = max(15, int(os.getenv("TERMUX_FORCE_FENCE_WAIT", "20")))
 AUTO_FAILOVER = os.getenv("TERMUX_AUTO_FAILOVER", "1").strip().casefold() in {"1", "true", "yes", "on"}
 LOG = ROOT / "termux-autoupdate.log"
+CONTROL_HEARTBEAT = ROOT / "data" / "test" / "runtime" / "control-heartbeat"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
 
@@ -69,8 +70,16 @@ def request(method: str, path: str, value=None):
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=12) as response:
-        return json.loads(response.read().decode("utf-8"))
+    last_error = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=12) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(1 + attempt)
+    raise last_error
 
 
 def lease_git(*args: str, input_text: str | None = None, check: bool = True) -> str:
@@ -215,6 +224,11 @@ def force_takeover() -> str:
         return f"force takeover failed; lease released; {health}"
     except Exception as exc:
         return f"force denied: {type(exc).__name__}: {exc}"
+
+
+def touch_control_heartbeat() -> None:
+    CONTROL_HEARTBEAT.parent.mkdir(parents=True, exist_ok=True)
+    CONTROL_HEARTBEAT.write_text(f"{time.time():.3f}\\n", encoding="utf-8")
 
 
 def load_state() -> int | None:
@@ -438,6 +452,7 @@ def execute(command: str) -> str:
 
 
 def main() -> int:
+    touch_control_heartbeat()
     role = ROLEFILE.read_text(encoding="utf-8").strip().casefold() if ROLEFILE.exists() else "active"
 
     if role == "active":
@@ -477,6 +492,7 @@ def main() -> int:
                 fh.write(f"CONTROL: auto-failover start failed; lease released ({health})\\n")
 
     comments = request("GET", f"/issues/{ISSUE}/comments?per_page=100")
+    touch_control_heartbeat()
     commands = [
         item for item in comments
         if MARKER in item.get("body", "")
@@ -505,6 +521,7 @@ def main() -> int:
             message = execute(command)
             result(command, message.replace("\n", " "))
         save_state(comment_id)
+        touch_control_heartbeat()
         last = comment_id
 
     return 0
