@@ -11,7 +11,7 @@ export BOT_DATA_DIR="${BOT_DATA_DIR:-data/${BOT_ENV}}"
 LOG="$REPO/codespace-boot.log"
 PIDFILE="$REPO/bot.pid"
 UPDATER_PIDFILE="$REPO/updater.pid"
-HEALTHCHECK="$REPO/.venv/bin/python $REPO/scripts/healthcheck.py"
+HEALTHCHECK="PYTHONPATH=$REPO${PYTHONPATH:+:$PYTHONPATH} $REPO/.venv/bin/python $REPO/scripts/healthcheck.py"
 
 log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG"
