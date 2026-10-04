@@ -74,7 +74,7 @@ async def rules_cmd(message: types.Message):
         await message.answer("Эта заклинание работает только в мире!")
   
 # Legacy barrier commands removed: the unified «тишина» action is panel-only.\n\n#кляп
-@dp.message_handler(commands=['мут', 'mute','дебафф'], commands_prefix='!?./', is_chat_admin=True)
+@dp.message_handler(commands=['мут', 'mute','дебафф'], commands_prefix='!?./')
 async def mute(message):
     """Compatibility wrapper; execution is centralized in moderation_gateway."""
     await request_moderation(message, message.text.strip())
