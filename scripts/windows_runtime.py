@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -38,10 +37,8 @@ def log(message: str) -> None:
 
 
 def git(*args: str, input_text: str | None = None, check: bool = True) -> str:
-    p = subprocess.run(
-        ["git", *args], cwd=ROOT, input=input_text, text=True,
-        capture_output=True, timeout=30, check=False,
-    )
+    p = subprocess.run(["git", *args], cwd=ROOT, input=input_text, text=True,
+                       capture_output=True, timeout=30, check=False)
     if check and p.returncode:
         raise RuntimeError((p.stderr or p.stdout or "git failed").strip()[-500:])
     return (p.stdout or "").strip()
@@ -57,27 +54,22 @@ def read_lease() -> tuple[dict, str]:
 def write_lease(lease: dict, parent: str) -> bool:
     content = json.dumps(lease, separators=(",", ":")) + "\n"
     blob = git("hash-object", "-w", "--stdin", input_text=content)
-    tree = git("mktree", input_text=f"100644 blob {blob}\\t{LEASE_PATH}\n")
+    tree = git("mktree", input_text=f"100644 blob {blob}\t{LEASE_PATH}\n")
     env = os.environ.copy()
-    env.update({
-        "GIT_AUTHOR_NAME": "Windows Runtime",
-        "GIT_AUTHOR_EMAIL": "windows-runtime@localhost",
-        "GIT_COMMITTER_NAME": "Windows Runtime",
-        "GIT_COMMITTER_EMAIL": "windows-runtime@localhost",
-    })
-    p = subprocess.run(
-        ["git", "commit-tree", tree, "-p", parent, "-m",
-         f"chore: update Windows lease for {DEVICE_ID}"],
-        cwd=ROOT, text=True, capture_output=True, timeout=30, env=env, check=False,
-    )
+    env.update({"GIT_AUTHOR_NAME": "Windows Runtime",
+                "GIT_AUTHOR_EMAIL": "windows-runtime@localhost",
+                "GIT_COMMITTER_NAME": "Windows Runtime",
+                "GIT_COMMITTER_EMAIL": "windows-runtime@localhost"})
+    p = subprocess.run(["git", "commit-tree", tree, "-p", parent, "-m",
+                        f"chore: update Windows lease for {DEVICE_ID}"],
+                       cwd=ROOT, text=True, capture_output=True, timeout=30,
+                       env=env, check=False)
     if p.returncode:
         raise RuntimeError((p.stderr or p.stdout or "commit-tree failed").strip()[-500:])
     commit = p.stdout.strip()
-    p = subprocess.run(
-        ["git", "push", "--porcelain", "origin",
-         f"{commit}:refs/heads/{LEASE_BRANCH}"],
-        cwd=ROOT, text=True, capture_output=True, timeout=30, check=False,
-    )
+    p = subprocess.run(["git", "push", "--porcelain", "origin",
+                        f"{commit}:refs/heads/{LEASE_BRANCH}"],
+                       cwd=ROOT, text=True, capture_output=True, timeout=30, check=False)
     if p.returncode == 0:
         return True
     detail = (p.stderr or p.stdout or "").lower()
@@ -86,20 +78,14 @@ def write_lease(lease: dict, parent: str) -> bool:
     raise RuntimeError(detail[-500:])
 
 
-def lease_state() -> tuple[str, int]:
-    lease, _ = read_lease()
-    return str(lease.get("owner", "")).strip().casefold(), int(lease.get("expires_at", 0) or 0)
-
-
 def acquire_or_renew() -> tuple[bool, str]:
     lease, parent = read_lease()
     now = int(time.time())
     owner = str(lease.get("owner", "")).strip().casefold()
     expires = int(lease.get("expires_at", 0) or 0)
-    if owner == DEVICE_ID and expires > now:
-        if expires - now > RENEW_BEFORE:
-            return True, f"lease owner={DEVICE_ID} ttl={expires-now}s"
-    elif owner and expires > now:
+    if owner == DEVICE_ID and expires > now and expires - now > RENEW_BEFORE:
+        return True, f"lease owner={DEVICE_ID} ttl={expires-now}s"
+    if owner and expires > now and owner != DEVICE_ID:
         return False, f"lease held by {owner} for {expires-now}s"
     new = {"owner": DEVICE_ID, "expires_at": now + TTL, "updated_at": now}
     if write_lease(new, parent):
@@ -120,11 +106,9 @@ def release() -> None:
 def pid() -> int | None:
     try:
         value = int(PID_FILE.read_text(encoding="utf-8").strip())
-        if value > 0:
-            return value
+        return value if value > 0 else None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def running() -> bool:
@@ -132,9 +116,9 @@ def running() -> bool:
     if not p:
         return False
     try:
-        import psutil
-        proc = psutil.Process(p)
-        return proc.is_running() and str(ROOT / "run.py").casefold() in " ".join(proc.cmdline()).casefold()
+        result = subprocess.run(["tasklist", "/FI", f"PID eq {p}", "/FO", "CSV", "/NH"],
+                                capture_output=True, text=True, timeout=5, check=False)
+        return str(p) in result.stdout
     except Exception:
         return False
 
@@ -142,21 +126,17 @@ def running() -> bool:
 def stop_bot() -> None:
     p = pid()
     if p:
-        try:
-            subprocess.run(["taskkill", "/PID", str(p), "/T", "/F"],
-                           capture_output=True, timeout=10, check=False)
-        except Exception:
-            pass
+        subprocess.run(["taskkill", "/PID", str(p), "/T", "/F"],
+                       capture_output=True, timeout=10, check=False)
     PID_FILE.unlink(missing_ok=True)
 
 
 def health() -> bool:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    p = subprocess.run(
-        [str(PYTHON), str(ROOT / "scripts" / "healthcheck.py")],
-        cwd=ROOT, env=env, text=True, capture_output=True, timeout=20, check=False,
-    )
+    p = subprocess.run([str(PYTHON), str(ROOT / "scripts" / "healthcheck.py")],
+                       cwd=ROOT, env=env, text=True, capture_output=True,
+                       timeout=20, check=False)
     if p.returncode == 0:
         log((p.stdout or "HEALTH OK").strip()[-500:])
         return True
@@ -171,13 +151,11 @@ def start_bot() -> bool:
         return False
     if running():
         return True
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     log_handle = LOG_FILE.open("a", encoding="utf-8")
-    p = subprocess.Popen(
-        [str(PYTHON), str(BOT)], cwd=ROOT, env=os.environ.copy(),
-        stdin=subprocess.DEVNULL, stdout=log_handle, stderr=subprocess.STDOUT,
-        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-    )
+    p = subprocess.Popen([str(PYTHON), str(BOT)], cwd=ROOT, env=os.environ.copy(),
+                         stdin=subprocess.DEVNULL, stdout=log_handle,
+                         stderr=subprocess.STDOUT,
+                         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
     PID_FILE.write_text(str(p.pid), encoding="utf-8")
     time.sleep(8)
     return health()
@@ -196,29 +174,24 @@ def main() -> int:
     if ROLE not in {"active", "standby"}:
         log("Invalid role; refusing to run")
         return 2
-
     try:
         while True:
             if ROLE == "standby":
                 if running():
                     stop_bot()
-                # Standby never steals the lease. It is ready for an explicit
-                # role switch or a future failover policy.
                 time.sleep(INTERVAL)
                 continue
-
             ok, msg = acquire_or_renew()
             if not ok:
                 log(f"FENCE: {msg}")
                 stop_bot()
                 time.sleep(INTERVAL)
                 continue
-            if not running():
-                if not start_bot():
-                    release()
-                    stop_bot()
-                    time.sleep(INTERVAL)
-                    continue
+            if not running() and not start_bot():
+                release()
+                stop_bot()
+                time.sleep(INTERVAL)
+                continue
             time.sleep(INTERVAL)
     except KeyboardInterrupt:
         log("STOP: keyboard interrupt")
