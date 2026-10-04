@@ -30,6 +30,7 @@ COMMAND_REGISTRY = (
     CommandSpec("health", frozenset({"health", "проверка"}), "system", "Пользователь", "chat", description="быстрая проверка работоспособности бота"),
     CommandSpec("panel", frozenset({"panel"}), "system", "Модератор", description="административная панель"),
     CommandSpec("ai", frozenset({"ai", "аи"}), "system", "Пользователь", description="обращение к Аи"),
+    CommandSpec("forget", frozenset({"forget", "забудь"}), "system", "Пользователь", description="очистить память диалога с Аи"),
     CommandSpec("start", frozenset({"start"}), "system", "Пользователь", "private", description="первичный запуск в личном чате"),
     CommandSpec("ai_diagnostic", frozenset({"aidiag"}), "system", "Создатель бота"),
     CommandSpec("status", frozenset({"status"}), "system", "Создатель бота", "global", description="текущий runtime-статус"),
