@@ -64,6 +64,29 @@ trap cleanup EXIT
 
 git fetch origin "$BRANCH" >> "$LOG" 2>&1
 
+# Bootstrap stale phones that accumulated only local edits to Termux-owned
+# runtime scripts. Preserve the local patch for diagnostics, then replace
+# those files with the tested branch revision. Never touch arbitrary tracked
+# application files, and never touch untracked QA data.
+TERMUX_OWNED_FILES=(
+    "autoupdate.sh"
+    "codespace_boot.sh"
+    "scripts/termux_control.py"
+    "scripts/termux_report.py"
+    "scripts/termux_update.sh"
+    "scripts/termux_supervisor.sh"
+    "scripts/termux_boot.sh"
+    "scripts/termux_lease_watchdog.py"
+)
+is_termux_owned_file() {
+    local candidate="$1"
+    local allowed
+    for allowed in "${TERMUX_OWNED_FILES[@]}"; do
+        [[ "$candidate" == "$allowed" ]] && return 0
+    done
+    return 1
+}
+
 # Recover tracked runtime fixes already matching the remote TEST branch.
 # Untracked QA data is intentionally preserved.
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -83,8 +106,23 @@ if [[ -n "$(git status --porcelain)" ]]; then
         fi
         path="${line:3}"
         if ! git diff --quiet "origin/$BRANCH" -- "$path"; then
-            log "STOP: tracked local change differs from origin/$BRANCH: $path"
-            exit 1
+            if is_termux_owned_file "$path"; then
+                backup_dir="$DATA_DIR/termux-local-patches"
+                mkdir -p "$backup_dir"
+                backup_file="$backup_dir/$(date +%Y%m%d-%H%M%S)-$(printf "%s" "$path" | tr "/" "_").patch"
+                if git diff --binary -- "$path" > "$backup_file"; then
+                    log "BOOTSTRAP: backed up stale local Termux patch: $path -> $backup_file"
+                else
+                    rm -f "$backup_file"
+                    log "STOP: failed to back up local Termux patch: $path"
+                    exit 1
+                fi
+                log "BOOTSTRAP: replacing stale local Termux script from origin/$BRANCH: $path"
+                git checkout -- "$path"
+            else
+                log "STOP: tracked local change differs from origin/$BRANCH: $path"
+                exit 1
+            fi
         fi
     done < <(git status --porcelain)
 
