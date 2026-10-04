@@ -413,6 +413,11 @@ class RuntimeRegressionTests(unittest.TestCase):
         for path in scripts:
             if path.suffix == ".py":
                 subprocess.run([str(sys.executable), "-m", "py_compile", str(path)], check=True)
+            elif os.name == "nt":
+                # Native Windows may expose a placeholder bash.exe that only
+                # forwards to WSL installation guidance. Use the installed WSL
+                # runtime explicitly for Linux shell syntax checks.
+                subprocess.run(["wsl.exe", "bash", "-n", str(path).replace("\\", "/")], check=True)
             else:
                 subprocess.run(["bash", "-n", str(path)], check=True)
 
@@ -439,7 +444,10 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn("existing process is unhealthy; stopping stale process before recovery", boot)
 
     def test_start_script_passes_shell_syntax(self):
-        subprocess.run(["bash", "-n", str(ROOT / "start.sh")], check=True)
+        if os.name == "nt":
+            subprocess.run(["wsl.exe", "bash", "-n", str(ROOT / "start.sh").replace("\\", "/")], check=True)
+        else:
+            subprocess.run(["bash", "-n", str(ROOT / "start.sh")], check=True)
 
     def test_termux_supervisor_records_real_pid(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
