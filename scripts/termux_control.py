@@ -311,10 +311,17 @@ def restart_bot() -> str:
     PIDFILE.write_text(str(process.pid), encoding="utf-8")
     start_watchdog()
     time.sleep(8)
+    health_env = os.environ.copy()
+    health_env["PYTHONPATH"] = str(ROOT) + (
+        os.pathsep + health_env["PYTHONPATH"]
+        if health_env.get("PYTHONPATH")
+        else ""
+    )
     try:
         health = subprocess.check_output(
             [str(PYTHON), str(ROOT / "scripts/healthcheck.py")],
             cwd=ROOT,
+            env=health_env,
             text=True,
             stderr=subprocess.STDOUT,
             timeout=15,
