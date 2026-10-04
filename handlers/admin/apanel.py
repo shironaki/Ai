@@ -1,7 +1,7 @@
 from aiogram import types
 
 from main import config, users, chats, random, bot, InlineKeyboardMarkup, datetime, timedelta, re, dp, sqlite3
-from core.permissions import has_moderator_role
+from core.permissions import has_admin_role, has_moderator_role
 from services.moderation_gateway import request as request_moderation
 
 # Role assignment compatibility entry point.
@@ -9,6 +9,9 @@ from services.moderation_gateway import request as request_moderation
 
 @dp.message_handler(commands=['setstatus'])
 async def set_status(message: types.Message):
+    if not has_admin_role(message.from_user.id, message.chat.id):
+        await message.reply("⛔ Команда доступна только Администратору или Основателю.")
+        return
     if not message.reply_to_message:
         await message.reply("❗ | Ответьте на сообщение пользователя.")
         return
