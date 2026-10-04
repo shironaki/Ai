@@ -264,6 +264,31 @@ def command(raw: str) -> str:
                     "error": f"{type(exc).__name__}: {exc}",
                 })
         return "QA REPORT\n" + json.dumps(reports, ensure_ascii=False, indent=2)
+    if op == "DIALOGS":
+        code = r'''
+import asyncio, json, os
+from telethon import TelegramClient
+from telethon.tl.types import Channel, Chat
+async def main():
+    client = TelegramClient(os.path.expanduser(os.environ["QA_SESSION"]), int(os.environ["QA_API_ID"]), os.environ["QA_API_HASH"])
+    await client.start()
+    try:
+        rows = []
+        async for dialog in client.iter_dialogs(limit=100):
+            entity = dialog.entity
+            if isinstance(entity, (Channel, Chat)) and not getattr(entity, "broadcast", False):
+                rows.append({"id": entity.id, "title": getattr(entity, "title", None), "username": getattr(entity, "username", None), "megagroup": getattr(entity, "megagroup", False)})
+        print(json.dumps(rows, ensure_ascii=False))
+    finally:
+        await client.disconnect()
+asyncio.run(main())
+'''
+        env = os.environ.copy()
+        env.update(QA_API_ID=API_ID, QA_API_HASH=api_hash(), QA_SESSION=str(SESSION))
+        process = subprocess.run([str(QA_PYTHON), "-c", code], cwd=ROOT, env=env, text=True, capture_output=True, timeout=120)
+        if process.returncode:
+            raise RuntimeError((process.stderr or process.stdout)[-3000:])
+        return "QA DIALOGS\n" + process.stdout.strip()
     if op == "LOGS":
         return (
             "QA LOG SNAPSHOT\n"
