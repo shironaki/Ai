@@ -20,6 +20,8 @@ MAX_SCORE = 100
 MIN_SCORE = -100
 NEGATIVE_THRESHOLD = -50
 BLOCK_THRESHOLD = -75
+# Relationship level that unlocks invocation-free AI as a deliberate bonus.
+FREE_INVOCATION_THRESHOLD = 75
 
 
 def _split_names(raw: str | None, defaults: tuple[str, ...]) -> tuple[str, ...]:
@@ -184,7 +186,8 @@ def relationship_state(user_id: int, owner_id: int | None = None) -> str:
 
 
 def is_max_positive(user_id: int, owner_id: int | None = None) -> bool:
-    return get_score(user_id, owner_id) >= MAX_SCORE
+    """Compatibility name: unlock the invocation-free bonus at 75/100."""
+    return get_score(user_id, owner_id) >= FREE_INVOCATION_THRESHOLD
 
 
 def calls_blocked(user_id: int, owner_id: int | None = None) -> bool:
