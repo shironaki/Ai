@@ -8,7 +8,7 @@ import time
 import requests
 
 from services.security import redact
-from services.ai_character import CHARACTER_PROMPT
+from services.ai_memory import append_history, load_history
 
 log = logging.getLogger(__name__)
 
@@ -166,6 +166,8 @@ async def generate_reply(
     _LAST_REQUEST[request_key] = now
 
     history_key = request_key
+    if chat_id is not None and history_key not in _HISTORY:
+        _HISTORY[history_key] = load_history(user_id, chat_id)
     history = _HISTORY.setdefault(history_key, [])
     safe_prompt = redact(prompt, 4000)
     candidate_history = (history + [{"role": "user", "content": safe_prompt}])[
@@ -226,6 +228,10 @@ async def generate_reply(
     history[:] = candidate_history
     history.append({"role": "assistant", "content": redact(answer, 4000)})
     history[:] = history[-_MAX_HISTORY_MESSAGES:]
+    if chat_id is not None:
+        append_history(user_id, chat_id, candidate_history[-_MAX_HISTORY_MESSAGES:] + [
+            {"role": "assistant", "content": redact(answer, 4000)}
+        ])
     return answer
 
 
