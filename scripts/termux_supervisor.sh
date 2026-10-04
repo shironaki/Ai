@@ -32,8 +32,7 @@ supervisor_process_matches() {
     [ "$pid" -gt 1 ] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
     if [ -r "/proc/$pid/cmdline" ]; then
-        cmdline="$(tr '\\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
-        case "$cmdline" in *termux_supervisor.sh*) return 0;; esac
+        grep -aq 'termux_supervisor.sh' "/proc/$pid/cmdline" 2>/dev/null && return 0
     fi
     return 1
 }
@@ -61,8 +60,7 @@ battery_process_matches() {
     [ "$pid" -gt 1 ] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
     if [ -r "/proc/$pid/cmdline" ]; then
-        cmdline="$(tr '\\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
-        case "$cmdline" in *termux_battery_watchdog.py*) return 0;; esac
+        grep -aq 'termux_battery_watchdog.py' "/proc/$pid/cmdline" 2>/dev/null && return 0
     fi
     return 1
 }
@@ -102,8 +100,7 @@ update_process_matches() {
     [ "$pid" -gt 1 ] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
     if [ -r "/proc/$pid/cmdline" ]; then
-        cmdline="$(tr '\\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
-        case "$cmdline" in *termux_update.sh*) return 0;; esac
+        grep -aq 'termux_update.sh' "/proc/$pid/cmdline" 2>/dev/null && return 0
     fi
     return 1
 }
