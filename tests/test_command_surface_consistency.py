@@ -43,6 +43,9 @@ def test_registered_slash_aliases_have_authoritative_handlers():
     routed_without_command_decorator = {
         "ai", "help", "panel", "report", "cancel", "info",
         "moderation", "silence", "issue_list",
+        # These aliases are intentionally routed by regex/natural-language
+        # gateways or dedicated non-command handlers.
+        "awakening", "start", "welcome",
     }
 
     missing = []
@@ -69,9 +72,19 @@ def test_info_and_report_compatibility_aliases_are_explicitly_registered():
 
 
 def test_privileged_commands_never_enter_the_public_telegram_menu():
-    source = (ROOT / "main.py").read_text(encoding="utf-8")
-    start = source.index("BOT_COMMANDS = [")
-    end = source.index("]\n\n\nasync def on_startup", start) + 1
-    public_menu = source[start:end]
+    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+    public_commands = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "BOT_COMMANDS"
+            for target in node.targets
+        ):
+            if isinstance(node.value, (ast.List, ast.Tuple)):
+                for item in node.value.elts:
+                    if isinstance(item, ast.Call) and isinstance(item.func, ast.Attribute):
+                        if item.func.attr == "BotCommand" and item.args:
+                            if isinstance(item.args[0], ast.Constant) and isinstance(item.args[0].value, str):
+                                public_commands.add(item.args[0].value.casefold())
+            break
     for command in ("status", "diagnostics", "aidiag", "debug", "stasis", "awakening", "restart", "logs"):
-        assert f'BotCommand("{command}"' not in public_menu
+        assert command not in public_commands
