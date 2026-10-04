@@ -8,6 +8,8 @@ REPORT_INTERVAL="${TERMUX_REPORT_INTERVAL:-300}"
 BATTERY_MAX_CACHE_AGE="${TERMUX_BATTERY_CACHE_MAX_AGE:-120}"
 BATTERY_START_GRACE="${TERMUX_BATTERY_START_GRACE:-45}"
 REPORT_ELAPSED=0
+CONTROL_TIMEOUT="${TERMUX_CONTROL_TIMEOUT:-45}"
+UPDATE_TIMEOUT="${TERMUX_UPDATE_TIMEOUT:-100}"
 BATTERY_WATCHDOG="$REPO/scripts/termux_battery_watchdog.py"
 BATTERY_PIDFILE="$REPO/termux-battery-watchdog.pid"
 BATTERY_HASHFILE="$REPO/termux-battery-watchdog.sha256"
@@ -24,6 +26,7 @@ fi
 
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
 SUPERVISOR_LOCKDIR="$REPO/.termux-supervisor.lock"
+UPDATE_PIDFILE="$REPO/termux-update.pid"
 
 supervisor_process_matches() {
     local pid="$1"
@@ -130,15 +133,51 @@ ensure_battery_watchdog() {
     printf '%s\n' "$current_hash" > "$BATTERY_HASHFILE"
 }
 
+update_process_matches() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$pid" -gt 1 ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+        local cmdline
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        [[ "$cmdline" == *"termux_update.sh"* ]] && return 0
+    fi
+    return 1
+}
+
+start_update() {
+    local existing_pid
+    existing_pid="$(cat "$UPDATE_PIDFILE" 2>/dev/null || true)"
+    if update_process_matches "$existing_pid"; then
+        return 0
+    fi
+    rm -f "$UPDATE_PIDFILE"
+    nohup timeout --foreground "\${UPDATE_TIMEOUT}s" bash "$REPO/scripts/termux_update.sh" \
+        >> "$REPO/termux-autoupdate.log" 2>&1 < /dev/null &
+    echo $! > "$UPDATE_PIDFILE"
+}
+
+reap_update() {
+    local pid
+    pid="$(cat "$UPDATE_PIDFILE" 2>/dev/null || true)"
+    [[ -n "$pid" ]] || return 0
+    kill -0 "$pid" 2>/dev/null && return 0
+    rm -f "$UPDATE_PIDFILE"
+}
+
 while true; do
     printf '%s\n' "$(date +%s.%N)" > "$SUPERVISOR_HEARTBEAT"
     ensure_battery_watchdog
+    reap_update
 
-    "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
-
-    if ! bash "$REPO/scripts/termux_update.sh"; then
-        report
+    if command -v timeout >/dev/null 2>&1; then
+        timeout --foreground "\${CONTROL_TIMEOUT}s" "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
+    else
+        "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 &
     fi
+
+    start_update
 
     REPORT_ELAPSED=$((REPORT_ELAPSED + INTERVAL))
     if [ "$REPORT_ELAPSED" -ge "$REPORT_INTERVAL" ]; then
