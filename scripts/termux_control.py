@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -466,8 +467,18 @@ def execute(command: str) -> str:
     return "ignored: unsupported command"
 
 
+def heartbeat_loop() -> None:
+    while True:
+        time.sleep(10)
+        try:
+            touch_control_heartbeat()
+        except Exception:
+            pass
+
+
 def main() -> int:
     touch_control_heartbeat()
+    threading.Thread(target=heartbeat_loop, daemon=True).start()
     role = ROLEFILE.read_text(encoding="utf-8").strip().casefold() if ROLEFILE.exists() else "active"
 
     if role == "active":
@@ -476,16 +487,19 @@ def main() -> int:
         except Exception as exc:
             acquired, lease_message = False, f"lease unavailable ({type(exc).__name__})"
         if not acquired:
-            # Do not exit before reading the emergency command queue.
-            # A lost lease is exactly when FORCE/ROLE recovery commands may
-            # be needed to restore an active device. The old early return
-            # created a deadlock: the device could no longer process the
-            # command that was supposed to recover it.
-            stop_bot_for_role()
-            ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
-            ROLEFILE.write_text("standby\\n", encoding="utf-8")
-            with LOG.open("a", encoding="utf-8") as fh:
-                fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
+            # A transient GitHub/HTTPS failure is not proof that the lease was
+            # lost. Keep the active bot alive and let the independent lease
+            # watchdog fence it if the last confirmed lease expiry is reached.
+            transient = lease_message.startswith("lease unavailable (")
+            if transient:
+                with LOG.open("a", encoding="utf-8") as fh:
+                    fh.write(f"CONTROL: lease check unavailable; preserving active role ({lease_message})\\n")
+            else:
+                stop_bot_for_role()
+                ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
+                ROLEFILE.write_text("standby\\n", encoding="utf-8")
+                with LOG.open("a", encoding="utf-8") as fh:
+                    fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
         if bot_running() and not WATCHDOG_PIDFILE.exists():
             start_watchdog()
 
