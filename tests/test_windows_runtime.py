@@ -52,3 +52,10 @@ def test_windows_runtime_does_not_reacquire_inside_start_bot():
     start = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "start_bot")
     start_text = ast.unparse(start)
     assert "acquire_or_renew" not in start_text
+
+
+def test_windows_runtime_fetches_lease_into_explicit_remote_ref():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'refs/remotes/origin/{LEASE_BRANCH}' in text
+    assert 'refs/heads/{LEASE_BRANCH}:{remote_ref}' in text
+    assert 'rev-parse", remote_ref' in text
