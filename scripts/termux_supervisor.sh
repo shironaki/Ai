@@ -39,7 +39,7 @@ supervisor_process_matches() {
 }
 
 if ! mkdir "$SUPERVISOR_LOCKDIR" 2>/dev/null; then
-    existing_pid="$(cat "$SUPERVISOR_PID" 2>/dev/null || true)"
+    existing_pid="$(tr -cd '0-9' < "$SUPERVISOR_PID" 2>/dev/null || true)"
     if supervisor_process_matches "$existing_pid"; then
         exit 0
     fi
