@@ -318,6 +318,24 @@ class RuntimeGateMiddleware(BaseMiddleware):
 dp.middleware.setup(RuntimeGateMiddleware())
 
 
+async def _founder_command_guard(message: types.Message, text: str) -> bool:
+    """Send a deterministic founder-only denial through the bot API."""
+    if message.from_user.id == config.owner:
+        return True
+    try:
+        await bot.send_message(message.chat.id, text)
+        log.info("FOUNDER GUARD | denied command chat=%s user=%s", message.chat.id, message.from_user.id)
+    except Exception as exc:
+        log.exception(
+            "FOUNDER GUARD | send failed chat=%s user=%s error=%s",
+            message.chat.id,
+            message.from_user.id,
+            redact(str(exc), 500),
+        )
+        raise
+    return False
+
+
 class ChatRegistrationMiddleware(BaseMiddleware):
     """Ensure group chats exist in chats.db before command handlers run."""
 
@@ -362,8 +380,7 @@ dp.middleware.setup(ChatRegistrationMiddleware())
 # and are not included in the public Telegram command menu to avoid collisions.
 @dp.message_handler(commands=["stasis"])
 async def enter_stasis(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
 
     if bot_is_paused():
@@ -388,8 +405,7 @@ async def enter_stasis(message: types.Message):
 
 @dp.message_handler(commands=["awakening"])
 async def leave_stasis(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
 
     if not bot_is_paused():
@@ -452,8 +468,7 @@ async def health_check(message: types.Message):
 # It is intentionally registered before the imported catch-all handlers.
 @dp.message_handler(commands=['debug'])
 async def debug_dispatch(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Эта диагностическая команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Эта диагностическая команда доступна только Основателю."):
         return
     await message.answer("DEBUG: обработчик сообщений работает.")
 
@@ -698,8 +713,7 @@ def _runtime_status_snapshot() -> dict:
 
 @dp.message_handler(commands=["diagnostics"])
 async def runtime_diagnostics(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
 
     status = _runtime_status_snapshot()
@@ -761,8 +775,7 @@ async def runtime_status(message: types.Message):
 
 @dp.message_handler(commands=["restart"])
 async def remote_restart(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
 
     request_path = os.path.join(HEALTH_DIR, "restart.request")
@@ -786,8 +799,7 @@ async def remote_restart(message: types.Message):
 
 @dp.message_handler(commands=["battery", "charge"])
 async def battery_status(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
 
     try:
@@ -843,8 +855,7 @@ async def battery_status(message: types.Message):
 
 @dp.message_handler(commands=['logs'])
 async def send_logs(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
 
     try:
