@@ -29,6 +29,18 @@ fi
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
 SUPERVISOR_LOCKDIR="$REPO/.termux-supervisor.lock"
 SUPERVISOR_HEARTBEAT="$REPO/data/test/runtime/supervisor-heartbeat"
+SUPERVISOR_HASHFILE="$REPO/termux-supervisor.sha256"
+
+ensure_supervisor_revision() {
+    current_hash="$(sha256sum "$0" 2>/dev/null | awk '{print $1}')"
+    [ -n "$current_hash" ] || return 0
+    previous_hash="$(cat "$SUPERVISOR_HASHFILE" 2>/dev/null || true)"
+    if [ -n "$previous_hash" ] && [ "$previous_hash" != "$current_hash" ]; then
+        printf "%s\\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
+        exec "$0"
+    fi
+    printf "%s\\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
+}
 
 supervisor_process_matches() {
     pid="$1"
@@ -205,6 +217,7 @@ reap_update() {
 }
 
 while true; do
+    ensure_supervisor_revision
     printf '%s\\n' "$(date +%s.%N)" > "$SUPERVISOR_HEARTBEAT"
     ensure_battery_watchdog
     reap_control
