@@ -178,6 +178,16 @@ async def main():
             expected = step.get("expect", [])
             haystack = "\n".join(x["text"] for x in replies).casefold()
             missing = [x for x in expected if str(x).casefold() not in haystack]
+            error_markers = (
+                "ошибка обработчика",
+                "ошибка обработчика кнопки",
+                "диагностика записана",
+                "ai-модуль сейчас недоступен",
+                "ai-модуль недоступен",
+            )
+            detected_errors = [
+                marker for marker in error_markers if marker in haystack
+            ]
             out.append({
                 "sent": step["text"],
                 "sent_id": sent.id,
@@ -185,7 +195,8 @@ async def main():
                 "replies": replies[:12],
                 "expected": expected,
                 "missing_expected": missing,
-                "ok": bool(replies) and not missing,
+                "detected_errors": detected_errors,
+                "ok": bool(replies) and not missing and not detected_errors,
             })
     finally:
         await client.disconnect()
