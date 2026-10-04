@@ -383,7 +383,7 @@ dp.middleware.setup(ChatRegistrationMiddleware())
 
 # Founder-only global runtime controls. The commands are intentionally unusual
 # and are not included in the public Telegram command menu to avoid collisions.
-@dp.message_handler(commands=["stasis"])
+@dp.message_handler(commands=["stasis", "стазис"])
 async def enter_stasis(message: types.Message):
     if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
