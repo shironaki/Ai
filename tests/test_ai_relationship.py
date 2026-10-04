@@ -11,6 +11,15 @@ class AIRelationshipTests(unittest.TestCase):
         self.assertTrue(is_max_positive(owner, owner))
         self.assertTrue(can_call(owner, owner))
 
+    def test_invocation_free_bonus_unlocks_at_75_percent(self):
+        from services.ai_relationship import set_score, is_max_positive
+
+        user_id = 778898
+        set_score(user_id, 74, 1057867710, actor_id=1057867710)
+        self.assertFalse(is_max_positive(user_id))
+        set_score(user_id, 75, 1057867710, actor_id=1057867710)
+        self.assertTrue(is_max_positive(user_id))
+
     def test_negative_relationship_blocks_calls(self):
         from services.ai_relationship import set_score, relationship_state, can_call
 
