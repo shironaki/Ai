@@ -500,7 +500,19 @@ def main() -> int:
                 ROLEFILE.write_text("standby\\n", encoding="utf-8")
                 with LOG.open("a", encoding="utf-8") as fh:
                     fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
-        if bot_running() and not WATCHDOG_PIDFILE.exists():
+        if acquired:
+            if bot_running():
+                if not WATCHDOG_PIDFILE.exists():
+                    start_watchdog()
+            else:
+                health = restart_bot()
+                if health.startswith("HEALTH OK:"):
+                    with LOG.open("a", encoding="utf-8") as fh:
+                        fh.write(f"CONTROL: active role repaired missing bot ({health})\\n")
+                else:
+                    with LOG.open("a", encoding="utf-8") as fh:
+                        fh.write(f"CONTROL: active role repair failed ({health})\\n")
+        elif bot_running() and not WATCHDOG_PIDFILE.exists():
             start_watchdog()
 
     elif AUTO_FAILOVER:
