@@ -12,6 +12,8 @@ SUPERVISOR_LOG="$REPO/termux-supervisor.log"
 GUARDIAN_PID="$REPO/termux-guardian.pid"
 CONTROL_HEARTBEAT="$REPO/data/test/runtime/control-heartbeat"
 CONTROL_MAX_AGE="${TERMUX_CONTROL_HEARTBEAT_MAX_AGE:-120}"
+CONTROL_START_GRACE="${TERMUX_CONTROL_START_GRACE:-90}"
+SUPERVISOR_HEARTBEAT="$REPO/data/test/runtime/supervisor-heartbeat"
 
 supervisor_process_matches() {
     local pid="$1"
@@ -36,13 +38,19 @@ start_supervisor() {
 }
 
 control_heartbeat_stale() {
-    [[ -f "$CONTROL_HEARTBEAT" ]] || return 0
     local now mtime age
     now="$(date +%s)"
-    mtime="$(stat -c %Y "$CONTROL_HEARTBEAT" 2>/dev/null || echo 0)"
+    if [[ -f "$CONTROL_HEARTBEAT" ]]; then
+        mtime="$(stat -c %Y "$CONTROL_HEARTBEAT" 2>/dev/null || echo 0)"
+        [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -gt 0 ]] || return 0
+        age=$((now - mtime))
+        (( age > CONTROL_MAX_AGE ))
+        return
+    fi
+    mtime="$(stat -c %Y "$SUPERVISOR_HEARTBEAT" 2>/dev/null || echo 0)"
     [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -gt 0 ]] || return 0
     age=$((now - mtime))
-    (( age > CONTROL_MAX_AGE ))
+    (( age > CONTROL_START_GRACE ))
 }
 
 restart_stale_supervisor() {
