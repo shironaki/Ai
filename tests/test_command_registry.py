@@ -18,6 +18,11 @@ class CommandRegistryTests(unittest.TestCase):
                 self.assertTrue(spec.confirmation, spec.key)
 
 
+    def test_cancel_is_staff_surface_only(self):
+        from core.command_registry import command_catalog
+        self.assertNotIn("/cancel", command_catalog("Пользователь"))
+        self.assertIn("/cancel", command_catalog("Модератор"))
+
     def test_founder_catalog_is_grounded_in_registry(self):
         from core.command_registry import command_catalog
 
