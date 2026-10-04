@@ -54,6 +54,8 @@ class DispatchRegressionTests(unittest.TestCase):
     def test_ordinary_uninvoked_text_does_not_open_ai_gateway(self):
         source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         self.assertNotIn("async def user_natural_ai", source)
+        self.assertIn("async def max_relationship_natural_ai", source)
+        self.assertIn("is_max_positive(m.from_user.id, config.owner)", source)
         chat_source = (ROOT / "handlers" / "chat_groups.py").read_text(encoding="utf-8")
         self.assertIn("if user_id != config.owner and invocation is None and not max_positive:", chat_source)
         self.assertIn("await _answer_ai(message, prompt)", chat_source)
