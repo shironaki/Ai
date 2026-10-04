@@ -337,7 +337,7 @@ class DispatchRegressionTests(unittest.TestCase):
         source = (ROOT / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
         for function_name in ("mute", "unmute", "ban", "unban"):
             start = source.index("async def " + function_name + "(")
-            end = source.find("\n# ", start)
+            end = source.find("\n@dp.", start)
             block = source[start:] if end == -1 else source[start:end]
             self.assertNotIn("is_chat_admin=True", block)
             self.assertIn("request_moderation(message, message.text.strip())", block)
