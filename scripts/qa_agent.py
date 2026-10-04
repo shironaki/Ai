@@ -176,8 +176,11 @@ async def main():
                     break
                 await asyncio.sleep(1)
             expected = step.get("expect", [])
+            absent = step.get("absent", [])
+            allow_no_reply = bool(step.get("allow_no_reply", False))
             haystack = "\n".join(x["text"] for x in replies).casefold()
             missing = [x for x in expected if str(x).casefold() not in haystack]
+            unexpected = [x for x in absent if str(x).casefold() in haystack]
             error_markers = (
                 "ошибка обработчика",
                 "ошибка обработчика кнопки",
@@ -195,8 +198,9 @@ async def main():
                 "replies": replies[:12],
                 "expected": expected,
                 "missing_expected": missing,
+                "unexpected_present": unexpected,
                 "detected_errors": detected_errors,
-                "ok": bool(replies) and not missing and not detected_errors,
+                "ok": (bool(replies) or allow_no_reply) and not missing and not unexpected and not detected_errors,
             })
     finally:
         await client.disconnect()
