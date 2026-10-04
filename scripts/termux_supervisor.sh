@@ -12,6 +12,7 @@ BATTERY_PIDFILE="$REPO/termux-battery-watchdog.pid"
 BATTERY_HASHFILE="$REPO/termux-battery-watchdog.sha256"
 UPDATE_PIDFILE="$REPO/termux-update.pid"
 CONTROL_PIDFILE="$REPO/termux-control.pid"
+CONTROL_HEARTBEAT="$REPO/data/test/runtime/control-heartbeat"
 
 cd "$REPO" || exit 1
 
@@ -115,7 +116,7 @@ control_process_matches() {
 start_control() {
     existing_pid="$(cat "$CONTROL_PIDFILE" 2>/dev/null || true)"
     if control_process_matches "$existing_pid"; then
-        mtime="$(stat -c %Y "$CONTROL_PIDFILE" 2>/dev/null || echo 0)"
+        mtime="$(stat -c %Y "$CONTROL_HEARTBEAT" 2>/dev/null || stat -c %Y "$CONTROL_PIDFILE" 2>/dev/null || echo 0)"
         now="$(date +%s)"
         age=$((now - mtime))
         if [ "$age" -gt "$CONTROL_MAX_AGE" ]; then
