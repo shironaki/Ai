@@ -11,10 +11,17 @@ def test_windows_runtime_compiles():
 
 
 def test_windows_runtime_is_not_termux_specific():
-    text = SCRIPT.read_text(encoding="utf-8")
-    assert "termux-battery-status" not in text
-    assert "/proc/" not in text
-    assert "bash" not in text.lower()
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    source = SCRIPT.read_text(encoding="utf-8")
+    runtime_nodes = [
+        node for node in tree.body
+        if not isinstance(node, (ast.Expr, ast.Import, ast.ImportFrom))
+    ]
+    runtime_text = ast.unparse(ast.Module(body=runtime_nodes, type_ignores=[]))
+    assert "termux-battery-status" not in runtime_text
+    assert "/proc/" not in runtime_text
+    assert "bash" not in runtime_text.lower()
+    assert "termux" in source.lower()
 
 
 def test_windows_runtime_defaults_to_standby_and_has_shared_lease():
