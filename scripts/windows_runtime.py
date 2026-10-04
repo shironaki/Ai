@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Native Windows runtime for the TEST bot.
+
+Uses the same GitHub lease branch as the Termux runtime, but does not depend
+on bash, /proc, ps, or Termux APIs. Default role is standby; set
+WINDOWS_RUNTIME_ROLE=active to make this machine eligible to host the bot.
+"""
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(os.getenv("BOT_REPO_DIR", Path(__file__).resolve().parents[1])).resolve()
+PYTHON = Path(os.getenv("WINDOWS_PYTHON", str(ROOT / ".venv" / "Scripts" / "python.exe")))
+BOT = ROOT / "run.py"
+DATA = ROOT / "data" / "test" / "runtime"
+ROLE_FILE = DATA / "windows-role"
+PID_FILE = DATA / "windows-bot.pid"
+LOG_FILE = ROOT / "windows-runtime.log"
+LEASE_BRANCH = os.getenv("TERMUX_LEASE_BRANCH", "termux-lease").strip()
+LEASE_PATH = os.getenv("TERMUX_LEASE_PATH", "lease.json").strip()
+DEVICE_ID = os.getenv("WINDOWS_DEVICE_ID", "pc1").strip().casefold()
+ROLE = os.getenv("WINDOWS_RUNTIME_ROLE", "standby").strip().casefold()
+TTL = max(90, int(os.getenv("TERMUX_LEASE_TTL", "120")))
+RENEW_BEFORE = max(30, int(os.getenv("TERMUX_LEASE_RENEW_BEFORE", "60")))
+INTERVAL = max(5, int(os.getenv("WINDOWS_RUNTIME_INTERVAL", "10")))
+
+
+def log(message: str) -> None:
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+
+
+def git(*args: str, input_text: str | None = None, check: bool = True) -> str:
+    p = subprocess.run(
+        ["git", *args], cwd=ROOT, input=input_text, text=True,
+        capture_output=True, timeout=30, check=False,
+    )
+    if check and p.returncode:
+        raise RuntimeError((p.stderr or p.stdout or "git failed").strip()[-500:])
+    return (p.stdout or "").strip()
+
+
+def read_lease() -> tuple[dict, str]:
+    git("fetch", "origin", LEASE_BRANCH)
+    parent = git("rev-parse", f"origin/{LEASE_BRANCH}")
+    raw = git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
+    return json.loads(raw or "{}"), parent
+
+
+def write_lease(lease: dict, parent: str) -> bool:
+    content = json.dumps(lease, separators=(",", ":")) + "\n"
+    blob = git("hash-object", "-w", "--stdin", input_text=content)
+    tree = git("mktree", input_text=f"100644 blob {blob}\\t{LEASE_PATH}\n")
+    env = os.environ.copy()
+    env.update({
+        "GIT_AUTHOR_NAME": "Windows Runtime",
+        "GIT_AUTHOR_EMAIL": "windows-runtime@localhost",
+        "GIT_COMMITTER_NAME": "Windows Runtime",
+        "GIT_COMMITTER_EMAIL": "windows-runtime@localhost",
+    })
+    p = subprocess.run(
+        ["git", "commit-tree", tree, "-p", parent, "-m",
+         f"chore: update Windows lease for {DEVICE_ID}"],
+        cwd=ROOT, text=True, capture_output=True, timeout=30, env=env, check=False,
+    )
+    if p.returncode:
+        raise RuntimeError((p.stderr or p.stdout or "commit-tree failed").strip()[-500:])
+    commit = p.stdout.strip()
+    p = subprocess.run(
+        ["git", "push", "--porcelain", "origin",
+         f"{commit}:refs/heads/{LEASE_BRANCH}"],
+        cwd=ROOT, text=True, capture_output=True, timeout=30, check=False,
+    )
+    if p.returncode == 0:
+        return True
+    detail = (p.stderr or p.stdout or "").lower()
+    if "non-fast-forward" in detail or "[rejected]" in detail or "fetch first" in detail:
+        return False
+    raise RuntimeError(detail[-500:])
+
+
+def lease_state() -> tuple[str, int]:
+    lease, _ = read_lease()
+    return str(lease.get("owner", "")).strip().casefold(), int(lease.get("expires_at", 0) or 0)
+
+
+def acquire_or_renew() -> tuple[bool, str]:
+    lease, parent = read_lease()
+    now = int(time.time())
+    owner = str(lease.get("owner", "")).strip().casefold()
+    expires = int(lease.get("expires_at", 0) or 0)
+    if owner == DEVICE_ID and expires > now:
+        if expires - now > RENEW_BEFORE:
+            return True, f"lease owner={DEVICE_ID} ttl={expires-now}s"
+    elif owner and expires > now:
+        return False, f"lease held by {owner} for {expires-now}s"
+    new = {"owner": DEVICE_ID, "expires_at": now + TTL, "updated_at": now}
+    if write_lease(new, parent):
+        return True, f"lease acquired owner={DEVICE_ID} ttl={TTL}s"
+    return False, "lease update conflict"
+
+
+def release() -> None:
+    try:
+        lease, parent = read_lease()
+        if str(lease.get("owner", "")).strip().casefold() != DEVICE_ID:
+            return
+        write_lease({"owner": "", "expires_at": 0, "updated_at": int(time.time())}, parent)
+    except Exception as exc:
+        log(f"LEASE release failed: {type(exc).__name__}: {exc}")
+
+
+def pid() -> int | None:
+    try:
+        value = int(PID_FILE.read_text(encoding="utf-8").strip())
+        if value > 0:
+            return value
+    except Exception:
+        pass
+    return None
+
+
+def running() -> bool:
+    p = pid()
+    if not p:
+        return False
+    try:
+        import psutil
+        proc = psutil.Process(p)
+        return proc.is_running() and str(ROOT / "run.py").casefold() in " ".join(proc.cmdline()).casefold()
+    except Exception:
+        return False
+
+
+def stop_bot() -> None:
+    p = pid()
+    if p:
+        try:
+            subprocess.run(["taskkill", "/PID", str(p), "/T", "/F"],
+                           capture_output=True, timeout=10, check=False)
+        except Exception:
+            pass
+    PID_FILE.unlink(missing_ok=True)
+
+
+def health() -> bool:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    p = subprocess.run(
+        [str(PYTHON), str(ROOT / "scripts" / "healthcheck.py")],
+        cwd=ROOT, env=env, text=True, capture_output=True, timeout=20, check=False,
+    )
+    if p.returncode == 0:
+        log((p.stdout or "HEALTH OK").strip()[-500:])
+        return True
+    log(f"HEALTH FAIL: {(p.stdout or p.stderr).strip()[-500:]}")
+    return False
+
+
+def start_bot() -> bool:
+    ok, msg = acquire_or_renew()
+    if not ok:
+        log(f"START denied: {msg}")
+        return False
+    if running():
+        return True
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = LOG_FILE.open("a", encoding="utf-8")
+    p = subprocess.Popen(
+        [str(PYTHON), str(BOT)], cwd=ROOT, env=os.environ.copy(),
+        stdin=subprocess.DEVNULL, stdout=log_handle, stderr=subprocess.STDOUT,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
+    PID_FILE.write_text(str(p.pid), encoding="utf-8")
+    time.sleep(8)
+    return health()
+
+
+def main() -> int:
+    if os.name != "nt":
+        print("Windows runtime requires Windows", file=sys.stderr)
+        return 2
+    if not PYTHON.exists():
+        print(f"Missing Python runtime: {PYTHON}", file=sys.stderr)
+        return 2
+    DATA.mkdir(parents=True, exist_ok=True)
+    ROLE_FILE.write_text(ROLE + "\n", encoding="utf-8")
+    log(f"START device={DEVICE_ID} role={ROLE}")
+    if ROLE not in {"active", "standby"}:
+        log("Invalid role; refusing to run")
+        return 2
+
+    try:
+        while True:
+            if ROLE == "standby":
+                if running():
+                    stop_bot()
+                # Standby never steals the lease. It is ready for an explicit
+                # role switch or a future failover policy.
+                time.sleep(INTERVAL)
+                continue
+
+            ok, msg = acquire_or_renew()
+            if not ok:
+                log(f"FENCE: {msg}")
+                stop_bot()
+                time.sleep(INTERVAL)
+                continue
+            if not running():
+                if not start_bot():
+                    release()
+                    stop_bot()
+                    time.sleep(INTERVAL)
+                    continue
+            time.sleep(INTERVAL)
+    except KeyboardInterrupt:
+        log("STOP: keyboard interrupt")
+    finally:
+        if ROLE == "active":
+            stop_bot()
+            release()
+        log("STOP: Windows runtime exited")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
