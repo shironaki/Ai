@@ -57,5 +57,6 @@ def test_windows_runtime_does_not_reacquire_inside_start_bot():
 def test_windows_runtime_fetches_lease_into_explicit_remote_ref():
     text = SCRIPT.read_text(encoding="utf-8")
     assert 'refs/remotes/origin/{LEASE_BRANCH}' in text
-    assert 'refs/heads/{LEASE_BRANCH}:{remote_ref}' in text
+    assert 'branch_ref = f"refs/heads/{LEASE_BRANCH}"' in text
+    assert 'git("fetch", "origin", f"{branch_ref}:{remote_ref}")' in text
     assert 'rev-parse", remote_ref' in text
