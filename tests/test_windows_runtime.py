@@ -37,3 +37,18 @@ def test_windows_runtime_has_fencing_before_start():
     assert "if not ok:" in text
     assert "stop_bot()" in text
     assert "release()" in text
+
+
+def test_windows_runtime_tracks_confirmed_lease_expiry_on_git_failure():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "last_confirmed_expiry = 0" in text
+    assert "last_confirmed_expiry > now" in text
+    assert "LEASE CHECK ERROR: preserving active bot until confirmed expiry" in text
+    assert "LEASE CHECK FAILED: fencing bot" in text
+
+
+def test_windows_runtime_does_not_reacquire_inside_start_bot():
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    start = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "start_bot")
+    start_text = ast.unparse(start)
+    assert "acquire_or_renew" not in start_text
