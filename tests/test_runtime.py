@@ -3,6 +3,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -414,10 +415,17 @@ class RuntimeRegressionTests(unittest.TestCase):
             if path.suffix == ".py":
                 subprocess.run([str(sys.executable), "-m", "py_compile", str(path)], check=True)
             elif os.name == "nt":
-                # Native Windows may expose a placeholder bash.exe that only
-                # forwards to WSL installation guidance. Use the installed WSL
-                # runtime explicitly for Linux shell syntax checks.
-                subprocess.run(["wsl.exe", "bash", "-n", str(path).replace("\\", "/")], check=True)
+                # Prefer the real Git-for-Windows bash shipped with Git. The
+                # bash.exe on PATH may be only a WSL guidance shim.
+                git_exe = shutil.which("git")
+                bash_exe = None
+                if git_exe:
+                    candidate = Path(git_exe).resolve().parent.parent / "bin" / "bash.exe"
+                    if candidate.exists():
+                        bash_exe = str(candidate)
+                if not bash_exe:
+                    self.skipTest("Git Bash is not available on Windows")
+                subprocess.run([bash_exe, "-n", str(path)], check=True)
             else:
                 subprocess.run(["bash", "-n", str(path)], check=True)
 
@@ -445,7 +453,15 @@ class RuntimeRegressionTests(unittest.TestCase):
 
     def test_start_script_passes_shell_syntax(self):
         if os.name == "nt":
-            subprocess.run(["wsl.exe", "bash", "-n", str(ROOT / "start.sh").replace("\\", "/")], check=True)
+            git_exe = shutil.which("git")
+            bash_exe = None
+            if git_exe:
+                candidate = Path(git_exe).resolve().parent.parent / "bin" / "bash.exe"
+                if candidate.exists():
+                    bash_exe = str(candidate)
+            if not bash_exe:
+                self.skipTest("Git Bash is not available on Windows")
+            subprocess.run([bash_exe, "-n", str(ROOT / "start.sh")], check=True)
         else:
             subprocess.run(["bash", "-n", str(ROOT / "start.sh")], check=True)
 
