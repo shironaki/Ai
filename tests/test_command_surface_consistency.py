@@ -42,10 +42,12 @@ def test_registered_slash_aliases_have_authoritative_handlers():
     # commands=[...] decorator, or are panel/natural-language-only surfaces.
     routed_without_command_decorator = {
         "ai", "help", "panel", "report", "cancel", "info",
-        "moderation", "silence", "issue_list",
+        "moderation", "silence", "issue_list", "issues", "метки",
+        "moderation", "модерация", "silence", "тишина",
+        "report", "q", "r", "репорт", "cancel", "отмена",
         # These aliases are intentionally routed by regex/natural-language
         # gateways or dedicated non-command handlers.
-        "awakening", "start", "welcome",
+        "awakening", "start", "welcome", "пробуждение", "приветствие",
     }
 
     missing = []
