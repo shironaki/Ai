@@ -7,6 +7,12 @@ class AssistantActionTests(unittest.TestCase):
 
         self.assertEqual(detect_direct_action("Профиль мой мне покажи"), "profile")
 
+    def test_profile_natural_phrases_are_supported(self):
+        from services.assistant_actions import detect_direct_action
+
+        self.assertEqual(detect_direct_action("Мой профиль"), "profile")
+        self.assertEqual(detect_direct_action("Покажи мой профиль"), "profile")
+
     def test_profile_statistics_is_supported(self):
         from services.assistant_actions import detect_direct_action
 
