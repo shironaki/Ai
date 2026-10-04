@@ -446,12 +446,16 @@ def main() -> int:
         except Exception as exc:
             acquired, lease_message = False, f"lease unavailable ({type(exc).__name__})"
         if not acquired:
+            # Do not exit before reading the emergency command queue.
+            # A lost lease is exactly when FORCE/ROLE recovery commands may
+            # be needed to restore an active device. The old early return
+            # created a deadlock: the device could no longer process the
+            # command that was supposed to recover it.
             stop_bot_for_role()
             ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
-            ROLEFILE.write_text("standby\n", encoding="utf-8")
+            ROLEFILE.write_text("standby\\n", encoding="utf-8")
             with LOG.open("a", encoding="utf-8") as fh:
                 fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
-            return 1
         if bot_running() and not WATCHDOG_PIDFILE.exists():
             start_watchdog()
 
