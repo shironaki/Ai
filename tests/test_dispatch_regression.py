@@ -315,6 +315,16 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('from services.broadcast_service import broadcast_message', help_source)
 
 
+    def test_founder_only_command_guards_use_direct_bot_messages(self):
+        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("async def _founder_command_guard(message: types.Message, text: str) -> bool:", source)
+        self.assertIn("await bot.send_message(message.chat.id, text)", source)
+        for command in ("stasis", "awakening", "debug_dispatch", "runtime_diagnostics", "runtime_status", "remote_restart", "battery_status", "send_logs"):
+            start = source.index("async def " + command + "(")
+            end = source.find("\n@dp.", start)
+            block = source[start:] if end == -1 else source[start:end]
+            self.assertIn("await _founder_command_guard(", block, command)
+
 
 if __name__ == "__main__":
     unittest.main()
