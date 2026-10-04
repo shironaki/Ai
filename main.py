@@ -931,6 +931,7 @@ async def on_startup(dispatcher):
 # chat_groups contains the final catch-all echo handler, so it must be imported last.
 import handlers.admin  # noqa: E402,F401
 import handlers.help  # noqa: E402,F401
+import handlers.runtime_diagnostics  # noqa: E402,F401
 import handlers.chat_groups  # noqa: E402,F401
 
 
