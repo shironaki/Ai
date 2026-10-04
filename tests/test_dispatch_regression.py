@@ -392,7 +392,7 @@ def test_telegram_exfiltration_surfaces_redact_sensitive_runtime_output():
     help_source = Path("handlers/help/help.py").read_text(encoding="utf-8")
     assert "class RedactingFormatter" in security
     assert "RedactingFormatter(" in main
-    assert 'content = redact(log_file.read(), 12000)' in help_source
+    assert 'content = redact(log_file.read(), 12000)' in main
     assert 'redact(str(exception), 1200)' in main
     assert 'redact(str(exc), 500)' in main
     assert 'redact((result.stdout + "\\n" + result.stderr).strip(), 5000)' in help_source
