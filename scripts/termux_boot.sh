@@ -10,6 +10,8 @@ SUPERVISOR="$REPO/scripts/termux_supervisor.sh"
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
 SUPERVISOR_LOG="$REPO/termux-supervisor.log"
 GUARDIAN_PID="$REPO/termux-guardian.pid"
+CONTROL_HEARTBEAT="$REPO/data/test/runtime/control-heartbeat"
+CONTROL_MAX_AGE="${TERMUX_CONTROL_HEARTBEAT_MAX_AGE:-120}"
 
 supervisor_process_matches() {
     local pid="$1"
@@ -33,6 +35,30 @@ start_supervisor() {
     echo $! > "$SUPERVISOR_PID"
 }
 
+control_heartbeat_stale() {
+    [[ -f "$CONTROL_HEARTBEAT" ]] || return 0
+    local now mtime age
+    now="$(date +%s)"
+    mtime="$(stat -c %Y "$CONTROL_HEARTBEAT" 2>/dev/null || echo 0)"
+    [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -gt 0 ]] || return 0
+    age=$((now - mtime))
+    (( age > CONTROL_MAX_AGE ))
+}
+
+restart_stale_supervisor() {
+    local pid
+    pid="$(cat "$SUPERVISOR_PID" 2>/dev/null || true)"
+    if supervisor_process_matches "$pid" && control_heartbeat_stale; then
+        printf '%s CONTROL_GUARD: supervisor control heartbeat stale; restarting supervisor\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$SUPERVISOR_LOG"
+        kill "$pid" 2>/dev/null || true
+        sleep 2
+        if supervisor_process_matches "$pid"; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+        rm -f "$SUPERVISOR_PID"
+    fi
+}
+
 start_supervisor
 
 # Keep a tiny independent guardian alive after Termux:Boot returns. If Android
@@ -50,6 +76,7 @@ fi
     echo $BASHPID > "$GUARDIAN_PID"
     trap 'rm -f "$GUARDIAN_PID"' EXIT
     while true; do
+        restart_stale_supervisor
         if ! supervisor_process_matches "$(cat "$SUPERVISOR_PID" 2>/dev/null || true)"; then
             start_supervisor
         fi
