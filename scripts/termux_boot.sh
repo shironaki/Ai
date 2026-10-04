@@ -19,9 +19,7 @@ supervisor_process_matches() {
     [[ "$pid" -gt 1 ]] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
     if [[ -r "/proc/$pid/cmdline" ]]; then
-        local cmdline
-        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
-        [[ "$cmdline" == *"termux_supervisor.sh"* ]] && return 0
+        grep -aq "termux_supervisor.sh" "/proc/$pid/cmdline" 2>/dev/null && return 0
     fi
     return 1
 }
