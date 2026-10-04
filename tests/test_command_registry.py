@@ -52,6 +52,44 @@ class CommandRegistryTests(unittest.TestCase):
         for command in ("пополнить счет", "снять со счета", "setstavka", "setdick"):
             self.assertIsNone(resolve_command(command))
 
+    def test_role_matrix_has_expected_boundaries(self):
+        from core.command_registry import command_catalog
+
+        user = command_catalog("Пользователь")
+        moderator = command_catalog("Модератор")
+        admin = command_catalog("Администратор")
+        founder = command_catalog("Создатель бота")
+
+        for value in ("/panel", "/cancel", "/mute", "/ban", "/setstatus", "/status", "/diagnostics"):
+            self.assertNotIn(value, user, value)
+
+        for value in ("/panel", "/cancel", "/mute", "/ban"):
+            self.assertIn(value, moderator, value)
+        self.assertNotIn("/setstatus", moderator)
+        self.assertNotIn("/status", moderator)
+
+        self.assertIn("/panel", admin)
+        self.assertIn("/setstatus", admin)
+        self.assertNotIn("/status", admin)
+        self.assertIn("/status", founder)
+        self.assertIn("/diagnostics", founder)
+        self.assertIn("/setstatus", founder)
+
+    def test_scope_matrix_rejects_privileged_commands_in_wrong_scope(self):
+        from core.command_models import CommandIntent
+        from core.command_policy import evaluate
+
+        denied = evaluate(CommandIntent("status", scope="chat"), "Создатель бота")
+        self.assertFalse(denied.allowed)
+        self.assertIn("глобально", denied.reason)
+
+        denied = evaluate(CommandIntent("start", scope="chat"), "Пользователь")
+        self.assertFalse(denied.allowed)
+        self.assertIn("личном чате", denied.reason)
+
+        allowed = evaluate(CommandIntent("setstatus", scope="chat"), "Администратор")
+        self.assertTrue(allowed.allowed)
+
 
 if __name__ == "__main__":
     unittest.main()
