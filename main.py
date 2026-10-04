@@ -363,6 +363,7 @@ dp.middleware.setup(ChatRegistrationMiddleware())
 @dp.message_handler(commands=["stasis"])
 async def enter_stasis(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Команда доступна только Основателю.")
         return
 
     if bot_is_paused():
@@ -388,6 +389,7 @@ async def enter_stasis(message: types.Message):
 @dp.message_handler(commands=["awakening"])
 async def leave_stasis(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Команда доступна только Основателю.")
         return
 
     if not bot_is_paused():
@@ -451,6 +453,7 @@ async def health_check(message: types.Message):
 @dp.message_handler(commands=['debug'])
 async def debug_dispatch(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Эта диагностическая команда доступна только Основателю.")
         return
     await message.answer("DEBUG: обработчик сообщений работает.")
 
@@ -696,6 +699,7 @@ def _runtime_status_snapshot() -> dict:
 @dp.message_handler(commands=["diagnostics"])
 async def runtime_diagnostics(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Команда доступна только Основателю.")
         return
 
     status = _runtime_status_snapshot()
@@ -729,6 +733,7 @@ async def runtime_diagnostics(message: types.Message):
 @dp.message_handler(commands=["status"])
 async def runtime_status(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Команда доступна только Основателю.")
         return
 
     status = _runtime_status_snapshot()
@@ -757,6 +762,7 @@ async def runtime_status(message: types.Message):
 @dp.message_handler(commands=["restart"])
 async def remote_restart(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Команда доступна только Основателю.")
         return
 
     request_path = os.path.join(HEALTH_DIR, "restart.request")
@@ -781,6 +787,7 @@ async def remote_restart(message: types.Message):
 @dp.message_handler(commands=["battery", "charge"])
 async def battery_status(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Команда доступна только Основателю.")
         return
 
     try:
@@ -837,6 +844,7 @@ async def battery_status(message: types.Message):
 @dp.message_handler(commands=['logs'])
 async def send_logs(message: types.Message):
     if message.from_user.id != config.owner:
+        await message.answer("⛔ Команда доступна только Основателю.")
         return
 
     try:
