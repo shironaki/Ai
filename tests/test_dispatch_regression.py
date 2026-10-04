@@ -318,7 +318,7 @@ class DispatchRegressionTests(unittest.TestCase):
     def test_founder_only_command_guards_use_direct_bot_messages(self):
         source = (ROOT / "main.py").read_text(encoding="utf-8")
         self.assertIn("async def _founder_command_guard(message: types.Message, text: str) -> bool:", source)
-        self.assertIn("await bot.send_message(message.chat.id, text)", source)
+        self.assertIn("await message.reply(text, allow_sending_without_reply=True)", source)
         for command in ("enter_stasis", "leave_stasis", "debug_dispatch", "runtime_diagnostics", "runtime_status", "remote_restart", "battery_status", "send_logs"):
             start = source.index("async def " + command + "(")
             end = source.find("\n@dp.", start)
