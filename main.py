@@ -864,7 +864,7 @@ async def send_logs(message: types.Message):
 
     try:
         with open(LOG_FILE, "r", encoding="utf-8", errors="replace") as log_file:
-            content = log_file.read()
+            content = redact(log_file.read(), 12000)
 
         if not content:
             await message.answer("bot.log пока пуст.")
