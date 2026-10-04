@@ -1,89 +1,280 @@
 #!/usr/bin/env python3
-import json, os, subprocess, time, urllib.request
+"""Autonomous Telethon QA agent controlled through GitHub Issue #27.
+
+The agent is intentionally isolated from the bot process and only uses the
+pre-provisioned QA session on the second Android device. It executes named
+scenarios, captures every bot reply after each send, and includes a bounded
+tail of bot/runtime logs in the report.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import time
+import urllib.request
 from pathlib import Path
-REPO=os.getenv("QA_GITHUB_REPO","shironaki/Ai"); ISSUE=int(os.getenv("QA_ISSUE","27"))
-MARKER="<!-- QA-AGENT-CONTROL -->"; RESULT="<!-- QA-AGENT-RESULT -->"; USER=os.getenv("QA_CONTROL_USER","shironaki")
-ROOT=Path(os.getenv("BOT_REPO_DIR",Path(__file__).resolve().parents[1])); TOKEN_FILE=Path(os.getenv("TERMUX_TOKEN_FILE","~/.config/ai/termux.env")).expanduser()
-STATE=ROOT/"data/test/runtime/qa-agent-state.json"; SCENARIOS=ROOT/"qa/scenarios.json"
-QA_PYTHON=Path(os.getenv("QA_PYTHON",str(Path.home()/"Ai/qa_client/.venv/bin/python"))); SESSION=Path(os.getenv("QA_SESSION",str(Path.home()/".config/ai/qa_client/founder_qa.session"))).expanduser()
-API_ID=os.getenv("QA_API_ID","36412572"); TARGET=os.getenv("QA_TARGET","AiAether1_Bot")
-def api_hash():
-    v=os.getenv("QA_API_HASH","").strip()
-    if v: return v
-    d=SESSION.parent
+
+REPO = os.getenv("QA_GITHUB_REPO", "shironaki/Ai")
+ISSUE = int(os.getenv("QA_ISSUE", "27"))
+MARKER = "<!-- QA-AGENT-CONTROL -->"
+RESULT = "<!-- QA-AGENT-RESULT -->"
+USER = os.getenv("QA_CONTROL_USER", "shironaki")
+ROOT = Path(os.getenv("BOT_REPO_DIR", Path(__file__).resolve().parents[1]))
+TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
+STATE = ROOT / "data/test/runtime/qa-agent-state.json"
+SCENARIOS = ROOT / "qa/scenarios.json"
+QA_PYTHON = Path(os.getenv("QA_PYTHON", str(Path.home() / "Ai/qa_client/.venv/bin/python")))
+SESSION = Path(
+    os.getenv(
+        "QA_SESSION",
+        str(Path.home() / ".config/ai/qa_client/founder_qa.session"),
+    )
+).expanduser()
+API_ID = os.getenv("QA_API_ID", "36412572")
+DEFAULT_TARGET = os.getenv("QA_TARGET", "AiAether1_Bot")
+BOT_LOG = ROOT / "bot.log"
+RUNTIME_LOG = ROOT / "termux-autoupdate.log"
+
+
+def api_hash() -> str:
+    value = os.getenv("QA_API_HASH", "").strip()
+    if value:
+        return value
+    config_dir = SESSION.parent
     try:
-        for p in d.rglob("*"):
-            if p.is_file() and p.stat().st_size < 10000:
-                for line in p.read_text(errors="ignore").splitlines():
-                    if line.strip().lower().startswith(("api_hash=","api_hash =")):
-                        return line.split("=",1)[1].strip().strip("'").strip('"')
-    except OSError: pass
+        for path in config_dir.rglob("*"):
+            if not path.is_file() or path.stat().st_size >= 10000:
+                continue
+            for line in path.read_text(errors="ignore").splitlines():
+                if line.strip().lower().startswith(("api_hash=", "api_hash =")):
+                    return line.split("=", 1)[1].strip().strip("'").strip('"')
+    except OSError:
+        pass
     return ""
-def token():
-    for n in ("TERMUX_GITHUB_TOKEN","GITHUB_TOKEN","GH_TOKEN"):
-        if os.getenv(n,"").strip(): return os.getenv(n).strip()
+
+
+def token() -> str:
+    for name in ("TERMUX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
     try:
-        for x in TOKEN_FILE.read_text().splitlines():
-            if x.startswith("TERMUX_GITHUB_TOKEN="): return x.split("=",1)[1].strip().strip("'").strip('"')
-    except OSError: pass
-    try: return subprocess.check_output(["gh","auth","token"],text=True,stderr=subprocess.DEVNULL,timeout=5).strip()
-    except Exception: return ""
-def gh(method,path,value=None):
-    req=urllib.request.Request("https://api.github.com/repos/"+REPO+path,data=None if value is None else json.dumps(value,ensure_ascii=False).encode(),method=method,headers={"Accept":"application/vnd.github+json","Authorization":"Bearer "+token(),"X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json"})
-    with urllib.request.urlopen(req,timeout=15) as r: return json.loads(r.read().decode())
-def comments():
-    out=[]
-    for p in range(1,11):
-        x=gh("GET",f"/issues/{ISSUE}/comments?per_page=100&page={p}")
-        if not x: break
-        out+=x
-        if len(x)<100: break
+        for line in TOKEN_FILE.read_text(encoding="utf-8").splitlines():
+            if line.startswith("TERMUX_GITHUB_TOKEN="):
+                return line.split("=", 1)[1].strip().strip("'").strip('"')
+    except OSError:
+        pass
+    try:
+        return subprocess.check_output(
+            ["gh", "auth", "token"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        ).strip()
+    except Exception:
+        return ""
+
+
+def gh(method: str, path: str, value=None):
+    tok = token()
+    if not tok:
+        raise RuntimeError("GitHub token unavailable")
+    req = urllib.request.Request(
+        "https://api.github.com/repos/" + REPO + path,
+        data=None if value is None else json.dumps(value, ensure_ascii=False).encode(),
+        method=method,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "Bearer " + tok,
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def comments() -> list[dict]:
+    out: list[dict] = []
+    for page in range(1, 11):
+        items = gh("GET", f"/issues/{ISSUE}/comments?per_page=100&page={page}")
+        if not items:
+            break
+        out.extend(items)
+        if len(items) < 100:
+            break
     return out
-def state():
-    try: return int(json.loads(STATE.read_text())["last_comment_id"])
-    except Exception: return 0
-def save(i):
-    STATE.parent.mkdir(parents=True,exist_ok=True); STATE.write_text(json.dumps({"last_comment_id":i}))
-def publish(s): gh("POST",f"/issues/{ISSUE}/comments",{"body":RESULT+"\n"+s})
-def run(name):
-    steps=json.loads(SCENARIOS.read_text())[name]
-    code='''import asyncio,json,os,time
+
+
+def state() -> int:
+    try:
+        return int(json.loads(STATE.read_text(encoding="utf-8"))["last_comment_id"])
+    except Exception:
+        return 0
+
+
+def save(comment_id: int) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"last_comment_id": comment_id}), encoding="utf-8")
+    tmp.replace(STATE)
+
+
+def publish(message: str) -> None:
+    gh("POST", f"/issues/{ISSUE}/comments", {"body": RESULT + "\n" + message})
+
+
+def tail(path: Path, lines: int = 80) -> str:
+    try:
+        data = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return "\n".join(data[-lines:])
+    except OSError:
+        return f"[missing: {path}]"
+
+
+def run_scenario(name: str) -> dict:
+    all_scenarios = json.loads(SCENARIOS.read_text(encoding="utf-8"))
+    if name not in all_scenarios:
+        raise ValueError(f"unknown scenario: {name}")
+    steps = all_scenarios[name]
+    code = r'''
+import asyncio, json, os
 from telethon import TelegramClient
+
 async def main():
- c=TelegramClient(os.path.expanduser(os.environ["QA_SESSION"]),int(os.environ["QA_API_ID"]),os.environ["QA_API_HASH"]); await c.start()
- e=await c.get_entity(os.environ["QA_TARGET"]); out=[]
- for s in json.loads(os.environ["QA_STEPS"]):
-  t=int(time.time()); await c.send_message(e,s["text"]); deadline=time.time()+s.get("wait",10); rr=[]
-  while time.time()<deadline:
-   async for m in c.iter_messages(e,limit=20):
-    if not m.out and m.message and int(m.date.timestamp())>=t-1: rr.append({"id":m.id,"text":m.message})
-   if rr: break
-   await asyncio.sleep(1)
-  out.append({"sent":s["text"],"replies":rr[:8]})
- await c.disconnect(); print(json.dumps(out,ensure_ascii=False))
-asyncio.run(main())'''
-    env=os.environ.copy(); env.update(QA_API_ID=API_ID,QA_API_HASH=api_hash(),QA_SESSION=str(SESSION),QA_TARGET=TARGET,QA_STEPS=json.dumps(steps,ensure_ascii=False))
-    p=subprocess.run([str(QA_PYTHON),"-c",code],cwd=ROOT,env=env,text=True,capture_output=True,timeout=240)
-    if p.returncode: raise RuntimeError((p.stderr or p.stdout)[-2000:])
-    return json.loads(p.stdout)
-def command(cmd):
-    p=cmd.split(maxsplit=1); op=p[0].upper()
-    if op=="STATUS": return f"QA_AGENT ONLINE; python={QA_PYTHON}; session={'present' if SESSION.exists() else 'missing'}; target={TARGET}"
-    if op=="RUN":
-        name=p[1].strip().lower() if len(p)>1 else "smoke"; names=list(json.loads(SCENARIOS.read_text())) if name=="all" else [name]; r=[]
-        for n in names:
-            try: r.append({"scenario":n,"ok":True,"results":run(n)})
-            except Exception as e: r.append({"scenario":n,"ok":False,"error":f"{type(e).__name__}: {e}"})
-        return "QA REPORT\n"+json.dumps(r,ensure_ascii=False,indent=2)
-    return "ignored command: "+cmd
-last=state()
+    client = TelegramClient(
+        os.path.expanduser(os.environ["QA_SESSION"]),
+        int(os.environ["QA_API_ID"]),
+        os.environ["QA_API_HASH"],
+    )
+    await client.start()
+    out = []
+    try:
+        for step in json.loads(os.environ["QA_STEPS"]):
+            entity = await client.get_entity(step.get("target") or os.environ["QA_TARGET"])
+            sent = await client.send_message(entity, step["text"])
+            deadline = asyncio.get_running_loop().time() + int(step.get("wait", 10))
+            replies = []
+            seen = set()
+            while asyncio.get_running_loop().time() < deadline:
+                async for message in client.iter_messages(
+                    entity,
+                    min_id=sent.id,
+                    limit=30,
+                    reverse=True,
+                ):
+                    if message.id in seen or message.out or not message.message:
+                        continue
+                    seen.add(message.id)
+                    replies.append({
+                        "id": message.id,
+                        "date": message.date.isoformat(),
+                        "text": message.message,
+                    })
+                if replies:
+                    break
+                await asyncio.sleep(1)
+            expected = step.get("expect", [])
+            haystack = "\n".join(x["text"] for x in replies).casefold()
+            missing = [x for x in expected if str(x).casefold() not in haystack]
+            out.append({
+                "sent": step["text"],
+                "sent_id": sent.id,
+                "target": str(entity),
+                "replies": replies[:12],
+                "expected": expected,
+                "missing_expected": missing,
+                "ok": bool(replies) and not missing,
+            })
+    finally:
+        await client.disconnect()
+    print(json.dumps(out, ensure_ascii=False))
+
+asyncio.run(main())
+'''
+    env = os.environ.copy()
+    env.update(
+        QA_API_ID=API_ID,
+        QA_API_HASH=api_hash(),
+        QA_SESSION=str(SESSION),
+        QA_TARGET=DEFAULT_TARGET,
+        QA_STEPS=json.dumps(steps, ensure_ascii=False),
+    )
+    if not env["QA_API_HASH"]:
+        raise RuntimeError("QA API hash unavailable")
+    process = subprocess.run(
+        [str(QA_PYTHON), "-c", code],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=300,
+    )
+    if process.returncode:
+        raise RuntimeError((process.stderr or process.stdout)[-3000:])
+    results = json.loads(process.stdout)
+    return {
+        "scenario": name,
+        "ok": all(item["ok"] for item in results),
+        "steps": results,
+        "bot_log_tail": tail(BOT_LOG),
+        "runtime_log_tail": tail(RUNTIME_LOG, 40),
+    }
+
+
+def command(raw: str) -> str:
+    parts = raw.split(maxsplit=1)
+    op = parts[0].upper() if parts else ""
+    if op == "STATUS":
+        return (
+            "QA_AGENT ONLINE; "
+            f"python={QA_PYTHON}; "
+            f"session={'present' if SESSION.exists() else 'missing'}; "
+            f"api_hash={'present' if api_hash() else 'missing'}; "
+            f"target={DEFAULT_TARGET}"
+        )
+    if op == "RUN":
+        name = parts[1].strip().lower() if len(parts) > 1 else "smoke"
+        names = list(json.loads(SCENARIOS.read_text(encoding="utf-8"))) if name == "all" else [name]
+        reports = []
+        for scenario in names:
+            try:
+                reports.append(run_scenario(scenario))
+            except Exception as exc:
+                reports.append({
+                    "scenario": scenario,
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+        return "QA REPORT\n" + json.dumps(reports, ensure_ascii=False, indent=2)
+    if op == "LOGS":
+        return (
+            "QA LOG SNAPSHOT\n"
+            "=== bot.log ===\n" + tail(BOT_LOG) +
+            "\n=== termux-autoupdate.log ===\n" + tail(RUNTIME_LOG, 60)
+        )
+    return "ignored command: " + raw
+
+
+last = state()
 while True:
     try:
-        for c in comments():
-            i=int(c["id"])
-            if i<=last or c.get("user",{}).get("login")!=USER or MARKER not in c.get("body",""): continue
-            last=i; save(i)
-            try: publish(command(c["body"].replace(MARKER,"").strip()))
-            except Exception as e: publish(f"QA ERROR: {type(e).__name__}: {e}")
-    except Exception: pass
+        for comment in comments():
+            comment_id = int(comment["id"])
+            body = comment.get("body", "")
+            if (
+                comment_id <= last
+                or comment.get("user", {}).get("login") != USER
+                or MARKER not in body
+            ):
+                continue
+            last = comment_id
+            save(last)
+            try:
+                publish(command(body.replace(MARKER, "").strip()))
+            except Exception as exc:
+                publish(f"QA ERROR: {type(exc).__name__}: {exc}")
+    except Exception:
+        pass
     time.sleep(8)
