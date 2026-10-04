@@ -325,6 +325,14 @@ class DispatchRegressionTests(unittest.TestCase):
             block = source[start:] if end == -1 else source[start:end]
             self.assertIn("await _founder_command_guard(", block, command)
 
+    def test_setstatus_handler_has_runtime_admin_guard(self):
+        source = (ROOT / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
+        start = source.index("async def set_status(")
+        end = source.find("\n# ", start)
+        block = source[start:] if end == -1 else source[start:end]
+        self.assertIn("has_admin_role(message.from_user.id, message.chat.id)", block)
+        self.assertIn("Команда доступна только Администратору или Основателю", block)
+
 
 if __name__ == "__main__":
     unittest.main()
