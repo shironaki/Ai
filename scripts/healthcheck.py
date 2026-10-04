@@ -21,7 +21,13 @@ if str(ROOT) not in sys.path:
 
 import requests
 
-from services.security import redact
+
+def _safe_error(value, limit: int = 180) -> str:
+    """Keep healthcheck self-contained so bootstrap never depends on project imports."""
+    text = str(value)[:limit]
+    token = os.getenv("BOT_TOKEN", "").strip()
+    return text.replace(token, "[REDACTED]") if token else text
+
 
 
 def _network_diagnostics() -> list[str]:
@@ -35,7 +41,7 @@ def _network_diagnostics() -> list[str]:
         ips = sorted({item[4][0] for item in addresses})
         lines.append(f"NETWORK DNS: OK {dns_ms:.0f}ms ips={','.join(ips[:4])}")
     except Exception as exc:
-        lines.append(f"NETWORK DNS: FAIL {type(exc).__name__}: {redact(exc, 180)}")
+        lines.append(f"NETWORK DNS: FAIL {type(exc).__name__}: {_safe_error(exc, 180)}")
     try:
         started = time.perf_counter()
         with socket.create_connection((host, 443), timeout=5):
