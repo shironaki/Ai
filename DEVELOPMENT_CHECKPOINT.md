@@ -189,3 +189,21 @@ Next required work:
 - Admin log viewer already redacts credential patterns before Telegram rendering.
 - TEST/PROD data paths remain isolated through `BOT_ENV` / `BOT_DATA_DIR`.
 - Next security block: compromise recovery / backup hygiene and remaining privacy paths.
+
+## Final security/self-audit checkpoint — 2026-10-04
+
+- Рабочая ветка: `test-global-assistant-upgrade`; `main/PROD` не изменялся.
+- Завершён крупный self-audit по Telegram exfiltration, runtime logs, diagnostics, exceptions и legacy-хламу.
+- Runtime logs унифицированы через `BOT_DATA_DIR`; `autoupdate.sh` и `scripts/termux_update.sh` больше не должны создавать рабочие bot/update logs в корне репозитория.
+- `BOT_DATA_DIR` инициализируется до создания updater logs; POSIX permissions: data dir 700, logs 600.
+- Добавлен credential-redacting logging formatter; runtime exceptions/tracebacks и диагностические ответы перед Telegram также проходят redaction.
+- Admin log/diagnostic output остаётся redacted перед рендерингом.
+- AI history/context isolation и report operator/recipient boundaries повторно проверены; прямых cross-user data paths не обнаружено.
+- Проверены command/callback permission boundaries, public health/debug/system/profile/chat-info surfaces и SQL data layer; пользовательский ввод не получает executable SQL/Python capability.
+- Проверен repository tree: `aboute.py` в текущей ветке отсутствует; найденные GitHub search hits по нему относятся к старым историческим commit snapshots и не являются текущим кодом.
+- Проверен поиск опасных конструкций: текущий security audit не обнаружил новых `eval`, `exec`, `shell=True`, `os.system` или TODO/FIXME/HACK-хвостов в рабочей ветке.
+- Не удалялись рабочие модули только по имени/старому индексу GitHub: удаление выполнялось бы только после подтверждения отсутствия текущих references.
+- Добавлены regression tests для Telegram exfiltration redaction и защищённого runtime log location.
+- Последний CI: Python integrity check #1418, commit `4d159ad385dfece709cf449eee3a1d107c0e6327` — **SUCCESS**; compile/import/AI-no-credentials/runtime regressions/direct dependency audit/legacy dependency report — зелёные.
+- Следующий этап: переход от security hardening к функциональным фичам, сохраняя правило: каждая новая фича проходит permission/security self-audit и regression CI перед переходом дальше.
+
