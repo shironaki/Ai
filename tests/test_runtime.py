@@ -660,6 +660,13 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertLess(pid_check, remove_pos)
         self.assertIn('termux_supervisor.sh', source)
 
+    def test_termux_supervisor_self_restarts_after_script_update(self):
+        source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
+        self.assertIn("SUPERVISOR_HASHFILE=", source)
+        self.assertIn("ensure_supervisor_revision()", source)
+        self.assertIn('exec "$0"', source)
+        self.assertIn("ensure_supervisor_revision", source.split("while true; do", 1)[1])
+
 
 if __name__ == "__main__":
     unittest.main()
