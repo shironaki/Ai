@@ -85,19 +85,19 @@ def write_lease(lease: dict, parent: str) -> bool:
     raise RuntimeError(detail[-500:])
 
 
-def acquire_or_renew() -> tuple[bool, str]:
+def acquire_or_renew() -> tuple[bool, str, int]:
     lease, parent = read_lease()
     now = int(time.time())
     owner = str(lease.get("owner", "")).strip().casefold()
     expires = int(lease.get("expires_at", 0) or 0)
     if owner == DEVICE_ID and expires > now and expires - now > RENEW_BEFORE:
-        return True, f"lease owner={DEVICE_ID} ttl={expires-now}s"
+        return True, f"lease owner={DEVICE_ID} ttl={expires-now}s", expires
     if owner and expires > now and owner != DEVICE_ID:
-        return False, f"lease held by {owner} for {expires-now}s"
+        return False, f"lease held by {owner} for {expires-now}s", expires
     new = {"owner": DEVICE_ID, "expires_at": now + TTL, "updated_at": now}
     if write_lease(new, parent):
-        return True, f"lease acquired owner={DEVICE_ID} ttl={TTL}s"
-    return False, "lease update conflict"
+        return True, f"lease acquired owner={DEVICE_ID} ttl={TTL}s", new["expires_at"]
+    return False, "lease update conflict", now
 
 
 def release() -> None:
@@ -152,10 +152,6 @@ def health() -> bool:
 
 
 def start_bot() -> bool:
-    ok, msg = acquire_or_renew()
-    if not ok:
-        log(f"START denied: {msg}")
-        return False
     if running():
         return True
     log_handle = LOG_FILE.open("a", encoding="utf-8")
@@ -181,6 +177,7 @@ def main() -> int:
     if ROLE not in {"active", "standby"}:
         log("Invalid role; refusing to run")
         return 2
+    last_confirmed_expiry = 0
     try:
         while True:
             if ROLE == "standby":
@@ -191,7 +188,19 @@ def main() -> int:
                     log(f"STANDBY: healthy; lease untouched; next check in {INTERVAL}s")
                 time.sleep(INTERVAL)
                 continue
-            ok, msg = acquire_or_renew()
+            try:
+                ok, msg, expires_at = acquire_or_renew()
+            except Exception as exc:
+                now = int(time.time())
+                if running() and last_confirmed_expiry > now:
+                    log(f"LEASE CHECK ERROR: preserving active bot until confirmed expiry ({type(exc).__name__}: {exc})")
+                    time.sleep(INTERVAL)
+                    continue
+                log(f"LEASE CHECK FAILED: fencing bot ({type(exc).__name__}: {exc})")
+                stop_bot()
+                time.sleep(INTERVAL)
+                continue
+            last_confirmed_expiry = expires_at
             if not ok:
                 log(f"FENCE: {msg}")
                 stop_bot()
