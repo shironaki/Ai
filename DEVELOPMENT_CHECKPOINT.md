@@ -207,3 +207,16 @@ Next required work:
 - Последний CI: Python integrity check #1418, commit `4d159ad385dfece709cf449eee3a1d107c0e6327` — **SUCCESS**; compile/import/AI-no-credentials/runtime regressions/direct dependency audit/legacy dependency report — зелёные.
 - Следующий этап: переход от security hardening к функциональным фичам, сохраняя правило: каждая новая фича проходит permission/security self-audit и regression CI перед переходом дальше.
 
+## AI memory feature checkpoint — 2026-10-04
+
+- Implemented the first functional AI-memory block on `test-global-assistant-upgrade`.
+- AI conversation context is now persistently stored in `ai_memory.db`, outside Git and under the protected `BOT_DATA_DIR`.
+- Memory scope is strictly `(user_id, chat_id)`; the bot does not archive arbitrary group messages and one user's AI context cannot be loaded into another user's context.
+- Stored turns are credential-redacted and bounded to 30 days / 40 messages per user+chat scope.
+- Existing provider history remains capped to the short active context window; persistence survives bot restarts without sending unrelated chat history to the provider.
+- Added user-controlled deletion of the current AI conversation memory through `/forget`, `/забудь`, and deterministic natural-language requests such as «Аи, забудь мою историю».
+- Deletion clears both persistent storage and the current in-process AI cache for the exact user+chat scope.
+- Added regression coverage for cross-user/cross-chat isolation, credential redaction, persistence across process-memory loss, and command routing.
+- Security rule preserved: no global/shared AI memory and no automatic ingestion of ordinary group messages.
+- Main/PROD remains untouched.
+- Next functional block: richer personal preferences and AI behavior settings, built on the same isolated memory/security boundary.
