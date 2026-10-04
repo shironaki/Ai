@@ -16,6 +16,8 @@ _DIRECT_ACTIONS = (
     "chatinfo",
     "system_stats",
     "runtime",
+    "status",
+    "diagnostics",
     "debug",
     "ai_diagnostic",
     "logs",
@@ -103,6 +105,23 @@ def detect_direct_action(prompt: str) -> str | None:
         )
     ) or "/aidiag" in text:
         return "ai_diagnostic"
+
+    if any(phrase in text for phrase in (
+        "статус бота",
+        "статус системы",
+        "runtime status",
+        "/status",
+    )):
+        return "status"
+
+    if any(phrase in text for phrase in (
+        "диагностика системы",
+        "диагностика бота",
+        "системная диагностика",
+        "runtime диагностика",
+        "/diagnostics",
+    )):
+        return "diagnostics"
 
     if "дебаг" in text or "отладк" in text or "debug" in text or "/debug" in text:
         return "debug"
