@@ -14,6 +14,7 @@ UPDATE_PIDFILE="$REPO/termux-update.pid"
 CONTROL_PIDFILE="$REPO/termux-control.pid"
 CONTROL_HEARTBEAT="$REPO/data/test/runtime/control-heartbeat"
 QA_PIDFILE="$REPO/qa-agent.pid"
+QA_HASHFILE="$REPO/qa-agent.sha256"
 QA_ENV_FILE="${QA_ENV_FILE:-$HOME/.config/ai/qa_agent.env}"
 
 cd "$REPO" || exit 1
@@ -154,10 +155,18 @@ qa_process_matches() {
 
 start_qa_agent() {
     [ -f "$REPO/scripts/qa_agent.py" ] || return 0
+    current_hash="$(sha256sum "$REPO/scripts/qa_agent.py" 2>/dev/null | awk '{print $1}')"
     if [ -f "$QA_PIDFILE" ]; then
         pid="$(cat "$QA_PIDFILE" 2>/dev/null || true)"
-        qa_process_matches "$pid" && return 0
-        rm -f "$QA_PIDFILE"
+        if qa_process_matches "$pid"; then
+            running_hash="$(cat "$QA_HASHFILE" 2>/dev/null || true)"
+            if [ -n "$current_hash" ] && [ "$running_hash" = "$current_hash" ]; then
+                return 0
+            fi
+            kill "$pid" 2>/dev/null || true
+            sleep 1
+        fi
+        rm -f "$QA_PIDFILE" "$QA_HASHFILE"
     fi
     if [ -f "$QA_ENV_FILE" ]; then
         set -a
@@ -168,6 +177,7 @@ start_qa_agent() {
     [ -x "$QA_RUNNER" ] || return 0
     nohup "$QA_RUNNER" "$REPO/scripts/qa_agent.py" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
     echo $! > "$QA_PIDFILE"
+    printf "%s\\n" "$current_hash" > "$QA_HASHFILE"
 }
 
 reap_qa_agent() {
