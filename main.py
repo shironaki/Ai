@@ -746,8 +746,7 @@ async def runtime_diagnostics(message: types.Message):
 
 @dp.message_handler(commands=["status"])
 async def runtime_status(message: types.Message):
-    if message.from_user.id != config.owner:
-        await message.answer("⛔ Команда доступна только Основателю.")
+    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
 
     status = _runtime_status_snapshot()
