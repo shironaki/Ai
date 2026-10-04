@@ -62,12 +62,20 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
 fi
 trap cleanup EXIT
 
+git fetch origin "$BRANCH" >> "$LOG" 2>&1
+
+# Recover tracked runtime fixes already matching the remote TEST branch.
+# Untracked QA data is intentionally preserved.
 if [[ -n "$(git status --porcelain)" ]]; then
-    log "STOP: working tree is not clean"
-    exit 1
+    if git diff --quiet --cached && git diff --quiet "origin/$BRANCH" --; then
+        log "SYNC: tracked files already match origin/$BRANCH; cleaning tracked state"
+        git reset --hard "origin/$BRANCH" >> "$LOG" 2>&1
+    else
+        log "STOP: working tree has tracked changes that differ from origin/$BRANCH"
+        exit 1
+    fi
 fi
 
-git fetch origin "$BRANCH" >> "$LOG" 2>&1
 LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse "origin/$BRANCH")"
 
