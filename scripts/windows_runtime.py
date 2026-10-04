@@ -31,9 +31,11 @@ INTERVAL = max(5, int(os.getenv("WINDOWS_RUNTIME_INTERVAL", "10")))
 
 
 def log(message: str) -> None:
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}"
     LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     with LOG_FILE.open("a", encoding="utf-8") as fh:
-        fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
+        fh.write(line + "\n")
+    print(line, flush=True)
 
 
 def git(*args: str, input_text: str | None = None, check: bool = True) -> str:
@@ -178,7 +180,10 @@ def main() -> int:
         while True:
             if ROLE == "standby":
                 if running():
+                    log("STANDBY: unexpected bot detected; stopping it")
                     stop_bot()
+                else:
+                    log(f"STANDBY: healthy; lease untouched; next check in {INTERVAL}s")
                 time.sleep(INTERVAL)
                 continue
             ok, msg = acquire_or_renew()
