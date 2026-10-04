@@ -142,6 +142,18 @@ is_running() {
     ps -p "$pid" -o command= 2>/dev/null | grep -F -q -- "$BOT"
 }
 
+local_bot_ready() {
+    is_running || return 1
+    local heartbeat_file="$DATA_DIR/runtime/heartbeat"
+    [[ -f "$heartbeat_file" ]] || return 1
+    local timestamp timestamp_int now age
+    timestamp="$(cat "$heartbeat_file" 2>/dev/null || true)"
+    [[ "$timestamp" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+    timestamp_int="${timestamp%%.*}"
+    now="$(date +%s)"
+    age=$((now - timestamp_int))
+    (( age >= 0 && age <= 30 ))
+}
 stop_bot() {
     if ! is_running; then
         rm -f "$PIDFILE"
@@ -256,7 +268,14 @@ start_bot() {
     nohup "$PYTHON" "$BOT" >> "$DATA_DIR/bot.log" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
     sleep 8
-    PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1
+    if PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1; then
+        return 0
+    fi
+    if local_bot_ready; then
+        log "HEALTH: Telegram API unavailable/transient; local bot heartbeat is fresh, preserving new revision"
+        return 0
+    fi
+    return 1
 }
 
 rollback() {
