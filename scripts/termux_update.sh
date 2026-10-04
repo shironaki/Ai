@@ -422,4 +422,12 @@ else
     }
 fi
 
+if [[ "$LOCAL" != "$REMOTE" ]] && ! git diff --quiet "$LOCAL" "$REMOTE" -- scripts/termux_supervisor.sh scripts/termux_boot.sh; then
+    parent_command="$(ps -p "$PPID" -o command= 2>/dev/null || true)"
+    if [[ "$parent_command" == *"termux_supervisor.sh"* ]]; then
+        log "UPDATE: supervisor/boot script changed; requesting supervisor self-restart"
+        kill -TERM "$PPID" 2>/dev/null || true
+    fi
+fi
+
 log "OK: Termux sync check completed at $(git rev-parse HEAD)"
