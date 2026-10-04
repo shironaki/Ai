@@ -43,6 +43,7 @@ def test_registered_slash_aliases_have_authoritative_handlers():
     routed_without_command_decorator = {
         "ai", "help", "panel", "report", "cancel", "info",
         "moderation", "silence", "issue_list", "issues", "метки",
+        "аи",
         "moderation", "модерация", "silence", "тишина",
         "report", "q", "r", "репорт", "cancel", "отмена",
         # These aliases are intentionally routed by regex/natural-language
