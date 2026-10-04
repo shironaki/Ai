@@ -76,14 +76,22 @@ def snapshot() -> str:
         if health_env.get("PYTHONPATH")
         else ""
     )
-    health = subprocess.check_output(
-        [health_python, str(ROOT / "scripts/healthcheck.py")],
-        cwd=ROOT,
-        env=health_env,
-        text=True,
-        stderr=subprocess.STDOUT,
-        timeout=8,
-    ).strip()
+    try:
+        health = subprocess.check_output(
+            [health_python, str(ROOT / "scripts/healthcheck.py")],
+            cwd=ROOT,
+            env=health_env,
+            text=True,
+            stderr=subprocess.STDOUT,
+            timeout=8,
+        ).strip()
+    except subprocess.TimeoutExpired:
+        health = "<healthcheck timeout after 8s>"
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.output or "").strip().replace("\\n", " ")
+        health = f"<healthcheck failed: {detail[-500:]}>"
+    except Exception as exc:
+        health = f"<healthcheck error: {type(exc).__name__}>"
     ai_configured = bool(os.getenv("GROQ_API_KEY", "").strip())
     ai_model = os.getenv("AI_MODEL", "openai/gpt-oss-20b")
     bot_pid = BOT_PID.read_text(encoding="utf-8").strip() if BOT_PID.exists() else "<missing>"
