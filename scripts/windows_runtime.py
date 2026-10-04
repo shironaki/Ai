@@ -39,8 +39,12 @@ def log(message: str) -> None:
 
 
 def git(*args: str, input_text: str | None = None, check: bool = True) -> str:
+    env = os.environ.copy()
+    # Runtime must never open an interactive credential/browser prompt.
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never"})
+    log(f"GIT: {' '.join(args)}")
     p = subprocess.run(["git", *args], cwd=ROOT, input=input_text, text=True,
-                       capture_output=True, timeout=30, check=False)
+                       capture_output=True, timeout=30, check=False, env=env)
     if check and p.returncode:
         raise RuntimeError((p.stderr or p.stdout or "git failed").strip()[-500:])
     return (p.stdout or "").strip()
@@ -58,7 +62,8 @@ def write_lease(lease: dict, parent: str) -> bool:
     blob = git("hash-object", "-w", "--stdin", input_text=content)
     tree = git("mktree", input_text=f"100644 blob {blob}\t{LEASE_PATH}\n")
     env = os.environ.copy()
-    env.update({"GIT_AUTHOR_NAME": "Windows Runtime",
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "Never",
+                "GIT_AUTHOR_NAME": "Windows Runtime",
                 "GIT_AUTHOR_EMAIL": "windows-runtime@localhost",
                 "GIT_COMMITTER_NAME": "Windows Runtime",
                 "GIT_COMMITTER_EMAIL": "windows-runtime@localhost"})
@@ -71,7 +76,7 @@ def write_lease(lease: dict, parent: str) -> bool:
     commit = p.stdout.strip()
     p = subprocess.run(["git", "push", "--porcelain", "origin",
                         f"{commit}:refs/heads/{LEASE_BRANCH}"],
-                       cwd=ROOT, text=True, capture_output=True, timeout=30, check=False)
+                       cwd=ROOT, text=True, capture_output=True, timeout=30, check=False, env=env)
     if p.returncode == 0:
         return True
     detail = (p.stderr or p.stdout or "").lower()
