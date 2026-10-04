@@ -400,6 +400,9 @@ async def slash_forget_ai_memory(message: types.Message):
 
 @dp.message_handler(commands=["cancel"], commands_prefix="/!.")
 async def slash_cancel_pending_request(message: types.Message):
+    if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
+        await message.reply("⛔ /cancel доступна только персоналу.")
+        return
     if cancel_current_action(message.from_user.id, message.chat.id):
         await message.reply("↩️ Ладно. Отставить. Текущее действие отменено. Ничего не выполняю.")
     else:
@@ -408,6 +411,9 @@ async def slash_cancel_pending_request(message: types.Message):
 
 @dp.message_handler(lambda m: bool(m.text and is_cancel_request(m.text)))
 async def cancel_pending_request(message: types.Message):
+    if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
+        await message.reply("⛔ Отмена доступна только персоналу.")
+        return
     if cancel_current_action(message.from_user.id, message.chat.id):
         await message.reply("↩️ Ладно. Отставить. Текущее действие отменено. Ничего не выполняю.")
     else:
