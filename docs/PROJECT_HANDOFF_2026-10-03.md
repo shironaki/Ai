@@ -59,3 +59,26 @@ The panel only documents/organizes these controls; it does not silently execute 
 
 ## Next development focus
 Return to bot feature work from this audited branch. Do not reopen the panel/Termux architecture unless a concrete regression appears.
+
+## Final handoff update — 2026-10-04
+
+- Current branch: `test-global-assistant-upgrade`.
+- Latest checkpoint commit: `33ae46a9a6cb68a4547c90abdf9e9650de6c92bc`.
+- `main/PROD` remains untouched.
+- Security hardening is now the baseline, not an optional follow-up:
+  - permission boundaries rechecked;
+  - Telegram exfiltration surfaces rechecked;
+  - AI context/history isolation rechecked;
+  - report recipient/operator binding rechecked;
+  - diagnostics/logs/errors credential-redacted;
+  - runtime logs confined to protected `BOT_DATA_DIR`;
+  - data/log POSIX permissions hardened;
+  - retention limits and storage redaction active;
+  - updater log initialization order corrected;
+  - stale historical `aboute.py` search results verified as non-current; file is absent from the current branch.
+- Repository self-audit found no new `eval`, `exec`, `shell=True`, `os.system`, or TODO/FIXME/HACK residue in the current branch.
+- Do not delete working modules merely because GitHub search exposes an old historical snapshot; verify the current branch first.
+- Latest green CI before the documentation-only checkpoint: Python integrity check #1418 / commit `4d159ad385dfece709cf449eee3a1d107c0e6327`, SUCCESS.
+- The checkpoint update itself is documentation-only; it does not change runtime behavior.
+- Next work: feature development. Every new feature must receive the same security self-audit, regression coverage, and green CI gate.
+
