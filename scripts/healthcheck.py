@@ -12,6 +12,13 @@ import sys
 import time
 from pathlib import Path
 
+# The healthcheck is invoked as a script from several working directories.
+# Bootstrap the repository root explicitly so project packages such as
+# ``services`` are always importable.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 import requests
 
 from services.security import redact
@@ -83,7 +90,8 @@ def main() -> int:
         return 1
 
     age = time.time() - timestamp
-    if age < 0 or age > 30:
+    max_age = 90 if role == "standby" else 30
+    if age < 0 or age > max_age:
         print(f"HEALTH FAIL: {heartbeat_name} age={age:.1f}s", file=sys.stderr)
         return 1
 
