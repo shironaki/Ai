@@ -153,16 +153,17 @@ qa_process_matches() {
 }
 
 start_qa_agent() {
-    [ -f "$QA_ENV_FILE" ] || return 0
     [ -f "$REPO/scripts/qa_agent.py" ] || return 0
     if [ -f "$QA_PIDFILE" ]; then
         pid="$(cat "$QA_PIDFILE" 2>/dev/null || true)"
         qa_process_matches "$pid" && return 0
         rm -f "$QA_PIDFILE"
     fi
-    set -a
-    . "$QA_ENV_FILE"
-    set +a
+    if [ -f "$QA_ENV_FILE" ]; then
+        set -a
+        . "$QA_ENV_FILE"
+        set +a
+    fi
     QA_RUNNER="\${QA_PYTHON:-$HOME/Ai/qa_client/.venv/bin/python}"
     [ -x "$QA_RUNNER" ] || return 0
     nohup "$QA_RUNNER" "$REPO/scripts/qa_agent.py" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
