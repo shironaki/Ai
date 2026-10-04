@@ -461,10 +461,12 @@ def _render_issue_list(rows) -> str:
     lambda m: bool(
         m.text
         and m.text.casefold().strip() in {"метки", "список меток", "/метки", "/issues", "issues"}
-        and m.from_user.id == config.owner
     )
 )
 async def issue_control(message: types.Message):
+    if message.from_user.id != config.owner:
+        await message.reply("⛔ Команда доступна только Основателю.")
+        return
     rows = list_markers()
     rendered = _render_issue_list(rows)
     if message.chat.type == "private":
