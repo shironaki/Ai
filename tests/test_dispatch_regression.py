@@ -395,7 +395,10 @@ def test_telegram_exfiltration_surfaces_redact_sensitive_runtime_output():
     assert 'content = redact(log_file.read(), 12000)' in main
     assert 'redact(str(exception), 1200)' in main
     assert 'redact(str(exc), 500)' in main
-    assert 'redact((result.stdout + "\\n" + result.stderr).strip(), 5000)' in help_source
+    # Debug output is now returned as a fixed diagnostic message; raw command output
+    # is no longer exposed through the help gateway.
+    assert 'async def debug_dispatch' in main
+    assert 'DEBUG: обработчик сообщений работает.' in main
 
 def test_runtime_logs_use_protected_bot_data_directory():
     from pathlib import Path
