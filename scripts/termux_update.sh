@@ -67,13 +67,29 @@ git fetch origin "$BRANCH" >> "$LOG" 2>&1
 # Recover tracked runtime fixes already matching the remote TEST branch.
 # Untracked QA data is intentionally preserved.
 if [[ -n "$(git status --porcelain)" ]]; then
-    if git diff --quiet --cached && git diff --quiet "origin/$BRANCH" --; then
-        log "SYNC: tracked files already match origin/$BRANCH; cleaning tracked state"
-        git reset --hard "origin/$BRANCH" >> "$LOG" 2>&1
-    else
-        log "STOP: working tree has tracked changes that differ from origin/$BRANCH"
+    if ! git diff --quiet --cached; then
+        log "STOP: index contains staged changes"
         exit 1
     fi
+
+    # Only compare files that are actually dirty in the local worktree.
+    # Comparing the entire worktree against origin/$BRANCH would also flag
+    # every legitimate remote commit that has not reached this old checkout,
+    # which defeats bootstrap recovery.
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if [[ "$line" == "?? "* ]]; then
+            continue
+        fi
+        path="${line:3}"
+        if ! git diff --quiet "origin/$BRANCH" -- "$path"; then
+            log "STOP: tracked local change differs from origin/$BRANCH: $path"
+            exit 1
+        fi
+    done < <(git status --porcelain)
+
+    log "SYNC: local tracked changes match origin/$BRANCH; cleaning tracked state"
+    git reset --hard "origin/$BRANCH" >> "$LOG" 2>&1
 fi
 
 LOCAL="$(git rev-parse HEAD)"
