@@ -15,6 +15,9 @@ LEASE_PATH = os.getenv("TERMUX_LEASE_PATH", "lease.json").strip()
 DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()
 BOT_PIDFILE = ROOT / "termux-bot.pid"
 WATCHDOG_PIDFILE = ROOT / "termux-lease-watchdog.pid"
+SUPERVISOR_PIDFILE = ROOT / "termux-supervisor.pid"
+SUPERVISOR = ROOT / "scripts" / "termux_supervisor.sh"
+SUPERVISOR_LOG = ROOT / "termux-supervisor.log"
 INTERVAL = max(3, int(os.getenv("TERMUX_LEASE_WATCHDOG_INTERVAL", "5")))
 
 
@@ -55,6 +58,39 @@ def bot_running() -> bool:
         return False
 
 
+def supervisor_running() -> bool:
+    if not SUPERVISOR_PIDFILE.exists():
+        return False
+    try:
+        pid = int(SUPERVISOR_PIDFILE.read_text(encoding="utf-8").strip())
+        if pid <= 1:
+            return False
+        os.kill(pid, 0)
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\\x00", b" ").decode(errors="replace")
+        return "termux_supervisor.sh" in cmdline
+    except Exception:
+        return False
+
+
+def ensure_supervisor() -> None:
+    if supervisor_running() or not SUPERVISOR.exists():
+        return
+    try:
+        with SUPERVISOR_LOG.open("a", encoding="utf-8") as log:
+            process = subprocess.Popen(
+                ["bash", str(SUPERVISOR)],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        SUPERVISOR_PIDFILE.write_text(str(process.pid), encoding="utf-8")
+    except Exception:
+        # The lease watchdog must never die because supervisor recovery failed.
+        pass
+
+
 def read_lease() -> tuple[str, int]:
     git("fetch", "origin", LEASE_BRANCH)
     raw = git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
@@ -80,25 +116,34 @@ def main() -> int:
     WATCHDOG_PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
     last_expiry = 0
     try:
+        # The watchdog is also the last-resort supervisor guardian while a
+        # detached bot is alive. This repairs the exact failure mode where the
+        # supervisor dies but the bot process survives detached from it.
+        ensure_supervisor()
+
         # Fail closed if the watchdog cannot establish a valid lease before watching.
         try:
             _, last_expiry = read_lease()
         except Exception:
             stop_bot()
+            ensure_supervisor()
             return 1
         while bot_running():
             now = int(time.time())
+            ensure_supervisor()
             try:
                 owner, expires_at = read_lease()
                 last_expiry = expires_at
                 if owner != DEVICE_ID or expires_at <= now:
                     stop_bot()
+                    ensure_supervisor()
                     return 0
             except Exception:
                 # If GitHub is unreachable, trust only the last successfully
                 # observed expiry. Once it passes, fence the stale bot locally.
                 if last_expiry and now >= last_expiry:
                     stop_bot()
+                    ensure_supervisor()
                     return 0
             time.sleep(INTERVAL)
     finally:
