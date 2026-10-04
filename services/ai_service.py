@@ -229,9 +229,14 @@ async def generate_reply(
     history.append({"role": "assistant", "content": redact(answer, 4000)})
     history[:] = history[-_MAX_HISTORY_MESSAGES:]
     if chat_id is not None:
-        append_history(user_id, chat_id, candidate_history[-_MAX_HISTORY_MESSAGES:] + [
-            {"role": "assistant", "content": redact(answer, 4000)}
-        ])
+        append_history(
+            user_id,
+            chat_id,
+            [
+                {"role": "user", "content": safe_prompt},
+                {"role": "assistant", "content": redact(answer, 4000)},
+            ],
+        )
     return answer
 
 
