@@ -2,7 +2,24 @@
   "smoke": [
     {"text": "/start", "wait": 8, "expect": ["Система 'Аи' приветствует"]},
     {"text": "Аи покажи мой профиль", "wait": 12, "expect": ["ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ", "Роль: Пользователь"]},
-    {"text": "Мой профиль", "wait": 12, "expect": ["ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ", "Роль: Пользователь"]}
+    {"text": "Мой профиль", "wait": 12, "expect": ["ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ"]}
+  ],
+  "user_surface": [
+    {"text": "/start", "wait": 8, "expect": ["Система 'Аи' приветствует"]},
+    {"text": "/help", "wait": 8, "expect": ["Актуальные команды Системы", "Роль: Пользователь"]},
+    {"text": "/health", "wait": 12, "expect": ["ПРОВЕРКА БОТА", "Состояние:"]},
+    {"text": "/info", "wait": 8, "expect": ["ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ"]},
+    {"text": "/инфа", "wait": 8, "expect": ["ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ"]},
+    {"text": "/chatinfo", "wait": 8, "expect": ["ИНФОРМАЦИЯ О ЧАТЕ"]},
+    {"text": "/forget", "wait": 8, "expect": ["Память этого диалога очищена"]},
+    {"text": "/report", "wait": 8, "expect": ["Укажите суть обращения"]},
+    {"text": "/ai", "wait": 8, "expect": ["ПОЛЬЗОВАТЕЛЬ"]},
+    {"text": "/panel", "wait": 5, "allow_no_reply": true},
+    {"text": "/status", "wait": 5, "allow_no_reply": true},
+    {"text": "/diagnostics", "wait": 5, "allow_no_reply": true},
+    {"text": "/aidiag", "wait": 5, "allow_no_reply": true},
+    {"text": "/debug", "wait": 5, "allow_no_reply": true},
+    {"text": "/stasis", "wait": 5, "allow_no_reply": true}
   ],
   "profile": [
     {"text": "/start", "wait": 8, "expect": ["Система 'Аи' приветствует"]},
