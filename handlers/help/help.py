@@ -378,7 +378,7 @@ async def direct_ai_invocation(message: types.Message):
         await _answer_ai(message, invocation)
 
 
-@dp.message_handler(commands=["forget"], commands_prefix="/!.")
+@dp.message_handler(commands=["forget", "забудь"], commands_prefix="/!.")
 async def slash_forget_ai_memory(message: types.Message):
     """Let a user erase only their own AI memory, without affecting anyone else."""
     removed = clear_history(message.from_user.id, message.chat.id)
