@@ -194,7 +194,7 @@ start_bot() {
     nohup "$PYTHON" "$BOT" >> "$DATA_DIR/bot.log" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
     sleep 8
-    "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1
+    PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1
 }
 
 rollback() {
@@ -349,7 +349,7 @@ else
         fi
     fi
 
-    "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1 || {
+    PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1 || {
         log "RECOVERY: health check failed; restarting bot"
         stop_bot
         start_bot
