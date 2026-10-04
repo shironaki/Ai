@@ -14,12 +14,12 @@
     {"text": "/forget", "wait": 8, "expect": ["Память этого диалога очищена"]},
     {"text": "/report", "wait": 8, "expect": ["Укажите суть обращения"]},
     {"text": "/ai", "wait": 8, "expect": ["ПОЛЬЗОВАТЕЛЬ"]},
-    {"text": "/panel", "wait": 5, "allow_no_reply": true},
-    {"text": "/status", "wait": 5, "allow_no_reply": true},
-    {"text": "/diagnostics", "wait": 5, "allow_no_reply": true},
-    {"text": "/aidiag", "wait": 5, "allow_no_reply": true},
-    {"text": "/debug", "wait": 5, "allow_no_reply": true},
-    {"text": "/stasis", "wait": 5, "allow_no_reply": true}
+    {"text": "/panel", "wait": 5, "expect": ["Панель доступна только персоналу"]},
+    {"text": "/status", "wait": 5, "expect": ["только Основателю"]},
+    {"text": "/diagnostics", "wait": 5, "expect": ["только Основателю"]},
+    {"text": "/aidiag", "wait": 5, "expect": ["только Основателю"]},
+    {"text": "/debug", "wait": 5, "expect": ["только Основателю"]},
+    {"text": "/stasis", "wait": 5, "expect": ["только Основателю"]}
   ],
   "profile": [
     {"text": "/start", "wait": 8, "expect": ["Система 'Аи' приветствует"]},
