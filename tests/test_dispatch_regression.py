@@ -333,6 +333,15 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("has_admin_role(message.from_user.id, message.chat.id)", block)
         self.assertIn("Команда доступна только Администратору или Основателю", block)
 
+    def test_slash_moderation_wrappers_do_not_bypass_unified_permission_gateway(self):
+        source = (ROOT / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
+        for function_name in ("mute", "unmute", "ban", "unban"):
+            start = source.index("async def " + function_name + "(")
+            end = source.find("\n# ", start)
+            block = source[start:] if end == -1 else source[start:end]
+            self.assertNotIn("is_chat_admin=True", block)
+            self.assertIn("request_moderation(message, message.text.strip())", block)
+
 
 if __name__ == "__main__":
     unittest.main()
