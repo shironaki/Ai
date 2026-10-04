@@ -51,6 +51,13 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('if row is None:', source)
         self.assertIn("Откройте личный чат и выполните первичный запуск.", source)
 
+    def test_ordinary_uninvoked_text_does_not_open_ai_gateway(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        self.assertNotIn("async def user_natural_ai", source)
+        chat_source = (ROOT / "handlers" / "chat_groups.py").read_text(encoding="utf-8")
+        self.assertIn("if user_id != config.owner and invocation is None and not max_positive:", chat_source)
+        self.assertIn("await _answer_ai(message, prompt)", chat_source)
+
     def test_deterministic_assistant_actions_reach_real_handlers(self):
         source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         for action in ("profile", "chatinfo", "system_stats", "system_info", "runtime"):
