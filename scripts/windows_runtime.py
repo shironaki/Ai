@@ -51,9 +51,11 @@ def git(*args: str, input_text: str | None = None, check: bool = True) -> str:
 
 
 def read_lease() -> tuple[dict, str]:
-    git("fetch", "origin", LEASE_BRANCH)
-    parent = git("rev-parse", f"origin/{LEASE_BRANCH}")
-    raw = git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
+    remote_ref = f"refs/remotes/origin/{LEASE_BRANCH}"
+    branch_ref = f"refs/heads/{LEASE_BRANCH}"
+    git("fetch", "origin", f"{branch_ref}:{remote_ref}")
+    parent = git("rev-parse", remote_ref)
+    raw = git("show", f"{remote_ref}:{LEASE_PATH}")
     return json.loads(raw or "{}"), parent
 
 
