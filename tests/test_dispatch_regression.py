@@ -60,6 +60,19 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("await chatinfo_cmd(message)", source)
         self.assertIn("from main import debug_dispatch, send_logs, ai_diagnostic", source)
 
+    def test_cancel_handlers_enforce_staff_surface(self):
+        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        start = source.index("async def slash_cancel_pending_request")
+        end = source.index("async def cancel_pending_request", start)
+        slash_block = source[start:end]
+        natural_start = end
+        natural_end = source.index("\n\n@dp.message_handler(", natural_start)
+        natural_block = source[natural_start:natural_end]
+        self.assertIn("has_moderator_role", slash_block)
+        self.assertIn("has_moderator_role", natural_block)
+        self.assertIn("is_owner", slash_block)
+        self.assertIn("is_owner", natural_block)
+
     def test_service_permission_boundaries_are_enforced(self):
         role_source = (ROOT / "services" / "chat_roles.py").read_text(encoding="utf-8")
         ai_source = (ROOT / "services" / "ai_relationship.py").read_text(encoding="utf-8")
