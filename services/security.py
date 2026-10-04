@@ -10,7 +10,7 @@ _TOKEN_PATTERNS = (
     re.compile(r"(?i)(gsk_)[A-Za-z0-9_-]+"),
     re.compile(r"(?i)(sk-)[A-Za-z0-9_-]+"),
     re.compile(r"(?i)(xox[baprs]-)[A-Za-z0-9-]+"),
-    re.compile(r"(?i)((?:ghp|gho|ghu|ghs|github_pat|glpat)-)[A-Za-z0-9_-]+"),
+    re.compile(r"(?i)((?:ghp|gho|ghu|ghs|github_pat|glpat)[_-])[A-Za-z0-9_-]+"),
 )
 
 
