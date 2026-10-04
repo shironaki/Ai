@@ -6,7 +6,19 @@ MARKER="<!-- QA-AGENT-CONTROL -->"; RESULT="<!-- QA-AGENT-RESULT -->"; USER=os.g
 ROOT=Path(os.getenv("BOT_REPO_DIR",Path(__file__).resolve().parents[1])); TOKEN_FILE=Path(os.getenv("TERMUX_TOKEN_FILE","~/.config/ai/termux.env")).expanduser()
 STATE=ROOT/"data/test/runtime/qa-agent-state.json"; SCENARIOS=ROOT/"qa/scenarios.json"
 QA_PYTHON=Path(os.getenv("QA_PYTHON",str(Path.home()/"Ai/qa_client/.venv/bin/python"))); SESSION=Path(os.getenv("QA_SESSION",str(Path.home()/".config/ai/qa_client/founder_qa.session"))).expanduser()
-API_ID=os.getenv("QA_API_ID","36412572"); API_HASH=os.getenv("QA_API_HASH",""); TARGET=os.getenv("QA_TARGET","AiAether1_Bot")
+API_ID=os.getenv("QA_API_ID","36412572"); TARGET=os.getenv("QA_TARGET","AiAether1_Bot")
+def api_hash():
+    v=os.getenv("QA_API_HASH","").strip()
+    if v: return v
+    d=SESSION.parent
+    try:
+        for p in d.rglob("*"):
+            if p.is_file() and p.stat().st_size < 10000:
+                for line in p.read_text(errors="ignore").splitlines():
+                    if line.strip().lower().startswith(("api_hash=","api_hash =")):
+                        return line.split("=",1)[1].strip().strip("'").strip('"')
+    except OSError: pass
+    return ""
 def token():
     for n in ("TERMUX_GITHUB_TOKEN","GITHUB_TOKEN","GH_TOKEN"):
         if os.getenv(n,"").strip(): return os.getenv(n).strip()
@@ -50,7 +62,7 @@ async def main():
   out.append({"sent":s["text"],"replies":rr[:8]})
  await c.disconnect(); print(json.dumps(out,ensure_ascii=False))
 asyncio.run(main())'''
-    env=os.environ.copy(); env.update(QA_API_ID=API_ID,QA_API_HASH=API_HASH,QA_SESSION=str(SESSION),QA_TARGET=TARGET,QA_STEPS=json.dumps(steps,ensure_ascii=False))
+    env=os.environ.copy(); env.update(QA_API_ID=API_ID,QA_API_HASH=api_hash(),QA_SESSION=str(SESSION),QA_TARGET=TARGET,QA_STEPS=json.dumps(steps,ensure_ascii=False))
     p=subprocess.run([str(QA_PYTHON),"-c",code],cwd=ROOT,env=env,text=True,capture_output=True,timeout=240)
     if p.returncode: raise RuntimeError((p.stderr or p.stdout)[-2000:])
     return json.loads(p.stdout)
