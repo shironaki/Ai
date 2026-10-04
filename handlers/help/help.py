@@ -237,12 +237,19 @@ async def _answer_ai(message: types.Message, prompt: str):
             f"Этот чат: <b>{chat_state}</b>"
         )
         return
-    if direct_action in {"debug", "logs", "ai_diagnostic"}:
+    if direct_action in {"status", "diagnostics", "debug", "logs", "ai_diagnostic"}:
         if not is_owner(message.from_user.id):
             await message.reply("⛔ Эта диагностическая функция доступна только Основателю.")
             return
         from main import debug_dispatch, send_logs, ai_diagnostic
-        handler = {"debug": debug_dispatch, "logs": send_logs, "ai_diagnostic": ai_diagnostic}[direct_action]
+        from handlers.runtime_diagnostics import status_command, diagnostics_command
+        handler = {
+            "status": status_command,
+            "diagnostics": diagnostics_command,
+            "debug": debug_dispatch,
+            "logs": send_logs,
+            "ai_diagnostic": ai_diagnostic,
+        }[direct_action]
         await handler(message)
         return
     if await _handle_founder_command(message, text):
