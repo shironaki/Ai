@@ -12,6 +12,7 @@ ROOT = Path(os.getenv("BOT_REPO_DIR", Path(__file__).resolve().parents[1]))
 BOT_LOG = ROOT / os.getenv("BOT_LOG_FILE", "bot.log")
 UPDATE_LOG = ROOT / os.getenv("TERMUX_UPDATE_LOG", "termux-autoupdate.log")
 SUPERVISOR_PID = ROOT / "termux-supervisor.pid"
+CONTROL_HEARTBEAT = ROOT / "data" / "test" / "runtime" / "control-heartbeat"
 BOT_PID = ROOT / "termux-bot.pid"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
@@ -87,6 +88,8 @@ def snapshot() -> str:
     ai_model = os.getenv("AI_MODEL", "openai/gpt-oss-20b")
     bot_pid = BOT_PID.read_text(encoding="utf-8").strip() if BOT_PID.exists() else "<missing>"
     supervisor_pid = SUPERVISOR_PID.read_text(encoding="utf-8").strip() if SUPERVISOR_PID.exists() else "<missing>"
+    control_heartbeat = run("stat", "-c", "%Y", str(CONTROL_HEARTBEAT)) if CONTROL_HEARTBEAT.exists() else "<missing>"
+    device_id = os.getenv("TERMUX_DEVICE_ID", "") or "<unset>"
     bot_ps = run("ps", "-p", bot_pid, "-o", "pid=,etime=,command=") if bot_pid.isdigit() else "<not running>"
     sup_ps = run("ps", "-p", supervisor_pid, "-o", "pid=,etime=,command=") if supervisor_pid.isdigit() else "<not running>"
     return redact(
@@ -100,6 +103,8 @@ health: {health or "<empty>"}
 ai: {"configured" if ai_configured else "UNCONFIGURED"} model={ai_model}
 bot process: {bot_ps}
 supervisor process: {sup_ps}
+device id: {device_id}
+control heartbeat mtime: {control_heartbeat}
 
 ### bot.log (tail)
 {tail(BOT_LOG)}
