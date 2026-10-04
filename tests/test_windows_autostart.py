@@ -18,7 +18,7 @@ def test_windows_autostart_does_not_require_scheduled_task():
     assert "administrator privileges required" in text
 
 
-def test_windows_autostart_targets_standby_pc1():
+def test_windows_autostart_targets_active_pc1():
     text = SCRIPT.read_text(encoding="utf-8")
-    assert '-Role standby -DeviceId pc1' in text
+    assert '-Role active -DeviceId pc1' in text
     assert 'scripts\\windows_host.ps1' in text
