@@ -134,7 +134,7 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("from services.moderation_gateway import request as request_moderation", source)
         for function_name in ("mute", "unmute", "ban", "unban"):
             start = source.index("async def " + function_name + "(")
-            end = source.find("\n# ", start)
+            end = source.find("\n@dp.", start)
             block = source[start:] if end == -1 else source[start:end]
             self.assertIn("request_moderation(message, message.text.strip())", block)
         self.assertNotIn("restrict_chat_member(", source)
