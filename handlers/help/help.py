@@ -517,8 +517,8 @@ async def unified_report_request(message: types.Message):
         )
     if not reason and not message.reply_to_message and not (message.forward_from or message.forward_from_chat):
         await message.reply(
-            "📬 Укажите суть обращения. Можно написать «репорт <текст>» "
-            "или ответить «репорт» на сообщение."
+            "📬 Укажите суть обращения. Можно написать "
+            "<code>репорт &lt;текст&gt;</code> или ответить «репорт» на сообщение."
         )
         return
     report_id = create_report(
