@@ -82,6 +82,21 @@ def request(method: str, path: str, value=None):
     raise last_error
 
 
+def fetch_issue_comments() -> list[dict]:
+    """Fetch the complete command queue, not just GitHub's first 100 comments."""
+    comments: list[dict] = []
+    for page in range(1, 11):
+        page_items = request(
+            "GET", f"/issues/{ISSUE}/comments?per_page=100&page={page}"
+        )
+        if not page_items:
+            break
+        comments.extend(page_items)
+        if len(page_items) < 100:
+            break
+    return comments
+
+
 def lease_git(*args: str, input_text: str | None = None, check: bool = True) -> str:
     result = subprocess.run(
         ["git", *args],
@@ -491,7 +506,7 @@ def main() -> int:
             with LOG.open("a", encoding="utf-8") as fh:
                 fh.write(f"CONTROL: auto-failover start failed; lease released ({health})\\n")
 
-    comments = request("GET", f"/issues/{ISSUE}/comments?per_page=100")
+    comments = fetch_issue_comments()
     touch_control_heartbeat()
     commands = [
         item for item in comments
