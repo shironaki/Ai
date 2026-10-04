@@ -203,14 +203,9 @@ reap_update() {
 while true; do
     printf '%s\n' "$(date +%s.%N)" > "$SUPERVISOR_HEARTBEAT"
     ensure_battery_watchdog
+    reap_control
     reap_update
-
-    if command -v timeout >/dev/null 2>&1; then
-        timeout --foreground "\${CONTROL_TIMEOUT}s" "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
-    else
-        "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 &
-    fi
-
+    start_control
     start_update
 
     REPORT_ELAPSED=$((REPORT_ELAPSED + INTERVAL))
