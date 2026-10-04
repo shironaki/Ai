@@ -274,11 +274,15 @@ rollback() {
 
 if [[ "$LOCAL" != "$REMOTE" ]]; then
     log "UPDATE: $LOCAL -> $REMOTE"
-    if is_active_role && ! has_fresh_active_lease; then
-        log "STOP: refusing update because active device has no fresh lease"
-        exit 1
-    fi
-    if is_active_role; then
+    # A stale phone may still carry the default/old "active" role while
+    # another device owns the lease. It is safe to synchronize code while no
+    # bot is running locally; only stopping/running an active bot requires a
+    # fresh lease.
+    if is_active_role && is_running; then
+        if ! has_fresh_active_lease; then
+            log "STOP: refusing update because active device has no fresh lease"
+            exit 1
+        fi
         stop_bot
         if ! has_fresh_active_lease; then
             log "FENCE: lease lost after stopping bot; update aborted"
