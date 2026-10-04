@@ -35,6 +35,7 @@ API_ID = os.getenv("QA_API_ID", "36412572")
 DEFAULT_TARGET = os.getenv("QA_TARGET", "AiAether1_Bot")
 BOT_LOG = ROOT / "bot.log"
 RUNTIME_LOG = ROOT / "termux-autoupdate.log"
+SCRIPT_MTIME = Path(__file__).stat().st_mtime
 
 
 def api_hash() -> str:
@@ -275,6 +276,8 @@ def command(raw: str) -> str:
 last = state()
 while True:
     try:
+        if Path(__file__).stat().st_mtime != SCRIPT_MTIME:
+            os.execv(str(QA_PYTHON), [str(QA_PYTHON), str(Path(__file__))])
         for comment in comments():
             comment_id = int(comment["id"])
             body = comment.get("body", "")
