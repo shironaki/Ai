@@ -164,7 +164,7 @@ start_qa_agent() {
         . "$QA_ENV_FILE"
         set +a
     fi
-    QA_RUNNER="\${QA_PYTHON:-$HOME/Ai/qa_client/.venv/bin/python}"
+    QA_RUNNER="${QA_PYTHON:-$HOME/Ai/qa_client/.venv/bin/python}"
     [ -x "$QA_RUNNER" ] || return 0
     nohup "$QA_RUNNER" "$REPO/scripts/qa_agent.py" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
     echo $! > "$QA_PIDFILE"
