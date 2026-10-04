@@ -891,18 +891,3 @@ async def founder_natural_ai(message: types.Message):
     """Founder may address Аи naturally without a slash command or invocation name."""
     await _answer_ai(message, message.text)
 
-@dp.message_handler(
-    lambda m: bool(
-        m.text
-        and not m.text.startswith("/")
-        and m.from_user.id != config.owner
-        and not is_cancel_request(m.text)
-        and not has_pending(m.from_user.id, m.chat.id)
-        and not has_pending_moderation(m.from_user.id, m.chat.id)
-        and not (m.from_user.id, m.chat.id) in globals().get("_PANEL_PENDING", {})
-        and not (m.from_user.id, m.chat.id) in globals().get("_REPORT_PENDING", {})
-    )
-)
-async def user_natural_ai(message: types.Message):
-    """All ordinary users get the same safe natural-language/read-only gateway."""
-    await _answer_ai(message, message.text)
