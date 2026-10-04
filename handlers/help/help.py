@@ -265,6 +265,7 @@ async def _answer_ai(message: types.Message, prompt: str):
 async def ai_diagnostic(message: types.Message):
     """Owner-only AI runtime diagnostic; never reveals the API key."""
     if message.from_user.id != config.owner:
+        await message.reply("⛔ Команда доступна только Основателю.")
         return
 
     status = ai_status()
