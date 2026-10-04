@@ -323,8 +323,13 @@ async def _founder_command_guard(message: types.Message, text: str) -> bool:
     if message.from_user.id == config.owner:
         return True
     try:
-        await bot.send_message(message.chat.id, text)
-        log.info("FOUNDER GUARD | denied command chat=%s user=%s", message.chat.id, message.from_user.id)
+        sent = await message.reply(text, allow_sending_without_reply=True)
+        log.info(
+            "FOUNDER GUARD | denied command chat=%s user=%s sent_id=%s",
+            message.chat.id,
+            message.from_user.id,
+            getattr(sent, "message_id", "?"),
+        )
     except Exception as exc:
         log.exception(
             "FOUNDER GUARD | send failed chat=%s user=%s error=%s",
