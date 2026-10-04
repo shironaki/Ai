@@ -8,8 +8,7 @@ REPORT_INTERVAL="${TERMUX_REPORT_INTERVAL:-300}"
 BATTERY_MAX_CACHE_AGE="${TERMUX_BATTERY_CACHE_MAX_AGE:-120}"
 BATTERY_START_GRACE="${TERMUX_BATTERY_START_GRACE:-45}"
 REPORT_ELAPSED=0
-CONTROL_TIMEOUT="${TERMUX_CONTROL_TIMEOUT:-45}"
-UPDATE_TIMEOUT="${TERMUX_UPDATE_TIMEOUT:-100}"
+CONTROL_MAX_AGE="${TERMUX_CONTROL_MAX_AGE:-45}"
 BATTERY_WATCHDOG="$REPO/scripts/termux_battery_watchdog.py"
 BATTERY_PIDFILE="$REPO/termux-battery-watchdog.pid"
 BATTERY_HASHFILE="$REPO/termux-battery-watchdog.sha256"
@@ -27,6 +26,7 @@ fi
 SUPERVISOR_PID="$REPO/termux-supervisor.pid"
 SUPERVISOR_LOCKDIR="$REPO/.termux-supervisor.lock"
 UPDATE_PIDFILE="$REPO/termux-update.pid"
+CONTROL_PIDFILE="$REPO/termux-control.pid"
 
 supervisor_process_matches() {
     local pid="$1"
@@ -146,6 +146,41 @@ update_process_matches() {
     return 1
 }
 
+control_process_matches() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$pid" -gt 1 ]] || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+start_control() {
+    local existing_pid
+    existing_pid="$(cat "$CONTROL_PIDFILE" 2>/dev/null || true)"
+    if control_process_matches "$existing_pid"; then
+        local mtime now age
+        mtime="$(stat -c %Y "$CONTROL_PIDFILE" 2>/dev/null || echo 0)"
+        now="$(date +%s)"
+        age=$((now - mtime))
+        if (( age > CONTROL_MAX_AGE )); then
+            kill "$existing_pid" 2>/dev/null || true
+            sleep 1
+        else
+            return 0
+        fi
+    fi
+    rm -f "$CONTROL_PIDFILE"
+    nohup "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 < /dev/null &
+    echo $! > "$CONTROL_PIDFILE"
+}
+
+reap_control() {
+    local pid
+    pid="$(cat "$CONTROL_PIDFILE" 2>/dev/null || true)"
+    [[ -n "$pid" ]] || return 0
+    kill -0 "$pid" 2>/dev/null && return 0
+    rm -f "$CONTROL_PIDFILE"
+}
+
 start_update() {
     local existing_pid
     existing_pid="$(cat "$UPDATE_PIDFILE" 2>/dev/null || true)"
@@ -153,8 +188,7 @@ start_update() {
         return 0
     fi
     rm -f "$UPDATE_PIDFILE"
-    nohup timeout --foreground "\${UPDATE_TIMEOUT}s" bash "$REPO/scripts/termux_update.sh" \
-        >> "$REPO/termux-autoupdate.log" 2>&1 < /dev/null &
+    nohup bash "$REPO/scripts/termux_update.sh" >> "$REPO/termux-autoupdate.log" 2>&1 < /dev/null &
     echo $! > "$UPDATE_PIDFILE"
 }
 
