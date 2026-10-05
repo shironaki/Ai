@@ -22,13 +22,11 @@ class Identity:
 def resolve_role(user_id: int) -> str:
     if user_id == config.owner:
         return OWNER_ROLE
-    row = users.cursor.execute(
-        "SELECT status FROM users WHERE id = ?",
-        (user_id,),
-    ).fetchone()
-    status = row[0] if row else None
-    # Unknown/legacy/game-only statuses are ordinary users in the admin layer.
-    return status if status in ROLE_ORDER and status != OWNER_ROLE else "Пользователь"
+    from services.global_roles import get_global_role
+    global_role = get_global_role(user_id)
+    if global_role:
+        return global_role
+    return "Пользователь"
 
 
 def resolve_identity(user_id: int) -> Identity:
