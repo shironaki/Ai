@@ -41,33 +41,9 @@ is_active_role() {
 
 has_fresh_active_lease() {
     [[ -n "$DEVICE_ID" ]] || return 1
+    git fetch origin "$LEASE_BRANCH" >> "$LOG" 2>&1 || return 1
     local raw owner expires now
-    raw="$("$PYTHON" - <<'PY'
-import base64, json, os, urllib.request
-repo = os.environ.get("TERMUX_GITHUB_REPO", "shironaki/Ai")
-branch = os.environ.get("TERMUX_LEASE_BRANCH", "termux-lease")
-path = os.environ.get("TERMUX_LEASE_PATH", "lease.json")
-token = ""
-env_file = os.path.expanduser(os.environ.get("TERMUX_ENV_FILE", "~/.config/ai/termux.env"))
-for name in ("TERMUX_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
-    token = os.environ.get(name, "").strip()
-    if token: break
-if not token:
-    try:
-        for line in open(env_file, encoding="utf-8"):
-            if line.startswith("TERMUX_GITHUB_TOKEN="):
-                token = line.split("=", 1)[1].strip().strip("'").strip('"')
-                break
-    except OSError: pass
-if not token: raise SystemExit(1)
-def get(p):
-    req = urllib.request.Request(f"https://api.github.com/repos/{repo}{p}", headers={"Accept":"application/vnd.github+json","Authorization":f"Bearer {token}","X-GitHub-Api-Version":"2022-11-28"})
-    with urllib.request.urlopen(req, timeout=12) as r: return json.loads(r.read().decode())
-try: item = get(f"/contents/{path}?ref={branch}")
-except Exception: item = get(f"/contents/{path}%0D?ref={branch}")
-print(base64.b64decode(item["content"]).decode("utf-8"), end="")
-PY
-)" || return 1
+    raw="$(git show "origin/$LEASE_BRANCH:$LEASE_PATH" 2>/dev/null || true)"
     [[ -n "$raw" ]] || return 1
     owner="$(printf "%s\n" "$raw" | "$PYTHON" -c 'import json,sys; print(str(json.load(sys.stdin).get("owner","")).strip().casefold())' 2>/dev/null || true)"
     expires="$(printf "%s\n" "$raw" | "$PYTHON" -c 'import json,sys; print(int(json.load(sys.stdin).get("expires_at",0) or 0))' 2>/dev/null || true)"
