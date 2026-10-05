@@ -523,7 +523,7 @@ async def enter_stasis(message: types.Message):
     )
 
 
-@dp.message_handler(commands=["awakening"])
+@dp.message_handler(commands=["awakening", "пробуждение"])
 async def leave_stasis(message: types.Message):
     if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
         return
