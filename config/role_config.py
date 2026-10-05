@@ -10,6 +10,7 @@ ROLE_TAGS = {
     "Модератор": "🔨 МОДЕРАТОР",
     "Хелпер": "👮 ХЕЛПЕР",
     "Администратор": "🛡️ АДМИНИСТРАТОР",
+    "Владелец чата": "🔑 ВЛАДЕЛЕЦ ЧАТА",
     "Создатель бота": "👑 ОСНОВАТЕЛЬ",
 }
 
@@ -17,6 +18,8 @@ ROLE_TAGS = {
 SYSTEM_ROLE = "Система"
 GAME_ROLE = "Игрок"
 OWNER_ROLE = "Создатель бота"
+
+CHAT_OWNER_ROLE = "Владелец чата"
 
 ASSIGNABLE_ROLES = (
     "Модератор",
@@ -31,12 +34,13 @@ ROLE_ORDER = {
     "Модератор": 20,
     "Хелпер": 30,
     "Администратор": 40,
+    CHAT_OWNER_ROLE: 45,
     "Создатель бота": 50,
     "Основатель": 50,
 }
 
-MODERATOR_ROLES = {"Модератор", "Хелпер", "Администратор", OWNER_ROLE}
-ADMIN_ROLES = {"Администратор", OWNER_ROLE}
+MODERATOR_ROLES = {"Модератор", "Хелпер", "Администратор", CHAT_OWNER_ROLE, OWNER_ROLE}
+ADMIN_ROLES = {"Администратор", CHAT_OWNER_ROLE, OWNER_ROLE}
 
 
 def is_assignable_role(role: str) -> bool:
