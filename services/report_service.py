@@ -144,7 +144,11 @@ def answer_report(
     source_chat_id: int | None = None,
 ) -> bool:
     if answered_by != config.owner and answered_by not in getattr(config, "tech_team_ids", ()):
-        raise PermissionError("Report replies require operator actor context")
+        if source_chat_id is None:
+            raise PermissionError("Report replies require operator actor context")
+        from core.permissions import has_moderator_role
+        if not has_moderator_role(answered_by, source_chat_id):
+            raise PermissionError("Report replies require moderator authority in the report chat")
     _ensure_table()
     now = datetime.now(timezone.utc).isoformat()
     with connect_db("users.db") as db:
