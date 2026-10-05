@@ -30,8 +30,11 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn("refresh_scenarios_from_github", source)
         self.assertIn('/contents/qa/scenarios.json?ref={QA_BRANCH}', source)
         self.assertIn("limit = 60000", source)
-        self.assertIn("scenario_ok = all(item[\"ok\"] for item in results)", source)
-        self.assertIn("if not scenario_ok:", source)
+        self.assertIn("scenario_ok = all(item.get(\"ok\", False) for item in results)", source)
+        self.assertIn("coverage_complete", source)
+        self.assertIn("def _expand_scenario", source)
+        self.assertIn("reply_target", source)
+        self.assertIn("if not scenario_ok or skipped:", source)
         self.assertIn('DATA_DIR = Path(os.getenv("BOT_DATA_DIR", str(ROOT / "data" / "test")))', source)
         self.assertIn("BOT_LOG = DATA_DIR / \"bot.log\"", source)
 
