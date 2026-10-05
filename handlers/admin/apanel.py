@@ -61,9 +61,9 @@ async def rules_cmd(message: types.Message):
         chat_id = message.chat.id
         new_welcome = message.get_args()
         if new_welcome:
-                chats.cursor.execute("UPDATE chats SET welcome=? WHERE chat_id=?", (new_welcome, chat_id,))
-                chats.connect.commit()
-                await message.answer("👋 Приветствие мира было успешно изменено!")
+            chats.cursor.execute("UPDATE chats SET welcome=? WHERE chat_id=?", (new_welcome, chat_id,))
+            chats.connect.commit()
+            await message.answer("👋 Приветствие мира было успешно изменено!")
         else:
             await message.answer("💬 Вы не указали новое приветствие!")
     else:
