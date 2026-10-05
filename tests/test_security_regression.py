@@ -126,8 +126,8 @@ class SecurityRegressionTests(unittest.TestCase):
                 return "Модератор"
             return None
 
-        with patch("core.permissions.is_owner", return_value=False), \\
-             patch("services.chat_members.get_chat_authority", side_effect=authority), \\
+        with patch("core.permissions.is_owner", return_value=False), \
+             patch("services.chat_members.get_chat_authority", side_effect=authority), \
              patch("services.chat_roles.get_role", side_effect=local_role):
             self.assertEqual(get_user_status(7, 100), "Владелец чата")
             self.assertTrue(has_moderator_role(7, 100))
