@@ -34,8 +34,9 @@ SESSION = Path(
 API_ID = os.getenv("QA_API_ID", "36412572")
 DEFAULT_TARGET = os.getenv("QA_TARGET", "AiAether1_Bot")
 QA_BRANCH = os.getenv("QA_GITHUB_BRANCH", "test-global-assistant-upgrade")
-BOT_LOG = ROOT / "bot.log"
-RUNTIME_LOG = ROOT / "termux-autoupdate.log"
+DATA_DIR = Path(os.getenv("BOT_DATA_DIR", str(ROOT / "data" / "test")))
+BOT_LOG = DATA_DIR / "bot.log"
+RUNTIME_LOG = DATA_DIR / "termux-autoupdate.log"
 SCRIPT_MTIME = Path(__file__).stat().st_mtime
 
 
