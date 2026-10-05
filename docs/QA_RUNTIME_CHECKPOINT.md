@@ -68,6 +68,7 @@ Known healthy telemetry: HEALTH OK: bot_heartbeat=... role=active telegram=@AiAe
 8. Root cause found in QA/runtime sync: untracked qa/scenarios.json was intentionally preserved by termux_update.sh. Fixed updater to synchronize explicitly owned QA runtime files with backup.
 9. Root cause found in live QA RUN all: report publication hit GitHub HTTP 422 because per-scenario log tails made the report too large. Fixed QA agent with bounded reports and diagnostics-on-failure.
 10. Supervisor now restarts termux_control.py when its script hash changes, so pulled control fixes become active without manual process surgery.
+11. QA diagnostics now read data/test/bot.log and data/test/termux-autoupdate.log, matching the actual runtime writer locations.
 
 ## Next sequence
 A. Allow the fixed runtime updater/supervisor/control chain to converge; do not rebuild Termux generically.
@@ -81,7 +82,7 @@ G. Continue full command/role/capability audit only after live QA is operational
 ## Code audit state
 Recent fixes include chat-aware role resolution; Telegram authority TTL/startup/new-chat warmup; role-based moderation without hidden admin gates; Founder-only markers; chat-aware report-center authorization/callbacks; authoritative runtime diagnostics/status handlers; background diagnostic telemetry; sanitized runtime errors; bounded AI timeout/timing; chat-aware profile/info; fresh silence confirmation.
 
-Latest confirmed CI: workflow #1854 / run 37310936770, commit f42e99c9316ea33b5e8ebae2b382467a2f736572, success. Later runtime-control/QA synchronization fixes are on the current PR head and require a fresh CI result before being considered complete.
+Latest confirmed CI: workflow #1883 / run 37315674404, current head 1e44aec243645c84f65e73759ea1a5607e186838, success. All 10 substantive workflow steps passed, including compile, import, runtime regression tests, and dependency audits.
 
 ## Evidence rule
 Never claim a live Telegram command was tested without a QA result showing sent command + observed reply. Never claim runtime control executed without its result. Never infer infrastructure is unavailable from a stale artifact; inspect the update/supervisor path first.
