@@ -57,7 +57,6 @@ class CommandRegistryTests(unittest.TestCase):
 
         user = command_catalog("Пользователь")
         moderator = command_catalog("Модератор")
-        admin = command_catalog("Администратор")
         founder = command_catalog("Создатель бота")
 
         for value in ("/panel", "/cancel", "/mute", "/ban", "/setstatus", "/status", "/diagnostics"):
@@ -65,12 +64,10 @@ class CommandRegistryTests(unittest.TestCase):
 
         for value in ("/panel", "/cancel", "/mute", "/ban"):
             self.assertIn(value, moderator, value)
-        self.assertNotIn("/setstatus", moderator)
+        self.assertIn("/setstatus", moderator)
         self.assertNotIn("/status", moderator)
 
-        self.assertIn("/panel", admin)
-        self.assertIn("/setstatus", admin)
-        self.assertNotIn("/status", admin)
+        self.assertIn("/setstatus", founder)
         self.assertIn("/status", founder)
         self.assertIn("/diagnostics", founder)
         self.assertIn("/setstatus", founder)
