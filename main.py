@@ -45,7 +45,7 @@ from services.diagnostic_journal import record as record_diagnostic
 from services.issue_tracker import create_runtime_error_marker
 from services.report_service import reminder_loop
 from services.battery_status import get_battery_status
-from services.chat_members import sync_chat_admins
+from services.chat_members import get_chat_authority, observe_chat_member_update, refresh_chat_member, sync_chat_admins
 
 DATA_DIR = os.path.abspath(os.getenv("BOT_DATA_DIR", os.path.join("data", "test")))
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -295,7 +295,7 @@ dp.middleware.setup(ActivityLoggingMiddleware())
 
 
 _CHAT_ADMIN_SYNC_AT: dict[int, float] = {}
-_CHAT_ADMIN_SYNC_TTL = 60.0
+_CHAT_ADMIN_SYNC_TTL = 15.0
 
 
 class ChatAuthorityMiddleware(BaseMiddleware):
@@ -305,7 +305,24 @@ class ChatAuthorityMiddleware(BaseMiddleware):
         if message.chat.type not in ("group", "supergroup"):
             return
         chat_id = message.chat.id
+        user_id = getattr(message.from_user, "id", None)
         now = time.monotonic()
+
+        # If this sender already has Telegram-derived authority, verify that
+        # authority directly before dispatch. This removes the dangerous
+        # demotion window without calling Telegram for every ordinary member.
+        if user_id is not None and get_chat_authority(chat_id, user_id):
+            try:
+                await refresh_chat_member(bot, chat_id, user_id)
+                _CHAT_ADMIN_SYNC_AT[chat_id] = now
+                return
+            except Exception:
+                log.exception(
+                    "CHAT AUTHORITY | failed to verify user=%s chat=%s",
+                    user_id,
+                    chat_id,
+                )
+
         if now - _CHAT_ADMIN_SYNC_AT.get(chat_id, 0.0) < _CHAT_ADMIN_SYNC_TTL:
             return
         try:
@@ -313,6 +330,27 @@ class ChatAuthorityMiddleware(BaseMiddleware):
             _CHAT_ADMIN_SYNC_AT[chat_id] = now
         except Exception:
             log.exception("CHAT AUTHORITY | failed to refresh chat=%s", chat_id)
+
+
+@dp.chat_member_handler()
+async def chat_member_authority_update(chat_member):
+    """Apply Telegram membership changes immediately to the local authority cache."""
+    chat = getattr(chat_member, "chat", None)
+    if not chat or getattr(chat, "type", None) not in ("group", "supergroup"):
+        return
+    try:
+        observe_chat_member_update(chat_member)
+        _CHAT_ADMIN_SYNC_AT[chat.id] = time.monotonic()
+        log.info(
+            "CHAT AUTHORITY | membership update applied chat=%s user=%s status=%s",
+            chat.id,
+            getattr(getattr(chat_member, "new_chat_member", None), "user", None).id
+            if getattr(getattr(chat_member, "new_chat_member", None), "user", None)
+            else None,
+            getattr(getattr(chat_member, "new_chat_member", None), "status", None),
+        )
+    except Exception:
+        log.exception("CHAT AUTHORITY | failed to apply membership update chat=%s", chat.id)
 
 
 dp.middleware.setup(ChatAuthorityMiddleware())
@@ -971,7 +1009,7 @@ def start_bot():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(\n        dp,\n        skip_updates=True,\n        on_startup=on_startup,\n        allowed_updates=[\n            "message", "edited_message", "channel_post", "edited_channel_post",\n            "inline_query", "chosen_inline_result", "callback_query",\n            "shipping_query", "pre_checkout_query", "poll", "poll_answer",\n            "my_chat_member", "chat_member", "chat_join_request",\n        ],\n    )
 
 
 if __name__ == "__main__":
