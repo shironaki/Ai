@@ -117,7 +117,14 @@ def lease_git(*args: str, input_text: str | None = None, check: bool = True) -> 
 def read_lease() -> tuple[dict, str]:
     lease_git("fetch", "origin", LEASE_BRANCH)
     parent = lease_git("rev-parse", f"origin/{LEASE_BRANCH}")
-    raw = lease_git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
+    try:
+        raw = lease_git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
+    except RuntimeError:
+        # Recover from the historical CRLF-created path ``lease.json\\r``.
+        # The next successful write_lease() rebuilds the tree with the canonical
+        # filename, permanently repairing the lease branch.
+        legacy_path = LEASE_PATH + "\\r"
+        raw = lease_git("show", f"origin/{LEASE_BRANCH}:{legacy_path}")
     return json.loads(raw or "{}"), parent
 
 
