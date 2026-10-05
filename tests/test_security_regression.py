@@ -180,6 +180,8 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertTrue({"welcome", "приветствие"} <= specs["welcome"].aliases)
         self.assertIn("тишина", specs["silence"].aliases)
         self.assertIn("модерация", specs["moderation"].aliases)
+        self.assertFalse(specs["welcome"].confirmation)
+        self.assertFalse(specs["setstatus"].confirmation)
 
     def test_role_based_moderation_has_no_hidden_telegram_admin_gate(self):
         from pathlib import Path
