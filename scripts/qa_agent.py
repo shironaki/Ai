@@ -280,6 +280,8 @@ def command(raw: str) -> str:
         )
     if op == "RUN":
         name = parts[1].strip().lower() if len(parts) > 1 else "smoke"
+        if name == "all":
+            refresh_scenarios_from_github()
         names = list(load_scenarios()) if name == "all" else [name]
         reports = []
         for scenario in names:
