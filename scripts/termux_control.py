@@ -84,16 +84,19 @@ def request(method: str, path: str, value=None):
     raise last_error
 
 
-def fetch_issue_comments() -> list[dict]:
-    """Fetch the complete command queue, not just GitHub's first 100 comments."""
+def fetch_issue_comments(after_id: int | None = None) -> list[dict]:
+    """Fetch newest comments first and page backwards until the saved cursor."""
     comments: list[dict] = []
     for page in range(1, 11):
         page_items = request(
-            "GET", f"/issues/{ISSUE}/comments?per_page=100&page={page}"
+            "GET",
+            f"/issues/{ISSUE}/comments?per_page=100&page={page}&sort=created&direction=desc",
         )
         if not page_items:
             break
         comments.extend(page_items)
+        if after_id is not None and any(int(item.get("id", 0)) <= after_id for item in page_items):
+            break
         if len(page_items) < 100:
             break
     return comments
@@ -550,7 +553,8 @@ def main() -> int:
             with LOG.open("a", encoding="utf-8") as fh:
                 fh.write(f"CONTROL: auto-failover start failed; lease released ({health})\\n")
 
-    comments = fetch_issue_comments()
+    last = load_state()
+    comments = fetch_issue_comments(last)
     touch_control_heartbeat()
     commands = [
         item for item in comments
@@ -562,7 +566,6 @@ def main() -> int:
     if not commands:
         return 0
 
-    last = load_state()
     result_ids = set()
     for item in comments:
         body = item.get("body", "")
