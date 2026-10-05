@@ -538,8 +538,9 @@ class RuntimeRegressionTests(unittest.TestCase):
     def test_termux_update_refuses_bot_start_without_fresh_lease(self):
         source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
         self.assertIn("has_fresh_active_lease()", source)
-        self.assertIn("urllib.request", source)
-        self.assertIn("/contents/{path}?ref={branch}", source)
+        self.assertIn('git fetch origin "$LEASE_BRANCH"', source)
+        self.assertIn('git show "origin/$LEASE_BRANCH:$LEASE_PATH"', source)
+        self.assertNotIn("urllib.request", source)
         self.assertIn('STOP: refusing to start bot without a fresh active lease', source)
 
 
