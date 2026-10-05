@@ -1,6 +1,7 @@
 import json
 import logging
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -270,7 +271,8 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(get_display_role(1, 999), "Создатель бота")
 
     def test_safe_natural_informational_actions_reach_regular_users(self):
-        source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         self.assertIn("async def direct_informational_action(message: types.Message):", source)
         self.assertIn('m.from_user.id != config.owner', source)
         self.assertIn('detect_direct_action(m.text) in {', source)
