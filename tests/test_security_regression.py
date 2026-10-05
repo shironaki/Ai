@@ -175,7 +175,7 @@ class SecurityRegressionTests(unittest.TestCase):
     def test_qa_marker_access_remains_founder_only(self):
         from core.command_registry import COMMAND_REGISTRY
 
-        spec = next(item for item in COMMAND_REGISTRY if item.name == "issue_list")
+        spec = next(item for item in COMMAND_REGISTRY if item.key == "issue_list")
         self.assertEqual(spec.min_role, "Создатель бота")
         self.assertEqual(spec.scope, "global")
 
