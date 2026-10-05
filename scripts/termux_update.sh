@@ -92,7 +92,7 @@ git fetch origin "$BRANCH" >> "$LOG" 2>&1
 # Bootstrap stale phones that accumulated only local edits to Termux-owned
 # runtime scripts. Preserve the local patch for diagnostics, then replace
 # those files with the tested branch revision. Never touch arbitrary tracked
-# application files, and never touch untracked QA data.
+# application files; explicitly owned QA runtime files are synchronized too.
 TERMUX_OWNED_FILES=(
     "autoupdate.sh"
     "codespace_boot.sh"
