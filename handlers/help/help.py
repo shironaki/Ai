@@ -852,7 +852,7 @@ async def chatinfo_cmd(message: types.Message):
 @dp.message_handler(commands=["info", "инфо", "инфа"], commands_prefix="/!.")
 @dp.message_handler(lambda msg: bool(msg.text and msg.text.casefold().strip() == "инфа"))
 async def info_msg(message):
-    summary = user_summary(message.from_user.id)
+    summary = user_summary(message.from_user.id, message.chat.id)
     if summary is None:
         await message.reply("Вы ещё не зарегистрированы в Системе. Откройте личный чат и выполните первичный запуск.")
         return
@@ -902,5 +902,4 @@ async def founder_natural_ai(message: types.Message):
 async def max_relationship_natural_ai(message: types.Message):
     """100% relationship unlocks invocation-free AI replies for this user."""
     await _answer_ai(message, message.text)
-
 
