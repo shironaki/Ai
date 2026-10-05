@@ -471,17 +471,16 @@ def _render_issue_list(rows) -> str:
     )
 )
 async def issue_control(message: types.Message):
-    role = get_display_role(message.from_user.id, message.chat.id)
-    if role == "Создатель бота":
-        rows = list_markers()
-        await message.reply(_render_issue_list(rows))
+    if message.from_user.id != config.owner:
+        await message.reply("⛔ Команда доступна только Основателю.")
         return
-    if role == "Владелец чата":
-        rows = list_markers(chat_id=message.chat.id)
-        await message.reply(_render_issue_list(rows))
-        return
-    await message.reply("⛔ QA-метки доступны только Основателю или Владельцу чата.")
-
+    rows = list_markers()
+    rendered = _render_issue_list(rows)
+    if message.chat.type == "private":
+        await message.reply(rendered)
+    else:
+        await bot.send_message(config.owner, rendered)
+        await message.reply("📬 Список QA-меток отправлен Основателю в личные сообщения.")
 
 
 _REPORT_PENDING: dict[tuple[int, int], int] = {}
