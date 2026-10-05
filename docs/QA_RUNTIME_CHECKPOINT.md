@@ -63,22 +63,25 @@ Known healthy telemetry: HEALTH OK: bot_heartbeat=... role=active telegram=@AiAe
 3. QA returned ValueError: unknown scenario: role_matrix_command_surface_v2.
 4. Current repository qa/scenarios.json DOES contain that scenario.
 5. Therefore the immediate task is to synchronize/deploy current branch QA scenario/code to the runtime checkout, then rerun live.
-6. UPDATE was sent to Issue #23 but no result was observed in the checked window; do not assume it executed.
-7. FORCE PHONE2 ACTIVE was then sent; its result was not yet confirmed at checkpoint time.
+6. Runtime control Issue #23 later stopped acknowledging new commands; telemetry shows repeated lease GitHub API timeouts while the bot watchdog intermittently repairs the active bot.
+7. Root cause found in control queue: it fetched only the first 10 oldest comment pages, so a large Issue #23 hid new commands. Fixed in termux_control.py with newest-first paging.
+8. Root cause found in QA/runtime sync: untracked qa/scenarios.json was intentionally preserved by termux_update.sh. Fixed updater to synchronize explicitly owned QA runtime files with backup.
+9. Root cause found in live QA RUN all: report publication hit GitHub HTTP 422 because per-scenario log tails made the report too large. Fixed QA agent with bounded reports and diagnostics-on-failure.
+10. Supervisor now restarts termux_control.py when its script hash changes, so pulled control fixes become active without manual process surgery.
 
 ## Next sequence
-A. Restore runtime checkout freshness for scripts/qa_agent.py + qa/scenarios.json using the existing supervisor/update mechanism; do not rebuild Termux generically.
-B. Verify QA STATUS.
-C. Run role_matrix_command_surface_v2 live.
+A. Allow the fixed runtime updater/supervisor/control chain to converge; do not rebuild Termux generically.
+B. Verify QA STATUS shows the refreshed agent/catalog.
+C. Run role_matrix_command_surface_v2 live and verify real Telegram replies.
 D. Run focused role/isolation scenarios and then RUN all.
 E. Correlate every live failure with bot/runtime logs, diagnostic journal and QA markers; fix root causes, never merely suppress notifications.
 F. Re-run static regression tests and CI after fixes.
-G. Continue full command/role/capability audit only after live QA is operational.
+G. Continue full command/role/capability audit only after live QA is operational and CI is green on the final head.
 
 ## Code audit state
 Recent fixes include chat-aware role resolution; Telegram authority TTL/startup/new-chat warmup; role-based moderation without hidden admin gates; Founder-only markers; chat-aware report-center authorization/callbacks; authoritative runtime diagnostics/status handlers; background diagnostic telemetry; sanitized runtime errors; bounded AI timeout/timing; chat-aware profile/info; fresh silence confirmation.
 
-Latest CI requiring recheck: workflow #1854 / run 37310936770, commit f42e99c9316ea33b5e8ebae2b382467a2f736572. Do not call it green until rechecked.
+Latest confirmed CI: workflow #1854 / run 37310936770, commit f42e99c9316ea33b5e8ebae2b382467a2f736572, success. Later runtime-control/QA synchronization fixes are on the current PR head and require a fresh CI result before being considered complete.
 
 ## Evidence rule
 Never claim a live Telegram command was tested without a QA result showing sent command + observed reply. Never claim runtime control executed without its result. Never infer infrastructure is unavailable from a stale artifact; inspect the update/supervisor path first.
