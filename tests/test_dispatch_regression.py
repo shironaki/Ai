@@ -410,14 +410,20 @@ class DispatchRegressionTests(unittest.TestCase):
 
 
     def test_founder_only_command_guards_use_direct_bot_messages(self):
-        source = (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("async def _founder_command_guard(message: types.Message, text: str) -> bool:", source)
-        self.assertIn("await message.reply(text, allow_sending_without_reply=True)", source)
-        for command in ("enter_stasis", "leave_stasis", "debug_dispatch", "runtime_diagnostics", "runtime_status", "remote_restart", "battery_status", "send_logs"):
-            start = source.index("async def " + command + "(")
-            end = source.find("\n@dp.", start)
-            block = source[start:] if end == -1 else source[start:end]
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        runtime_source = (ROOT / "handlers" / "runtime_diagnostics.py").read_text(encoding="utf-8")
+        self.assertIn("async def _founder_command_guard(message: types.Message, text: str) -> bool:", main_source)
+        self.assertIn("await message.reply(text, allow_sending_without_reply=True)", main_source)
+        for command in ("enter_stasis", "leave_stasis", "debug_dispatch", "remote_restart", "battery_status", "send_logs"):
+            start = main_source.index("async def " + command + "(")
+            end = main_source.find("\n@dp.", start)
+            block = main_source[start:] if end == -1 else main_source[start:end]
             self.assertIn("await _founder_command_guard(", block, command)
+        for command in ("status_command", "diagnostics_command"):
+            start = runtime_source.index("async def " + command + "(")
+            end = runtime_source.find("\n@dp.", start)
+            block = runtime_source[start:] if end == -1 else runtime_source[start:end]
+            self.assertIn("await _founder_guard(", block, command)
 
     def test_setstatus_handler_has_runtime_admin_guard(self):
         source = (ROOT / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
