@@ -49,7 +49,7 @@ from main import (
     users,
 )
 
-from core.permissions import get_user_status, has_admin_role, has_moderator_role
+from core.permissions import get_user_status, get_display_role, has_admin_role, has_moderator_role
 from core.identity import is_owner, resolve_role
 from core.role_transitions import available_role_targets
 from core.command_resolution import is_founder_scope_reply
@@ -60,9 +60,9 @@ def _is_report_operator(user_id: int) -> bool:
 
 
 def _panel_role(user_id: int, chat_id: int | None = None) -> str:
-    if is_owner(user_id):
-        return "Создатель бота"
-    return (get_role(chat_id, user_id) if chat_id is not None else get_user_status(user_id)) or "Пользователь"
+    if chat_id is not None:
+        return get_display_role(user_id, chat_id)
+    return get_user_status(user_id) or "Пользователь"
 
 
 
@@ -118,21 +118,15 @@ class ThrottlingMiddleware(BaseMiddleware):
 # С текстом передаёт вопрос в AI-провайдер, поэтому ответы не нужно
 # прописывать вручную в коде.
 def _ai_role(message: types.Message) -> str:
-    if message.from_user.id == config.owner:
-        return "Основатель"
-    status = get_user_status(message.from_user.id, message.chat.id)
-    if status == "Администратор":
-        return "Администратор"
-    if status == "Хелпер":
-        return "Хелпер"
-    if status == "Модератор":
-        return "Модератор"
-    return "Пользователь"
+    role = get_display_role(message.from_user.id, message.chat.id)
+    return "Основатель" if role == "Создатель бота" else role
 
 
 def _ai_intro(role: str) -> str:
     if role == "Основатель":
         return "🔐 СПЕЦДОСТУП ПОЛУЧЕН · Я слушаю. Система в полном распоряжении. Приказывайте."
+    if role == "Владелец чата":
+        return "🔑 ВЛАДЕЛЕЦ ЧАТА · Полномочия этого мира подтверждены. Что прикажете?"
     if role == "Администратор":
         return "🛡️ АДМИНИСТРАТОР · Я слушаю. Полномочия подтверждены. Что прикажете?"
     if role == "Хелпер":
