@@ -94,8 +94,8 @@ class SecurityRegressionTests(unittest.TestCase):
         with patch("core.permissions.is_owner", return_value=True), \
              patch("services.chat_members.get_chat_authority", return_value="Пользователь"), \
              patch("services.chat_roles.get_role", return_value="Модератор"):
-            self.assertEqual(get_user_status(1, 999), "Основатель")
-            self.assertEqual(get_display_role(1, 999), "Основатель")
+            self.assertEqual(get_user_status(1, 999), "Создатель бота")
+            self.assertEqual(get_display_role(1, 999), "Создатель бота")
 
 if __name__ == "__main__":
     unittest.main()
