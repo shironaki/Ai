@@ -605,7 +605,7 @@ async def panel_reports(call: types.CallbackQuery):
     if not _is_report_operator(call.from_user.id, call.message.chat.id):
         await call.answer("Нет доступа.", show_alert=True)
         return
-    rows = list_open()
+    rows = list_open() if is_owner(call.from_user.id) else list_open(source_chat_id=call.message.chat.id)
     menu = InlineKeyboardMarkup(row_width=1)
     for row in rows:
         menu.add(
@@ -634,7 +634,7 @@ async def report_view(call: types.CallbackQuery):
     except ValueError:
         await call.answer("Некорректный ID.", show_alert=True)
         return
-    row = get_report(report_id)
+    row = get_report(report_id) if is_owner(call.from_user.id) else get_report(report_id, call.message.chat.id)
     if row is None:
         await call.answer("Репорт не найден.", show_alert=True)
         return
@@ -665,7 +665,7 @@ async def report_answer_start(call: types.CallbackQuery):
     except ValueError:
         await call.answer("Некорректный ID.", show_alert=True)
         return
-    row = get_report(report_id)
+    row = get_report(report_id) if is_owner(call.from_user.id) else get_report(report_id, call.message.chat.id)
     if row is None or row["status"] != "open":
         await call.answer("Репорт уже закрыт или не найден.", show_alert=True)
         return
@@ -696,7 +696,7 @@ async def report_answer_message(message: types.Message):
         await message.reply("⛔ Доступ к центру обращений больше не подтверждён.")
         return
     _REPORT_PENDING.pop(key, None)
-    row = get_report(report_id)
+    row = get_report(report_id) if is_owner(message.from_user.id) else get_report(report_id, message.chat.id)
     if row is None or row["status"] != "open":
         await message.reply("⚠️ Репорт уже закрыт или не найден.")
         return
@@ -712,7 +712,12 @@ async def report_answer_message(message: types.Message):
             "Попросите его открыть личный чат с Аи."
         )
         return
-    answer_report(report_id, message.from_user.id, message.text.strip())
+    if not answer_report(
+        report_id,
+        message.from_user.id,
+        message.text.strip(),
+        source_chat_id=None if is_owner(message.from_user.id) else message.chat.id,
+    ):
     await message.reply(f"✅ Ответ по репорту #{report_id} отправлен.")
 
 
