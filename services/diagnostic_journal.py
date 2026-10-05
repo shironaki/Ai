@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 DIAGNOSTIC_RETENTION_DAYS = 14
 DIAGNOSTIC_MAX_ROWS = 5000
+_PURGE_INTERVAL_SECONDS = 60.0
+_last_purge_at = 0.0
 
 from database.connection import connect_db
 from services.security import redact
@@ -38,11 +40,20 @@ def _ensure_table() -> None:
 
 
 def _purge_old() -> None:
+    global _last_purge_at
+    now_monotonic = __import__("time").monotonic()
+    if now_monotonic - _last_purge_at < _PURGE_INTERVAL_SECONDS:
+        return
     cutoff = (datetime.now(timezone.utc) - timedelta(days=DIAGNOSTIC_RETENTION_DAYS)).isoformat()
     with connect_db("users.db") as db:
         db.execute("DELETE FROM diagnostic_events WHERE created_at < ?", (cutoff,))
-        db.execute("DELETE FROM diagnostic_events WHERE id NOT IN (SELECT id FROM diagnostic_events ORDER BY id DESC LIMIT ?)", (DIAGNOSTIC_MAX_ROWS,))
+        db.execute(
+            "DELETE FROM diagnostic_events WHERE id NOT IN "
+            "(SELECT id FROM diagnostic_events ORDER BY id DESC LIMIT ?)",
+            (DIAGNOSTIC_MAX_ROWS,),
+        )
         db.commit()
+    _last_purge_at = now_monotonic
 
 
 def record(
