@@ -1009,7 +1009,17 @@ def start_bot():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    executor.start_polling(\n        dp,\n        skip_updates=True,\n        on_startup=on_startup,\n        allowed_updates=[\n            "message", "edited_message", "channel_post", "edited_channel_post",\n            "inline_query", "chosen_inline_result", "callback_query",\n            "shipping_query", "pre_checkout_query", "poll", "poll_answer",\n            "my_chat_member", "chat_member", "chat_join_request",\n        ],\n    )
+    executor.start_polling(
+        dp,
+        skip_updates=True,
+        on_startup=on_startup,
+        allowed_updates=[
+            "message", "edited_message", "channel_post", "edited_channel_post",
+            "inline_query", "chosen_inline_result", "callback_query",
+            "shipping_query", "pre_checkout_query", "poll", "poll_answer",
+            "my_chat_member", "chat_member", "chat_join_request",
+        ],
+    )
 
 
 if __name__ == "__main__":
