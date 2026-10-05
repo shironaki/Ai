@@ -37,7 +37,10 @@ supervisor_heartbeat_stale() {
     local now mtime age
     now="$(date +%s)"
     if [[ ! -f "$SUPERVISOR_HEARTBEAT" ]]; then
-        return 1
+        # A live supervisor must publish its heartbeat immediately. If the
+        # file is missing, treat the process as unhealthy so the independent
+        # guardian can replace a wedged/stale supervisor.
+        return 0
     fi
     mtime="$(stat -c %Y "$SUPERVISOR_HEARTBEAT" 2>/dev/null || echo 0)"
     [[ "$mtime" =~ ^[0-9]+$ && "$mtime" -gt 0 ]] || return 1
