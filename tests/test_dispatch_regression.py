@@ -97,6 +97,21 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("Broadcast execution requires founder actor context", broadcast_source)
         self.assertIn("Report replies require operator actor context", report_source)
 
+    def test_chat_roles_are_surface_local_not_global(self):
+        source = (ROOT / "core" / "permissions.py").read_text(encoding="utf-8")
+        self.assertIn("if chat_id is not None:", source)
+        self.assertIn('return get_role(chat_id, user_id) or "Пользователь"', source)
+        self.assertIn("return resolve_role(user_id)", source)
+        self.assertNotIn("if chat_role:", source)
+        self.assertNotIn("return row[0] if row else None", source)
+
+    def test_chat_role_display_and_authority_share_the_same_scope(self):
+        source = (ROOT / "core" / "permissions.py").read_text(encoding="utf-8")
+        self.assertIn("def get_display_role(user_id, chat_id=None):", source)
+        self.assertIn("role = get_role(chat_id, user_id)", source)
+        self.assertIn("def has_moderator_role(user_id, chat_id=None):", source)
+        self.assertIn("def has_admin_role(user_id, chat_id=None):", source)
+
     def test_moderation_menu_renderer_is_not_recursive(self):
         source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
         start = source.index("def _moderation_menu(call):")
