@@ -9,6 +9,7 @@ from database.chats import get_chat
 from database.connection import connect_db
 from database.users import get_user
 from core.runtime_state import is_paused
+from core.permissions import get_display_role
 
 
 def _count(connection, table: str) -> int:
@@ -16,7 +17,7 @@ def _count(connection, table: str) -> int:
     return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
-def user_summary(user_id: int) -> dict | None:
+def user_summary(user_id: int, chat_id: int | None = None) -> dict | None:
     row = get_user(user_id)
     if row is None:
         return None
@@ -24,7 +25,11 @@ def user_summary(user_id: int) -> dict | None:
         "id": int(row["id"]),
         "name": row["name"],
         "username": row["username"],
-        "status": "Создатель бота" if user_id == config.owner else row["status"],
+        "status": (
+            "Создатель бота" if user_id == config.owner
+            else get_display_role(user_id, chat_id) if chat_id is not None
+            else row["status"]
+        ),
         "system_registered_at": row["regdata"],
         "telegram_registration": "не предоставляется Telegram Bot API",
     }
@@ -108,7 +113,7 @@ def build_verified_context(
     sections = []
 
     if wants_profile:
-        profile = user_summary(user_id)
+        profile = user_summary(user_id, chat_id)
         sections.append(f"ПРОВЕРЕННЫЕ ДАННЫЕ ПРОФИЛЯ: {profile!r}")
 
     if wants_chat:
