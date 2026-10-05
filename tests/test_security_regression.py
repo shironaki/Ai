@@ -172,6 +172,54 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertEqual(summary["status"], "Модератор")
         self.assertEqual(summary["id"], 7)
 
+    def test_registered_aliases_match_real_dispatch_surface(self):
+        from core.command_registry import COMMAND_REGISTRY
+
+        specs = {item.key: item for item in COMMAND_REGISTRY}
+        self.assertTrue({"help", "хелп", "команды"} <= specs["help"].aliases)
+        self.assertTrue({"welcome", "приветствие"} <= specs["welcome"].aliases)
+        self.assertIn("тишина", specs["silence"].aliases)
+        self.assertIn("модерация", specs["moderation"].aliases)
+
+    def test_role_based_moderation_has_no_hidden_telegram_admin_gate(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
+        for command in ("unmute", "ban", "unban"):
+            line = next(
+                line for line in source.splitlines()
+                if "@dp.message_handler" in line and command in line
+            )
+            self.assertNotIn("is_chat_admin=True", line)
+
+    def test_welcome_uses_effective_role_without_extra_telegram_admin_gate(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
+        block = source[source.index("async def rules_cmd"):source.index("# Legacy barrier commands")]
+        self.assertIn("has_moderator_role(message.from_user.id, message.chat.id)", block)
+        self.assertNotIn("get_chat_administrators", block)
+
+    def test_silence_apply_requires_live_confirmation_state(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        block = source[source.index('async def panel_silence_apply'):source.index('@dp.callback_query_handler(lambda c: c.data == "panel:welcome")')]
+        self.assertIn('confirmation.get("kind") != "silence"', block)
+        self.assertIn('confirmation.get("message_id") != call.message.message_id', block)
+        self.assertIn('confirmation.get("expected_enabled")', block)
+
+    def test_panel_myinfo_uses_chat_effective_role(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        block = source[source.index("async def panel_myinfo"):source.index("async def panel_")]
+        self.assertIn("user_summary(call.from_user.id, call.message.chat.id)", block)
+
     def test_qa_marker_access_remains_founder_only(self):
         from core.command_registry import COMMAND_REGISTRY
 
