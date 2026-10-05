@@ -26,6 +26,7 @@ ROLE_ORDER = {
     "Пользователь": 10,
     "Модератор": 20,
     OWNER_ROLE: 50,
+    CHAT_OWNER_ROLE: 20,  # capability level only; never a persisted bot role
 }
 MODERATOR_ROLES = {"Модератор", OWNER_ROLE}
 ADMIN_ROLES = MODERATOR_ROLES
