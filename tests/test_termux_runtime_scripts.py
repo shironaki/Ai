@@ -30,7 +30,8 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn("refresh_scenarios_from_github", source)
         self.assertIn('/contents/qa/scenarios.json?ref={QA_BRANCH}', source)
         self.assertIn("limit = 60000", source)
-        self.assertIn("diagnostics-on-failure" not in source, source.__contains__("scenario_ok"))
+        self.assertIn("scenario_ok = all(item[\"ok\"] for item in results)", source)
+        self.assertIn("if not scenario_ok:", source)
 
 
 if __name__ == "__main__":
