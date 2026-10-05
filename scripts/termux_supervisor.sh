@@ -12,6 +12,7 @@ BATTERY_PIDFILE="$REPO/termux-battery-watchdog.pid"
 BATTERY_HASHFILE="$REPO/termux-battery-watchdog.sha256"
 UPDATE_PIDFILE="$REPO/termux-update.pid"
 CONTROL_PIDFILE="$REPO/termux-control.pid"
+CONTROL_HASHFILE="$REPO/termux-control.sha256"
 CONTROL_HEARTBEAT="$REPO/data/test/runtime/control-heartbeat"
 QA_PIDFILE="$REPO/qa-agent.pid"
 QA_HASHFILE="$REPO/qa-agent.sha256"
@@ -133,21 +134,29 @@ control_process_matches() {
 }
 
 start_control() {
+    current_hash="$(sha256sum "$REPO/scripts/termux_control.py" 2>/dev/null | awk '{print $1}')"
     existing_pid="$(cat "$CONTROL_PIDFILE" 2>/dev/null || true)"
     if control_process_matches "$existing_pid"; then
-        mtime="$(stat -c %Y "$CONTROL_HEARTBEAT" 2>/dev/null || stat -c %Y "$CONTROL_PIDFILE" 2>/dev/null || echo 0)"
-        now="$(date +%s)"
-        age=$((now - mtime))
-        if [ "$age" -gt "$CONTROL_MAX_AGE" ]; then
+        running_hash="$(cat "$CONTROL_HASHFILE" 2>/dev/null || true)"
+        if [ -n "$current_hash" ] && [ "$running_hash" != "$current_hash" ]; then
             kill "$existing_pid" 2>/dev/null || true
             sleep 1
         else
-            return 0
+            mtime="$(stat -c %Y "$CONTROL_HEARTBEAT" 2>/dev/null || stat -c %Y "$CONTROL_PIDFILE" 2>/dev/null || echo 0)"
+            now="$(date +%s)"
+            age=$((now - mtime))
+            if [ "$age" -gt "$CONTROL_MAX_AGE" ]; then
+                kill "$existing_pid" 2>/dev/null || true
+                sleep 1
+            else
+                return 0
+            fi
         fi
     fi
-    rm -f "$CONTROL_PIDFILE"
+    rm -f "$CONTROL_PIDFILE" "$CONTROL_HASHFILE"
     nohup "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 < /dev/null &
     echo $! > "$CONTROL_PIDFILE"
+    printf "%s\n" "$current_hash" > "$CONTROL_HASHFILE"
 }
 
 reap_control() {
