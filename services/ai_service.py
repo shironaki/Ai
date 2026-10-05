@@ -167,7 +167,7 @@ async def generate_reply(
 
     history_key = request_key
     if chat_id is not None and history_key not in _HISTORY:
-        _HISTORY[history_key] = load_history(user_id, chat_id)
+        _HISTORY[history_key] = await asyncio.to_thread(load_history, user_id, chat_id)
     history = _HISTORY.setdefault(history_key, [])
     safe_prompt = redact(prompt, 4000)
     candidate_history = (history + [{"role": "user", "content": safe_prompt}])[
@@ -229,7 +229,8 @@ async def generate_reply(
     history.append({"role": "assistant", "content": redact(answer, 4000)})
     history[:] = history[-_MAX_HISTORY_MESSAGES:]
     if chat_id is not None:
-        append_history(
+        await asyncio.to_thread(
+            append_history,
             user_id,
             chat_id,
             [
