@@ -141,24 +141,70 @@ def tail(path: Path, lines: int = 80) -> str:
 
 
 def refresh_scenarios_from_github() -> bool:
-    """Refresh the scenario catalog when a runtime checkout is stale."""
+    """Refresh the scenario catalog when a runtime checkout is stale.
+
+    Prefer the local git remote so runtime updates do not depend on a second
+    GitHub API request. Fall back to the API when the checkout cannot fetch.
+    """
+    errors: list[str] = []
+
     try:
-        item = gh("GET", f"/contents/qa/scenarios.json?ref={QA_BRANCH}")
+        subprocess.run(
+            ["git", "fetch", "--quiet", "origin", QA_BRANCH],
+            cwd=ROOT,
+            check=True,
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        content = subprocess.check_output(
+            ["git", "show", f"origin/{QA_BRANCH}:qa/scenarios.json"],
+            cwd=ROOT,
+            text=True,
+            timeout=10,
+        )
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            raise ValueError("scenario catalog root must be an object")
+        SCENARIOS.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SCENARIOS.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(parsed, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(SCENARIOS)
+        return True
+    except Exception as exc:
+        errors.append(f"git: {type(exc).__name__}: {exc}")
+
+    try:
+        from urllib.parse import quote
+
+        item = gh(
+            "GET",
+            f"/contents/qa/scenarios.json?ref={quote(QA_BRANCH, safe='')}",
+        )
         encoded = item.get("content", "")
         if not encoded:
-            return False
+            raise ValueError("GitHub API returned no file content")
         import base64
+
         content = base64.b64decode(encoded).decode("utf-8")
         parsed = json.loads(content)
         if not isinstance(parsed, dict):
-            return False
+            raise ValueError("scenario catalog root must be an object")
         SCENARIOS.parent.mkdir(parents=True, exist_ok=True)
         tmp = SCENARIOS.with_suffix(".tmp")
-        tmp.write_text(json.dumps(parsed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp.write_text(
+            json.dumps(parsed, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         tmp.replace(SCENARIOS)
         return True
-    except Exception:
-        return False
+    except Exception as exc:
+        errors.append(f"github: {type(exc).__name__}: {exc}")
+
+    raise RuntimeError("scenario refresh failed: " + " | ".join(errors))
 
 
 def load_scenarios() -> dict:
