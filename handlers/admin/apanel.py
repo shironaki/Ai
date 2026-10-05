@@ -9,43 +9,56 @@ from services.moderation_gateway import request as request_moderation
 
 @dp.message_handler(commands=['setstatus'])
 async def set_status(message: types.Message):
-    if not has_admin_role(message.from_user.id, message.chat.id):
-        await message.reply("⛔ Команда доступна только Администратору или Основателю.")
-        return
+    from core.identity import is_owner
+    from core.permissions import has_admin_role
+    from services.chat_roles import set_role
+    from services.global_roles import set_global_role
+    from core.role_transitions import available_role_targets
+
+    actor_id = message.from_user.id
     if not message.reply_to_message:
         await message.reply("❗ | Ответьте на сообщение пользователя.")
         return
-    from core.identity import is_owner, resolve_role
-    from core.role_transitions import available_role_targets
-    from core.permissions import get_user_status
 
-    actor_id = message.from_user.id
-    actor_role = get_user_status(actor_id, message.chat.id) or resolve_role(actor_id)
     target_role = (message.get_args() or "").strip()
-    allowed = available_role_targets(actor_role, actor_is_owner=is_owner(actor_id))
-    if target_role not in allowed:
-        await message.reply(
-            "⛔ | Эту роль нельзя назначить из вашего уровня. "
-            "AI/SYSTEM, Основатель и игровые роли через этот контур не назначаются."
-        )
-        return
     target_id = message.reply_to_message.from_user.id
     if target_id == actor_id:
         await message.reply("⛔ | Нельзя назначить роль самому себе.")
         return
-    if get_user_status(target_id) is None:
-        await message.reply("❗ | Пользователь не зарегистрирован в Системе.")
+
+    if target_role != "Модератор":
+        await message.reply("⛔ | В административном контуре назначается только роль Модератор.")
         return
-    from services.chat_roles import set_role
-    if not set_role(message.chat.id, target_id, target_role, actor_id):
-        await message.reply("⛔ | Роль не может быть назначена в этом контуре.")
+
+    if is_owner(actor_id):
+        if set_global_role(target_id, target_role, actor_id):
+            await message.answer(
+                "✅ | Глобальная роль пользователя обновлена: <b>Модератор</b>",
+                parse_mode="html",
+            )
+        else:
+            await message.reply("⛔ | Глобальная роль не может быть назначена этому пользователю.")
         return
-    from services.role_audit import record_role_grant
-    record_role_grant(chat_id=message.chat.id, actor_id=actor_id, target_id=target_id, role=target_role)
-    await message.answer(
-        f"✅ | Роль пользователя обновлена: <b>{target_role}</b>",
-        parse_mode="html",
-    )
+
+    if not has_admin_role(actor_id, message.chat.id):
+        await message.reply("⛔ | Только Основатель или Владелец чата может назначать локальную роль.")
+        return
+
+    if set_role(message.chat.id, target_id, target_role, actor_id):
+        from services.role_audit import record_role_grant
+        record_role_grant(
+            chat_id=message.chat.id,
+            actor_id=actor_id,
+            target_id=target_id,
+            role=target_role,
+        )
+        await message.answer(
+            "✅ | Локальная роль в этом чате обновлена: <b>Модератор</b>",
+            parse_mode="html",
+        )
+        return
+
+    await message.reply("⛔ | Локальная роль не может быть назначена в этом чате.")
 
 # расширение территории
 #/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////#
