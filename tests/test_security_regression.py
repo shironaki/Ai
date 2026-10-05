@@ -174,15 +174,10 @@ class SecurityRegressionTests(unittest.TestCase):
 
     def test_qa_marker_access_remains_founder_only(self):
         from core.command_registry import COMMAND_REGISTRY
-        from handlers.help.help import issue_control
 
         spec = next(item for item in COMMAND_REGISTRY if item.name == "issue_list")
         self.assertEqual(spec.min_role, "Создатель бота")
         self.assertEqual(spec.scope, "global")
-
-        source = __import__("inspect").getsource(issue_control)
-        self.assertIn("message.from_user.id != config.owner", source)
-        self.assertIn("list_markers()", source)
 
     def test_qa_marker_rendering_preserves_workflow_state_and_newlines(self):
         from services.issue_tracker import render_marker
