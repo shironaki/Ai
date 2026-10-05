@@ -165,13 +165,76 @@ def load_scenarios() -> dict:
     return json.loads(SCENARIOS.read_text(encoding="utf-8"))
 
 
+def _expand_scenario(name: str, raw) -> tuple[list[dict], list[dict]]:
+    """Normalize legacy flat scenarios and structured role matrices.
+
+    The live agent is a QA identity, so non-QA actors are never impersonated.
+    Their coverage is reported explicitly instead of being silently skipped.
+    """
+    if isinstance(raw, list) and all(isinstance(item, dict) and "text" in item for item in raw):
+        return list(raw), []
+
+    if not isinstance(raw, list):
+        raise ValueError(f"scenario {name!r} must be a list")
+
+    steps: list[dict] = []
+    skipped: list[dict] = []
+    for group in raw:
+        if not isinstance(group, dict):
+            raise ValueError(f"scenario {name!r} contains a non-object group")
+        actor = group.get("actor", "QA")
+        if actor != "QA":
+            # Founder commands are useful as negative checks from QA, while
+            # ordinary-user coverage requires a separate actor/session.
+            if actor == "Founder":
+                for target in group.get("targets", []):
+                    for command in group.get("commands", []):
+                        step = dict(command)
+                        step["target"] = target
+                        step["absent"] = list(group.get("absent_for_qa", []))
+                        step["expect"] = list(step.get("expect", []))
+                        # QA must never receive the Founder-only payload.
+                        step["qa_negative_actor"] = "Founder"
+                        steps.append(step)
+                continue
+            skipped.append({
+                "group": group.get("name", actor),
+                "reason": f"actor {actor!r} is not available to the isolated QA session",
+            })
+            continue
+
+        target = group.get("target")
+        commands = group.get("commands")
+        if commands is not None:
+            for command in commands:
+                step = dict(command)
+                if target is not None:
+                    step.setdefault("target", target)
+                steps.append(step)
+            continue
+
+        nested = group.get("steps")
+        if nested is not None:
+            for nested_step in nested:
+                step = dict(nested_step)
+                if target is not None:
+                    step.setdefault("target", target)
+                steps.append(step)
+            continue
+
+        raise ValueError(f"scenario group {group.get('name', '<unnamed>')!r} has no commands/steps")
+
+    return steps, skipped
+
+
 def run_scenario(name: str) -> dict:
     all_scenarios = load_scenarios()
     if name not in all_scenarios and refresh_scenarios_from_github():
         all_scenarios = load_scenarios()
     if name not in all_scenarios:
         raise ValueError(f"unknown scenario: {name}")
-    steps = all_scenarios[name]
+
+    steps, skipped = _expand_scenario(name, all_scenarios[name])
     code = r'''
 import asyncio, json, os
 from telethon import TelegramClient
@@ -184,10 +247,73 @@ async def main():
     )
     await client.start()
     out = []
+    last_replies = {}
+    me = await client.get_me()
     try:
         for step in json.loads(os.environ["QA_STEPS"]):
+            if step.get("action") == "replay_same_callback_after_state_change":
+                previous = last_replies.get(str(step.get("target") or os.environ["QA_TARGET"]))
+                if not previous:
+                    out.append({
+                        "action": step["action"],
+                        "ok": False,
+                        "error": "no previous confirmation message available",
+                    })
+                    continue
+                buttons = previous.buttons or []
+                flat = [button for row in buttons for button in row]
+                if not flat:
+                    out.append({
+                        "action": step["action"],
+                        "ok": False,
+                        "error": "previous confirmation message has no inline callback buttons",
+                    })
+                    continue
+                button = flat[0]
+                try:
+                    await previous.click(button)
+                    await asyncio.sleep(1)
+                    await previous.click(button)
+                except Exception as exc:
+                    text = str(exc).casefold()
+                    stale_markers = [str(x).casefold() for x in step.get("expect", [])]
+                    matched = any(marker in text for marker in stale_markers)
+                    out.append({
+                        "action": step["action"],
+                        "ok": matched,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "expected": step.get("expect", []),
+                    })
+                    continue
+                out.append({
+                    "action": step["action"],
+                    "ok": False,
+                    "error": "callback replay did not raise an observable stale-confirmation error",
+                    "expected": step.get("expect", []),
+                })
+                continue
+
             entity = await client.get_entity(step.get("target") or os.environ["QA_TARGET"])
-            sent = await client.send_message(entity, step["text"])
+            reply_to = None
+            if step.get("reply_target") == "ordinary_user":
+                async for candidate in client.iter_messages(entity, limit=50):
+                    if (
+                        candidate.message
+                        and candidate.sender_id
+                        and candidate.sender_id != me.id
+                        and not candidate.out
+                    ):
+                        reply_to = candidate.id
+                        break
+                if reply_to is None:
+                    out.append({
+                        "sent": step["text"],
+                        "ok": False,
+                        "error": "reply_target=ordinary_user but no recent ordinary-user message was found",
+                    })
+                    continue
+
+            sent = await client.send_message(entity, step["text"], reply_to=reply_to)
             deadline = asyncio.get_running_loop().time() + int(step.get("wait", 10))
             replies = []
             seen = set()
@@ -236,9 +362,13 @@ async def main():
                 "detected_errors": detected_errors,
                 "ok": (bool(replies) or allow_no_reply) and not missing and not unexpected and not detected_errors,
             })
+            if replies:
+                last_replies[str(step.get("target") or os.environ["QA_TARGET"])] = await client.get_messages(
+                    entity, ids=replies[-1]["id"]
+                )
     finally:
         await client.disconnect()
-    print(json.dumps(out, ensure_ascii=False))
+    return out
 
 asyncio.run(main())
 '''
@@ -263,13 +393,15 @@ asyncio.run(main())
     if process.returncode:
         raise RuntimeError((process.stderr or process.stdout)[-3000:])
     results = json.loads(process.stdout)
-    scenario_ok = all(item["ok"] for item in results)
+    scenario_ok = all(item.get("ok", False) for item in results)
     report = {
         "scenario": name,
         "ok": scenario_ok,
+        "coverage_complete": not skipped,
+        "skipped": skipped,
         "steps": results,
     }
-    if not scenario_ok:
+    if not scenario_ok or skipped:
         report["bot_log_tail"] = tail(BOT_LOG, 40)
         report["runtime_log_tail"] = tail(RUNTIME_LOG, 20)
     return report
