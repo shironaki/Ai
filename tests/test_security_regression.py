@@ -69,5 +69,33 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn("credentials", event)
 
 
+    def test_chat_owner_authority_overrides_chat_role(self):
+        from core.permissions import get_display_role, get_user_status
+
+        with patch("core.identity.is_owner", return_value=False), \
+             patch("services.chat_members.get_chat_authority", return_value="Владелец чата"), \
+             patch("services.chat_roles.get_role", return_value="Модератор"):
+            self.assertEqual(get_user_status(123, 456), "Владелец чата")
+            self.assertEqual(get_display_role(123, 456), "Владелец чата")
+
+    def test_chat_admin_authority_overrides_chat_role(self):
+        from core.permissions import has_admin_role, has_moderator_role, get_display_role
+
+        with patch("core.identity.is_owner", return_value=False), \
+             patch("services.chat_members.get_chat_authority", return_value="Администратор"), \
+             patch("services.chat_roles.get_role", return_value="Модератор"):
+            self.assertTrue(has_admin_role(123, 456))
+            self.assertTrue(has_moderator_role(123, 456))
+            self.assertEqual(get_display_role(123, 456), "Администратор")
+
+    def test_founder_remains_global_and_immutable(self):
+        from core.permissions import get_display_role, get_user_status
+
+        with patch("core.identity.is_owner", return_value=True), \
+             patch("services.chat_members.get_chat_authority", return_value="Пользователь"), \
+             patch("services.chat_roles.get_role", return_value="Модератор"):
+            self.assertEqual(get_user_status(1, 999), "Основатель")
+            self.assertEqual(get_display_role(1, 999), "Основатель")
+
 if __name__ == "__main__":
     unittest.main()
