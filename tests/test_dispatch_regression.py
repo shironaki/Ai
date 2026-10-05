@@ -312,6 +312,28 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('r")(?:[,,:]|\\s|$)"', source)
         self.assertIn('return normalized[slash_match.end():].strip()', source)
 
+    def test_group_authority_verification_is_ttl_bound_and_event_invalidated(self):
+        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("_CHAT_AUTHORITY_VERIFY_TTL = 15.0", source)
+        self.assertIn("_CHAT_AUTHORITY_VERIFY_AT", source)
+        self.assertIn("_CHAT_AUTHORITY_VERIFY_AT.pop((chat.id, member_user.id), None)", source)
+        self.assertIn("failed to verify user=%s chat=%s duration_ms=%s", source)
+
+    def test_diagnostic_telemetry_does_not_block_message_dispatch(self):
+        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn("async def _record_diagnostic_background", source)
+        self.assertIn("asyncio.to_thread(record_diagnostic", source)
+        self.assertIn('name="diagnostic-update"', source)
+        self.assertIn('name="diagnostic-callback"', source)
+
+    def test_runtime_errors_do_not_expose_internal_marker_ids_to_users(self):
+        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        start = source.index("async def log_update_error(")
+        end = source.find("\n\ndef _runtime_status_snapshot", start)
+        block = source[start:end]
+        self.assertIn("Ошибка автоматически зафиксирована во внутренней диагностике.", block)
+        self.assertNotIn("QA-метку", block.split("if message:", 1)[1].split("elif callback_query:", 1)[0])
+
     def test_runtime_latency_and_single_instance_guards_exist(self):
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
         run_source = (ROOT / "run.py").read_text(encoding="utf-8")
