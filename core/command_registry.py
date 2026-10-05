@@ -26,7 +26,7 @@ class CommandSpec:
 
 
 COMMAND_REGISTRY = (
-    CommandSpec("help", frozenset({"help"}), "system", "Пользователь", description="панель и справка"),
+    CommandSpec("help", frozenset({"help", "хелп", "команды"}), "system", "Пользователь", description="панель и справка"),
     CommandSpec("health", frozenset({"health", "проверка"}), "system", "Пользователь", "chat", description="быстрая проверка работоспособности бота"),
     CommandSpec("panel", frozenset({"panel"}), "system", "Модератор", description="административная панель"),
     CommandSpec("ai", frozenset({"ai", "аи"}), "system", "Пользователь", description="обращение к Аи"),
@@ -43,7 +43,7 @@ COMMAND_REGISTRY = (
     CommandSpec("awakening", frozenset({"awakening", "пробуждение"}), "runtime", "Создатель бота", "both"),
     CommandSpec("moderation", frozenset({"модерация"}), "administration", "Модератор"),
     CommandSpec("silence", frozenset({"тишина"}), "moderation", "Модератор", "chat", True, True),
-    CommandSpec("welcome", frozenset({"приветствие"}), "administration", "Модератор", "chat", True, True),
+    CommandSpec("welcome", frozenset({"welcome", "приветствие"}), "administration", "Модератор", "chat", True, True),
     CommandSpec("mute", frozenset({"мут", "mute", "дебафф"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("unmute", frozenset({"размут", "unmute", "андебафф"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("ban", frozenset({"ban", "аннигилировать"}), "moderation", "Модератор", "chat", True, True),
