@@ -9,7 +9,7 @@ from aiogram.utils.exceptions import BadRequest, MessageToEditNotFound
 from base import config
 from core.command_help import render_help
 from core.command_registry import commands_for_role
-from core.permissions import get_user_status, has_moderator_role, has_admin_role
+from core.permissions import get_user_status, get_display_role, has_moderator_role, has_admin_role
 from core.identity import is_owner
 from core.role_transitions import available_role_targets
 from services.chat_members import sync_chat_admins
@@ -32,17 +32,11 @@ def _panel_key(call):
 
 
 def _role_for_message(message: types.Message) -> str:
-    if message.from_user.id == config.owner:
-        return "Основатель"
-    status = get_role(message.chat.id, message.from_user.id)
-    if status in {
-        "Создатель бота",
-        "Администратор",
-        "Хелпер",
-        "Модератор",
-    }:
-        return status
-    return "Пользователь"
+    # Display the same effective role used by permission checks:
+    # Founder is global; Telegram owner/admin authority is chat-local;
+    # explicit chat_roles are used only when Telegram does not override them.
+    role = get_display_role(message.from_user.id, message.chat.id)
+    return "Основатель" if role == "Создатель бота" else role
 
 
 @dp.message_handler(commands=["help", "хелп", "команды"], commands_prefix="/!.")
@@ -190,9 +184,9 @@ def _panel_guard(call, *, moderator: bool = True) -> bool:
 
 
 def _panel_role(user_id, chat_id=None):
-    if is_owner(user_id):
-        return "Создатель бота"
-    return (get_role(chat_id, user_id) if chat_id is not None else get_user_status(user_id)) or "Пользователь"
+    if chat_id is not None:
+        return get_display_role(user_id, chat_id)
+    return get_user_status(user_id) or "Пользователь"
 
 
 def _panel_menu(user_id: int, chat_id: int) -> InlineKeyboardMarkup:
