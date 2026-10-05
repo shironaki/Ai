@@ -113,6 +113,29 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(get_user_status(7, 300), "Пользователь")
             self.assertEqual(get_display_role(7, 300), "Пользователь")
 
+    def test_role_matrix_maps_capabilities_to_each_chat_authority(self):
+        from core.permissions import get_user_status, has_admin_role, has_moderator_role
+
+        def authority(chat_id, user_id):
+            if chat_id == 100 and user_id == 7:
+                return "Владелец чата"
+            return None
+
+        def local_role(chat_id, user_id):
+            if chat_id == 200 and user_id == 7:
+                return "Модератор"
+            return None
+
+        with patch("core.permissions.is_owner", return_value=False), \\
+             patch("services.chat_members.get_chat_authority", side_effect=authority), \\
+             patch("services.chat_roles.get_role", side_effect=local_role):
+            self.assertEqual(get_user_status(7, 100), "Владелец чата")
+            self.assertTrue(has_moderator_role(7, 100))
+            self.assertTrue(has_admin_role(7, 100))
+            self.assertEqual(get_user_status(7, 200), "Модератор")
+            self.assertTrue(has_moderator_role(7, 200))
+            self.assertFalse(has_admin_role(7, 200))
+
     def test_founder_remains_global_and_immutable(self):
         from core.permissions import get_display_role, get_user_status
 
