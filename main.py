@@ -822,67 +822,6 @@ def _runtime_status_snapshot() -> dict:
     }
 
 
-@dp.message_handler(commands=["diagnostics"])
-async def runtime_diagnostics(message: types.Message):
-    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
-        return
-
-    status = _runtime_status_snapshot()
-    heartbeat_age = status["heartbeat_age"]
-    heartbeat_text = f"{heartbeat_age:.1f}s" if heartbeat_age is not None else "missing"
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "healthcheck.py")
-    try:
-        result = subprocess.run(
-            [os.getenv("PYTHON", "python3"), script, "--diagnostics"],
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-            capture_output=True,
-            text=True,
-            timeout=20,
-            env=os.environ.copy(),
-        )
-        output = (result.stdout + "\\n" + result.stderr).strip()
-        if len(output) > 5000:
-            output = output[-5000:]
-    except Exception as exc:
-        output = f"DIAGNOSTICS ERROR: {type(exc).__name__}: {exc}"
-
-    await message.answer(
-        "🧪 <b>NETWORK / RUNTIME DIAGNOSTICS</b>\\n"
-        f"Heartbeat: <code>{html.escape(heartbeat_text)}</code>\\n"
-        f"PID: <code>{status['pid']}</code>\\n"
-        f"Commit: <code>{html.escape(status['commit'])}</code>\\n\\n"
-        f"<pre>{html.escape(output)}</pre>"
-    )
-
-
-@dp.message_handler(commands=["status"])
-async def runtime_status(message: types.Message):
-    if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
-        return
-
-    status = _runtime_status_snapshot()
-    heartbeat_age = status["heartbeat_age"]
-    heartbeat_state = (
-        "🟢 OK" if heartbeat_age is not None and heartbeat_age <= 30
-        else "🔴 STALE/MISSING"
-    )
-    uptime = status["process_uptime"]
-    if uptime is None:
-        uptime_text = "unknown"
-    else:
-        uptime_text = f"{int(uptime // 3600)}ч {int((uptime % 3600) // 60)}м {int(uptime % 60)}с"
-
-    heartbeat_text = f"{heartbeat_age:.1f}s назад" if heartbeat_age is not None else "нет"
-    await message.answer(
-        "🛰 <b>FOUNDER RUNTIME STATUS</b>\n"
-        f"Бот: <b>{heartbeat_state}</b>\n"
-        f"Heartbeat: <code>{heartbeat_text}</code>\n"
-        f"PID: <code>{status['pid']}</code>\n"
-        f"Uptime: <code>{uptime_text}</code>\n"
-        f"Commit: <code>{html.escape(status['commit'])}</code>"
-    )
-
-
 @dp.message_handler(commands=["restart"])
 async def remote_restart(message: types.Message):
     if not await _founder_command_guard(message, "⛔ Команда доступна только Основателю."):
