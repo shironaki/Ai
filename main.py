@@ -222,8 +222,8 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             else None,
             redact(getattr(callback_query, "data", "") or ""),
         )
-        try:
-            record_diagnostic(
+        _schedule_background(
+            _record_diagnostic_background(
                 update_id=getattr(callback_query, "id", None),
                 chat_id=getattr(getattr(callback_query, "message", None), "chat", None).id
                 if getattr(callback_query, "message", None) and getattr(callback_query.message, "chat", None)
@@ -232,9 +232,9 @@ class ActivityLoggingMiddleware(BaseMiddleware):
                 stage="callback_received",
                 result="received",
                 context={"callback_data": redact(getattr(callback_query, "data", "") or "")},
-            )
-        except Exception:
-            log.exception("DIAGNOSTIC JOURNAL | failed to record callback")
+            ),
+            name="diagnostic-callback",
+        )
 
     async def on_process_callback_query(self, callback_query, data):
         handler = current_handler.get()
