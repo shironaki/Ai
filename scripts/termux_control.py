@@ -268,9 +268,10 @@ def save_state(comment_id: int) -> None:
     tmp.replace(STATEFILE)
 
 
-def result(command: str, message: str) -> bool:
+def result(command: str, message: str, source_comment_id: int | None = None) -> bool:
     """Publish a command result and report whether GitHub accepted it."""
-    body = f"{RESULT_MARKER}\n## Termux control\ncommand: {command}\ntimestamp: {time.strftime('%Y-%m-%d %H:%M:%S %z')}\nresult: {message}"
+    source = f"\nsource_comment_id: {source_comment_id}" if source_comment_id is not None else ""
+    body = f"{RESULT_MARKER}\n## Termux control\ncommand: {command}\ntimestamp: {time.strftime('%Y-%m-%d %H:%M:%S %z')}{source}\nresult: {message}"
     try:
         request("POST", f"/issues/{ISSUE}/comments", {"body": body})
         return True
@@ -555,6 +556,36 @@ def main() -> int:
         return 0
 
     last = load_state()
+    result_ids = set()
+    for item in comments:
+        body = item.get("body", "")
+        if RESULT_MARKER not in body:
+            continue
+        for line in body.splitlines():
+            if line.strip().startswith("source_comment_id:"):
+                try:
+                    result_ids.add(int(line.split(":", 1)[1].strip()))
+                except ValueError:
+                    pass
+
+    # Migrate old state written by the pre-publication-ack implementation.
+    # That version could advance last_comment_id even when publishing a result
+    # failed, which permanently hid the command on every subsequent restart.
+    if last is not None:
+        for item in commands:
+            comment_id = int(item["id"])
+            if comment_id == last and comment_id not in result_ids:
+                raw = item.get("body", "").split(MARKER, 1)[1]
+                command = next((line.strip().upper() for line in raw.splitlines() if line.strip()), "")
+                if command in {"STATUS", "RESTART", "UPDATE"} or command.startswith("ROLE ") or command.startswith("FORCE "):
+                    message = execute(command)
+                    published = result(command, message.replace("\n", " "), comment_id)
+                    if not published:
+                        with LOG.open("a", encoding="utf-8") as fh:
+                            fh.write(f"CONTROL: migrated command {comment_id} retained for retry after result publish failure\\n")
+                        return 1
+                break
+
     if last is None:
         save_state(int(commands[-1]["id"]))
         return 0
@@ -570,7 +601,7 @@ def main() -> int:
         )
         if command in {"STATUS", "RESTART", "UPDATE"} or command.startswith("ROLE ") or command.startswith("FORCE "):
             message = execute(command)
-            published = result(command, message.replace("\n", " "))
+            published = result(command, message.replace("\n", " "), comment_id)
             if not published:
                 with LOG.open("a", encoding="utf-8") as fh:
                     fh.write(f"CONTROL: command {comment_id} retained for retry after result publish failure\\n")
