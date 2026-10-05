@@ -482,6 +482,14 @@ class ChatRegistrationMiddleware(BaseMiddleware):
             ),
         )
         chats.connect.commit()
+        # The first message is the only registration path that may pay the
+        # Telegram authority lookup cost. This closes the first-message RBAC
+        # race without adding latency to already registered chats.
+        try:
+            await sync_chat_admins(bot, chat_id)
+            _CHAT_ADMIN_SYNC_AT[chat_id] = time.monotonic()
+        except Exception:
+            log.exception("CHAT AUTHORITY | initial registration sync failed chat=%s", chat_id)
         log.info("Registered new chat id=%s title=%s", chat_id, message.chat.title)
 
 
