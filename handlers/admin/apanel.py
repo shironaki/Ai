@@ -60,16 +60,12 @@ async def rules_cmd(message: types.Message):
         user_id = message.from_user.id
         chat_id = message.chat.id
         new_welcome = message.get_args()
-        admins_list = [admin.user.id for admin in await bot.get_chat_administrators(chat_id=chat_id)]
-        if user_id in admins_list:
-            if new_welcome:
+        if new_welcome:
                 chats.cursor.execute("UPDATE chats SET welcome=? WHERE chat_id=?", (new_welcome, chat_id,))
                 chats.connect.commit()
                 await message.answer("👋 Приветствие мира было успешно изменено!")
-            else:
-                await message.answer("💬 Вы не указали новое приветствие!")
         else:
-            await message.answer("🛡️ Вы не являетесь Хелпером этого мира!")
+            await message.answer("💬 Вы не указали новое приветствие!")
     else:
         await message.answer("Эта заклинание работает только в мире!")
   
@@ -80,19 +76,19 @@ async def mute(message):
     await request_moderation(message, message.text.strip())
 
 #Анмут
-@dp.message_handler(commands=['андебафф', 'размут', 'unmute'], commands_prefix='!?./', is_chat_admin=True)
+@dp.message_handler(commands=['андебафф', 'размут', 'unmute'], commands_prefix='!?./')
 async def unmute(message):
     """Compatibility wrapper; execution is centralized in moderation_gateway."""
     await request_moderation(message, message.text.strip())
 
 # Аннигиляция | Пинок Системы
-@dp.message_handler(commands=['аннигилировать', 'ban'], commands_prefix='!?./', is_chat_admin=True)
+@dp.message_handler(commands=['аннигилировать', 'ban'], commands_prefix='!?./')
 async def ban(message):
     """Compatibility wrapper; execution is centralized in moderation_gateway."""
     await request_moderation(message, message.text.strip())
 
 #Воскрешение
-@dp.message_handler(commands=['воскресить', 'unban'], commands_prefix='!?./', is_chat_admin=True)
+@dp.message_handler(commands=['воскресить', 'unban'], commands_prefix='!?./')
 async def unban(message):
     """Compatibility wrapper; execution is centralized in moderation_gateway."""
     await request_moderation(message, message.text.strip())
