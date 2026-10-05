@@ -154,6 +154,23 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertEqual(summary["status"], "Модератор")
         role.assert_called_once_with(7, 200)
 
+    def test_user_summary_without_chat_keeps_legacy_status(self):
+        from services.ai_data import user_summary
+
+        class Row(dict):
+            pass
+
+        with patch("services.ai_data.get_user", return_value=Row(
+            id=7,
+            name="QA",
+            username="qa",
+            status="Модератор",
+            regdata="04.10.2026",
+        )):
+            summary = user_summary(7)
+
+        self.assertEqual(summary["status"], "Модератор")
+
     def test_founder_remains_global_and_immutable(self):
         from core.permissions import get_display_role, get_user_status
 
