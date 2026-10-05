@@ -495,3 +495,12 @@ def test_runtime_logs_use_protected_bot_data_directory():
     assert 'LOG="$DATA_DIR/autoupdate.log"' in autoupdate
     assert 'LOG="$DATA_DIR/termux-autoupdate.log"' in termux
     assert '>> "$DATA_DIR/bot.log" 2>&1' in termux
+
+    def test_new_chat_registration_warms_authority_once(self):
+        source = (ROOT / "main.py").read_text(encoding="utf-8")
+        start = source.index("class ChatRegistrationMiddleware")
+        end = source.index("\ndp.middleware.setup(ChatRegistrationMiddleware())", start)
+        block = source[start:end]
+        self.assertIn("await sync_chat_admins(bot, chat_id)", block)
+        self.assertIn("_CHAT_ADMIN_SYNC_AT[chat_id] = time.monotonic()", block)
+        self.assertIn("initial registration sync failed", block)
