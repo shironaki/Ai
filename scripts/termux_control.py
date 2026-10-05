@@ -2,6 +2,7 @@
 """Fixed-command emergency control plane for the Termux supervisor."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -115,18 +116,24 @@ def lease_git(*args: str, input_text: str | None = None, check: bool = True) -> 
 
 
 def read_lease() -> tuple[dict, str]:
-    lease_git("fetch", "origin", LEASE_BRANCH)
-    parent = lease_git("rev-parse", f"origin/{LEASE_BRANCH}")
-    try:
-        raw = lease_git("show", f"origin/{LEASE_BRANCH}:{LEASE_PATH}")
-    except RuntimeError:
-        # Recover from the historical CRLF-created path ``lease.json\\r``.
-        # The next successful write_lease() rebuilds the tree with the canonical
-        # filename, permanently repairing the lease branch.
-        legacy_path = LEASE_PATH + "\r"
-        raw = lease_git("show", f"origin/{LEASE_BRANCH}:{legacy_path}")
-    return json.loads(raw or "{}"), parent
+    """Read the central lease through GitHub API, not a blocking git fetch."""
+    branch_ref = request("GET", f"/git/ref/heads/{LEASE_BRANCH}")
+    parent = str(branch_ref.get("object", {}).get("sha", "")).strip()
+    if not parent:
+        raise RuntimeError(f"lease branch {LEASE_BRANCH!r} has no commit sha")
 
+    try:
+        item = request("GET", f"/contents/{LEASE_PATH}?ref={LEASE_BRANCH}")
+    except Exception:
+        # Recover from the historical CRLF-created lease.json carriage-return path.
+        legacy_path = LEASE_PATH + "%0D"
+        item = request("GET", f"/contents/{legacy_path}?ref={LEASE_BRANCH}")
+
+    encoded = item.get("content", "")
+    if not encoded:
+        raise RuntimeError("lease file content is empty")
+    raw = base64.b64decode(encoded).decode("utf-8")
+    return json.loads(raw or "{}"), parent
 
 def write_lease(lease: dict, parent: str) -> bool:
     content = json.dumps(lease, separators=(",", ":")) + "\n"
