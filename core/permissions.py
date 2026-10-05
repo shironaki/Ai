@@ -13,6 +13,10 @@ def get_user_status(user_id, chat_id=None):
     if is_owner(user_id):
         return OWNER_ROLE
     if chat_id is not None:
+        from services.chat_members import get_chat_authority
+        authority = get_chat_authority(chat_id, user_id)
+        if authority:
+            return authority
         from services.chat_roles import get_role
         return get_role(chat_id, user_id) or "Пользователь"
     row = users.cursor.execute(
@@ -26,6 +30,10 @@ def get_display_role(user_id, chat_id=None):
     if is_owner(user_id):
         return OWNER_ROLE
     if chat_id is not None:
+        from services.chat_members import get_chat_authority
+        authority = get_chat_authority(chat_id, user_id)
+        if authority:
+            return authority
         from services.chat_roles import get_role
         return get_role(chat_id, user_id) or "Пользователь"
     return resolve_role(user_id)
