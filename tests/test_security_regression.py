@@ -172,6 +172,36 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertEqual(summary["status"], "Модератор")
         self.assertEqual(summary["id"], 7)
 
+    def test_qa_marker_rendering_preserves_workflow_state_and_newlines(self):
+        from services.issue_tracker import render_marker
+
+        row = (
+            42, 100, 200, 7, "QA",
+            "проверка",
+            "runtime",
+            "Автоматическая диагностика",
+            None,
+            "in_progress",
+            "2026-10-05T00:00:00+00:00",
+            None,
+            None,
+            None,
+            "проверка фикса",
+        )
+        rendered = render_marker(row)
+        self.assertIn("в работе", rendered)
+        self.assertIn("решение: проверка фикса", rendered)
+        self.assertNotIn(r"\nрешение", rendered)
+
+    def test_ai_request_timeout_is_bounded(self):
+        from services.ai_service import _REQUEST_TIMEOUT
+
+        connect_timeout, read_timeout = _REQUEST_TIMEOUT
+        self.assertGreater(connect_timeout, 0)
+        self.assertGreater(read_timeout, 0)
+        self.assertLessEqual(connect_timeout, 10)
+        self.assertLessEqual(read_timeout, 30)
+
     def test_founder_remains_global_and_immutable(self):
         from core.permissions import get_display_role, get_user_status
 
