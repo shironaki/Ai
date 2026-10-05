@@ -121,3 +121,14 @@ Recent fixes include chat-aware role resolution; Telegram authority TTL/startup/
 Never claim a live Telegram command was tested without a QA result showing the sent command and observed reply. Never claim runtime control executed without its result. Never infer infrastructure is unavailable from a stale artifact; inspect the update/supervisor path first.
 
 This file is the continuity source for subsequent chats.
+
+
+## Latest audit continuation (2026-10-05)
+- Commit `4941d822a8da01c3cf2faac37e59bfd03e2d7b0e`: QA scenario refresh was hardened to use local git first, GitHub API fallback second, and to surface refresh errors instead of silently returning false.
+- Commit `b8ad16b2a9163a21e37b9aa75f0e077ce6b55c7e`: regression test updated to lock the new refresh contract.
+- CI runs 1906, 1907, and 1908 for `b8ad16b2a9163a21e37b9aa75f0e077ce6b55c7e` all completed successfully.
+- PR #22 was briefly closed/reopened to resynchronize its head with the branch; it now points to `b8ad16b2a9163a21e37b9aa75f0e077ce6b55c7e`.
+- Live QA still reports the old STATUS format, proving the running QA agent is stale. The new agent has not yet been deployed to the phone runtime.
+- Runtime Issue #23 accepted the control comments but produced no result for the latest `UPDATE` or `FORCE PHONE2 ACTIVE` commands, while older runtime results prove the running control code is stale (`git show ... lease.json\\r`).
+- Therefore one genuinely physical/manual action remains: on the active phone, execute `cd ~/Ai && bash scripts/termux_update.sh` (or the established equivalent updater entrypoint). This is specifically to bootstrap the stale control process; after that, all further QA/runtime operations return to automated control through Issues #23/#27.
+- Do not mark live role-matrix testing complete until QA STATUS reports the updated agent and `RUN role_matrix_command_surface_v2` returns a real `QA-AGENT-RESULT`.
