@@ -55,8 +55,11 @@ from core.role_transitions import available_role_targets
 from core.command_resolution import is_founder_scope_reply
 
 
-def _is_report_operator(user_id: int) -> bool:
-    return is_owner(user_id) or user_id in getattr(config, "tech_team_ids", ())
+def _is_report_operator(user_id: int, chat_id: int | None = None) -> bool:
+    """Report-center access follows the effective role of the current chat."""
+    return is_owner(user_id) or (
+        chat_id is not None and has_moderator_role(user_id, chat_id)
+    )
 
 
 def _panel_role(user_id: int, chat_id: int | None = None) -> str:
@@ -571,7 +574,7 @@ async def unified_report_request(message: types.Message):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:reports")
 async def panel_reports(call: types.CallbackQuery):
-    if not _is_report_operator(call.from_user.id):
+    if not _is_report_operator(call.from_user.id, call.message.chat.id):
         await call.answer("Нет доступа.", show_alert=True)
         return
     rows = list_open()
@@ -660,7 +663,7 @@ async def report_answer_message(message: types.Message):
     report_id = _REPORT_PENDING.get(key)
     if report_id is None:
         return
-    if not _is_report_operator(message.from_user.id):
+    if not _is_report_operator(message.from_user.id, message.chat.id):
         _REPORT_PENDING.pop(key, None)
         await message.reply("⛔ Доступ к центру обращений больше не подтверждён.")
         return
