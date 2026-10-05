@@ -52,7 +52,14 @@ def _purge_old() -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=REPORT_RETENTION_DAYS)).isoformat()
     with connect_db("users.db") as db:
         db.execute("DELETE FROM user_reports WHERE status='answered' AND created_at < ?", (cutoff,))
-        db.execute("DELETE FROM user_reports WHERE id NOT IN (SELECT id FROM user_reports ORDER BY id DESC LIMIT ?)", (REPORT_MAX_ROWS,))
+        # Never evict open/pending reports merely because the table is large.
+        # The cap applies to answered rows only.
+        excess = db.execute(
+            "SELECT id FROM user_reports WHERE status='answered' ORDER BY id DESC LIMIT -1 OFFSET ?",
+            (REPORT_MAX_ROWS,),
+        ).fetchall()
+        if excess:
+            db.executemany("DELETE FROM user_reports WHERE id=? AND status='answered'", [(row['id'],) for row in excess])
         db.commit()
 
 
