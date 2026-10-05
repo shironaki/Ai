@@ -112,6 +112,25 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("def has_moderator_role(user_id, chat_id=None):", source)
         self.assertIn("def has_admin_role(user_id, chat_id=None):", source)
 
+
+
+    def test_chat_owner_authority_is_distinct_from_founder_identity(self):
+        role_source = (ROOT / "config" / "role_config.py").read_text(encoding="utf-8")
+        permissions = (ROOT / "core" / "permissions.py").read_text(encoding="utf-8")
+        members = (ROOT / "services" / "chat_members.py").read_text(encoding="utf-8")
+        help_source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn('CHAT_OWNER_ROLE = "Владелец чата"', role_source)
+        self.assertIn('CHAT_OWNER_ROLE: 45', role_source)
+        self.assertIn('CHAT_OWNER_ROLE, OWNER_ROLE', role_source)
+        self.assertIn('def get_chat_authority(chat_id: int, user_id: int)', members)
+        self.assertIn('if row["is_chat_owner"] or row["telegram_status"] == "creator":', members)
+        self.assertIn('authority = get_chat_authority(chat_id, user_id)', permissions)
+        self.assertIn('from services.chat_members import sync_chat_admins', main_source)
+        self.assertIn('class ChatAuthorityMiddleware', main_source)
+        self.assertIn('return "🔐 СПЕЦДОСТУП ПОЛУЧЕН · Я слушаю. Система в полном распоряжении. Приказывайте."', help_source)
+        self.assertNotIn('return "👑 ОСНОВАТЕЛЬ · Я слушаю.', help_source)
+
     def test_moderation_menu_renderer_is_not_recursive(self):
         source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
         start = source.index("def _moderation_menu(call):")
