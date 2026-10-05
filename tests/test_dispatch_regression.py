@@ -380,7 +380,7 @@ class DispatchRegressionTests(unittest.TestCase):
         start = source.index("async def report_answer_message(")
         end = source.find("\n\n_PanelKey", start)
         block = source[start:end]
-        self.assertIn("_is_report_operator(message.from_user.id)", block)
+        self.assertIn("_is_report_operator(message.from_user.id, message.chat.id)", block)
         self.assertIn("_REPORT_PENDING.pop(key, None)", block)
 
 
