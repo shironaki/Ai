@@ -25,6 +25,9 @@ def get_user_status(user_id, chat_id=None):
     """
     if is_owner(user_id):
         return OWNER_ROLE
+    global_role = resolve_role(user_id)
+    if global_role != "Пользователь":
+        return global_role
     local_role = _local_bot_role(user_id, chat_id)
     if local_role:
         return local_role
