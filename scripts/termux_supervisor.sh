@@ -37,10 +37,10 @@ ensure_supervisor_revision() {
     [ -n "$current_hash" ] || return 0
     previous_hash="$(cat "$SUPERVISOR_HASHFILE" 2>/dev/null || true)"
     if [ -n "$previous_hash" ] && [ "$previous_hash" != "$current_hash" ]; then
-        printf "%s\\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
+        printf "%s\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
         exec "$0"
     fi
-    printf "%s\\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
+    printf "%s\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
 }
 
 supervisor_process_matches() {
@@ -108,7 +108,7 @@ ensure_battery_watchdog() {
     fi
     nohup "$PYTHON" "$BATTERY_WATCHDOG" >> "$REPO/termux-battery-watchdog.log" 2>&1 < /dev/null &
     echo $! > "$BATTERY_PIDFILE"
-    printf '%s\\n' "$current_hash" > "$BATTERY_HASHFILE"
+    printf '%s\n' "$current_hash" > "$BATTERY_HASHFILE"
 }
 
 update_process_matches() {
@@ -202,7 +202,7 @@ start_qa_agent() {
     [ -x "$QA_RUNNER" ] || return 0
     nohup "$QA_RUNNER" "$REPO/scripts/qa_agent.py" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
     echo $! > "$QA_PIDFILE"
-    printf "%s\\n" "$current_hash" > "$QA_HASHFILE"
+    printf "%s\n" "$current_hash" > "$QA_HASHFILE"
 }
 
 reap_qa_agent() {
@@ -231,7 +231,7 @@ reap_update() {
 
 while true; do
     ensure_supervisor_revision
-    printf '%s\\n' "$(date +%s.%N)" > "$SUPERVISOR_HEARTBEAT"
+    printf '%s\n' "$(date +%s.%N)" > "$SUPERVISOR_HEARTBEAT"
     ensure_battery_watchdog
     reap_control
     reap_update
