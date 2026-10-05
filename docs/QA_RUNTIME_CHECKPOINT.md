@@ -63,6 +63,7 @@ Known healthy telemetry: HEALTH OK: bot_heartbeat=... role=active telegram=@AiAe
 3. QA returned ValueError: unknown scenario: role_matrix_command_surface_v2.
 4. Current repository qa/scenarios.json DOES contain that scenario.
 5. Therefore the immediate task is to synchronize/deploy current branch QA scenario/code to the runtime checkout, then rerun live.
+8. New finding: the runtime control agent itself is stale. Current repository `scripts/termux_control.py` reads the lease through the GitHub API with a CRLF fallback, while the runtime result still shows the older `git show ... lease.json\\r` implementation. Thus UPDATE/FORCE commands can be unprocessable until the runtime updater is manually started once.
 6. Runtime control Issue #23 later stopped acknowledging new commands; telemetry shows repeated lease GitHub API timeouts while the bot watchdog intermittently repairs the active bot.
 7. Root cause found in control queue: it fetched only the first 10 oldest comment pages, so a large Issue #23 hid new commands. Fixed in termux_control.py with newest-first paging.
 8. Root cause found in QA/runtime sync: untracked qa/scenarios.json was intentionally preserved by termux_update.sh. Fixed updater to synchronize explicitly owned QA runtime files with backup.
