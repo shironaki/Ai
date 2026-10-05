@@ -217,7 +217,7 @@ class SecurityRegressionTests(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[1]
         source = (root / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
-        block = source[source.index("async def panel_myinfo"):source.index("async def panel_")]
+        block = source[source.index("async def panel_myinfo"):source.index("async def panel_info")]
         self.assertIn("user_summary(call.from_user.id, call.message.chat.id)", block)
 
     def test_qa_marker_access_remains_founder_only(self):
