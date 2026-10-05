@@ -293,6 +293,34 @@ def _looks_like_founder_command(prompt: str) -> bool:
     return any(hint in text for hint in hints)
 
 
+@dp.message_handler(
+    lambda m: bool(
+        m.text
+        and not m.text.startswith("/")
+        and m.from_user.id != config.owner
+        and not is_max_positive(m.from_user.id, config.owner)
+        and detect_direct_action(m.text) in {
+            "help",
+            "panel",
+            "profile",
+            "chatinfo",
+            "system_stats",
+            "runtime",
+            "status",
+            "diagnostics",
+            "debug",
+            "ai_diagnostic",
+            "logs",
+            "system_info",
+            "unsupported_settings",
+        }
+    )
+)
+async def direct_informational_action(message: types.Message):
+    """Handle recognized safe informational requests without requiring an AI invocation prefix."""
+    await _answer_ai(message, message.text)
+
+
 async def _handle_founder_command(message: types.Message, prompt: str):
     """Founder gets a direct command path; scope defaults to current chat unless global is explicit."""
     if message.from_user.id != config.owner or not _looks_like_founder_command(prompt):
