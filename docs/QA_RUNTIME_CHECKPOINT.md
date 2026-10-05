@@ -88,4 +88,35 @@ Latest confirmed CI: workflow #1883 / run 37315674404, current head 1e44aec24364
 ## Evidence rule
 Never claim a live Telegram command was tested without a QA result showing sent command + observed reply. Never claim runtime control executed without its result. Never infer infrastructure is unavailable from a stale artifact; inspect the update/supervisor path first.
 
+This file is the continuity source for subsequent chats.## Current continuation point
+
+1. CI run #1854 (run 37310936770) is green on the earlier RBAC fix.
+2. QA live STATUS is confirmed online through Issue #27.
+3. The runtime QA checkout was stale: RUN role_matrix_command_surface_v2 returned unknown scenario.
+4. Root cause found in the QA runner contract: the current role_matrix_command_surface_v2 is a structured role matrix, while the old runtime runner expected only flat command lists.
+5. Fixed scripts/qa_agent.py to normalize structured matrices, support QA-only execution, report unavailable actors explicitly, implement ordinary-user reply targeting, and exercise stale callback replay.
+6. Fixed the corresponding regression test contract. Latest code commit: 805ff007215b50920dc9a16c17d1fc1ae5accdc4.
+7. CI run #1899 (run 37323328924) is green: all checks completed successfully.
+8. Runtime Issue #23 currently does not return results for FORCE PHONE2 ACTIVE or STATUS; Issue #27's previously submitted RUN all also has not returned a result. Do not claim either action executed.
+9. Repository review confirms scripts/termux_update.sh explicitly synchronizes scripts/qa_agent.py and qa/scenarios.json and restarts the QA agent after a successful active-lease update. Therefore the current blocker is runtime control responsiveness/lease execution, not a missing synchronization mechanism.
+
+## Next sequence
+
+A. Restore responsiveness of the existing runtime control/active lease path; use physical phone interaction only if the control plane itself remains inaccessible.
+B. Verify runtime UPDATE/STATUS result.
+C. Verify QA agent is running the new runner revision and scenarios count.
+D. Run role_matrix_command_surface_v2 live and inspect every reply.
+E. Run focused role/isolation scenarios and then RUN all.
+F. Correlate live failures with bot/runtime logs and QA markers; fix root causes.
+G. Re-run CI after every code fix and keep the applicable workflow green.
+H. Continue full command/role/capability audit until the objective is actually complete.
+
+## Code audit state
+
+Recent fixes include chat-aware role resolution; Telegram authority TTL/startup/new-chat warmup; role-based moderation without hidden admin gates; Founder-only markers; chat-aware report-center authorization/callbacks; authoritative runtime diagnostics/status handlers; background diagnostic telemetry; sanitized runtime errors; bounded AI timeout/timing; chat-aware profile/info; fresh silence confirmation; structured QA role-matrix execution.
+
+## Evidence rule
+
+Never claim a live Telegram command was tested without a QA result showing the sent command and observed reply. Never claim runtime control executed without its result. Never infer infrastructure is unavailable from a stale artifact; inspect the update/supervisor path first.
+
 This file is the continuity source for subsequent chats.
