@@ -269,5 +269,16 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertEqual(get_user_status(1, 999), "Создатель бота")
             self.assertEqual(get_display_role(1, 999), "Создатель бота")
 
+    def test_report_callbacks_use_effective_chat_role(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        for handler in ("async def report_view", "async def report_answer_start"):
+            start = source.index(handler)
+            block = source[start:source.find("\n@dp.", start + 1)]
+            self.assertIn("_is_report_operator(call.from_user.id, call.message.chat.id)", block)
+
+
 if __name__ == "__main__":
     unittest.main()
