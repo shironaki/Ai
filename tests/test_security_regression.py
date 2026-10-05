@@ -170,6 +170,7 @@ class SecurityRegressionTests(unittest.TestCase):
             summary = user_summary(7)
 
         self.assertEqual(summary["status"], "Модератор")
+        self.assertEqual(summary["id"], 7)
 
     def test_founder_remains_global_and_immutable(self):
         from core.permissions import get_display_role, get_user_status
