@@ -183,7 +183,12 @@ def render_marker(marker) -> str:
         message_text, message_sender_name, reason, code, status,
         created_at, fixed_by, fixed_at, diagnostic_id, resolution
     ) = values[:15]
-    state = "исправлено" if status == "fixed" else "открыто"
+    state = {
+        "open": "открыто",
+        "in_progress": "в работе",
+        "fixed": "исправлено",
+        "broken": "сломано",
+    }.get(status, status or "неизвестно")
     code_text = f" · код {code}" if code is not None else ""
     diagnostic_text = f" · диагностика #{diagnostic_id}" if diagnostic_id else ""
     diagnostic_details = ""
@@ -214,6 +219,6 @@ def render_marker(marker) -> str:
         f"отметил: {reporter}\n"
         f"сообщение:\n«{original}»\n"
         f"причина: {reason}"
-        f"\\nрешение: {resolution_text}"
+        f"\nрешение: {resolution_text}"
         f"{diagnostic_details}"
     )
