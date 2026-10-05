@@ -65,11 +65,23 @@ start_supervisor
 # kills the supervisor process, the guardian recreates it without touching the
 # bot/lease directly. The supervisor remains the only component allowed to
 # acquire or renew the active lease.
+guardian_process_matches() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$pid" -gt 1 ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+        grep -aq "termux_boot.sh" "/proc/$pid/cmdline" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
 if [[ -f "$GUARDIAN_PID" ]]; then
     old_guardian="$(cat "$GUARDIAN_PID" 2>/dev/null || true)"
-    if [[ "$old_guardian" =~ ^[0-9]+$ ]] && kill -0 "$old_guardian" 2>/dev/null; then
+    if guardian_process_matches "$old_guardian"; then
         exit 0
     fi
+    rm -f "$GUARDIAN_PID"
 fi
 
 (
