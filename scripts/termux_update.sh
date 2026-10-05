@@ -142,6 +142,7 @@ if [[ -n "$(git status --porcelain)" ]]; then
                 fi
                 rm -f "$path"
                 log "BOOTSTRAP: replacing stale untracked Termux/QA file from origin/$BRANCH: $path"
+                continue
             else
                 continue
             fi
