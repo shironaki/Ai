@@ -329,6 +329,19 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('name="diagnostic-update"', source)
         self.assertIn('name="diagnostic-callback"', source)
 
+    def test_runtime_status_and_diagnostics_have_single_authoritative_handlers(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        main = (root / "main.py").read_text(encoding="utf-8")
+        runtime = (root / "handlers" / "runtime_diagnostics.py").read_text(encoding="utf-8")
+
+        self.assertEqual(main.count('@dp.message_handler(commands=["status"])'), 0)
+        self.assertEqual(main.count('@dp.message_handler(commands=["diagnostics"])'), 0)
+        self.assertEqual(runtime.count('@dp.message_handler(commands=["status"])'), 1)
+        self.assertEqual(runtime.count('@dp.message_handler(commands=["diagnostics"])'), 1)
+        self.assertIn('import handlers.runtime_diagnostics', main)
+
     def test_runtime_errors_do_not_expose_internal_marker_ids_to_users(self):
         source = (ROOT / "main.py").read_text(encoding="utf-8")
         start = source.index("async def log_update_error(")
