@@ -45,6 +45,7 @@ from services.diagnostic_journal import record as record_diagnostic
 from services.issue_tracker import create_runtime_error_marker
 from services.report_service import reminder_loop
 from services.battery_status import get_battery_status
+from services.chat_members import sync_chat_admins
 
 DATA_DIR = os.path.abspath(os.getenv("BOT_DATA_DIR", os.path.join("data", "test")))
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -291,6 +292,30 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 
 
 dp.middleware.setup(ActivityLoggingMiddleware())
+
+
+_CHAT_ADMIN_SYNC_AT: dict[int, float] = {}
+_CHAT_ADMIN_SYNC_TTL = 60.0
+
+
+class ChatAuthorityMiddleware(BaseMiddleware):
+    """Refresh Telegram admin/owner authority before permission checks."""
+
+    async def on_pre_process_message(self, message, data):
+        if message.chat.type not in ("group", "supergroup"):
+            return
+        chat_id = message.chat.id
+        now = time.monotonic()
+        if now - _CHAT_ADMIN_SYNC_AT.get(chat_id, 0.0) < _CHAT_ADMIN_SYNC_TTL:
+            return
+        try:
+            await sync_chat_admins(bot, chat_id)
+            _CHAT_ADMIN_SYNC_AT[chat_id] = now
+        except Exception:
+            log.exception("CHAT AUTHORITY | failed to refresh chat=%s", chat_id)
+
+
+dp.middleware.setup(ChatAuthorityMiddleware())
 
 
 class RuntimeGateMiddleware(BaseMiddleware):
