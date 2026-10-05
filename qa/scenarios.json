@@ -456,5 +456,234 @@
         "только Основателю"
       ]
     }
+  ],
+  "role_matrix_command_surface_v2": [
+    {
+      "name": "test_owner_chat_local_authority",
+      "actor": "QA",
+      "target": -1004300830848,
+      "expect_role": "Владелец чата",
+      "commands": [
+        {
+          "text": "/welcome",
+          "expect": [
+            "Приветствие мира было успешно изменено!"
+          ]
+        },
+        {
+          "text": "/модерация",
+          "expect": [
+            "АДМИНИСТРАТИВНАЯ ПАНЕЛЬ"
+          ]
+        },
+        {
+          "text": "/тишина",
+          "expect": [
+            "ТИШИНА",
+            "Подтвердите"
+          ]
+        },
+        {
+          "text": "/мут",
+          "reply_target": "ordinary_user",
+          "expect": [
+            "Требуется подтверждение"
+          ]
+        },
+        {
+          "text": "/ban",
+          "reply_target": "ordinary_user",
+          "expect": [
+            "Требуется подтверждение"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ai_chat_moderator_capability_parity",
+      "actor": "QA",
+      "target": -1002128213860,
+      "expect_role": "Модератор",
+      "commands": [
+        {
+          "text": "/welcome",
+          "expect": [
+            "Приветствие мира было успешно изменено!"
+          ]
+        },
+        {
+          "text": "/модерация",
+          "expect": [
+            "АДМИНИСТРАТИВНАЯ ПАНЕЛЬ"
+          ]
+        },
+        {
+          "text": "/тишина",
+          "expect": [
+            "ТИШИНА",
+            "Подтвердите"
+          ]
+        },
+        {
+          "text": "/мут",
+          "reply_target": "ordinary_user",
+          "expect": [
+            "Требуется подтверждение"
+          ]
+        },
+        {
+          "text": "/unmute",
+          "reply_target": "ordinary_user",
+          "expect": [
+            "Требуется подтверждение"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ordinary_user_denials",
+      "actor": "ordinary_user",
+      "targets": [
+        -1004300830848,
+        -1002128213860
+      ],
+      "commands": [
+        {
+          "text": "/panel",
+          "expect": [
+            "Панель доступна только персоналу"
+          ]
+        },
+        {
+          "text": "/модерация",
+          "expect": [
+            "Модерация доступна только персоналу"
+          ]
+        },
+        {
+          "text": "/тишина",
+          "expect": [
+            "Тишина доступна только персоналу"
+          ]
+        },
+        {
+          "text": "/welcome",
+          "expect": [
+            "нет роли"
+          ]
+        },
+        {
+          "text": "/ban",
+          "reply_target": "ordinary_user",
+          "expect": [
+            "Недостаточно прав"
+          ]
+        },
+        {
+          "text": "/issues",
+          "expect": [
+            "только Основателю"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "founder_global_only",
+      "actor": "Founder",
+      "targets": [
+        -1004300830848,
+        -1002128213860
+      ],
+      "commands": [
+        {
+          "text": "/status",
+          "expect": [
+            "FOUNDER RUNTIME STATUS"
+          ]
+        },
+        {
+          "text": "/diagnostics",
+          "expect": [
+            "NETWORK / RUNTIME DIAGNOSTICS"
+          ]
+        },
+        {
+          "text": "/issues",
+          "expect": [
+            "QA-метки"
+          ]
+        }
+      ],
+      "absent_for_qa": [
+        "FOUNDER RUNTIME STATUS",
+        "NETWORK / RUNTIME DIAGNOSTICS",
+        "QA-метки"
+      ]
+    },
+    {
+      "name": "cross_chat_role_isolation_v2",
+      "actor": "QA",
+      "steps": [
+        {
+          "target": -1004300830848,
+          "text": "/info",
+          "expect": [
+            "Роль: Владелец чата"
+          ],
+          "absent": [
+            "Роль: Модератор"
+          ]
+        },
+        {
+          "target": -1002128213860,
+          "text": "/info",
+          "expect": [
+            "Роль: Модератор"
+          ],
+          "absent": [
+            "Роль: Владелец чата"
+          ]
+        },
+        {
+          "target": -1004300830848,
+          "text": "/help",
+          "expect": [
+            "Уровень: Владелец чата"
+          ],
+          "absent": [
+            "Уровень: Модератор"
+          ]
+        },
+        {
+          "target": -1002128213860,
+          "text": "/help",
+          "expect": [
+            "Уровень: Модератор"
+          ],
+          "absent": [
+            "Уровень: Владелец чата"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "silence_confirmation_freshness",
+      "actor": "QA",
+      "target": -1002128213860,
+      "steps": [
+        {
+          "text": "/тишина",
+          "expect": [
+            "Подтвердите"
+          ]
+        },
+        {
+          "action": "replay_same_callback_after_state_change",
+          "expect": [
+            "подтверждение устарело"
+          ]
+        }
+      ]
+    }
   ]
 }
