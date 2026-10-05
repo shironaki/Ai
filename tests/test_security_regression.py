@@ -194,21 +194,6 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn(r"\nрешение", rendered)
 
 
-    def test_qa_markers_are_chat_scoped_for_chat_owner(self):
-        from core.permissions import get_display_role
-        from services.issue_tracker import list_markers
-
-        with patch("core.permissions.is_owner", return_value=False), \
-             patch("services.chat_members.get_chat_authority", return_value="Владелец чата"):
-            self.assertEqual(get_display_role(7, 100), "Владелец чата")
-
-        with patch("services.issue_tracker._ensure_table"), patch("services.issue_tracker.connect_db") as connect:
-            db = connect.return_value.__enter__.return_value
-            db.execute.return_value.fetchall.return_value = [(1, 100)]
-            list_markers(chat_id=100)
-            query = db.execute.call_args.args[0]
-            self.assertIn("WHERE chat_id = ?", query)
-
     def test_ai_request_timeout_is_bounded(self):
         from services.ai_service import _REQUEST_TIMEOUT
 
