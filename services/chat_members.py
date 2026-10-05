@@ -151,3 +151,21 @@ async def sync_chat_admins(bot, chat_id: int) -> list:
             is_chat_admin=True,
         )
     return admins
+
+
+def get_chat_authority(chat_id: int, user_id: int) -> str | None:
+    """Return Telegram-derived local authority without affecting founder identity."""
+    from config.role_config import CHAT_OWNER_ROLE
+    _ensure_table()
+    with connect_db("users.db") as db:
+        row = db.execute(
+            "SELECT telegram_status,is_chat_owner,is_chat_admin FROM chat_members WHERE chat_id=? AND user_id=?",
+            (chat_id, user_id),
+        ).fetchone()
+    if not row:
+        return None
+    if row["is_chat_owner"] or row["telegram_status"] == "creator":
+        return CHAT_OWNER_ROLE
+    if row["is_chat_admin"] or row["telegram_status"] == "administrator":
+        return "Администратор"
+    return None
