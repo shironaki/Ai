@@ -33,6 +33,7 @@ SESSION = Path(
 ).expanduser()
 API_ID = os.getenv("QA_API_ID", "36412572")
 DEFAULT_TARGET = os.getenv("QA_TARGET", "AiAether1_Bot")
+QA_BRANCH = os.getenv("QA_GITHUB_BRANCH", "test-global-assistant-upgrade")
 BOT_LOG = ROOT / "bot.log"
 RUNTIME_LOG = ROOT / "termux-autoupdate.log"
 SCRIPT_MTIME = Path(__file__).stat().st_mtime
@@ -134,8 +135,35 @@ def tail(path: Path, lines: int = 80) -> str:
         return f"[missing: {path}]"
 
 
+def refresh_scenarios_from_github() -> bool:
+    """Refresh the scenario catalog when a runtime checkout is stale."""
+    try:
+        item = gh("GET", f"/contents/qa/scenarios.json?ref={QA_BRANCH}")
+        encoded = item.get("content", "")
+        if not encoded:
+            return False
+        import base64
+        content = base64.b64decode(encoded).decode("utf-8")
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            return False
+        SCENARIOS.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SCENARIOS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(parsed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(SCENARIOS)
+        return True
+    except Exception:
+        return False
+
+
+def load_scenarios() -> dict:
+    return json.loads(SCENARIOS.read_text(encoding="utf-8"))
+
+
 def run_scenario(name: str) -> dict:
-    all_scenarios = json.loads(SCENARIOS.read_text(encoding="utf-8"))
+    all_scenarios = load_scenarios()
+    if name not in all_scenarios and refresh_scenarios_from_github():
+        all_scenarios = load_scenarios()
     if name not in all_scenarios:
         raise ValueError(f"unknown scenario: {name}")
     steps = all_scenarios[name]
@@ -248,11 +276,11 @@ def command(raw: str) -> str:
             f"python={QA_PYTHON}; "
             f"session={'present' if SESSION.exists() else 'missing'}; "
             f"api_hash={'present' if api_hash() else 'missing'}; "
-            f"target={DEFAULT_TARGET}"
+            f"target={DEFAULT_TARGET}; root={ROOT}; scenarios={len(load_scenarios())}"
         )
     if op == "RUN":
         name = parts[1].strip().lower() if len(parts) > 1 else "smoke"
-        names = list(json.loads(SCENARIOS.read_text(encoding="utf-8"))) if name == "all" else [name]
+        names = list(load_scenarios()) if name == "all" else [name]
         reports = []
         for scenario in names:
             try:
