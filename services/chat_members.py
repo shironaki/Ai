@@ -153,6 +153,16 @@ async def sync_chat_admins(bot, chat_id: int) -> list:
     return admins
 
 
+def _existing_bot_role(chat_id: int, user_id: int) -> str | None:
+    _ensure_table()
+    with connect_db("users.db") as db:
+        row = db.execute(
+            "SELECT bot_role FROM chat_members WHERE chat_id=? AND user_id=?",
+            (chat_id, user_id),
+        ).fetchone()
+    return row["bot_role"] if row else None
+
+
 async def refresh_chat_member(bot, chat_id: int, user_id: int):
     """Refresh one user's Telegram membership without touching local role assignments."""
     _ensure_table()
@@ -167,6 +177,7 @@ async def refresh_chat_member(bot, chat_id: int, user_id: int):
         name=user.full_name,
         username=user.username,
         telegram_status=status,
+        bot_role=_existing_bot_role(chat_id, user.id),
         is_chat_owner=status == "creator",
         is_chat_admin=status in ADMIN_STATUSES,
     )
@@ -187,6 +198,7 @@ def observe_chat_member_update(chat_member) -> None:
         name=user.full_name,
         username=user.username,
         telegram_status=status,
+        bot_role=_existing_bot_role(chat.id, user.id),
         is_chat_owner=status == "creator",
         is_chat_admin=status in ADMIN_STATUSES,
     )
