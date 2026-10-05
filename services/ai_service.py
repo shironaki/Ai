@@ -184,6 +184,7 @@ async def generate_reply(
     messages = [{"role": "system", "content": system_content}]
     messages.extend(candidate_history)
 
+    started = time.monotonic()
     try:
         answer = await asyncio.to_thread(
             _request_sync,
@@ -220,10 +221,22 @@ async def generate_reply(
                 if continuation:
                     answer = answer.rstrip() + " " + continuation.lstrip()
     except Exception as exc:
+        log.info(
+            "AI TOTAL | user_id=%s chat_id=%s duration_ms=%d result=error",
+            user_id,
+            chat_id,
+            round((time.monotonic() - started) * 1000),
+        )
         _LAST_ERROR["value"] = html.escape(redact(f"{type(exc).__name__}: {exc}", 1200), quote=False)
         log.exception("AI provider request failed for user_id=%s", user_id)
         return None
 
+    log.info(
+        "AI TOTAL | user_id=%s chat_id=%s duration_ms=%d",
+        user_id,
+        chat_id,
+        round((time.monotonic() - started) * 1000),
+    )
     _LAST_ERROR["value"] = ""
     history[:] = candidate_history
     history.append({"role": "assistant", "content": redact(answer, 4000)})
