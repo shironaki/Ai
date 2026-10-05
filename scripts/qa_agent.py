@@ -124,7 +124,11 @@ def save(comment_id: int) -> None:
 
 
 def publish(message: str) -> None:
-    gh("POST", f"/issues/{ISSUE}/comments", {"body": RESULT + "\n" + message})
+    body = RESULT + "\n" + message
+    limit = 60000
+    if len(body) > limit:
+        body = body[:45000] + "\n\n...[QA REPORT TRUNCATED]...\n\n" + body[-14000:]
+    gh("POST", f"/issues/{ISSUE}/comments", {"body": body})
 
 
 def tail(path: Path, lines: int = 80) -> str:
@@ -258,13 +262,16 @@ asyncio.run(main())
     if process.returncode:
         raise RuntimeError((process.stderr or process.stdout)[-3000:])
     results = json.loads(process.stdout)
-    return {
+    scenario_ok = all(item["ok"] for item in results)
+    report = {
         "scenario": name,
-        "ok": all(item["ok"] for item in results),
+        "ok": scenario_ok,
         "steps": results,
-        "bot_log_tail": tail(BOT_LOG),
-        "runtime_log_tail": tail(RUNTIME_LOG, 40),
     }
+    if not scenario_ok:
+        report["bot_log_tail"] = tail(BOT_LOG, 40)
+        report["runtime_log_tail"] = tail(RUNTIME_LOG, 20)
+    return report
 
 
 def command(raw: str) -> str:
