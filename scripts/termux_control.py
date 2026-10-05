@@ -346,6 +346,11 @@ def restart_bot() -> str:
             if not bot_running():
                 break
             time.sleep(1)
+    # The lease can change while the old process is stopping. Re-check again
+    # immediately before spawning the replacement; the first check only fences
+    # the beginning of the restart operation.
+    if not has_active_lease():
+        return "restart denied: active lease was lost during shutdown"
     stop_watchdog()
     PIDFILE.unlink(missing_ok=True)
 
