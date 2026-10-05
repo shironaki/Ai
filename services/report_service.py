@@ -98,48 +98,75 @@ def create_report(
         return int(cur.lastrowid)
 
 
-def get_report(report_id: int):
+def get_report(report_id: int, source_chat_id: int | None = None):
     _ensure_table()
     with connect_db("users.db") as db:
+        if source_chat_id is None:
+            return db.execute(
+                "SELECT * FROM user_reports WHERE id = ?", (report_id,)
+            ).fetchone()
         return db.execute(
-            "SELECT * FROM user_reports WHERE id = ?", (report_id,)
+            "SELECT * FROM user_reports WHERE id = ? AND source_chat_id = ?",
+            (report_id, source_chat_id),
         ).fetchone()
 
 
-def list_open(limit: int = 30):
+def list_open(limit: int = 30, source_chat_id: int | None = None):
     _ensure_table()
     with connect_db("users.db") as db:
+        if source_chat_id is None:
+            return db.execute(
+                """
+                SELECT id,reporter_id,reporter_name,source_chat_id,source_message_id,
+                       reason,status,created_at,answered_at
+                FROM user_reports
+                WHERE status = 'open'
+                ORDER BY id ASC LIMIT ?
+                """,
+                (max(1, min(limit, 100)),),
+            ).fetchall()
         return db.execute(
             """
             SELECT id,reporter_id,reporter_name,source_chat_id,source_message_id,
                    reason,status,created_at,answered_at
             FROM user_reports
-            WHERE status = 'open'
+            WHERE status = 'open' AND source_chat_id = ?
             ORDER BY id ASC LIMIT ?
             """,
-            (max(1, min(limit, 100)),),
+            (source_chat_id, max(1, min(limit, 100))),
         ).fetchall()
 
 
-def answer_report(report_id: int, answered_by: int, answer_text: str) -> bool:
+def answer_report(
+    report_id: int,
+    answered_by: int,
+    answer_text: str,
+    source_chat_id: int | None = None,
+) -> bool:
     if answered_by != config.owner and answered_by not in getattr(config, "tech_team_ids", ()):
         raise PermissionError("Report replies require operator actor context")
     _ensure_table()
     now = datetime.now(timezone.utc).isoformat()
     with connect_db("users.db") as db:
-        row = db.execute(
-            "SELECT reporter_id,status FROM user_reports WHERE id = ?",
-            (report_id,),
-        ).fetchone()
+        if source_chat_id is None:
+            row = db.execute(
+                "SELECT reporter_id,status FROM user_reports WHERE id = ?",
+                (report_id,),
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT reporter_id,status FROM user_reports WHERE id = ? AND source_chat_id = ?",
+                (report_id, source_chat_id),
+            ).fetchone()
         if row is None or row["status"] != "open":
             return False
         db.execute(
             """
             UPDATE user_reports
             SET status='answered', answered_at=?, answered_by=?, answer_text=?
-            WHERE id=? AND status='open'
+            WHERE id=? AND status='open' AND (? IS NULL OR source_chat_id=?)
             """,
-            (now, answered_by, answer_text[:6000], report_id),
+            (now, answered_by, answer_text[:6000], report_id, source_chat_id, source_chat_id),
         )
         db.commit()
         return True
