@@ -32,6 +32,8 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn("limit = 60000", source)
         self.assertIn("scenario_ok = all(item[\"ok\"] for item in results)", source)
         self.assertIn("if not scenario_ok:", source)
+        self.assertIn('DATA_DIR = Path(os.getenv("BOT_DATA_DIR", str(ROOT / "data" / "test")))', source)
+        self.assertIn("BOT_LOG = DATA_DIR / \"bot.log\"", source)
 
 
 if __name__ == "__main__":
