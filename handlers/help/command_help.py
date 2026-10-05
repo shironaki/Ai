@@ -261,6 +261,17 @@ async def _render_panel_root_message(message: types.Message):
     )
 
 
+@dp.message_handler(commands=["модерация"])
+async def moderation_command(message: types.Message):
+    if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
+        await message.answer("⛔ Модерация доступна только персоналу.")
+        return
+    if message.chat.type not in {"group", "supergroup"}:
+        await message.answer("⛔ Модерация доступна только в группах.")
+        return
+    await _render_panel_root_message(message)
+
+
 @dp.message_handler(commands=["panel"])
 async def panel_command(message: types.Message):
     if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
@@ -558,7 +569,7 @@ async def panel_myinfo(call):
     if not _panel_guard(call):
         await call.answer("Нет доступа к административной панели.", show_alert=True)
         return
-    data = user_summary(call.from_user.id)
+    data = user_summary(call.from_user.id, call.message.chat.id)
     if not data:
         await call.answer("Нет данных.", show_alert=True)
         return
@@ -673,6 +684,12 @@ async def panel_silence(call):
         return
     enabled = is_silent(call.message.chat.id)
     action = "снять тишину" if enabled else "включить тишину"
+    key = _panel_key(call)
+    _PANEL_CONFIRMATIONS[key] = {
+        "kind": "silence",
+        "message_id": call.message.message_id,
+        "expected_enabled": enabled,
+    }
     menu = InlineKeyboardMarkup(row_width=2)
     menu.add(
         InlineKeyboardButton("✅ Подтвердить", callback_data="panel:silence:apply"),
@@ -685,11 +702,47 @@ async def panel_silence(call):
     await call.answer()
 
 
+@dp.message_handler(commands=["тишина"])
+async def silence_command(message: types.Message):
+    if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
+        await message.answer("⛔ Тишина доступна только персоналу.")
+        return
+    if message.chat.type not in {"group", "supergroup"}:
+        await message.answer("⛔ Тишина доступна только в группах.")
+        return
+    enabled = is_silent(message.chat.id)
+    action = "снять тишину" if enabled else "включить тишину"
+    menu = InlineKeyboardMarkup(row_width=2)
+    menu.add(
+        InlineKeyboardButton("✅ Подтвердить", callback_data="panel:silence:apply"),
+        InlineKeyboardButton("↩️ Отмена", callback_data="panel:close"),
+    )
+    sent = await message.answer(
+        "<b>🔇 ТИШИНА</b>\n\nПодтвердите: <b>" + action + "</b> для всего чата?",
+        reply_markup=menu,
+    )
+    _PANEL_CONFIRMATIONS[(message.from_user.id, message.chat.id)] = {
+        "kind": "silence",
+        "message_id": sent.message_id,
+        "expected_enabled": enabled,
+    }
+
+
 @dp.callback_query_handler(lambda c: c.data == "panel:silence:apply")
 async def panel_silence_apply(call):
     if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
         await call.answer("Нет доступа.", show_alert=True)
         return
+    key = _panel_key(call)
+    confirmation = _PANEL_CONFIRMATIONS.get(key)
+    if not confirmation or confirmation.get("kind") != "silence" or confirmation.get("message_id") != call.message.message_id:
+        await call.answer("Это подтверждение устарело. Откройте тишину заново.", show_alert=True)
+        return
+    if is_silent(call.message.chat.id) != confirmation.get("expected_enabled"):
+        _PANEL_CONFIRMATIONS.pop(key, None)
+        await call.answer("Состояние уже изменилось. Откройте тишину заново.", show_alert=True)
+        return
+    _PANEL_CONFIRMATIONS.pop(key, None)
     try:
         from aiogram.types import ChatPermissions
         enabled = is_silent(call.message.chat.id)
