@@ -318,6 +318,9 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("_CHAT_AUTHORITY_VERIFY_AT", source)
         self.assertIn("_CHAT_AUTHORITY_VERIFY_AT.pop((chat.id, member_user.id), None)", source)
         self.assertIn("failed to verify user=%s chat=%s duration_ms=%s", source)
+        self.assertIn("_sync_registered_chat_authority", source)
+        self.assertIn('name="chat-authority-warmup"', source)
+        self.assertIn("Do not make ordinary messages wait for getChatAdministrators()", source)
 
     def test_diagnostic_telemetry_does_not_block_message_dispatch(self):
         source = (ROOT / "main.py").read_text(encoding="utf-8")
