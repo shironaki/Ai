@@ -466,19 +466,10 @@ else
 fi
 
 if [[ "$LOCAL" != "$REMOTE" ]] && ! git diff --quiet "$LOCAL" "$REMOTE" -- scripts/termux_supervisor.sh scripts/termux_boot.sh scripts/qa_agent.py; then
-    parent_command="$(ps -p "$PPID" -o command= 2>/dev/null || true)"
-    if [[ "$parent_command" == *"termux_supervisor.sh"* ]]; then
-        log "UPDATE: supervisor/boot/QA script changed; requesting supervisor self-restart"
-        kill -TERM "$PPID" 2>/dev/null || true
-    else
-        supervisor_pid="$(tr -cd '0-9' < "$REPO/termux-supervisor.pid" 2>/dev/null || true)"
-        if [[ -n "$supervisor_pid" ]] && kill -0 "$supervisor_pid" 2>/dev/null; then
-            if [ -r "/proc/$supervisor_pid/cmdline" ] && grep -aq 'termux_supervisor.sh' "/proc/$supervisor_pid/cmdline" 2>/dev/null; then
-                log "UPDATE: supervisor/boot/QA script changed; requesting supervisor restart via pidfile"
-                kill -TERM "$supervisor_pid" 2>/dev/null || true
-            fi
-        fi
-    fi
+    # The supervisor has its own revision guard and will exec the freshly pulled
+    # script on its next loop. Do not kill its parent from the updater: doing so
+    # can leave the bot healthy while silently removing the control-plane guardian.
+    log "UPDATE: supervisor/boot/QA script changed; supervisor revision guard will reload it"
 fi
 
 log "OK: Termux sync check completed at $(git rev-parse HEAD)"
