@@ -153,6 +153,45 @@ async def sync_chat_admins(bot, chat_id: int) -> list:
     return admins
 
 
+async def refresh_chat_member(bot, chat_id: int, user_id: int):
+    """Refresh one user's Telegram membership without touching local role assignments."""
+    _ensure_table()
+    member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+    status = getattr(member, "status", None)
+    user = getattr(member, "user", None)
+    if user is None:
+        return member
+    observe(
+        chat_id=chat_id,
+        user_id=user.id,
+        name=user.full_name,
+        username=user.username,
+        telegram_status=status,
+        is_chat_owner=status == "creator",
+        is_chat_admin=status in ADMIN_STATUSES,
+    )
+    return member
+
+
+def observe_chat_member_update(chat_member) -> None:
+    """Persist a Telegram chat_member update while preserving bot-local role data."""
+    chat = getattr(chat_member, "chat", None)
+    member = getattr(chat_member, "new_chat_member", None)
+    user = getattr(member, "user", None)
+    if not chat or not member or not user:
+        return
+    status = getattr(member, "status", None)
+    observe(
+        chat_id=chat.id,
+        user_id=user.id,
+        name=user.full_name,
+        username=user.username,
+        telegram_status=status,
+        is_chat_owner=status == "creator",
+        is_chat_admin=status in ADMIN_STATUSES,
+    )
+
+
 def get_chat_authority(chat_id: int, user_id: int) -> str | None:
     """Return Telegram-derived local authority without affecting founder identity."""
     from config.role_config import CHAT_OWNER_ROLE
