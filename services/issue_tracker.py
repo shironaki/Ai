@@ -135,17 +135,30 @@ def create_runtime_error_marker(
     )
 
 
-def list_markers(limit: int = 30):
+def list_markers(limit: int = 30, chat_id: int | None = None):
     _ensure_table()
     with connect_db("users.db") as db:
+        limit_value = max(1, min(limit, 100))
+        if chat_id is None:
+            return db.execute(
+                """
+                SELECT id,chat_id,message_id,reporter_id,reporter_name,message_text,
+                       message_sender_name,reason,code,status,created_at,fixed_by,
+                       fixed_at,diagnostic_id
+                FROM issue_markers ORDER BY id DESC LIMIT ?
+                """,
+                (limit_value,),
+            ).fetchall()
         return db.execute(
             """
             SELECT id,chat_id,message_id,reporter_id,reporter_name,message_text,
                    message_sender_name,reason,code,status,created_at,fixed_by,
                    fixed_at,diagnostic_id
-            FROM issue_markers ORDER BY id DESC LIMIT ?
+            FROM issue_markers
+            WHERE chat_id = ?
+            ORDER BY id DESC LIMIT ?
             """,
-            (max(1, min(limit, 100)),),
+            (chat_id, limit_value),
         ).fetchall()
 
 
