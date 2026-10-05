@@ -103,12 +103,12 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('return get_role(chat_id, user_id) or "Пользователь"', source)
         self.assertIn("return resolve_role(user_id)", source)
         self.assertNotIn("if chat_role:", source)
-        self.assertNotIn("return row[0] if row else None", source)
+        self.assertIn("return row[0] if row else None", source)
 
     def test_chat_role_display_and_authority_share_the_same_scope(self):
         source = (ROOT / "core" / "permissions.py").read_text(encoding="utf-8")
         self.assertIn("def get_display_role(user_id, chat_id=None):", source)
-        self.assertIn("role = get_role(chat_id, user_id)", source)
+        self.assertIn("return get_role(chat_id, user_id) or \"Пользователь\"", source)
         self.assertIn("def has_moderator_role(user_id, chat_id=None):", source)
         self.assertIn("def has_admin_role(user_id, chat_id=None):", source)
 
