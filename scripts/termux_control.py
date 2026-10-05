@@ -268,13 +268,16 @@ def save_state(comment_id: int) -> None:
     tmp.replace(STATEFILE)
 
 
-def result(command: str, message: str) -> None:
+def result(command: str, message: str) -> bool:
+    """Publish a command result and report whether GitHub accepted it."""
     body = f"{RESULT_MARKER}\n## Termux control\ncommand: {command}\ntimestamp: {time.strftime('%Y-%m-%d %H:%M:%S %z')}\nresult: {message}"
     try:
         request("POST", f"/issues/{ISSUE}/comments", {"body": body})
+        return True
     except Exception as exc:
         with LOG.open("a", encoding="utf-8") as fh:
             fh.write(f"CONTROL: result publish failed ({type(exc).__name__})\\n")
+        return False
 
 
 def bot_running() -> bool:
@@ -567,7 +570,11 @@ def main() -> int:
         )
         if command in {"STATUS", "RESTART", "UPDATE"} or command.startswith("ROLE ") or command.startswith("FORCE "):
             message = execute(command)
-            result(command, message.replace("\n", " "))
+            published = result(command, message.replace("\n", " "))
+            if not published:
+                with LOG.open("a", encoding="utf-8") as fh:
+                    fh.write(f"CONTROL: command {comment_id} retained for retry after result publish failure\\n")
+                return 1
         save_state(comment_id)
         touch_control_heartbeat()
         last = comment_id
