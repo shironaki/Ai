@@ -6,6 +6,7 @@ BRANCH="${BOT_BRANCH:-test-global-assistant-upgrade}"
 PYTHON="$REPO/.venv/bin/python"
 BOT="$REPO/run.py"
 PIDFILE="$REPO/termux-bot.pid"
+RUNTIME_COMMIT_FILE="$REPO/data/test/runtime/bot-commit"
 ROLEFILE="$REPO/data/test/runtime/termux-role"
 LOCKDIR="$REPO/.termux-update.lock"
 LEASE_BRANCH="${TERMUX_LEASE_BRANCH:-termux-lease}"
@@ -166,7 +167,7 @@ stop_bot() {
         is_running || break
         sleep 1
     done
-    rm -f "$PIDFILE"
+    rm -f "$PIDFILE" "$RUNTIME_COMMIT_FILE"
 }
 
 install_dependencies() {
@@ -267,6 +268,7 @@ start_bot() {
     fi
     nohup "$PYTHON" "$BOT" >> "$DATA_DIR/bot.log" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
+    printf "%s\n" "$(git rev-parse HEAD)" > "$RUNTIME_COMMIT_FILE"
     sleep 8
     if PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" "$REPO/scripts/healthcheck.py" >> "$LOG" 2>&1; then
         return 0
@@ -422,6 +424,28 @@ elif ! is_running; then
 
     log "RECOVERY: bot started and health-verified"
 else
+    # A running bot can survive a git update because its Python process keeps the
+    # old modules in memory. Detect that stale process explicitly and restart it
+    # on the current checkout even when LOCAL == REMOTE.
+    RUNNING_COMMIT="$(cat "$RUNTIME_COMMIT_FILE" 2>/dev/null || true)"
+    if [[ "$RUNNING_COMMIT" != "$LOCAL" ]]; then
+        log "UPDATE: running bot revision ${RUNNING_COMMIT:-unknown} != checkout $LOCAL; restarting"
+        if ! has_fresh_active_lease; then
+            log "FENCE: lease lost before stale-runtime restart"
+            exit 1
+        fi
+        stop_bot
+        if ! has_fresh_active_lease; then
+            log "FENCE: lease lost before stale-runtime restart start"
+            exit 1
+        fi
+        if ! start_bot; then
+            log "STOP: stale-runtime restart failed"
+            exit 1
+        fi
+        log "UPDATE: stale runtime replaced with checkout $LOCAL"
+    fi
+
     # Keep runtime dependencies self-healing even when the bot process is still alive.
     # This also repairs auxiliary Termux services (for example the battery watchdog)
     # that import the same Python dependencies as the bot.
