@@ -102,6 +102,8 @@ TERMUX_OWNED_FILES=(
     "scripts/termux_supervisor.sh"
     "scripts/termux_boot.sh"
     "scripts/termux_lease_watchdog.py"
+    "scripts/qa_agent.py"
+    "qa/scenarios.json"
 )
 is_termux_owned_file() {
     local candidate="$1"
@@ -127,7 +129,22 @@ if [[ -n "$(git status --porcelain)" ]]; then
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         if [[ "$line" == "?? "* ]]; then
-            continue
+            path="${line:3}"
+            if is_termux_owned_file "$path" && git cat-file -e "origin/$BRANCH:$path" 2>/dev/null; then
+                backup_dir="$DATA_DIR/termux-local-patches"
+                mkdir -p "$backup_dir"
+                backup_file="$backup_dir/$(date +%Y%m%d-%H%M%S)-$(printf "%s" "$path" | tr "/" "_").untracked"
+                if cp -p "$path" "$backup_file" 2>/dev/null; then
+                    log "BOOTSTRAP: backed up stale untracked Termux/QA file: $path -> $backup_file"
+                else
+                    log "STOP: failed to back up stale untracked Termux/QA file: $path"
+                    exit 1
+                fi
+                rm -f "$path"
+                log "BOOTSTRAP: replacing stale untracked Termux/QA file from origin/$BRANCH: $path"
+            else
+                continue
+            fi
         fi
         path="${line:3}"
         if ! git diff --quiet "origin/$BRANCH" -- "$path"; then
