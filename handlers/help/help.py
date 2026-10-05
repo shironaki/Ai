@@ -598,7 +598,7 @@ async def panel_reports(call: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("report:view:"))
 async def report_view(call: types.CallbackQuery):
-    if not _is_report_operator(call.from_user.id):
+    if not _is_report_operator(call.from_user.id, call.message.chat.id):
         await call.answer("Нет доступа к центру обращений.", show_alert=True)
         return
     try:
@@ -629,7 +629,7 @@ async def report_view(call: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("report:answer:"))
 async def report_answer_start(call: types.CallbackQuery):
-    if not _is_report_operator(call.from_user.id):
+    if not _is_report_operator(call.from_user.id, call.message.chat.id):
         await call.answer("Нет доступа к центру обращений.", show_alert=True)
         return
     try:
