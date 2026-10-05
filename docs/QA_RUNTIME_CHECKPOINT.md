@@ -69,6 +69,7 @@ Known healthy telemetry: HEALTH OK: bot_heartbeat=... role=active telegram=@AiAe
 9. Root cause found in live QA RUN all: report publication hit GitHub HTTP 422 because per-scenario log tails made the report too large. Fixed QA agent with bounded reports and diagnostics-on-failure.
 10. Supervisor now restarts termux_control.py when its script hash changes, so pulled control fixes become active without manual process surgery.
 11. QA diagnostics now read data/test/bot.log and data/test/termux-autoupdate.log, matching the actual runtime writer locations.
+12. Live QA reproduced that ordinary users could not reach safe natural profile actions without the “Аи” prefix. The direct-action router now handles recognized safe informational requests for regular users; a regression test locks this behavior.
 
 ## Next sequence
 A. Allow the fixed runtime updater/supervisor/control chain to converge; do not rebuild Termux generically.
