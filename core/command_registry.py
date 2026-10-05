@@ -48,7 +48,7 @@ COMMAND_REGISTRY = (
     CommandSpec("unmute", frozenset({"размут", "unmute", "андебафф"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("ban", frozenset({"ban", "аннигилировать"}), "moderation", "Модератор", "chat", True, True),
     CommandSpec("unban", frozenset({"unban", "воскресить"}), "moderation", "Модератор", "chat", True, True),
-    CommandSpec("setstatus", frozenset({"setstatus", "выдай статус"}), "administration", "Администратор", "chat"),
+    CommandSpec("setstatus", frozenset({"setstatus", "выдай статус"}), "administration", "Модератор", "chat"),
     CommandSpec("info", frozenset({"info", "инфо", "инфа"}), "information", "Пользователь"),
     CommandSpec("chatinfo", frozenset({"chatinfo", "чатинфо"}), "information", "Пользователь"),
     CommandSpec("report", frozenset({"report", "репорт", "q", "r"}), "communication", "Пользователь"),
