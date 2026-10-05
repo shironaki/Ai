@@ -718,6 +718,8 @@ async def report_answer_message(message: types.Message):
         message.text.strip(),
         source_chat_id=None if is_owner(message.from_user.id) else message.chat.id,
     ):
+        await message.reply("⚠️ Не удалось закрыть репорт: он уже изменён или больше не относится к этому чату.")
+        return
     await message.reply(f"✅ Ответ по репорту #{report_id} отправлен.")
 
 
