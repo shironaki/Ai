@@ -28,7 +28,10 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
     def test_qa_agent_refreshes_catalog_and_bounds_reports(self):
         source = (ROOT / "scripts" / "qa_agent.py").read_text(encoding="utf-8")
         self.assertIn("refresh_scenarios_from_github", source)
-        self.assertIn('/contents/qa/scenarios.json?ref={QA_BRANCH}', source)
+        self.assertIn('["git", "fetch", "--quiet", "origin", QA_BRANCH]', source)
+        self.assertIn('git", "show", f"origin/{QA_BRANCH}:qa/scenarios.json', source)
+        self.assertIn('/contents/qa/scenarios.json?ref={quote(QA_BRANCH, safe=\'\')}', source)
+        self.assertIn("scenario refresh failed:", source)
         self.assertIn("limit = 60000", source)
         self.assertIn("scenario_ok = all(item.get(\"ok\", False) for item in results)", source)
         self.assertIn("coverage_complete", source)
