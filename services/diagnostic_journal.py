@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import traceback
+import time
 from datetime import datetime, timedelta, timezone
 
 DIAGNOSTIC_RETENTION_DAYS = 14
@@ -41,7 +42,7 @@ def _ensure_table() -> None:
 
 def _purge_old() -> None:
     global _last_purge_at
-    now_monotonic = __import__("time").monotonic()
+    now_monotonic = time.monotonic()
     if now_monotonic - _last_purge_at < _PURGE_INTERVAL_SECONDS:
         return
     cutoff = (datetime.now(timezone.utc) - timedelta(days=DIAGNOSTIC_RETENTION_DAYS)).isoformat()
