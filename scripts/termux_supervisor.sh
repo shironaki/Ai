@@ -125,7 +125,11 @@ control_process_matches() {
     pid="$1"
     case "$pid" in ''|*[!0-9]*) return 1;; esac
     [ "$pid" -gt 1 ] || return 1
-    kill -0 "$pid" 2>/dev/null
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [ -r "/proc/$pid/cmdline" ]; then
+        grep -aq 'scripts/termux_control.py' "/proc/$pid/cmdline" 2>/dev/null && return 0
+    fi
+    return 1
 }
 
 start_control() {
