@@ -831,12 +831,25 @@ async def _apply_panel_role(message: types.Message, target_user_id: int, target_
     if row is None:
         await message.reply("❗ Пользователь не зарегистрирован в Системе.")
         return False
-    if not set_role(message.chat.id, target_user_id, target_role, actor_id):
-        return False
+    if is_owner(actor_id):
+        from services.global_roles import set_global_role
+        if not set_global_role(target_user_id, target_role, actor_id):
+            return False
+        audit_chat_id = 0
+    else:
+        if not set_role(message.chat.id, target_user_id, target_role, actor_id):
+            return False
+        audit_chat_id = message.chat.id
     from services.role_audit import record_role_grant
-    record_role_grant(chat_id=message.chat.id, actor_id=actor_id, target_id=target_user_id, role=target_role)
+    record_role_grant(
+        chat_id=audit_chat_id,
+        actor_id=actor_id,
+        target_id=target_user_id,
+        role=target_role,
+    )
     await message.reply(
         f"✅ Роль пользователя обновлена: <b>{escape_for_telegram_html(target_role)}</b>."
+        + (" Глобально." if is_owner(actor_id) else " Только в этом чате.")
     )
     return True
 
