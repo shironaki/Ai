@@ -59,6 +59,28 @@ BOT_PAUSED = False
 HEALTH_DIR = os.path.join(os.getenv("BOT_DATA_DIR", "data/test"), "runtime")
 HEARTBEAT_FILE = os.path.join(HEALTH_DIR, "heartbeat")
 PROCESS_STARTED_AT = time.monotonic()
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_background(coro, *, name: str) -> None:
+    """Run non-critical blocking telemetry off the message dispatch path."""
+    task = asyncio.create_task(coro, name=name)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+    def _report_failure(done_task):
+        try:
+            done_task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            log.exception("BACKGROUND TASK | failed name=%s", name)
+
+    task.add_done_callback(_report_failure)
+
+
+async def _record_diagnostic_background(**kwargs) -> None:
+    await asyncio.to_thread(record_diagnostic, **kwargs)
 
 
 def write_health_heartbeat() -> None:
@@ -159,17 +181,17 @@ class ActivityLoggingMiddleware(BaseMiddleware):
                     )
                 except Exception:
                     log.exception("FOUNDER IDENTITY | failed to persist owner profile")
-            try:
-                data["diagnostic_event_id"] = record_diagnostic(
+            _schedule_background(
+                _record_diagnostic_background(
                     update_id=data["diagnostic_update_id"],
                     chat_id=message.chat.id,
                     user_id=getattr(message.from_user, "id", None),
                     stage="update_received",
                     result="received",
                     context={"content_type": getattr(message, "content_type", "unknown")},
-                )
-            except Exception:
-                log.exception("DIAGNOSTIC JOURNAL | failed to record update")
+                ),
+                name="diagnostic-update",
+            )
             write_health_heartbeat()
             log.info(
                 "UPDATE message | update_id=%s chat=%s type=%s user=%s text_len=%s content_type=%s",
