@@ -212,6 +212,61 @@ stop_bot() {
     rm -f "$PIDFILE" "$RUNTIME_COMMIT_FILE"
 }
 
+qa_process_matches() {
+    local pid="$1"
+    case "$pid" in ''|*[!0-9]*) return 1;; esac
+    [ "$pid" -gt 1 ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    if [ -r "/proc/$pid/cmdline" ]; then
+        grep -aq 'scripts/qa_agent.py' "/proc/$pid/cmdline" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+restart_qa_agent() {
+    local script="$REPO/scripts/qa_agent.py"
+    local pidfile="$REPO/qa-agent.pid"
+    local hashfile="$REPO/qa-agent.sha256"
+    local env_file="${QA_ENV_FILE:-$HOME/.config/ai/qa_agent.env}"
+    local runner="${QA_PYTHON:-$HOME/Ai/qa_client/.venv/bin/python}"
+    [ -f "$script" ] || return 0
+    [ -x "$runner" ] || {
+        log "QA: runner unavailable; leaving existing QA agent untouched"
+        return 0
+    }
+
+    local current_hash
+    current_hash="$(sha256sum "$script" 2>/dev/null | awk '{print $1}')"
+    local pid
+    pid="$(cat "$pidfile" 2>/dev/null || true)"
+    if qa_process_matches "$pid"; then
+        local running_hash
+        running_hash="$(cat "$hashfile" 2>/dev/null || true)"
+        if [ -n "$current_hash" ] && [ "$running_hash" = "$current_hash" ]; then
+            return 0
+        fi
+        kill "$pid" 2>/dev/null || true
+        for _ in {1..5}; do
+            qa_process_matches "$pid" || break
+            sleep 1
+        done
+        if qa_process_matches "$pid"; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    fi
+
+    rm -f "$pidfile" "$hashfile"
+    if [ -f "$env_file" ]; then
+        set -a
+        . "$env_file"
+        set +a
+    fi
+    nohup "$runner" "$script" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
+    echo $! > "$pidfile"
+    printf "%s\\n" "$current_hash" > "$hashfile"
+    log "QA: agent synchronized to $(git rev-parse HEAD)"
+}
+
 install_dependencies() {
     if ! "$PYTHON" -m pip --version >> "$LOG" 2>&1; then
         log "STOP: pip unavailable"
@@ -396,6 +451,16 @@ elif [[ "$APPLY_UPDATED" == "1" ]]; then
     if ! has_fresh_active_lease; then
         stop_bot
         log "FENCE: lease lost after dependency installation"
+        exit 1
+    fi
+
+    if ! restart_qa_agent; then
+        log "UPDATE: QA agent synchronization failed"
+        if [[ -n "$ROLLBACK_COMMIT" ]]; then
+            rollback "$ROLLBACK_COMMIT" || true
+        else
+            log "ROLLBACK: no previous commit available; bot remains stopped"
+        fi
         exit 1
     fi
 
