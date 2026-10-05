@@ -364,23 +364,11 @@ class ChatAuthorityMiddleware(BaseMiddleware):
                 # Keep the cached authority for this update; chat_member
                 # events remain the fast invalidation path.
 
-        if now - _CHAT_ADMIN_SYNC_AT.get(chat_id, 0.0) < _CHAT_ADMIN_SYNC_TTL:
-            return
-        started = time.perf_counter()
-        try:
-            await sync_chat_admins(bot, chat_id)
-            _CHAT_ADMIN_SYNC_AT[chat_id] = now
-            log.info(
-                "CHAT AUTHORITY | synced chat=%s duration_ms=%s",
-                chat_id,
-                round((time.perf_counter() - started) * 1000, 1),
-            )
-        except Exception:
-            log.exception(
-                "CHAT AUTHORITY | failed to refresh chat=%s duration_ms=%s",
-                chat_id,
-                round((time.perf_counter() - started) * 1000, 1),
-            )
+        # Do not make ordinary messages wait for getChatAdministrators().
+        # Known chats are synchronized in the background at startup and
+        # chat_member events provide immediate invalidation. A privileged
+        # sender is still re-verified above on a short TTL.
+        return
 
 
 @dp.chat_member_handler()
@@ -1013,8 +1001,37 @@ BOT_COMMANDS = [
 
 
 
+async def _sync_registered_chat_authority() -> None:
+    """Warm Telegram authority cache without blocking message dispatch."""
+    try:
+        chat_ids = [
+            int(row[0])
+            for row in chats.cursor.execute("SELECT chat_id FROM chats").fetchall()
+        ]
+    except Exception:
+        log.exception("CHAT AUTHORITY | could not enumerate registered chats")
+        return
+
+    for chat_id in chat_ids:
+        started = time.perf_counter()
+        try:
+            await sync_chat_admins(bot, chat_id)
+            _CHAT_ADMIN_SYNC_AT[chat_id] = time.monotonic()
+            log.info(
+                "CHAT AUTHORITY | startup sync chat=%s duration_ms=%s",
+                chat_id,
+                round((time.perf_counter() - started) * 1000, 1),
+            )
+        except Exception:
+            log.exception(
+                "CHAT AUTHORITY | startup sync failed chat=%s duration_ms=%s",
+                chat_id,
+            )
+
+
 async def on_startup(dispatcher):
     write_health_heartbeat()
+    _schedule_background(_sync_registered_chat_authority(), name="chat-authority-warmup")
     asyncio.create_task(runtime_heartbeat())
     asyncio.create_task(expiry_loop(bot))
     asyncio.create_task(reminder_loop(bot, config.owner, config.tech_team_ids))
