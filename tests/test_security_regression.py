@@ -136,6 +136,24 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertTrue(has_moderator_role(7, 200))
             self.assertFalse(has_admin_role(7, 200))
 
+    def test_user_summary_uses_chat_effective_role(self):
+        from services.ai_data import user_summary
+
+        class Row(dict):
+            pass
+
+        with patch("services.ai_data.get_user", return_value=Row(
+            id=7,
+            name="QA",
+            username="qa",
+            status="Пользователь",
+            regdata="04.10.2026",
+        )), patch("services.ai_data.get_display_role", return_value="Модератор") as role:
+            summary = user_summary(7, 200)
+
+        self.assertEqual(summary["status"], "Модератор")
+        role.assert_called_once_with(7, 200)
+
     def test_founder_remains_global_and_immutable(self):
         from core.permissions import get_display_role, get_user_status
 
