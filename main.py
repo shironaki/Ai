@@ -295,11 +295,13 @@ dp.middleware.setup(ActivityLoggingMiddleware())
 
 
 _CHAT_ADMIN_SYNC_AT: dict[int, float] = {}
+_CHAT_AUTHORITY_VERIFY_AT: dict[tuple[int, int], float] = {}
 _CHAT_ADMIN_SYNC_TTL = 15.0
+_CHAT_AUTHORITY_VERIFY_TTL = 15.0
 
 
 class ChatAuthorityMiddleware(BaseMiddleware):
-    """Refresh Telegram admin/owner authority before permission checks."""
+    """Refresh Telegram admin/owner authority without blocking every group message."""
 
     async def on_pre_process_message(self, message, data):
         if message.chat.type not in ("group", "supergroup"):
@@ -307,29 +309,56 @@ class ChatAuthorityMiddleware(BaseMiddleware):
         chat_id = message.chat.id
         user_id = getattr(message.from_user, "id", None)
         now = time.monotonic()
+        cached_authority = get_chat_authority(chat_id, user_id) if user_id is not None else None
 
-        # If this sender already has Telegram-derived authority, verify that
-        # authority directly before dispatch. This removes the dangerous
-        # demotion window without calling Telegram for every ordinary member.
-        if user_id is not None and get_chat_authority(chat_id, user_id):
+        # Telegram chat_member updates invalidate this cache immediately. For
+        # the normal path, verify an already-privileged sender periodically
+        # instead of calling getChatMember on every single message. This keeps
+        # RBAC fail-closed on stale authority while removing an avoidable
+        # network round-trip from every admin/owner message.
+        if cached_authority and (
+            now - _CHAT_AUTHORITY_VERIFY_AT.get((chat_id, user_id), 0.0)
+            >= _CHAT_AUTHORITY_VERIFY_TTL
+        ):
+            started = time.perf_counter()
             try:
                 await refresh_chat_member(bot, chat_id, user_id)
-                _CHAT_ADMIN_SYNC_AT[chat_id] = now
+                _CHAT_AUTHORITY_VERIFY_AT[(chat_id, user_id)] = now
+                log.info(
+                    "CHAT AUTHORITY | verified chat=%s user=%s role=%s duration_ms=%s",
+                    chat_id,
+                    user_id,
+                    cached_authority,
+                    round((time.perf_counter() - started) * 1000, 1),
+                )
                 return
             except Exception:
                 log.exception(
-                    "CHAT AUTHORITY | failed to verify user=%s chat=%s",
+                    "CHAT AUTHORITY | failed to verify user=%s chat=%s duration_ms=%s",
                     user_id,
                     chat_id,
+                    round((time.perf_counter() - started) * 1000, 1),
                 )
+                # Keep the cached authority for this update; chat_member
+                # events remain the fast invalidation path.
 
         if now - _CHAT_ADMIN_SYNC_AT.get(chat_id, 0.0) < _CHAT_ADMIN_SYNC_TTL:
             return
+        started = time.perf_counter()
         try:
             await sync_chat_admins(bot, chat_id)
             _CHAT_ADMIN_SYNC_AT[chat_id] = now
+            log.info(
+                "CHAT AUTHORITY | synced chat=%s duration_ms=%s",
+                chat_id,
+                round((time.perf_counter() - started) * 1000, 1),
+            )
         except Exception:
-            log.exception("CHAT AUTHORITY | failed to refresh chat=%s", chat_id)
+            log.exception(
+                "CHAT AUTHORITY | failed to refresh chat=%s duration_ms=%s",
+                chat_id,
+                round((time.perf_counter() - started) * 1000, 1),
+            )
 
 
 @dp.chat_member_handler()
@@ -340,7 +369,12 @@ async def chat_member_authority_update(chat_member):
         return
     try:
         observe_chat_member_update(chat_member)
-        _CHAT_ADMIN_SYNC_AT[chat.id] = time.monotonic()
+        now = time.monotonic()
+        _CHAT_ADMIN_SYNC_AT[chat.id] = now
+        member = getattr(chat_member, "new_chat_member", None)
+        member_user = getattr(member, "user", None)
+        if member_user:
+            _CHAT_AUTHORITY_VERIFY_AT.pop((chat.id, member_user.id), None)
         log.info(
             "CHAT AUTHORITY | membership update applied chat=%s user=%s status=%s",
             chat.id,
@@ -706,9 +740,8 @@ async def log_update_error(update, exception):
     if message:
         try:
             await message.answer(
-                "⚠️ Ошибка обработчика. Я автоматически сохранила диагностику "
-                f"<code>#{diagnostic_id or '?'}</code> и QA-метку "
-                f"<code>#{marker_id or '?'}</code>."
+                "⚠️ Не удалось обработать запрос. "
+                "Ошибка автоматически зафиксирована во внутренней диагностике."
             )
         except Exception:
             log.exception("Could not send error notice to the user")
