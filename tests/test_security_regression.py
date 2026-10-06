@@ -389,7 +389,7 @@ class SecurityRegressionTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         source = (root / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         start = source.index("async def unified_report_request")
-        end = source.index("\n\n_REPORT_PENDING", start)
+        end = source.index('\n@dp.callback_query_handler(lambda c: c.data == "reports:list")', start)
         block = source[start:end]
         self.assertIn("helper_ids = tuple(list_global_users_by_role(\"Хелпер\"))", block)
         self.assertIn("recipients = tuple(dict.fromkeys((config.owner, *helper_ids)))", block)
