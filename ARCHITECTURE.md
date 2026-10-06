@@ -43,7 +43,7 @@ Human authorization is split by source and scope:
 - 👑 **Основатель** — hidden, immutable and derived only from `config.owner`; never assignable or displayed as a normal role.
 - 🛡️ **Администратор** — local authority derived from Telegram chat ownership; it exists only for the current `chat_id`.
 - 🔨 **Модератор** — local role assigned by that chat's Administrator; never global.
-- 👮 **Хелпер** — global technical role assigned only by the Founder; intended for the report center and technical support across chats.
+- 👮 **Хелпер** — global technical role assigned only by the Founder; intended for the report center and technical support across chats. It does not grant local moderation, and a local Moderator assignment cannot be used to elevate a Helper.
 - 👤 **Пользователь** — default human role.
 
 Telegram administrator/creator status is an authority source, not a persistent bot role. Global Helper state lives in `global_roles`; local Moderator state lives in `chat_roles(chat_id,user_id)`.
@@ -77,4 +77,5 @@ Local database directories are best-effort restricted to owner-only filesystem p
 - Error diagnostics redact common API/token formats.
 - Audit events contain command metadata only; AI prompts, message text and credentials are excluded.\n- Command scope is explicit: chat-only commands cannot be promoted to global execution, even by the Founder.
 - Runtime logs stay outside Git.
+- The Termux supervisor bootstraps only its owned control-plane files (`termux_update.sh`, `termux_control.py`, `qa_agent.py`, `qa/scenarios.json`) from the tested branch so stale staged runtime edits cannot permanently block recovery.
 - Python 3.11 syntax is checked by GitHub Actions on pushes and pull requests.
