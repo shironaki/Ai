@@ -108,7 +108,7 @@ class DispatchRegressionTests(unittest.TestCase):
     def test_chat_role_display_and_authority_share_the_same_scope(self):
         source = (ROOT / "core" / "permissions.py").read_text(encoding="utf-8")
         self.assertIn("def get_display_role(user_id, chat_id=None):", source)
-        self.assertIn("return get_role(chat_id, user_id) or \"Пользователь\"", source)
+        self.assertIn("authority = _telegram_authority(user_id, chat_id)", source)
         self.assertIn("def has_moderator_role(user_id, chat_id=None):", source)
         self.assertIn("def has_admin_role(user_id, chat_id=None):", source)
 
