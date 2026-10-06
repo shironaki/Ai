@@ -74,7 +74,7 @@ class SecurityRegressionTests(unittest.TestCase):
         from core.permissions import get_display_role, get_user_status
 
         with patch("core.permissions.is_owner", return_value=False), \
-             patch("services.chat_members.get_chat_authority", return_value="Владелец чата"), \
+             patch("services.chat_members.get_chat_authority", return_value="Администратор"), \
              patch("services.chat_roles.get_role", return_value="Модератор"):
             self.assertEqual(get_user_status(123, 456), "Администратор")
             self.assertEqual(get_display_role(123, 456), "Администратор")
