@@ -26,6 +26,7 @@ ROLE_ORDER = {
     "Администратор": 30,
     "Хелпер": 15,
     OWNER_ROLE: 50,
+    "Основатель": 50,  # hidden compatibility alias for command catalog/policy
     SYSTEM_ROLE: 60,
     GAME_ROLE: 10,
 }
