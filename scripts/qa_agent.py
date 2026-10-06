@@ -372,13 +372,13 @@ async def main():
                 ):
                     if message.id in seen or message.out or not message.message:
                         continue
-                    # Only a bot response can satisfy a command step. Human
-                    # messages in the same chat must never become false positives.
+                    # Only the target bot's response can satisfy a command step.
+                    # Other bots in the same chat must never become false positives.
                     try:
                         sender = await message.get_sender()
                     except Exception:
                         sender = None
-                    if not getattr(sender, "bot", False):
+                    if not getattr(sender, "bot", False) or sender.id != me.id:
                         continue
                     seen.add(message.id)
                     replies.append({
