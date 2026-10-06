@@ -126,7 +126,7 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('def get_chat_authority(chat_id: int, user_id: int)', members)
         self.assertIn('if row["is_chat_owner"] or row["telegram_status"] == "creator":', members)
         self.assertIn('authority = _telegram_authority(user_id, chat_id)', permissions)
-        self.assertIn('from services.chat_members import get_chat_authority, observe_chat_member_update, refresh_chat_member, sync_chat_admins', main_source)
+        self.assertIn('from services.chat_members import get_chat_authority, invalidate_chat_authority, observe_chat_member_update, refresh_chat_member, sync_chat_admins', main_source)
         self.assertIn('class ChatAuthorityMiddleware', main_source)
         self.assertIn('return "🔐 СПЕЦДОСТУП ПОЛУЧЕН · Я слушаю. Система в полном распоряжении. Приказывайте."', help_source)
         self.assertNotIn('return "👑 ОСНОВАТЕЛЬ · Я слушаю.', help_source)
