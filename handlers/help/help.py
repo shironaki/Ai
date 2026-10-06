@@ -600,6 +600,41 @@ async def unified_report_request(message: types.Message):
     await message.reply(f"📬 Репорт #{report_id} принят. Ответ будет направлен отдельно.")
 
 
+@dp.callback_query_handler(lambda c: c.data == "reports:list")
+async def reports_list_callback(call: types.CallbackQuery):
+    if not _is_report_operator(call.from_user.id, call.message.chat.id):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    global_report_operator = is_owner(call.from_user.id) or resolve_role(call.from_user.id) == "Хелпер"
+    rows = list_open() if global_report_operator else list_open(source_chat_id=call.message.chat.id)
+    menu = InlineKeyboardMarkup(row_width=1)
+    for row in rows:
+        menu.add(
+            InlineKeyboardButton(
+                f"#{row['id']} · {str(row['reason'])[:42]}",
+                callback_data=f"report:view:{row['id']}",
+            )
+        )
+    menu.add(InlineKeyboardButton("✖️ Закрыть", callback_data="reports:close"))
+    await call.message.edit_text(
+        "<b>📬 ЦЕНТР ОБРАЩЕНИЙ</b>\n\n"
+        + (f"Открытых репортов: <b>{len(rows)}</b>" if rows else "Открытых репортов нет."),
+        reply_markup=menu,
+    )
+    await call.answer()
+
+
+@dp.callback_query_handler(lambda c: c.data == "reports:close")
+async def reports_close_callback(call: types.CallbackQuery):
+    if not _is_report_operator(call.from_user.id, call.message.chat.id):
+        await call.answer("Нет доступа.", show_alert=True)
+        return
+    try:
+        await call.message.edit_text("📬 Центр обращений закрыт.")
+    finally:
+        await call.answer()
+
+
 @dp.callback_query_handler(lambda c: c.data == "panel:reports")
 async def panel_reports(call: types.CallbackQuery):
     if not _is_report_operator(call.from_user.id, call.message.chat.id):
@@ -615,7 +650,7 @@ async def panel_reports(call: types.CallbackQuery):
                 callback_data=f"report:view:{row['id']}",
             )
         )
-    menu.add(InlineKeyboardButton("◀️ Назад", callback_data="panel:back"))
+    menu.add(InlineKeyboardButton("◀️ К списку репортов", callback_data="reports:list"))
     from handlers.help.command_help import _panel_edit
     await _panel_edit(
         call,
