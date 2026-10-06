@@ -33,6 +33,32 @@ class ChatRoleIsolationTests(unittest.TestCase):
         self.assertEqual(get_role(200, 7), "Модератор")
         self.assertIsNone(get_role(300, 7))
 
+    def test_global_helper_can_manage_roles_when_also_chat_creator(self):
+        from services.chat_roles import set_role, get_role
+
+        with patch("core.identity.is_owner", return_value=False), patch(
+            "core.identity.resolve_role", return_value="Хелпер"
+        ), patch(
+            "core.permissions.get_display_role", return_value="Администратор"
+        ), patch(
+            "services.chat_members.get_chat_authority", return_value="Администратор"
+        ), patch("base.config.owner", 999999):
+            self.assertTrue(set_role(100, 7, "Модератор", 1))
+
+        self.assertEqual(get_role(100, 7), "Модератор")
+
+    def test_global_helper_without_chat_creator_authority_is_rejected(self):
+        from services.chat_roles import set_role
+
+        with patch("core.identity.is_owner", return_value=False), patch(
+            "core.identity.resolve_role", return_value="Хелпер"
+        ), patch(
+            "core.permissions.get_display_role", return_value="Хелпер"
+        ), patch(
+            "services.chat_members.get_chat_authority", return_value=None
+        ), patch("base.config.owner", 999999):
+            self.assertFalse(set_role(100, 7, "Модератор", 1))
+
     def test_service_identity_and_non_local_roles_cannot_be_assigned(self):
         from services.chat_roles import set_role
 
