@@ -99,11 +99,11 @@ class DispatchRegressionTests(unittest.TestCase):
 
     def test_chat_roles_are_surface_local_not_global(self):
         source = (ROOT / "core" / "permissions.py").read_text(encoding="utf-8")
-        self.assertIn("if chat_id is not None:", source)
-        self.assertIn('return get_role(chat_id, user_id) or "Пользователь"', source)
-        self.assertIn("return resolve_role(user_id)", source)
-        self.assertNotIn("if chat_role:", source)
-        self.assertIn("return row[0] if row else None", source)
+        self.assertIn("if chat_id is None:", source)
+        self.assertIn("def _local_bot_role(user_id, chat_id):", source)
+        self.assertIn("authority = _telegram_authority(user_id, chat_id)", source)
+        self.assertNotIn("global_role == \"Модератор\"", source)
+        self.assertIn("return get_role(chat_id, user_id)", source)
 
     def test_chat_role_display_and_authority_share_the_same_scope(self):
         source = (ROOT / "core" / "permissions.py").read_text(encoding="utf-8")
@@ -120,12 +120,12 @@ class DispatchRegressionTests(unittest.TestCase):
         members = (ROOT / "services" / "chat_members.py").read_text(encoding="utf-8")
         help_source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         main_source = (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn('CHAT_OWNER_ROLE = "Владелец чата"', role_source)
-        self.assertIn('CHAT_OWNER_ROLE: 45', role_source)
-        self.assertIn('CHAT_OWNER_ROLE, OWNER_ROLE', role_source)
+        self.assertIn('CHAT_OWNER_ROLE = "Администратор"', role_source)
+        self.assertIn('CHAT_OWNER_ROLE = "Администратор"', role_source)
+        self.assertIn('OWNER_ROLE', permissions)
         self.assertIn('def get_chat_authority(chat_id: int, user_id: int)', members)
         self.assertIn('if row["is_chat_owner"] or row["telegram_status"] == "creator":', members)
-        self.assertIn('authority = get_chat_authority(chat_id, user_id)', permissions)
+        self.assertIn('authority = _telegram_authority(user_id, chat_id)', permissions)
         self.assertIn('from services.chat_members import get_chat_authority, observe_chat_member_update, refresh_chat_member, sync_chat_admins', main_source)
         self.assertIn('class ChatAuthorityMiddleware', main_source)
         self.assertIn('return "🔐 СПЕЦДОСТУП ПОЛУЧЕН · Я слушаю. Система в полном распоряжении. Приказывайте."', help_source)
