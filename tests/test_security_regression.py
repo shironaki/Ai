@@ -419,6 +419,19 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertIn("_is_report_operator(call.from_user.id, call.message.chat.id)", block)
 
 
+    def test_global_helper_who_owns_chat_keeps_local_admin_authority(self):
+        from core.permissions import get_display_role, has_admin_role, has_moderator_role
+
+        with (
+            patch("core.permissions.is_owner", return_value=False),
+            patch("core.permissions.resolve_role", return_value="Хелпер"),
+            patch("services.chat_members.get_chat_authority", return_value="Администратор"),
+            patch("services.chat_roles.get_role", return_value="Модератор"),
+        ):
+            self.assertEqual(get_display_role(7, 123), "Администратор")
+            self.assertTrue(has_admin_role(7, 123))
+            self.assertTrue(has_moderator_role(7, 123))
+
     def test_global_helper_cannot_gain_local_moderation_from_legacy_role(self):
         from core.permissions import has_moderator_role
 
