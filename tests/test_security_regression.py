@@ -173,7 +173,7 @@ class SecurityRegressionTests(unittest.TestCase):
     def test_user_service_status_uses_authoritative_role_resolver(self):
         from services.user_service import get_status
 
-        with patch("services.user_service.get_display_role", return_value="Модератор"):
+        with patch("core.permissions.get_display_role", return_value="Модератор"):
             self.assertEqual(get_status(7, 123), "Модератор")
 
     def test_user_summary_does_not_fall_back_to_legacy_global_status(self):
