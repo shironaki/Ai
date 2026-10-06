@@ -45,7 +45,7 @@ def bot_running() -> bool:
         os.kill(pid, 0)
         cmdline_path = Path(f"/proc/{pid}/cmdline")
         if cmdline_path.exists():
-            cmdline = cmdline_path.read_bytes().replace(b"\\x00", b" ").decode(errors="replace")
+            cmdline = cmdline_path.read_bytes().replace(b"\x00", b" ").decode(errors="replace")
             return str(ROOT / "run.py") in cmdline
         command = subprocess.check_output(
             ["ps", "-p", str(pid), "-o", "command="],
@@ -66,7 +66,7 @@ def supervisor_running() -> bool:
         if pid <= 1:
             return False
         os.kill(pid, 0)
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\\x00", b" ").decode(errors="replace")
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(errors="replace")
         return "termux_supervisor.sh" in cmdline
     except Exception:
         return False
