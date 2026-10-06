@@ -38,16 +38,17 @@ Legacy game commands are intentionally outside the core registry. The game syste
 
 ## Roles
 
-The role catalogue is defined once in `config/role_config.py`:
+Human authorization is split by source and scope:
 
-- 👑 ОСНОВАТЕЛЬ
-- ⚙️ СИСТЕМА
-- 🛡️ АДМИНИСТРАТОР
-- 👮 ХЕЛПЕР
-- 🔨 МОДЕРАТОР
-- 👤 ИГРОК
+- 👑 **Основатель** — hidden, immutable and derived only from `config.owner`; never assignable or displayed as a normal role.
+- 🛡️ **Администратор** — local authority derived from Telegram chat ownership; it exists only for the current `chat_id`.
+- 🔨 **Модератор** — local role assigned by that chat's Administrator; never global.
+- 👮 **Хелпер** — global technical role assigned only by the Founder; intended for the report center and technical support across chats.
+- 👤 **Пользователь** — default human role.
 
-Permission checks use `core.permissions` and command policy, not duplicated role sets inside handlers.
+Telegram administrator/creator status is an authority source, not a persistent bot role. Global Helper state lives in `global_roles`; local Moderator state lives in `chat_roles(chat_id,user_id)`.
+
+Permission checks use `core.permissions` and command policy, while report access is handled separately from moderation access so a Helper does not gain local moderation powers.
 
 ## AI
 
