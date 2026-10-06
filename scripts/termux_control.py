@@ -79,8 +79,8 @@ def request(method: str, path: str, value=None):
                 return json.loads(response.read().decode("utf-8"))
         except Exception as exc:
             last_error = exc
-            if attempt < 2:
-                time.sleep(1 + attempt)
+            if attempt == 0:
+                time.sleep(1)
     raise last_error
 
 
