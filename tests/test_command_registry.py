@@ -71,7 +71,6 @@ class CommandRegistryTests(unittest.TestCase):
 
         self.assertIn("/panel", admin)
         self.assertIn("/setstatus", admin)
-        self.assertNotIn("/reports", helper)
         self.assertNotIn("/mute", helper)
         self.assertIn("/reports", helper)
         self.assertNotIn("/panel", helper)
