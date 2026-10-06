@@ -384,5 +384,27 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertIn("_is_report_operator(call.from_user.id, call.message.chat.id)", block)
 
 
+    def test_report_creation_notifies_only_founder_and_global_helpers(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        start = source.index("async def unified_report_request")
+        end = source.index("\n\n_REPORT_PENDING", start)
+        block = source[start:end]
+        self.assertIn("helper_ids = tuple(list_global_users_by_role(\"Хелпер\"))", block)
+        self.assertIn("recipients = tuple(dict.fromkeys((config.owner, *helper_ids)))", block)
+        self.assertNotIn("tech_team_ids", block)
+
+    def test_qa_agent_accepts_only_target_bot_replies(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "qa_agent.py").read_text(encoding="utf-8")
+        self.assertIn('target_entity = await client.get_entity(os.environ["QA_TARGET"])', source)
+        self.assertIn('target_bot_id = getattr(target_entity, "id", None)', source)
+        self.assertIn('if not target_bot_id or not getattr(target_entity, "bot", False):', source)
+        self.assertIn("sender.id != target_bot_id", source)
+        self.assertNotIn("sender.id != me.id", source)
+
+
 if __name__ == "__main__":
     unittest.main()
