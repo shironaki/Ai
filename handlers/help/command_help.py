@@ -272,6 +272,31 @@ async def moderation_command(message: types.Message):
     await _render_panel_root_message(message)
 
 
+@dp.message_handler(commands=["reports", "репорты"], commands_prefix="/!.")
+async def reports_command(message: types.Message):
+    if not _is_report_operator(message.from_user.id, message.chat.id):
+        await message.answer("⛔ Центр обращений недоступен.")
+        return
+    global_report_operator = is_owner(message.from_user.id) or resolve_role(message.from_user.id) == "Хелпер"
+    rows = list_open() if global_report_operator else list_open(source_chat_id=message.chat.id)
+    if not rows:
+        await message.answer("📬 Открытых репортов нет.")
+        return
+    menu = InlineKeyboardMarkup(row_width=1)
+    for row in rows:
+        menu.add(
+            InlineKeyboardButton(
+                f"#{row['id']} · {str(row['reason'])[:42]}",
+                callback_data=f"report:view:{row['id']}",
+            )
+        )
+    await message.answer(
+        "<b>📬 ЦЕНТР ОБРАЩЕНИЙ</b>\n\n"
+        + f"Открытых репортов: <b>{len(rows)}</b>",
+        reply_markup=menu,
+    )
+
+
 @dp.message_handler(commands=["panel"])
 async def panel_command(message: types.Message):
     if not (is_owner(message.from_user.id) or has_moderator_role(message.from_user.id, message.chat.id)):
