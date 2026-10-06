@@ -49,7 +49,7 @@ from main import (
     users,
 )
 
-from core.permissions import get_user_status, get_display_role, has_admin_role, has_moderator_role, has_report_access
+from core.permissions import get_user_status, get_display_role, has_moderator_role, has_report_access
 from core.identity import is_owner, resolve_role
 from core.role_transitions import available_role_targets
 from core.command_resolution import is_founder_scope_reply
