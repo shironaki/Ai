@@ -373,6 +373,21 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn('resolve_role(call.from_user.id) == "Хелпер"', block)
         self.assertIn("get_report(report_id) if global_report_operator", block)
 
+    def test_termux_control_stop_preserves_pid_while_process_lives(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        block = source[source.index("def stop_bot_for_role"):source.index("def has_active_lease")]
+        self.assertIn("os.kill(int(pid), 9)", block)
+        self.assertIn("PID state preserved", block)
+        self.assertIn("return \"bot stopped\"", block)
+
+    def test_qa_agent_binds_replies_to_target_bot(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "qa_agent.py").read_text(encoding="utf-8")
+        self.assertIn("target_bot_id = getattr(target_entity, \"id\", None)", source)
+        self.assertIn("sender.id != target_bot_id", source)
+        self.assertIn("getattr(sender, \"bot\", False)", source)
+
     def test_report_callbacks_use_effective_chat_role(self):
         from pathlib import Path
 
