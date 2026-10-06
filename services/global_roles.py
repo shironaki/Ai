@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from base import config
 from database.connection import connect_db
-from config.role_config import OWNER_ROLE, is_assignable_role
+from config.role_config import OWNER_ROLE, is_global_assignable_role
 
 
 def _ensure() -> None:
@@ -24,7 +24,7 @@ def _ensure() -> None:
 
 
 def set_global_role(target_user_id: int, role: str, actor_id: int) -> bool:
-    if actor_id != config.owner or not is_assignable_role(role):
+    if actor_id != config.owner or not is_global_assignable_role(role):
         return False
     if target_user_id == config.owner:
         return False
@@ -49,6 +49,12 @@ def get_global_role(user_id: int) -> str | None:
     with connect_db("users.db") as db:
         row = db.execute("SELECT role FROM global_roles WHERE user_id=?", (user_id,)).fetchone()
     return row["role"] if row else None
+
+
+def list_global_users_by_role(role: str):
+    _ensure()
+    with connect_db("users.db") as db:
+        return [row[0] for row in db.execute("SELECT user_id FROM global_roles WHERE role=?", (role,)).fetchall()]
 
 
 def revoke_global_role(target_user_id: int, actor_id: int) -> bool:
