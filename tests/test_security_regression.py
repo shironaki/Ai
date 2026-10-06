@@ -86,6 +86,19 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertIsNone(get_chat_authority(123, 456))
 
 
+    def test_failed_telegram_authority_refresh_fails_closed(self):
+        from services.chat_members import invalidate_chat_authority
+
+        with patch("services.chat_members.connect_db") as connect:
+            db = connect.return_value.__enter__.return_value
+            invalidate_chat_authority(123, 456)
+            db.execute.assert_called_once_with(
+                "UPDATE chat_members SET telegram_status='unknown', is_chat_owner=0, is_chat_admin=0 WHERE chat_id=? AND user_id=?",
+                (123, 456),
+            )
+            db.commit.assert_called_once()
+
+
     def test_chat_owner_authority_overrides_chat_role(self):
         from core.permissions import get_display_role, get_user_status
 
