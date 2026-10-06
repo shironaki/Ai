@@ -664,6 +664,13 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn('has_fresh_active_lease', source)
 
 
+    def test_termux_boot_bootstraps_supervisor_before_start(self):
+        source = (ROOT / "scripts" / "termux_boot.sh").read_text(encoding="utf-8")
+        self.assertIn('BRANCH="${BOT_BRANCH:-test-global-assistant-upgrade}"', source)
+        self.assertIn("bootstrap_supervisor()", source)
+        self.assertIn('git show "origin/$BRANCH:scripts/termux_supervisor.sh"', source)
+        self.assertLess(source.index("bootstrap_supervisor"), source.index("start_supervisor\n"))
+
     def test_termux_supervisor_bootstraps_control_plane_from_remote(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
         self.assertIn('BRANCH="${BOT_BRANCH:-test-global-assistant-upgrade}"', source)
