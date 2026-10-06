@@ -21,11 +21,14 @@ def get_user_status(user_id, chat_id=None):
     if is_owner(user_id):
         return OWNER_ROLE
     global_role = resolve_role(user_id)
-    if global_role == "Хелпер":
-        return global_role
+    # Local Telegram ownership is a scoped authority and must win over a
+    # global technical Helper role for this chat. The Helper identity remains
+    # globally available through resolve_role()/has_report_access().
     authority = _telegram_authority(user_id, chat_id)
     if authority:
         return authority
+    if global_role == "Хелпер":
+        return global_role
     local_role = _local_bot_role(user_id, chat_id)
     if local_role:
         return local_role
@@ -57,13 +60,14 @@ def has_moderator_role(user_id, chat_id=None):
     """Moderation authority: local Moderator or local Administrator."""
     if is_owner(user_id):
         return True
-    # Global Helper is technical staff, not a local moderator. Even a legacy
-    # local Moderator row must never grant moderation through this role.
+    # A global Helper is technical staff, not a local moderator. However,
+    # being the actual Telegram creator of this chat is an independent local
+    # authority and must remain effective even when the same person is a Helper.
+    if _telegram_authority(user_id, chat_id) == "Администратор":
+        return True
     if resolve_role(user_id) == "Хелпер":
         return False
-    if _local_bot_role(user_id, chat_id) == "Модератор":
-        return True
-    return _telegram_authority(user_id, chat_id) == "Администратор"
+    return _local_bot_role(user_id, chat_id) == "Модератор"
 
 
 def has_report_access(user_id, chat_id=None):
