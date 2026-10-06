@@ -30,7 +30,16 @@ def set_role(chat_id: int, user_id: int, role: str, granted_by: int):
     from core.role_transitions import can_assign
     if user_id == __import__("base").config.owner:
         return False
-    if resolve_role(user_id) == "Хелпер":
+    # A global Helper may simultaneously be the Telegram creator of this chat.
+    # In that scoped context the effective role is Administrator, so the global
+    # Helper identity must not suppress the creator's local authority.
+    actor_is_chat_owner = False
+    try:
+        from services.chat_members import get_chat_authority
+        actor_is_chat_owner = get_chat_authority(chat_id, granted_by) == "Администратор"
+    except Exception:
+        actor_is_chat_owner = False
+    if resolve_role(user_id) == "Хелпер" and not actor_is_chat_owner:
         return False
     actor_role = get_display_role(granted_by, chat_id)
     if not can_assign(actor_role, role, actor_is_owner=is_owner(granted_by)):
