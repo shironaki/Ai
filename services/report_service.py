@@ -143,7 +143,7 @@ def answer_report(
     answer_text: str,
     source_chat_id: int | None = None,
 ) -> bool:
-    if answered_by != config.owner and answered_by not in getattr(config, "tech_team_ids", ()):
+    if answered_by != config.owner:
         from services.global_roles import get_global_role
         if get_global_role(answered_by) != "Хелпер":
             if source_chat_id is None:
