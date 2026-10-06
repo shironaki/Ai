@@ -664,6 +664,14 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn('has_fresh_active_lease', source)
 
 
+    def test_termux_supervisor_bootstraps_control_plane_from_remote(self):
+        source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
+        self.assertIn('BRANCH="${BOT_BRANCH:-test-global-assistant-upgrade}"', source)
+        self.assertIn("sync_control_plane_files()", source)
+        self.assertIn('git fetch --quiet origin "$BRANCH"', source)
+        self.assertIn('git show "origin/$BRANCH:$path"', source)
+        self.assertIn("scripts/termux_update.sh scripts/termux_control.py scripts/qa_agent.py qa/scenarios.json", source)
+
     def test_termux_supervisor_is_singleton(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
         self.assertIn('SUPERVISOR_LOCKDIR="$REPO/.termux-supervisor.lock"', source)
