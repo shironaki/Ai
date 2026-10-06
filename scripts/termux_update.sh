@@ -277,7 +277,7 @@ restart_qa_agent() {
     fi
     nohup "$runner" "$script" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
     echo $! > "$pidfile"
-    printf "%s\\n" "$current_hash" > "$hashfile"
+    printf "%s\n" "$current_hash" > "$hashfile"
     log "QA: agent synchronized to $(git rev-parse HEAD)"
 }
 
