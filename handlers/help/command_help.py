@@ -13,7 +13,7 @@ from core.permissions import get_user_status, get_display_role, has_moderator_ro
 from core.identity import is_owner
 from core.role_transitions import available_role_targets
 from services.chat_members import sync_chat_admins
-from services.chat_roles import get_role, list_roles
+from services.chat_roles import get_role, list_roles, set_role
 from services.silence_service import set_silent, is_silent
 from services.ai_data import user_summary
 from services.ai_service import escape_for_telegram_html
@@ -400,7 +400,7 @@ async def panel_users(call):
     menu = InlineKeyboardMarkup(row_width=1)
     menu.add(InlineKeyboardButton("👤 Моя информация", callback_data="panel:myinfo"))
     menu.add(InlineKeyboardButton("👮 Состав администраторов", callback_data="panel:admins"))
-    if is_owner(call.from_user.id) or _panel_role(call.from_user.id, call.message.chat.id) in {"Администратор", "Хелпер"}:
+    if is_owner(call.from_user.id) or _panel_role(call.from_user.id, call.message.chat.id) == "Администратор":
         menu.add(InlineKeyboardButton("🎭 Назначить роль", callback_data="panel:role"))
     if is_owner(call.from_user.id):
         menu.add(InlineKeyboardButton("🤝 Отношение Аи", callback_data="panel:relation"))
