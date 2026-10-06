@@ -384,6 +384,21 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertIn("_is_report_operator(call.from_user.id, call.message.chat.id)", block)
 
 
+    def test_global_helper_cannot_gain_local_moderation_from_legacy_role(self):
+        from core.permissions import has_moderator_role
+
+        with patch("core.permissions.is_owner", return_value=False), \
+             patch("core.permissions.resolve_role", return_value="Хелпер"), \
+             patch("services.chat_roles.get_role", return_value="Модератор"), \
+             patch("services.chat_members.get_chat_authority", return_value=None):
+            self.assertFalse(has_moderator_role(7, 123))
+
+    def test_local_role_assignment_rejects_global_helper_target(self):
+        from services.chat_roles import set_role
+
+        with patch("core.identity.resolve_role", return_value="Хелпер"):
+            self.assertFalse(set_role(123, 7, "Модератор", 9))
+
     def test_report_creation_notifies_only_founder_and_global_helpers(self):
         from pathlib import Path
         root = Path(__file__).resolve().parents[1]
