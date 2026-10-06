@@ -220,3 +220,19 @@ Next required work:
 - Security rule preserved: no global/shared AI memory and no automatic ingestion of ordinary group messages.
 - Main/PROD remains untouched.
 - Next functional block: richer personal preferences and AI behavior settings, built on the same isolated memory/security boundary.
+
+
+## Protocol checkpoint — 2026-10-06 — role/runtime continuation
+
+- Active branch: `test-global-assistant-upgrade`; Main/PROD remains untouched.
+- Canonical human-role model remains: hidden immutable Founder; local Telegram creator = Administrator; local assignable Moderator; global Founder-assigned Helper; default User.
+- Telegram `administrator` status is deliberately **not** bot Administrator authority; only actual creator/owner maps to local Administrator.
+- Global Helper is technical/report-center staff only and must not inherit local moderation powers.
+- Local roles are keyed by `(chat_id,user_id)`; report access is global only for Founder/Helper and chat-scoped for local Administrator/Moderator.
+- Latest verified CI before this checkpoint: run `37472221050` (#2122), commit `ce75e84cf6061e9749c170352896467b3dc29301` — **SUCCESS**. Runtime regression suite passed; previous runtime-stop and QA target-bot boundary fixes are verified.
+- Deep audit found one real hidden panel defect: the role-assignment button was rendered for global Helper even though Helper has no role-assignment authority, and `_apply_panel_role()` referenced `set_role` without importing it. Fixed in `fe8254deaf39767da8122ee6707573b0bd7803d9`.
+- Regression guard added in `80d87fff1c52a192bb9a890b16d6e6ae1f52ddc0`: Helper no longer receives the role-assignment UI; panel role writer import/use is explicitly checked.
+- CI for current HEAD `80d87fff1c52a192bb9a890b16d6e6ae1f52ddc0` is currently in progress: Python integrity check run `37475816318` (#2125), job `112310801456`. Setup/dependency installation is running; compile/import/runtime regression steps have not completed yet. Do **not** call this HEAD green until the run completes.
+- QA agent review: `QA_TARGET` is resolved once to a concrete bot entity and reply acceptance is bound to that bot ID. Scenario `target` values are chat targets, not alternate bot targets, so the current binding is consistent with the scenario format.
+- Pending/cancellation state was audited: command, moderation, panel, report and runtime reversible state use `(user_id,chat_id)` boundaries; global runtime undo additionally uses an explicit global key `(user_id,0)`.
+- Continue next from current HEAD `80d87fff1c52a192bb9a890b16d6e6ae1f52ddc0`: first verify CI #2125, then continue broad hidden-code audit of panel callbacks, local settings/chat state, moderation target state, report scope, and Termux live runtime. Routine work continues without unnecessary stopping.
