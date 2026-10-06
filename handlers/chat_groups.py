@@ -33,7 +33,7 @@ async def new_chat_member(message: types.Message):
             welcome = None
             for prompt in prompts:
                 try:
-                    welcome = await generate_reply(member.id, prompt, "Пользователь")
+                    welcome = await generate_reply(member.id, prompt, "Пользователь", chat_id=message.chat.id)
                     if welcome:
                         break
                 except Exception:
