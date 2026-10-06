@@ -26,8 +26,8 @@ async def set_status(message: types.Message):
         await message.reply("⛔ | Нельзя назначить роль самому себе.")
         return
 
-    if target_role != "Модератор":
-        await message.reply("⛔ | В административном контуре назначается только роль Модератор.")
+    if target_role not in {"Модератор", "Хелпер"}:
+        await message.reply("⛔ | Основатель может назначить Хелпера, администратор чата — Модератора.")
         return
 
     if is_owner(actor_id):
@@ -41,7 +41,7 @@ async def set_status(message: types.Message):
         return
 
     if not has_admin_role(actor_id, message.chat.id):
-        await message.reply("⛔ | Только Основатель или Владелец чата может назначать локальную роль.")
+        await message.reply("⛔ | Только Администратор этого чата может назначать локального Модератора.")
         return
 
     if set_role(message.chat.id, target_id, target_role, actor_id):
