@@ -1,4 +1,4 @@
-from config.role_config import ADMIN_ROLES, MODERATOR_ROLES, OWNER_ROLE, CHAT_OWNER_ROLE
+from config.role_config import OWNER_ROLE
 from core.identity import is_owner, resolve_role
 
 
@@ -17,25 +17,19 @@ def _telegram_authority(user_id, chat_id):
 
 
 def get_user_status(user_id, chat_id=None):
-    """Return the effective bot role for this surface.
-
-    Founder/global role wins first; then a chat-local bot role. Telegram
-    creator/admin status is an authority source and is intentionally not
-    persisted as a bot role.
-    """
+    """Return the effective human role for the current surface."""
     if is_owner(user_id):
         return OWNER_ROLE
     global_role = resolve_role(user_id)
-    if global_role != "Пользователь":
+    if global_role == "Хелпер":
         return global_role
     local_role = _local_bot_role(user_id, chat_id)
     if local_role:
         return local_role
-    if chat_id is not None:
-        authority = _telegram_authority(user_id, chat_id)
-        if authority:
-            return authority
-    return resolve_role(user_id) if chat_id is None else "Пользователь"
+    authority = _telegram_authority(user_id, chat_id)
+    if authority:
+        return authority
+    return "Пользователь"
 
 
 def get_display_role(user_id, chat_id=None):
@@ -44,10 +38,7 @@ def get_display_role(user_id, chat_id=None):
 
 def get_role_tag(user_id, chat_id=None):
     from config.role_config import ROLE_TAGS
-    return ROLE_TAGS.get(
-        get_display_role(user_id, chat_id),
-        ROLE_TAGS["Пользователь"],
-    )
+    return ROLE_TAGS.get(get_display_role(user_id, chat_id), ROLE_TAGS["Пользователь"])
 
 
 def format_user_tag(user_id, name=None, chat_id=None):
@@ -55,18 +46,26 @@ def format_user_tag(user_id, name=None, chat_id=None):
     return f"{get_role_tag(user_id, chat_id)} · {display_name}"
 
 
-def has_moderator_role(user_id, chat_id=None):
-    if is_owner(user_id):
-        return True
-    role = _local_bot_role(user_id, chat_id)
-    if role == "Модератор":
-        return True
-    authority = _telegram_authority(user_id, chat_id)
-    return authority in {"Владелец чата", "Администратор"}
-
-
 def has_admin_role(user_id, chat_id=None):
+    """True only for the Telegram owner of the current chat or Founder."""
     if is_owner(user_id):
         return True
-    authority = _telegram_authority(user_id, chat_id)
-    return authority == CHAT_OWNER_ROLE
+    return _telegram_authority(user_id, chat_id) == "Администратор"
+
+
+def has_moderator_role(user_id, chat_id=None):
+    """Moderation authority: local Moderator or local Administrator."""
+    if is_owner(user_id):
+        return True
+    if _local_bot_role(user_id, chat_id) == "Модератор":
+        return True
+    return _telegram_authority(user_id, chat_id) == "Администратор"
+
+
+def has_report_access(user_id, chat_id=None):
+    """Report authority: Founder, global Helper, or local admin/moderator."""
+    if is_owner(user_id):
+        return True
+    if resolve_role(user_id) == "Хелпер":
+        return True
+    return has_moderator_role(user_id, chat_id)
