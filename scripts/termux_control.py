@@ -73,9 +73,9 @@ def request(method: str, path: str, value=None):
         },
     )
     last_error = None
-    for attempt in range(3):
+    for attempt in range(2):
         try:
-            with urllib.request.urlopen(req, timeout=12) as response:
+            with urllib.request.urlopen(req, timeout=8) as response:
                 return json.loads(response.read().decode("utf-8"))
         except Exception as exc:
             last_error = exc
@@ -87,7 +87,7 @@ def request(method: str, path: str, value=None):
 def fetch_issue_comments(after_id: int | None = None) -> list[dict]:
     """Fetch newest comments first and page backwards until the saved cursor."""
     comments: list[dict] = []
-    for page in range(1, 11):
+    for page in range(1, 4):
         page_items = request(
             "GET",
             f"/issues/{ISSUE}/comments?per_page=100&page={page}&sort=created&direction=desc",
