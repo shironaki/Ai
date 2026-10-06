@@ -431,8 +431,28 @@ def stop_bot_for_role() -> str:
         pass
     for _ in range(15):
         if not bot_running():
-            break
+            stop_watchdog()
+            PIDFILE.unlink(missing_ok=True)
+            return "bot stopped"
         time.sleep(1)
+
+    # Never clear PID state while the verified bot is still alive: a later
+    # control/supervisor pass could otherwise start a duplicate process.
+    if bot_running():
+        try:
+            os.kill(int(pid), 9)
+        except OSError:
+            pass
+        for _ in range(5):
+            if not bot_running():
+                stop_watchdog()
+                PIDFILE.unlink(missing_ok=True)
+                return "bot stopped"
+            time.sleep(1)
+
+    if bot_running():
+        return "bot stop failed: process still alive; PID state preserved"
+
     stop_watchdog()
     PIDFILE.unlink(missing_ok=True)
     return "bot stopped"
