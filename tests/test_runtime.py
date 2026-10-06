@@ -684,6 +684,12 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn('str(ROOT / "run.py") in cmdline', source)
         self.assertIn('if not bot_running():', source)
 
+    def test_termux_control_polling_is_bounded(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        self.assertIn("for attempt in range(2):", source)
+        self.assertIn("urlopen(req, timeout=8)", source)
+        self.assertIn("for page in range(1, 4):", source)
+
     def test_termux_restart_rechecks_lease_at_process_start_boundary(self):
         source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
         restart_pos = source.index('def restart_bot() -> str:')
