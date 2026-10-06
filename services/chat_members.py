@@ -217,6 +217,6 @@ def get_chat_authority(chat_id: int, user_id: int) -> str | None:
         return None
     if row["is_chat_owner"] or row["telegram_status"] == "creator":
         return CHAT_OWNER_ROLE
-    if row["is_chat_admin"] or row["telegram_status"] == "administrator":
-        return "Администратор"
+    # Telegram administrators are not bot roles. Only the actual chat
+    # owner/creator is our local Administrator authority.
     return None
