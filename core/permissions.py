@@ -57,6 +57,10 @@ def has_moderator_role(user_id, chat_id=None):
     """Moderation authority: local Moderator or local Administrator."""
     if is_owner(user_id):
         return True
+    # Global Helper is technical staff, not a local moderator. Even a legacy
+    # local Moderator row must never grant moderation through this role.
+    if resolve_role(user_id) == "Хелпер":
+        return False
     if _local_bot_role(user_id, chat_id) == "Модератор":
         return True
     return _telegram_authority(user_id, chat_id) == "Администратор"
