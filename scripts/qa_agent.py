@@ -295,10 +295,10 @@ async def main():
     out = []
     last_replies = {}
     me = await client.get_me()
-        target_entity = await client.get_entity(os.environ["QA_TARGET"])
-        target_bot_id = getattr(target_entity, "id", None)
-        if not target_bot_id or not getattr(target_entity, "bot", False):
-            raise RuntimeError("QA_TARGET must resolve to the target Telegram bot")
+    target_entity = await client.get_entity(os.environ["QA_TARGET"])
+    target_bot_id = getattr(target_entity, "id", None)
+    if not target_bot_id or not getattr(target_entity, "bot", False):
+        raise RuntimeError("QA_TARGET must resolve to the target Telegram bot")
     try:
         for step in json.loads(os.environ["QA_STEPS"]):
             if step.get("action") == "replay_same_callback_after_state_change":
