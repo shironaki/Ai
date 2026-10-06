@@ -277,6 +277,10 @@ class SecurityRegressionTests(unittest.TestCase):
         users_block = source[source.index("async def panel_users"):source.index('async def panel_relation_menu')]
         self.assertIn('_panel_role(call.from_user.id, call.message.chat.id) == "Администратор"', users_block)
         self.assertNotIn('in {"Администратор", "Хелпер"}', users_block)
+        role_menu = source[source.index("async def panel_role_menu"):source.index("async def panel_admins")]
+        role_select = source[source.index("async def panel_role_select"):source.index("async def panel_admins")]
+        self.assertIn('_panel_role(call.from_user.id, call.message.chat.id) == "Администратор"', role_menu)
+        self.assertIn('_panel_role(call.from_user.id, call.message.chat.id) == "Администратор"', role_select)
         self.assertIn("from services.chat_roles import get_role, list_roles, set_role", source)
         help_source = (root / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
         role_block = help_source[help_source.index("async def _apply_panel_role"):help_source.index("#chatinfo")]
