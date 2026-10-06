@@ -23,12 +23,12 @@ def get_user_status(user_id, chat_id=None):
     global_role = resolve_role(user_id)
     if global_role == "Хелпер":
         return global_role
-    local_role = _local_bot_role(user_id, chat_id)
-    if local_role:
-        return local_role
     authority = _telegram_authority(user_id, chat_id)
     if authority:
         return authority
+    local_role = _local_bot_role(user_id, chat_id)
+    if local_role:
+        return local_role
     return "Пользователь"
 
 
