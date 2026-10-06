@@ -407,6 +407,14 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("PID state preserved", block)
         self.assertIn("return \"bot stopped\"", block)
 
+    def test_termux_control_restart_preserves_pid_if_old_bot_survives(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        block = source[source.index("def restart_bot"):source.index("def set_role")]
+        self.assertIn("os.kill(int(pid), 9)", block)
+        self.assertIn("old bot process still alive; PID state preserved", block)
+        self.assertIn("if bot_running():", block)
+
     def test_qa_agent_binds_replies_to_target_bot(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "scripts" / "qa_agent.py").read_text(encoding="utf-8")
