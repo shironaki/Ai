@@ -378,7 +378,7 @@ async def main():
                         sender = await message.get_sender()
                     except Exception:
                         sender = None
-                    if not getattr(sender, "bot", False) or sender.id != me.id:
+                    if not getattr(sender, "bot", False) or sender.id != target_bot_id:
                         continue
                     seen.add(message.id)
                     replies.append({
