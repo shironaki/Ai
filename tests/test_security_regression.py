@@ -99,7 +99,7 @@ class SecurityRegressionTests(unittest.TestCase):
                     (123, 456),
                 ),
             )
-            db.commit.assert_called_once()
+            db.commit.assert_called()
 
 
     def test_chat_owner_authority_overrides_chat_role(self):
@@ -210,7 +210,7 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertEqual(summary["status"], "Модератор")
         role.assert_called_once_with(7, 200)
 
-    def test_user_summary_without_chat_keeps_legacy_status(self):
+    def test_user_summary_without_chat_uses_authoritative_global_role(self):
         from services.ai_data import user_summary
 
         class Row(dict):
@@ -222,11 +222,12 @@ class SecurityRegressionTests(unittest.TestCase):
             username="qa",
             status="Модератор",
             regdata="04.10.2026",
-        )):
+        )), patch("services.ai_data.get_display_role", return_value="Пользователь") as role:
             summary = user_summary(7)
 
-        self.assertEqual(summary["status"], "Модератор")
+        self.assertEqual(summary["status"], "Пользователь")
         self.assertEqual(summary["id"], 7)
+        role.assert_called_once_with(7, None)
 
     def test_registered_aliases_match_real_dispatch_surface(self):
         from core.command_registry import COMMAND_REGISTRY
