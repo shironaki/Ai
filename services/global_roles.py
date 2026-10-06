@@ -20,6 +20,8 @@ def _ensure() -> None:
                 updated_at TEXT NOT NULL
             )"""
         )
+        # Remove legacy global roles (the old model used global Moderator).
+        db.execute("DELETE FROM global_roles WHERE role != ?", ("Хелпер",))
         db.commit()
 
 
