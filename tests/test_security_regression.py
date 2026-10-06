@@ -393,6 +393,12 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn('resolve_role(call.from_user.id) == "Хелпер"', block)
         self.assertIn("get_report(report_id) if global_report_operator", block)
 
+    def test_termux_update_writes_qa_hash_with_real_newline(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
+        self.assertIn('printf "%s\\n" "$current_hash" > "$hashfile"', source)
+        self.assertNotIn('printf "%s\\\\n" "$current_hash" > "$hashfile"', source)
+
     def test_termux_control_stop_preserves_pid_while_process_lives(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "scripts" / "termux_control.py").read_text(encoding="utf-8")
