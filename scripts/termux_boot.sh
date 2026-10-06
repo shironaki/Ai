@@ -2,6 +2,7 @@
 set -u
 
 REPO="${BOT_REPO_DIR:-$HOME/Ai}"
+BRANCH="${BOT_BRANCH:-test-global-assistant-upgrade}"
 cd "$REPO" || exit 1
 
 termux-wake-lock || true
@@ -22,6 +23,23 @@ supervisor_process_matches() {
         grep -aq "termux_supervisor.sh" "/proc/$pid/cmdline" 2>/dev/null && return 0
     fi
     return 1
+}
+
+bootstrap_supervisor() {
+    if ! git fetch --quiet origin "$BRANCH" >> "$SUPERVISOR_LOG" 2>&1; then
+        return 0
+    fi
+    remote_hash="$(git rev-parse "origin/$BRANCH:scripts/termux_supervisor.sh" 2>/dev/null || true)"
+    local_hash="$(git hash-object "$SUPERVISOR" 2>/dev/null || true)"
+    [ -n "$remote_hash" ] && [ "$remote_hash" = "$local_hash" ] && return 0
+    tmp="$REPO/.termux-supervisor.remote.tmp"
+    if git show "origin/$BRANCH:scripts/termux_supervisor.sh" > "$tmp" 2>/dev/null; then
+        chmod --reference="$SUPERVISOR" "$tmp" 2>/dev/null || true
+        mv -f "$tmp" "$SUPERVISOR"
+        printf '%s BOOTSTRAP: supervisor synchronized from origin/%s\\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$BRANCH" >> "$SUPERVISOR_LOG"
+    else
+        rm -f "$tmp"
+    fi
 }
 
 start_supervisor() {
@@ -62,6 +80,7 @@ restart_stale_supervisor() {
     fi
 }
 
+bootstrap_supervisor
 start_supervisor
 
 # Keep a tiny independent guardian alive after Termux:Boot returns. If Android
