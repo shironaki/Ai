@@ -25,12 +25,12 @@ def set_role(chat_id: int, user_id: int, role: str, granted_by: int):
         return False
     if user_id == granted_by:
         return False
-    from core.identity import is_owner
+    from core.identity import is_owner, resolve_role
     from core.permissions import get_display_role
     from core.role_transitions import can_assign
     if user_id == __import__("base").config.owner:
         return False
-    if __import__("core.identity", fromlist=["resolve_role"]).resolve_role(user_id) == "Хелпер":
+    if resolve_role(user_id) == "Хелпер":
         return False
     actor_role = get_display_role(granted_by, chat_id)
     if not can_assign(actor_role, role, actor_is_owner=is_owner(granted_by)):
