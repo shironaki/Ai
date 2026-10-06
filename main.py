@@ -981,7 +981,7 @@ async def on_startup(dispatcher):
     _schedule_background(_sync_registered_chat_authority(), name="chat-authority-warmup")
     asyncio.create_task(runtime_heartbeat())
     asyncio.create_task(expiry_loop(bot))
-    asyncio.create_task(reminder_loop(bot, config.owner, config.tech_team_ids))
+    asyncio.create_task(reminder_loop(bot, config.owner))
     from handlers.help.help import ThrottlingMiddleware
     dp.middleware.setup(ThrottlingMiddleware())
     log_registered_handlers()
