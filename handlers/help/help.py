@@ -49,7 +49,7 @@ from main import (
     users,
 )
 
-from core.permissions import get_user_status, get_display_role, has_admin_role, has_moderator_role
+from core.permissions import get_user_status, get_display_role, has_admin_role, has_moderator_role, has_report_access
 from core.identity import is_owner, resolve_role
 from core.role_transitions import available_role_targets
 from core.command_resolution import is_founder_scope_reply
@@ -57,9 +57,7 @@ from core.command_resolution import is_founder_scope_reply
 
 def _is_report_operator(user_id: int, chat_id: int | None = None) -> bool:
     """Report-center access follows the effective role of the current chat."""
-    return is_owner(user_id) or (
-        chat_id is not None and has_moderator_role(user_id, chat_id)
-    )
+    return has_report_access(user_id, chat_id)
 
 
 def _panel_role(user_id: int, chat_id: int | None = None) -> str:
@@ -571,7 +569,9 @@ async def unified_report_request(message: types.Message):
         reason=reason or "Жалоба по сообщению",
         payload=payload,
     )
-    recipients = tuple(dict.fromkeys((config.owner, *getattr(config, "tech_team_ids", ()))) )
+    from services.global_roles import list_global_users_by_role
+    helper_ids = tuple(list_global_users_by_role("Хелпер"))
+    recipients = tuple(dict.fromkeys((config.owner, *getattr(config, "tech_team_ids", ()), *helper_ids)))
     notification = (
         "<b>📬 НОВЫЙ РЕПОРТ</b>\n"
         f"ID: <code>#{report_id}</code>\n"
@@ -605,7 +605,8 @@ async def panel_reports(call: types.CallbackQuery):
     if not _is_report_operator(call.from_user.id, call.message.chat.id):
         await call.answer("Нет доступа.", show_alert=True)
         return
-    rows = list_open() if is_owner(call.from_user.id) else list_open(source_chat_id=call.message.chat.id)
+    global_report_operator = is_owner(call.from_user.id) or resolve_role(call.from_user.id) == "Хелпер"
+    rows = list_open() if global_report_operator else list_open(source_chat_id=call.message.chat.id)
     menu = InlineKeyboardMarkup(row_width=1)
     for row in rows:
         menu.add(
@@ -634,7 +635,8 @@ async def report_view(call: types.CallbackQuery):
     except ValueError:
         await call.answer("Некорректный ID.", show_alert=True)
         return
-    row = get_report(report_id) if is_owner(call.from_user.id) else get_report(report_id, call.message.chat.id)
+    global_report_operator = is_owner(call.from_user.id) or resolve_role(call.from_user.id) == "Хелпер"
+    row = get_report(report_id) if global_report_operator else get_report(report_id, call.message.chat.id)
     if row is None:
         await call.answer("Репорт не найден.", show_alert=True)
         return
@@ -696,7 +698,8 @@ async def report_answer_message(message: types.Message):
         await message.reply("⛔ Доступ к центру обращений больше не подтверждён.")
         return
     _REPORT_PENDING.pop(key, None)
-    row = get_report(report_id) if is_owner(message.from_user.id) else get_report(report_id, message.chat.id)
+    global_report_operator = is_owner(message.from_user.id) or resolve_role(message.from_user.id) == "Хелпер"
+    row = get_report(report_id) if global_report_operator else get_report(report_id, message.chat.id)
     if row is None or row["status"] != "open":
         await message.reply("⚠️ Репорт уже закрыт или не найден.")
         return
@@ -716,7 +719,7 @@ async def report_answer_message(message: types.Message):
         report_id,
         message.from_user.id,
         message.text.strip(),
-        source_chat_id=None if is_owner(message.from_user.id) else message.chat.id,
+        source_chat_id=None if global_report_operator else message.chat.id,
     ):
         await message.reply("⚠️ Не удалось закрыть репорт: он уже изменён или больше не относится к этому чату.")
         return
