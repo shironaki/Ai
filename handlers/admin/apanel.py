@@ -25,11 +25,10 @@ async def set_status(message: types.Message):
         await message.reply("⛔ | Нельзя назначить роль самому себе.")
         return
 
-    if target_role not in {"Модератор", "Хелпер"}:
-        await message.reply("⛔ | Основатель может назначить Хелпера, администратор чата — Модератора.")
-        return
-
     if is_owner(actor_id):
+        if target_role != "Хелпер":
+            await message.reply("⛔ | Основатель может назначить только Хелпера через глобальный контур.")
+            return
         if set_global_role(target_id, target_role, actor_id):
             await message.answer(
                 f"✅ | Глобальная роль пользователя обновлена: <b>{target_role}</b>",
@@ -37,6 +36,10 @@ async def set_status(message: types.Message):
             )
         else:
             await message.reply("⛔ | Глобальная роль не может быть назначена этому пользователю.")
+        return
+
+    if target_role != "Модератор":
+        await message.reply("⛔ | Администратор чата может назначить только Модератора.")
         return
 
     if not has_admin_role(message.from_user.id, message.chat.id):
