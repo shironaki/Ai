@@ -211,7 +211,7 @@ async def _answer_ai(message: types.Message, prompt: str):
         await chatinfo_cmd(message)
         return
     if direct_action in {"system_stats", "system_info"}:
-        if not (is_owner(message.from_user.id) or has_admin_role(message.from_user.id, message.chat.id)):
+        if not (is_owner(message.from_user.id) or resolve_role(message.from_user.id) == "Хелпер"):
             await message.reply("⛔ Системная статистика доступна только персоналу.")
             return
         summary = system_summary()
