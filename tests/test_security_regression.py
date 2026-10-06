@@ -311,6 +311,13 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("return False", block)
         self.assertNotIn("os.kill(pid, signal.SIGTERM)\n    except Exception:\n        pass\n    BOT_PIDFILE.unlink", block)
 
+    def test_report_service_has_no_hidden_tech_team_bypass(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "services" / "report_service.py").read_text(encoding="utf-8")
+        block = source[source.index("def answer_report"):source.index("def due_reminders")]
+        self.assertNotIn("tech_team_ids", block)
+        self.assertIn('get_global_role(answered_by) != "Хелпер"', block)
+
     def test_report_callbacks_use_effective_chat_role(self):
         from pathlib import Path
 
