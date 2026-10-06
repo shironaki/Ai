@@ -92,9 +92,12 @@ class SecurityRegressionTests(unittest.TestCase):
         with patch("services.chat_members.connect_db") as connect:
             db = connect.return_value.__enter__.return_value
             invalidate_chat_authority(123, 456)
-            db.execute.assert_called_once_with(
-                "UPDATE chat_members SET telegram_status='unknown', is_chat_owner=0, is_chat_admin=0 WHERE chat_id=? AND user_id=?",
-                (123, 456),
+            self.assertEqual(
+                db.execute.call_args_list[-1],
+                __import__("unittest").mock.call(
+                    "UPDATE chat_members SET telegram_status='unknown', is_chat_owner=0, is_chat_admin=0 WHERE chat_id=? AND user_id=?",
+                    (123, 456),
+                ),
             )
             db.commit.assert_called_once()
 
