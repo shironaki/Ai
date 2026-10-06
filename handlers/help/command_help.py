@@ -458,7 +458,7 @@ async def panel_relation_select(call):
 
 @dp.callback_query_handler(lambda c: c.data == "panel:role")
 async def panel_role_menu(call):
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
+    if not (is_owner(call.from_user.id) or _panel_role(call.from_user.id, call.message.chat.id) == "Администратор"):
         await call.answer("Нет доступа.", show_alert=True)
         return
     targets = available_role_targets(_panel_role(call.from_user.id, call.message.chat.id), actor_is_owner=is_owner(call.from_user.id))
@@ -476,7 +476,7 @@ async def panel_role_menu(call):
 @dp.callback_query_handler(lambda c: c.data.startswith("panel:role:"))
 async def panel_role_select(call):
     role = call.data.split(":", 2)[2]
-    if not (is_owner(call.from_user.id) or has_moderator_role(call.from_user.id, call.message.chat.id)):
+    if not (is_owner(call.from_user.id) or _panel_role(call.from_user.id, call.message.chat.id) == "Администратор"):
         await call.answer("Нет доступа.", show_alert=True)
         return
     allowed_roles = available_role_targets(
