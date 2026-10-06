@@ -346,6 +346,17 @@ def restart_bot() -> str:
             if not bot_running():
                 break
             time.sleep(1)
+        if bot_running():
+            try:
+                os.kill(int(pid), 9)
+            except OSError:
+                pass
+            for _ in range(5):
+                if not bot_running():
+                    break
+                time.sleep(1)
+        if bot_running():
+            return "restart failed: old bot process still alive; PID state preserved"
     # The lease can change while the old process is stopping. Re-check again
     # immediately before spawning the replacement; the first check only fences
     # the beginning of the restart operation.
