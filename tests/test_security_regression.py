@@ -318,6 +318,13 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn("tech_team_ids", block)
         self.assertIn('get_global_role(answered_by) != "Хелпер"', block)
 
+    def test_helper_report_answer_callback_uses_global_scope(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        block = source[source.index("async def report_answer_start"):source.index("_PanelKey = tuple", source.index("async def report_answer_start"))]
+        self.assertIn('resolve_role(call.from_user.id) == "Хелпер"', block)
+        self.assertIn("get_report(report_id) if global_report_operator", block)
+
     def test_report_callbacks_use_effective_chat_role(self):
         from pathlib import Path
 
