@@ -182,10 +182,28 @@ stop_bot() {
     pid="$(cat "$PIDFILE")"
     kill "$pid" 2>/dev/null || true
     for _ in {1..15}; do
-        is_running || break
+        if ! is_running; then
+            rm -f "$PIDFILE" "$RUNTIME_COMMIT_FILE"
+            return 0
+        fi
         sleep 1
     done
+    # Never delete the PID marker while the verified bot process is still alive:
+    # doing so could let a later start create a duplicate bot process.
+    if is_running; then
+        log "STOP: bot did not exit after graceful shutdown; sending SIGKILL"
+        kill -KILL "$pid" 2>/dev/null || true
+        for _ in {1..5}; do
+            is_running || break
+            sleep 1
+        done
+    fi
+    if is_running; then
+        log "STOP: bot process remains alive after SIGKILL; refusing to clear PID state"
+        return 1
+    fi
     rm -f "$PIDFILE" "$RUNTIME_COMMIT_FILE"
+    return 0
 }
 
 qa_process_matches() {
