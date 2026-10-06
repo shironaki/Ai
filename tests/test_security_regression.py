@@ -166,6 +166,23 @@ class SecurityRegressionTests(unittest.TestCase):
             self.assertTrue(has_moderator_role(7, 200))
             self.assertFalse(has_admin_role(7, 200))
 
+
+    def test_user_summary_does_not_fall_back_to_legacy_global_status(self):
+        from services.ai_data import user_summary
+
+        class Row(dict):
+            pass
+
+        with patch("services.ai_data.get_user", return_value=Row(
+            id=7,
+            name="QA",
+            username="qa",
+            status="Модератор",
+            regdata="04.10.2026",
+        )), patch("services.ai_data.get_display_role", return_value="Пользователь"):
+            summary = user_summary(7)
+            self.assertEqual(summary["status"], "Пользователь")
+
     def test_user_summary_uses_chat_effective_role(self):
         from services.ai_data import user_summary
 
