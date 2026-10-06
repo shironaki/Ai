@@ -620,6 +620,13 @@ class RuntimeRegressionTests(unittest.TestCase):
         device_pos = source.index('DEVICE_ID="${TERMUX_DEVICE_ID:-}"', env_pos)
         self.assertLess(env_pos, device_pos)
 
+    def test_termux_update_recovers_staged_owned_runtime_changes(self):
+        source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
+        self.assertIn('git diff --cached --name-only', source)
+        self.assertIn('git diff --cached --binary -- "$staged_path"', source)
+        self.assertIn('git restore --staged -- "$staged_path"', source)
+        self.assertIn('STOP: tracked local staged change differs from origin/$BRANCH', source)
+
     def test_termux_update_never_installs_dependencies_on_standby(self):
         source = (ROOT / "scripts/termux_update.sh").read_text(encoding="utf-8")
         standby_pos = source.index('log "UPDATE: standby skips dependency installation')
