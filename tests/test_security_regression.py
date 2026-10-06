@@ -295,6 +295,22 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn('"profile"', source)
         self.assertIn('"chatinfo"', source)
 
+    def test_lease_watchdog_fences_invalid_initial_lease(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "termux_lease_watchdog.py").read_text(encoding="utf-8")
+        block = source[source.index("def main"):source.index('if __name__ == "__main__"')]
+        self.assertIn("owner, last_expiry = read_lease()", block)
+        self.assertIn("if owner != DEVICE_ID or last_expiry <= now:", block)
+
+    def test_lease_watchdog_keeps_pid_state_until_process_is_dead(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "termux_lease_watchdog.py").read_text(encoding="utf-8")
+        block = source[source.index("def stop_bot"):source.index("def main")]
+        self.assertIn("signal.SIGTERM", block)
+        self.assertIn("signal.SIGKILL", block)
+        self.assertIn("return False", block)
+        self.assertNotIn("os.kill(pid, signal.SIGTERM)\n    except Exception:\n        pass\n    BOT_PIDFILE.unlink", block)
+
     def test_report_callbacks_use_effective_chat_role(self):
         from pathlib import Path
 
