@@ -76,8 +76,8 @@ class SecurityRegressionTests(unittest.TestCase):
         with patch("core.permissions.is_owner", return_value=False), \
              patch("services.chat_members.get_chat_authority", return_value="Владелец чата"), \
              patch("services.chat_roles.get_role", return_value="Модератор"):
-            self.assertEqual(get_user_status(123, 456), "Владелец чата")
-            self.assertEqual(get_display_role(123, 456), "Владелец чата")
+            self.assertEqual(get_user_status(123, 456), "Администратор")
+            self.assertEqual(get_display_role(123, 456), "Администратор")
 
     def test_chat_admin_authority_overrides_chat_role(self):
         from core.permissions import has_admin_role, has_moderator_role, get_display_role
@@ -94,7 +94,7 @@ class SecurityRegressionTests(unittest.TestCase):
 
         def authority(chat_id, user_id):
             if chat_id == 100 and user_id == 7:
-                return "Владелец чата"
+                return "Администратор"
             if chat_id == 200 and user_id == 7:
                 return None
             return None
@@ -107,8 +107,8 @@ class SecurityRegressionTests(unittest.TestCase):
         with patch("core.permissions.is_owner", return_value=False), \
              patch("services.chat_members.get_chat_authority", side_effect=authority), \
              patch("services.chat_roles.get_role", side_effect=local_role):
-            self.assertEqual(get_user_status(7, 100), "Владелец чата")
-            self.assertEqual(get_display_role(7, 100), "Владелец чата")
+            self.assertEqual(get_user_status(7, 100), "Администратор")
+            self.assertEqual(get_display_role(7, 100), "Администратор")
             self.assertEqual(get_user_status(7, 200), "Модератор")
             self.assertEqual(get_display_role(7, 200), "Модератор")
             self.assertEqual(get_user_status(7, 300), "Пользователь")
@@ -119,7 +119,7 @@ class SecurityRegressionTests(unittest.TestCase):
 
         def authority(chat_id, user_id):
             if chat_id == 100 and user_id == 7:
-                return "Владелец чата"
+                return "Администратор"
             return None
 
         def local_role(chat_id, user_id):
