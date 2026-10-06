@@ -45,7 +45,7 @@ from services.diagnostic_journal import record as record_diagnostic
 from services.issue_tracker import create_runtime_error_marker
 from services.report_service import reminder_loop
 from services.battery_status import get_battery_status
-from services.chat_members import get_chat_authority, observe_chat_member_update, refresh_chat_member, sync_chat_admins
+from services.chat_members import get_chat_authority, invalidate_chat_authority, observe_chat_member_update, refresh_chat_member, sync_chat_admins
 
 DATA_DIR = os.path.abspath(os.getenv("BOT_DATA_DIR", os.path.join("data", "test")))
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -361,8 +361,10 @@ class ChatAuthorityMiddleware(BaseMiddleware):
                     chat_id,
                     round((time.perf_counter() - started) * 1000, 1),
                 )
-                # Keep the cached authority for this update; chat_member
-                # events remain the fast invalidation path.
+                # A stale privileged cache must never survive an unsuccessful
+                # live verification. Deny until Telegram authority is verified
+                # again; chat_member events/startup sync can restore it.
+                invalidate_chat_authority(chat_id, user_id)
 
         # Do not make ordinary messages wait for getChatAdministrators().
         # Known chats are synchronized in the background at startup and
