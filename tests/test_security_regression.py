@@ -271,6 +271,16 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn('confirmation.get("message_id") != call.message.message_id', block)
         self.assertIn('confirmation.get("expected_enabled")', block)
 
+    def test_panel_role_assignment_is_visible_only_to_chat_admins_and_has_role_writer(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        users_block = source[source.index("async def panel_users"):source.index('async def panel_relation_menu')]
+        self.assertIn('_panel_role(call.from_user.id, call.message.chat.id) == "Администратор"', users_block)
+        self.assertNotIn('in {"Администратор", "Хелпер"}', users_block)
+        self.assertIn("from services.chat_roles import get_role, list_roles, set_role", source)
+        role_block = source[source.index("async def _apply_panel_role"):source.index("#chatinfo")]
+        self.assertIn("set_role(message.chat.id, target_user_id, target_role, actor_id)", role_block)
+
     def test_panel_myinfo_uses_chat_effective_role(self):
         from pathlib import Path
 
