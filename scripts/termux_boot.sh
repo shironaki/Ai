@@ -36,7 +36,7 @@ bootstrap_supervisor() {
     if git show "origin/$BRANCH:scripts/termux_supervisor.sh" > "$tmp" 2>/dev/null; then
         chmod --reference="$SUPERVISOR" "$tmp" 2>/dev/null || true
         mv -f "$tmp" "$SUPERVISOR"
-        printf '%s BOOTSTRAP: supervisor synchronized from origin/%s\\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$BRANCH" >> "$SUPERVISOR_LOG"
+        printf '%s BOOTSTRAP: supervisor synchronized from origin/%s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$BRANCH" >> "$SUPERVISOR_LOG"
     else
         rm -f "$tmp"
     fi
