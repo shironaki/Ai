@@ -70,6 +70,22 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn("credentials", event)
 
 
+    def test_telegram_admin_is_not_bot_administrator_role(self):
+        from services.chat_members import get_chat_authority
+
+        class Row(dict):
+            __getattr__ = dict.get
+
+        with patch("services.chat_members.connect_db") as connect:
+            db = connect.return_value.__enter__.return_value
+            db.execute.return_value.fetchone.return_value = Row(
+                telegram_status="administrator",
+                is_chat_owner=0,
+                is_chat_admin=1,
+            )
+            self.assertIsNone(get_chat_authority(123, 456))
+
+
     def test_chat_owner_authority_overrides_chat_role(self):
         from core.permissions import get_display_role, get_user_status
 
