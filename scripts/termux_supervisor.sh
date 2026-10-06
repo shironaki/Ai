@@ -2,6 +2,7 @@
 set -u
 
 REPO="${BOT_REPO_DIR:-$HOME/Ai}"
+BRANCH="${BOT_BRANCH:-test-global-assistant-upgrade}"
 PYTHON="${TERMUX_PYTHON:-$REPO/.venv/bin/python}"
 INTERVAL="${TERMUX_UPDATE_INTERVAL:-15}"
 REPORT_INTERVAL="${TERMUX_REPORT_INTERVAL:-300}"
@@ -69,6 +70,31 @@ trap 'rm -f "$SUPERVISOR_PID"; rmdir "$SUPERVISOR_LOCKDIR" 2>/dev/null || true' 
 
 report() {
     "$PYTHON" "$REPO/scripts/termux_report.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
+}
+
+sync_control_plane_files() {
+    # The supervisor is the bootstrap authority for its own control plane.
+    # If an older updater is blocked by stale staged runtime edits, it must
+    # not be able to prevent the tested updater/control/QA scripts from
+    # reaching the device.
+    if ! git fetch --quiet origin "$BRANCH" >> "$REPO/termux-autoupdate.log" 2>&1; then
+        return 0
+    fi
+    local path tmp remote_hash local_hash
+    for path in scripts/termux_update.sh scripts/termux_control.py scripts/qa_agent.py qa/scenarios.json; do
+        remote_hash="$(git rev-parse "origin/$BRANCH:$path" 2>/dev/null || true)"
+        [ -n "$remote_hash" ] || continue
+        local_hash="$(git hash-object "$REPO/$path" 2>/dev/null || true)"
+        [ "$local_hash" = "$remote_hash" ] && continue
+        tmp="$REPO/.control-plane-$(printf '%s' "$path" | tr '/' '_').remote.tmp"
+        if git show "origin/$BRANCH:$path" > "$tmp" 2>/dev/null; then
+            chmod --reference="$REPO/$path" "$tmp" 2>/dev/null || true
+            mv -f "$tmp" "$REPO/$path"
+            printf '%s BOOTSTRAP: synced control-plane file %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$path" >> "$REPO/termux-autoupdate.log"
+        else
+            rm -f "$tmp"
+        fi
+    done
 }
 
 battery_process_matches() {
@@ -232,6 +258,7 @@ reap_update() {
 while true; do
     ensure_supervisor_revision
     printf '%s\n' "$(date +%s.%N)" > "$SUPERVISOR_HEARTBEAT"
+    sync_control_plane_files
     ensure_battery_watchdog
     reap_control
     reap_update
