@@ -702,7 +702,8 @@ async def report_answer_start(call: types.CallbackQuery):
     except ValueError:
         await call.answer("Некорректный ID.", show_alert=True)
         return
-    row = get_report(report_id) if is_owner(call.from_user.id) else get_report(report_id, call.message.chat.id)
+    global_report_operator = is_owner(call.from_user.id) or resolve_role(call.from_user.id) == "Хелпер"
+    row = get_report(report_id) if global_report_operator else get_report(report_id, call.message.chat.id)
     if row is None or row["status"] != "open":
         await call.answer("Репорт уже закрыт или не найден.", show_alert=True)
         return
