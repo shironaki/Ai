@@ -204,6 +204,17 @@ def observe_chat_member_update(chat_member) -> None:
     )
 
 
+def invalidate_chat_authority(chat_id: int, user_id: int) -> None:
+    """Fail closed when a live Telegram authority refresh cannot be verified."""
+    _ensure_table()
+    with connect_db("users.db") as db:
+        db.execute(
+            "UPDATE chat_members SET telegram_status='unknown', is_chat_owner=0, is_chat_admin=0 WHERE chat_id=? AND user_id=?",
+            (chat_id, user_id),
+        )
+        db.commit()
+
+
 def get_chat_authority(chat_id: int, user_id: int) -> str | None:
     """Return Telegram-derived local authority without affecting founder identity."""
     from config.role_config import CHAT_OWNER_ROLE
