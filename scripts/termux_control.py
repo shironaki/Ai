@@ -261,7 +261,7 @@ def force_takeover() -> str:
 
 def touch_control_heartbeat() -> None:
     CONTROL_HEARTBEAT.parent.mkdir(parents=True, exist_ok=True)
-    CONTROL_HEARTBEAT.write_text(f"{time.time():.3f}\\n", encoding="utf-8")
+    CONTROL_HEARTBEAT.write_text(f"{time.time():.3f}\n", encoding="utf-8")
 
 
 def load_state() -> int | None:
