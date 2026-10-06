@@ -13,7 +13,6 @@ async def set_status(message: types.Message):
     from core.permissions import has_admin_role
     from services.chat_roles import set_role
     from services.global_roles import set_global_role
-    from core.role_transitions import available_role_targets
 
     actor_id = message.from_user.id
     if not message.reply_to_message:
@@ -33,7 +32,7 @@ async def set_status(message: types.Message):
     if is_owner(actor_id):
         if set_global_role(target_id, target_role, actor_id):
             await message.answer(
-                "✅ | Глобальная роль пользователя обновлена: <b>Модератор</b>",
+                f"✅ | Глобальная роль пользователя обновлена: <b>{target_role}</b>",
                 parse_mode="html",
             )
         else:
@@ -53,7 +52,7 @@ async def set_status(message: types.Message):
             role=target_role,
         )
         await message.answer(
-            "✅ | Локальная роль в этом чате обновлена: <b>Модератор</b>",
+            f"✅ | Локальная роль в этом чате обновлена: <b>{target_role}</b>",
             parse_mode="html",
         )
         return
