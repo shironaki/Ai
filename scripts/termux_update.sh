@@ -93,10 +93,30 @@ is_termux_owned_file() {
 # Recover tracked runtime fixes already matching the remote TEST branch.
 # Untracked QA data is intentionally preserved.
 if [[ -n "$(git status --porcelain)" ]]; then
-    if ! git diff --quiet --cached; then
-        log "STOP: index contains staged changes"
-        exit 1
-    fi
+    # A stale runtime can have staged edits left by an interrupted/manual
+    # bootstrap. Termux-owned files are disposable runtime state: preserve the
+    # staged patch for diagnostics, unstage it, and let the normal owned-file
+    # reconciliation below replace it with the tested remote revision.
+    while IFS= read -r staged_path; do
+        [[ -z "$staged_path" ]] && continue
+        if is_termux_owned_file "$staged_path"; then
+            backup_dir="$DATA_DIR/termux-local-patches"
+            mkdir -p "$backup_dir"
+            backup_file="$backup_dir/$(date +%Y%m%d-%H%M%S)-$(printf "%s" "$staged_path" | tr "/" "_").staged.patch"
+            if git diff --cached --binary -- "$staged_path" > "$backup_file"; then
+                log "BOOTSTRAP: backed up stale staged Termux patch: $staged_path -> $backup_file"
+            else
+                rm -f "$backup_file"
+                log "STOP: failed to back up staged Termux patch: $staged_path"
+                exit 1
+            fi
+            git restore --staged -- "$staged_path"
+            log "BOOTSTRAP: unstaged stale Termux-owned change: $staged_path"
+        else
+            log "STOP: tracked local staged change differs from origin/$BRANCH: $staged_path"
+            exit 1
+        fi
+    done < <(git diff --cached --name-only)
 
     # Only compare files that are actually dirty in the local worktree.
     # Comparing the entire worktree against origin/$BRANCH would also flag
