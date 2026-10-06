@@ -318,6 +318,14 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn("tech_team_ids", block)
         self.assertIn('get_global_role(answered_by) != "Хелпер"', block)
 
+    def test_report_reminders_target_founder_and_global_helpers_only(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "services" / "report_service.py").read_text(encoding="utf-8")
+        block = source[source.index("async def reminder_loop"):]
+        self.assertIn('list_global_users_by_role("Хелпер")', block)
+        self.assertIn("recipients = tuple(dict.fromkeys((owner_id, *helper_ids)))", block)
+        self.assertNotIn("recipient_ids", block)
+
     def test_helper_report_answer_callback_uses_global_scope(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
