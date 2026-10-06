@@ -693,6 +693,11 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertIn('exec "$0"', source)
         self.assertIn("ensure_supervisor_revision", source.split("while true; do", 1)[1])
 
+    def test_termux_control_heartbeat_writes_real_newline(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        self.assertIn('CONTROL_HEARTBEAT.write_text(f"{time.time():.3f}\\n", encoding="utf-8")', source)
+        self.assertNotIn('CONTROL_HEARTBEAT.write_text(f"{time.time():.3f}\\\\n", encoding="utf-8")', source)
+
 
 if __name__ == "__main__":
     unittest.main()
