@@ -509,7 +509,7 @@ async def main():
         print(json.dumps(rows, ensure_ascii=False))
     finally:
         await client.disconnect()
-asyncio.run(main())
+print(json.dumps(asyncio.run(main()), ensure_ascii=False))
 '''
         env = os.environ.copy()
         env.update(QA_API_ID=API_ID, QA_API_HASH=api_hash(), QA_SESSION=str(SESSION))
