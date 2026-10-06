@@ -571,7 +571,7 @@ async def unified_report_request(message: types.Message):
     )
     from services.global_roles import list_global_users_by_role
     helper_ids = tuple(list_global_users_by_role("Хелпер"))
-    recipients = tuple(dict.fromkeys((config.owner, *getattr(config, "tech_team_ids", ()), *helper_ids)))
+    recipients = tuple(dict.fromkeys((config.owner, *helper_ids)))
     notification = (
         "<b>📬 НОВЫЙ РЕПОРТ</b>\n"
         f"ID: <code>#{report_id}</code>\n"
