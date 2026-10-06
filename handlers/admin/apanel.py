@@ -39,8 +39,8 @@ async def set_status(message: types.Message):
             await message.reply("⛔ | Глобальная роль не может быть назначена этому пользователю.")
         return
 
-    if not has_admin_role(actor_id, message.chat.id):
-        await message.reply("⛔ | Только Администратор этого чата может назначать локального Модератора.")
+    if not has_admin_role(message.from_user.id, message.chat.id):
+        await message.reply("⛔ | Команда доступна только Администратору или Основателю.")
         return
 
     if set_role(message.chat.id, target_id, target_role, actor_id):
