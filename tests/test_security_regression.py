@@ -406,6 +406,7 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertNotIn("sender.id != me.id", source)
         self.assertIn('    target_entity = await client.get_entity(os.environ["QA_TARGET"])\n    target_bot_id = getattr(target_entity, "id", None)', source)
         self.assertNotIn('        target_entity = await client.get_entity(os.environ["QA_TARGET"])\n', source)
+        self.assertIn('print(json.dumps(asyncio.run(main()), ensure_ascii=False))', source)
 
 
 if __name__ == "__main__":
