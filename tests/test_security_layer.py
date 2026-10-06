@@ -24,6 +24,24 @@ class SecurityLayerTests(unittest.TestCase):
         self.assertNotIn("super-secret-token", str(row))
         self.assertNotIn("another-secret", str(row))
 
+    def test_role_model_separates_global_helper_from_local_admin(self):
+        from config.role_config import (
+            OWNER_ROLE,
+            ASSIGNABLE_ROLES,
+            GLOBAL_ASSIGNABLE_ROLES,
+            ROLE_TAGS,
+            can_grant_role,
+        )
+        from core.role_transitions import available_role_targets
+
+        self.assertNotIn(OWNER_ROLE, ROLE_TAGS)
+        self.assertEqual(ASSIGNABLE_ROLES, ("Модератор",))
+        self.assertEqual(GLOBAL_ASSIGNABLE_ROLES, ("Хелпер",))
+        self.assertEqual(available_role_targets("Создатель бота", actor_is_owner=True), ("Хелпер",))
+        self.assertEqual(available_role_targets("Администратор"), ("Модератор",))
+        self.assertFalse(can_grant_role("Администратор", "Хелпер"))
+        self.assertFalse(can_grant_role("Модератор", "Модератор"))
+
     def test_command_policy_rejects_unknown_and_insufficient_role(self):
         from core.command_models import CommandIntent
         from core.command_policy import evaluate
