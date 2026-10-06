@@ -240,3 +240,20 @@ Next required work:
 - Current branch HEAD at checkpoint writing time: `6ff36e0745bb0ca520761bc916e55b908bfdb13d`.
 - CI for current HEAD is in progress: run `37476105615` (#2138). Install dependencies is still running; no green conclusion yet.
 - Continue next from current HEAD after verifying run #2138; then continue the broad hidden-code audit and live Termux verification. Main/PROD remains untouched.: first verify CI #2125, then continue broad hidden-code audit of panel callbacks, local settings/chat state, moderation target state, report scope, and Termux live runtime. Routine work continues without unnecessary stopping.
+
+## Protocol checkpoint — 2026-10-06 — role/runtime deep audit continuation
+
+- Branch: `test-global-assistant-upgrade`; Main/PROD remains untouched.
+- Latest verified TEST commit: `4633e7b8dc3569bf7e335d385df846062a984e8b`.
+- CI run `37482727658` (#2151) for that commit: **SUCCESS**. Compile, import, AI-no-credentials, runtime regression tests, direct dependency audit and legacy transitive dependency audit all passed.
+- Role boundary fix: `core/permissions.py` now gives the current chat's real Telegram creator `Администратор` authority even when the same person is globally `Хелпер`. The global Helper identity remains global for report/technical access, while Helper without local creator authority still cannot moderate.
+- Regression added: `test_global_helper_who_owns_chat_keeps_local_admin_authority`.
+- Termux updater fix: `scripts/termux_update.sh` now writes the QA hash with a real newline; the previous literal `\\n` caused hash mismatch and could restart QA-agent repeatedly. Regression: `test_termux_update_writes_qa_hash_with_real_newline`.
+- Termux control fix: `scripts/termux_control.py::restart_bot()` now force-fences a bot that survives the graceful timeout and preserves PID state if the old process remains alive; it cannot unlink the PID and spawn a duplicate. Regression: `test_termux_control_restart_preserves_pid_if_old_bot_survives`.
+- Existing runtime stop boundary remains protected: `stop_bot_for_role()` preserves PID state while a process is alive.
+- QA target audit completed: `QA_TARGET` is the concrete target bot; scenario `target` values are chat IDs, so filtering replies by the single resolved target bot ID is correct for the current scenario format.
+- Current panel/report audit: role assignment UI is restricted to Founder or current chat Administrator; local role writes use `set_role(chat_id,...)`; report callbacks are global only for Founder/Helper and chat-scoped for local authority.
+- Live telemetry: the last known successful Phone2 state was `role=active`, polling `ready`, `ai=ready`. A fresh control-plane `UPDATE` was submitted today, but no result was returned.
+- Current lease branch contains the historical CRLF path `lease.json\\r` with `owner=pc1` and an expired `expires_at`. Therefore the current physical runtime is **not freshly live-verified** from this session, and no claim of live synchronization is made.
+- Do not force a device takeover automatically without an explicit/verified active-device decision; continue code/security audit while live control-plane is unavailable.
+- Next continuation: re-check control-plane/lease, then perform live TEST verification when an active runtime is reachable; meanwhile continue hidden scope/state audit. Main/PROD remains untouched.
