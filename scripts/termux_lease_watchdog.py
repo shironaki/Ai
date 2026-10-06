@@ -101,15 +101,42 @@ def read_lease() -> tuple[str, int]:
     )
 
 
-def stop_bot() -> None:
+def stop_bot() -> bool:
+    """Fence the bot without clearing PID state while the process is alive."""
     if not bot_running():
         BOT_PIDFILE.unlink(missing_ok=True)
-        return
+        return True
     try:
-        os.kill(int(BOT_PIDFILE.read_text(encoding="utf-8").strip()), signal.SIGTERM)
+        pid = int(BOT_PIDFILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        return False
+
+    try:
+        os.kill(pid, signal.SIGTERM)
     except Exception:
         pass
-    BOT_PIDFILE.unlink(missing_ok=True)
+
+    for _ in range(5):
+        if not bot_running():
+            BOT_PIDFILE.unlink(missing_ok=True)
+            return True
+        time.sleep(1)
+
+    # Do not leave a known stale bot alive after lease loss. If SIGTERM was
+    # ignored, force the same process down before allowing another start.
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except Exception:
+        pass
+    for _ in range(5):
+        if not bot_running():
+            BOT_PIDFILE.unlink(missing_ok=True)
+            return True
+        time.sleep(1)
+
+    # Preserve PID state when the process cannot be fenced; deleting it here
+    # would allow a later supervisor/update pass to create a duplicate bot.
+    return False
 
 
 def main() -> int:
@@ -123,7 +150,12 @@ def main() -> int:
 
         # Fail closed if the watchdog cannot establish a valid lease before watching.
         try:
-            _, last_expiry = read_lease()
+            owner, last_expiry = read_lease()
+            now = int(time.time())
+            if owner != DEVICE_ID or last_expiry <= now:
+                stop_bot()
+                ensure_supervisor()
+                return 0
         except Exception:
             stop_bot()
             ensure_supervisor()
