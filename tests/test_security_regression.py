@@ -404,6 +404,8 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn('if not target_bot_id or not getattr(target_entity, "bot", False):', source)
         self.assertIn("sender.id != target_bot_id", source)
         self.assertNotIn("sender.id != me.id", source)
+        self.assertIn('    target_entity = await client.get_entity(os.environ["QA_TARGET"])\n    target_bot_id = getattr(target_entity, "id", None)', source)
+        self.assertNotIn('        target_entity = await client.get_entity(os.environ["QA_TARGET"])\n', source)
 
 
 if __name__ == "__main__":
