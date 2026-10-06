@@ -25,11 +25,7 @@ def user_summary(user_id: int, chat_id: int | None = None) -> dict | None:
         "id": int(row["id"]),
         "name": row["name"],
         "username": row["username"],
-        "status": (
-            "Создатель бота" if user_id == config.owner
-            else get_display_role(user_id, chat_id) if chat_id is not None
-            else row["status"]
-        ),
+        "status": get_display_role(user_id, chat_id),
         "system_registered_at": row["regdata"],
         "telegram_registration": "не предоставляется Telegram Bot API",
     }
