@@ -209,7 +209,7 @@ def mark_reminded(report_ids: list[int]) -> None:
         db.commit()
 
 
-async def reminder_loop(bot, owner_id: int, recipient_ids: tuple[int, ...] = ()) -> None:
+async def reminder_loop(bot, owner_id: int) -> None:
     """Remind founder and configured technical recipients every two hours."""
     while True:
         try:
@@ -226,7 +226,9 @@ async def reminder_loop(bot, owner_id: int, recipient_ids: tuple[int, ...] = ())
                         f"#{row['id']} · {row['reporter_name'] or row['reporter_id']} · "
                         f"{str(row['reason'])[:180]}"
                     )
-                recipients = tuple(dict.fromkeys((owner_id, *recipient_ids)))
+                from services.global_roles import list_global_users_by_role
+                helper_ids = list_global_users_by_role("Хелпер")
+                recipients = tuple(dict.fromkeys((owner_id, *helper_ids)))
                 for recipient_id in recipients:
                     try:
                         await bot.send_message(recipient_id, "\n".join(lines))
