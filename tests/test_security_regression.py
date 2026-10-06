@@ -271,6 +271,11 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn('confirmation.get("message_id") != call.message.message_id', block)
         self.assertIn('confirmation.get("expected_enabled")', block)
 
+    def test_new_member_welcome_ai_is_chat_scoped(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "chat_groups.py").read_text(encoding="utf-8")
+        self.assertIn('generate_reply(member.id, prompt, "Пользователь", chat_id=message.chat.id)', source)
+
     def test_panel_role_assignment_is_visible_only_to_chat_admins_and_has_role_writer(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
