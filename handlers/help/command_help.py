@@ -391,15 +391,20 @@ async def panel_cancel(call: types.CallbackQuery):
     # Clear panel-specific reply actions as well as the shared cancellation gateway.
     from handlers.help.help import _PANEL_PENDING
     key = _panel_key(call)
+    had_panel_state = key in _PANEL_PENDING or key in _PANEL_CONFIRMATIONS
     _PANEL_PENDING.pop(key, None)
     _PANEL_CONFIRMATIONS.pop(key, None)
     try:
         from handlers.help.help import _REPORT_PENDING
+        had_panel_state = had_panel_state or key in _REPORT_PENDING
         _REPORT_PENDING.pop(key, None)
     except Exception:
         pass
-    await FSMContext.current().finish()
-    cancelled = cancel_current_action(call.from_user.id, call.message.chat.id)
+    state = FSMContext.current()
+    had_fsm_state = await state.get_state() is not None
+    had_panel_state = had_panel_state or had_fsm_state
+    await state.finish()
+    cancelled = had_panel_state or cancel_current_action(call.from_user.id, call.message.chat.id)
     await call.answer(
         "Текущее действие отменено." if cancelled else "Незавершённого действия нет.",
         show_alert=True,
