@@ -22,6 +22,12 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn('if [[ "$line" == "?? "* ]]; then', source)
         self.assertIn("backed up stale untracked Termux/QA file", source)
 
+    def test_supervisor_self_restart_uses_bash_for_non_executable_file(self):
+        source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
+        self.assertIn('exec bash "$0"', source)
+        self.assertNotIn('exec "$0"', source)
+        self.assertIn('tr -d "\\000\\r\\n" < "$SUPERVISOR_HASHFILE"', source)
+
     def test_supervisor_restarts_changed_control_process(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
         self.assertIn('CONTROL_HASHFILE="$REPO/termux-control.sha256"', source)
