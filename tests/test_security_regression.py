@@ -291,6 +291,14 @@ class SecurityRegressionTests(unittest.TestCase):
         role_block = help_source[help_source.index("async def _apply_panel_role"):help_source.index("#chatinfo")]
         self.assertIn("set_role(message.chat.id, target_user_id, target_role, actor_id)", role_block)
 
+    def test_panel_back_clears_all_panel_scoped_pending_state(self):
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
+        block = source[source.index("async def panel_back"):source.index("async def panel_root", source.index("async def panel_back"))]
+        self.assertIn("_PANEL_CONFIRMATIONS.pop(key, None)", block)
+        self.assertIn("_PANEL_PENDING.pop(key, None)", block)
+        self.assertIn("_REPORT_PENDING.pop(key, None)", block)
+
     def test_panel_myinfo_uses_chat_effective_role(self):
         from pathlib import Path
 
