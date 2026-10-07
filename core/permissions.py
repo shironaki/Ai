@@ -27,11 +27,11 @@ def get_user_status(user_id, chat_id=None):
     authority = _telegram_authority(user_id, chat_id)
     if authority:
         return authority
+    if global_role == "Хелпер":
+        return global_role
     local_role = _local_bot_role(user_id, chat_id)
     if local_role:
         return local_role
-    if global_role == "Хелпер":
-        return global_role
     return "Пользователь"
 
 
@@ -65,12 +65,9 @@ def has_moderator_role(user_id, chat_id=None):
     # authority and must remain effective even when the same person is a Helper.
     if _telegram_authority(user_id, chat_id) == "Администратор":
         return True
-    local_role = _local_bot_role(user_id, chat_id)
-    if local_role == "Модератор":
-        return True
     if resolve_role(user_id) == "Хелпер":
         return False
-    return False
+    return _local_bot_role(user_id, chat_id) == "Модератор"
 
 
 def has_report_access(user_id, chat_id=None):
