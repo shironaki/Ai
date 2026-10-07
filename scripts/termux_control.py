@@ -10,6 +10,34 @@ import time
 import urllib.request
 from pathlib import Path
 
+
+def _load_termux_env() -> None:
+    """Load simple KEY=VALUE settings before reading control-plane config."""
+    env_path = Path(os.getenv("TERMUX_ENV_FILE", "~/.config/ai/termux.env")).expanduser()
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or not key.replace("_", "a").isalnum():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_termux_env()
+
 REPO = os.getenv("TERMUX_GITHUB_REPO", "shironaki/Ai")
 ISSUE = int(os.getenv("TERMUX_RUNTIME_ISSUE", "23"))
 API = f"https://api.github.com/repos/{REPO}"
