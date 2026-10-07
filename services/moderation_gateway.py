@@ -20,7 +20,7 @@ from core.command_policy import evaluate
 from core.permissions import get_display_role
 from base import config
 from services.audit_service import record
-from services.moderation_scheduler import schedule, notify_issued, notify_action, format_duration
+from services.moderation_scheduler import schedule, supersede_timers, notify_issued, notify_action, format_duration
 
 _PENDING = {}
 
@@ -297,6 +297,8 @@ async def confirm(message: types.Message, *, confirmed: bool = False):
             f"<code>{type(exc).__name__}</code>"
         )
         return True
+
+    supersede_timers(chat_id=message.chat.id, target_user_id=target_id)
 
     record(
         user_id=message.from_user.id,
