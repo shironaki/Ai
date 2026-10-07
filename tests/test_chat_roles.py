@@ -75,3 +75,12 @@ if __name__ == "__main__":
              patch("services.chat_members.get_chat_authority", return_value="Администратор"):
             self.assertTrue(set_role(100, 7, "Модератор", 1))
         self.assertEqual(get_role(100, 7), "Модератор")
+
+    def test_local_role_isolated_from_other_chat(self):
+        from services.chat_roles import set_role, get_role
+        with patch("core.identity.is_owner", return_value=False),              patch("core.identity.resolve_role", return_value="Пользователь"),              patch("core.permissions.get_display_role", return_value="Администратор"),              patch("services.chat_members.get_chat_authority", return_value="Администратор"):
+            self.assertTrue(set_role(100, 7, "Модератор", 1))
+        self.assertEqual(get_role(100, 7), "Модератор")
+        self.assertIsNone(get_role(200, 7))
+
+\nif __name__ == "__main__":\n    unittest.main()\n
