@@ -20,7 +20,7 @@ from core.command_policy import evaluate
 from core.permissions import get_display_role
 from base import config
 from services.audit_service import record
-from services.moderation_scheduler import schedule, supersede_timers, notify_issued, notify_action, format_duration
+from services.moderation_scheduler import replace_timer, supersede_timers, notify_issued, notify_action, format_duration
 
 _PENDING = {}
 
@@ -298,7 +298,8 @@ async def confirm(message: types.Message, *, confirmed: bool = False):
         )
         return True
 
-    supersede_timers(chat_id=message.chat.id, target_user_id=target_id)
+    if not (duration_seconds and expires_at and intent.command in {"mute", "ban"}):
+        supersede_timers(chat_id=message.chat.id, target_user_id=target_id)
 
     record(
         user_id=message.from_user.id,
@@ -311,7 +312,7 @@ async def confirm(message: types.Message, *, confirmed: bool = False):
     target_name = intent.parameters.get("target_name", target_id)
 
     if duration_seconds and expires_at and intent.command in {"mute", "ban"}:
-        schedule(
+        replace_timer(
             chat_id=message.chat.id,
             target_user_id=target_id,
             target_name=target_name,
