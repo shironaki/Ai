@@ -82,7 +82,7 @@ sync_control_plane_files() {
     # If an older updater is blocked by stale staged runtime edits, it must
     # not be able to prevent the tested updater/control/QA scripts from
     # reaching the device.
-    if ! git fetch --quiet origin "$BRANCH" >> "$REPO/termux-autoupdate.log" 2>&1; then
+    if ! git fetch --quiet origin "$BRANCH" >> "$LOG_FILE" 2>&1; then
         return 0
     fi
     local path tmp remote_hash local_hash
