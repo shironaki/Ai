@@ -35,6 +35,7 @@ def test_registered_slash_aliases_have_authoritative_handlers():
         "handlers/help/help.py",
         "handlers/help/command_help.py",
         "handlers/admin/apanel.py",
+        "handlers/runtime_diagnostics.py",
     ):
         handlers.update(_decorated_commands(ROOT / relative))
 
@@ -44,8 +45,8 @@ def test_registered_slash_aliases_have_authoritative_handlers():
         "ai", "help", "panel", "report", "cancel", "info",
         "moderation", "silence", "issue_list", "issues", "метки",
         "аи",
-        "moderation", "модерация", "silence", "тишина",
-        "report", "q", "r", "репорт", "cancel", "отмена",
+        "модерация", "тишина",
+        "q", "r", "репорт", "отмена",
         # These aliases are intentionally routed by regex/natural-language
         # gateways or dedicated non-command handlers.
         "awakening", "start", "welcome", "пробуждение", "приветствие",
