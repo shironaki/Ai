@@ -307,6 +307,7 @@ async def panel_back(call: types.CallbackQuery):
     key = _panel_key(call)
     _PANEL_CONFIRMATIONS.pop(key, None)
     _PANEL_PENDING.pop(key, None)
+    await FSMContext.current().finish()
     try:
         from handlers.help.help import _REPORT_PENDING
         _REPORT_PENDING.pop(key, None)
