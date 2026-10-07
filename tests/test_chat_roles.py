@@ -83,4 +83,6 @@ if __name__ == "__main__":
         self.assertEqual(get_role(100, 7), "Модератор")
         self.assertIsNone(get_role(200, 7))
 
-\nif __name__ == "__main__":\n    unittest.main()\n
+
+if __name__ == "__main__":
+    unittest.main()
