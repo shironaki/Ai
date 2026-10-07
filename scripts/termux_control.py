@@ -32,7 +32,8 @@ LEASE_TTL = max(90, int(os.getenv("TERMUX_LEASE_TTL", "120")))
 LEASE_RENEW_BEFORE = max(30, int(os.getenv("TERMUX_LEASE_RENEW_BEFORE", "60")))
 FORCE_FENCE_WAIT = max(15, int(os.getenv("TERMUX_FORCE_FENCE_WAIT", "20")))
 AUTO_FAILOVER = os.getenv("TERMUX_AUTO_FAILOVER", "1").strip().casefold() in {"1", "true", "yes", "on"}
-LOG = ROOT / "termux-autoupdate.log"
+DATA_DIR = Path(os.getenv("BOT_DATA_DIR", str(ROOT / "data" / "test" / "runtime")))
+LOG = DATA_DIR / "termux-autoupdate.log"
 CONTROL_HEARTBEAT = ROOT / "data" / "test" / "runtime" / "control-heartbeat"
 TOKEN_FILE = Path(os.getenv("TERMUX_TOKEN_FILE", "~/.config/ai/termux.env")).expanduser()
 
