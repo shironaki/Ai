@@ -139,90 +139,77 @@ def fetch_issue_comments(after_id: int | None = None) -> list[dict]:
     return comments
 
 
-def lease_git(*args: str, input_text: str | None = None, check: bool = True) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=ROOT,
-        input=input_text,
-        text=True,
-        capture_output=True,
-        timeout=20,
-        check=False,
+def write_lease(lease: dict, parent: str) -> bool:
+    """Update the central lease through GitHub HTTPS with an optimistic ref check."""
+    content = json.dumps(lease, separators=(",", ":")) + "\n"
+    encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+
+    commit_info = request("GET", "/git/commits/" + parent)
+    base_tree = str(commit_info.get("tree", {}).get("sha", "")).strip()
+    if not base_tree:
+        raise RuntimeError("lease parent " + parent + " has no tree sha")
+
+    blob_info = request(
+        "POST",
+        "/git/blobs",
+        {"content": encoded, "encoding": "base64"},
     )
-    if check and result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()[-500:]
-        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
-    return (result.stdout or "").strip()
+    blob = str(blob_info.get("sha", "")).strip()
+    if not blob:
+        raise RuntimeError("GitHub blob creation returned no sha")
 
+    tree_info = request(
+        "POST",
+        "/git/trees",
+        {
+            "base_tree": base_tree,
+            "tree": [
+                {
+                    "path": LEASE_PATH,
+                    "mode": "100644",
+                    "type": "blob",
+                    "sha": blob,
+                }
+            ],
+        },
+    )
+    tree = str(tree_info.get("sha", "")).strip()
+    if not tree:
+        raise RuntimeError("GitHub tree creation returned no sha")
 
-def read_lease() -> tuple[dict, str]:
-    """Read the central lease through GitHub API, not a blocking git fetch."""
-    branch_ref = request("GET", f"/git/ref/heads/{LEASE_BRANCH}")
-    parent = str(branch_ref.get("object", {}).get("sha", "")).strip()
-    if not parent:
-        raise RuntimeError(f"lease branch {LEASE_BRANCH!r} has no commit sha")
+    commit_info = request(
+        "POST",
+        "/git/commits",
+        {
+            "message": "chore: update Termux lease for " + DEVICE_ID,
+            "tree": tree,
+            "parents": [parent],
+            "author": {
+                "name": "Termux Lease",
+                "email": "termux-lease@localhost",
+            },
+            "committer": {
+                "name": "Termux Lease",
+                "email": "termux-lease@localhost",
+            },
+        },
+    )
+    commit = str(commit_info.get("sha", "")).strip()
+    if not commit:
+        raise RuntimeError("GitHub commit creation returned no sha")
 
     try:
-        item = request("GET", f"/contents/{LEASE_PATH}?ref={LEASE_BRANCH}")
-    except Exception as primary_exc:
-        # Recover from the historical CRLF-created lease.json carriage-return path,
-        # but preserve BOTH failures so diagnostics identify the real API failure.
-        legacy_path = LEASE_PATH + "%0D"
-        try:
-            item = request("GET", f"/contents/{legacy_path}?ref={LEASE_BRANCH}")
-        except Exception as legacy_exc:
-            raise RuntimeError(
-                f"lease content read failed: primary={primary_exc}; legacy={legacy_exc}"
-            ) from legacy_exc
-
-    encoded = item.get("content", "")
-    if not encoded:
-        raise RuntimeError("lease file content is empty")
-    raw = base64.b64decode(encoded).decode("utf-8")
-    return json.loads(raw or "{}"), parent
-
-def write_lease(lease: dict, parent: str) -> bool:
-    content = json.dumps(lease, separators=(",", ":")) + "\n"
-    blob = lease_git("hash-object", "-w", "--stdin", input_text=content)
-    tree = lease_git(
-        "mktree",
-        input_text=f"100644 blob {blob}\t{LEASE_PATH}\n",
-    )
-    env = os.environ.copy()
-    env.update({
-        "GIT_AUTHOR_NAME": "Termux Lease",
-        "GIT_AUTHOR_EMAIL": "termux-lease@localhost",
-        "GIT_COMMITTER_NAME": "Termux Lease",
-        "GIT_COMMITTER_EMAIL": "termux-lease@localhost",
-    })
-    result = subprocess.run(
-        ["git", "commit-tree", tree, "-p", parent, "-m",
-         f"chore: update Termux lease for {DEVICE_ID}"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=20,
-        env=env,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()[-500:]
-        raise RuntimeError(f"git commit-tree failed: {detail}")
-    commit = result.stdout.strip()
-    push = subprocess.run(
-        ["git", "push", "--porcelain", "origin", f"{commit}:refs/heads/{LEASE_BRANCH}"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    if push.returncode == 0:
-        return True
-    detail = (push.stderr or push.stdout or "").strip().lower()
-    if "non-fast-forward" in detail or "[rejected]" in detail or "fetch first" in detail:
-        return False
-    raise RuntimeError(f"git push lease failed: {detail[-500:]}")
+        request(
+            "PATCH",
+            "/git/refs/heads/" + LEASE_BRANCH,
+            {"sha": commit, "force": False},
+        )
+    except RuntimeError as exc:
+        detail = str(exc).lower()
+        if "github http 409:" in detail or "github http 422:" in detail:
+            return False
+        raise
+    return True
 
 
 def acquire_or_renew_lease() -> tuple[bool, str]:
