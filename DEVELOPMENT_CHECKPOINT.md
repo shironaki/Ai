@@ -300,3 +300,13 @@ Next required work:
 - Repeated historical runtime log entries show `lease check unavailable; preserving active role`; this remains a runtime connectivity/lease-control issue, not a reason to weaken functional role/state tests. The user explicitly prioritized functional continuity over lease-owner cleanup.
 - Current branch comparison: TEST is intentionally diverged from Main; do not merge/rebase Main automatically. Main/PROD remains untouched.
 - Completion status for this pass: code audit + hidden state/role audit + runtime-path correction + CI validation are complete. The only unresolved item is fresh physical Termux telemetry/acknowledgement from the device.
+
+
+## Protocol checkpoint — 2026-10-07 — Termux lease-channel recovery attempt
+
+- Physical control-plane investigation continued after CI completion.
+- Confirmed `termux-lease` contained the historical malformed filename `lease.json\\r`; this was the source of the earlier `git show ... lease.json\\r` failures.
+- The TEST `scripts/termux_control.py` already contains a compatibility fallback from `lease.json` to the CRLF legacy path and writes future leases to the normalized `lease.json` path.
+- To make the control branch compatible with both old and current runtimes, a normalized `lease.json` was created on `termux-lease` with an empty/expired lease. This does not touch Main/PROD or application code.
+- A new `FORCE PHONE2 ACTIVE` command was submitted after normalization, but no fresh control-result comment appeared. Therefore the physical Phone2 runtime/control polling is currently unreachable or not processing the issue queue.
+- No fabricated telemetry is recorded. The last real physical health remains the historical Phone2 `HEALTH OK / polling=ready / ai=ready` snapshot from 2026-10-05.
