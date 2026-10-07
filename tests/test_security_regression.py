@@ -298,6 +298,7 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("_PANEL_CONFIRMATIONS.pop(key, None)", block)
         self.assertIn("_PANEL_PENDING.pop(key, None)", block)
         self.assertIn("_REPORT_PENDING.pop(key, None)", block)
+        self.assertIn("await FSMContext.current().finish()", block)
 
     def test_panel_myinfo_uses_chat_effective_role(self):
         from pathlib import Path
