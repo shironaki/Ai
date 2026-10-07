@@ -718,7 +718,8 @@ class RuntimeRegressionTests(unittest.TestCase):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
         self.assertIn("SUPERVISOR_HASHFILE=", source)
         self.assertIn("ensure_supervisor_revision()", source)
-        self.assertIn('exec "$0"', source)
+        self.assertIn('exec bash "$0"', source)
+        self.assertNotIn('exec "$0"', source)
         self.assertIn("ensure_supervisor_revision", source.split("while true; do", 1)[1])
 
     def test_termux_control_heartbeat_writes_real_newline(self):
