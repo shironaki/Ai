@@ -41,10 +41,10 @@ SUPERVISOR_HASHFILE="$REPO/termux-supervisor.sha256"
 ensure_supervisor_revision() {
     current_hash="$(sha256sum "$0" 2>/dev/null | awk '{print $1}')"
     [ -n "$current_hash" ] || return 0
-    previous_hash="$(cat "$SUPERVISOR_HASHFILE" 2>/dev/null || true)"
+    previous_hash="$(tr -d "\000\r\n" < "$SUPERVISOR_HASHFILE" 2>/dev/null || true)"
     if [ -n "$previous_hash" ] && [ "$previous_hash" != "$current_hash" ]; then
         printf "%s\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
-        exec "$0"
+        exec bash "$0"
     fi
     printf "%s\n" "$current_hash" > "$SUPERVISOR_HASHFILE"
 }
