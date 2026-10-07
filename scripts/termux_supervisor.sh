@@ -95,7 +95,7 @@ sync_control_plane_files() {
         if git show "origin/$BRANCH:$path" > "$tmp" 2>/dev/null; then
             chmod --reference="$REPO/$path" "$tmp" 2>/dev/null || true
             mv -f "$tmp" "$REPO/$path"
-            printf '%s BOOTSTRAP: synced control-plane file %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$path" >> "$REPO/termux-autoupdate.log"
+            printf '%s BOOTSTRAP: synced control-plane file %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$path" >> "$LOG_FILE"
         else
             rm -f "$tmp"
         fi
@@ -185,7 +185,7 @@ start_control() {
         fi
     fi
     rm -f "$CONTROL_PIDFILE" "$CONTROL_HASHFILE"
-    nohup "$PYTHON" "$REPO/scripts/termux_control.py" >> "$REPO/termux-autoupdate.log" 2>&1 < /dev/null &
+    nohup "$PYTHON" "$REPO/scripts/termux_control.py" >> "$LOG_FILE" 2>&1 < /dev/null &
     echo $! > "$CONTROL_PIDFILE"
     printf "%s\n" "$current_hash" > "$CONTROL_HASHFILE"
 }
@@ -249,7 +249,7 @@ start_update() {
         return 0
     fi
     rm -f "$UPDATE_PIDFILE"
-    nohup bash "$REPO/scripts/termux_update.sh" >> "$REPO/termux-autoupdate.log" 2>&1 < /dev/null &
+    nohup bash "$REPO/scripts/termux_update.sh" >> "$LOG_FILE" 2>&1 < /dev/null &
     echo $! > "$UPDATE_PIDFILE"
 }
 
