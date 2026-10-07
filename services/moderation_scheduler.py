@@ -147,7 +147,7 @@ async def notify_issued(bot, *, chat_id: int, target_user_id: int, target_name: 
         pass
 
 
-async def _notify_expired(bot, row) -> None:
+async def _notify_expired(bot, row) -> bool:
     timer_id, chat_id, target_user_id, target_name, actor_user_id, action, expires_at, _ = row
     action_name = "мут" if action == "mute" else "бан"
     group_text = f"🔔 <b>{action_name.upper()} снят автоматически.</b>\n👤 Пользователь: <b>{target_name or target_user_id}</b>"
@@ -156,15 +156,17 @@ async def _notify_expired(bot, row) -> None:
     try:
         await bot.send_message(chat_id, group_text)
     except Exception:
-        pass
+        return False
+
     try:
         await bot.send_message(target_user_id, private_text)
     except Exception:
+        # Private delivery is best-effort; the group notification is authoritative.
         pass
 
     with connect_db("users.db") as db:
         db.execute("UPDATE moderation_timers SET notified=1 WHERE id=?", (timer_id,))
-
+    return True
 
 async def process_expired(bot) -> None:
     ensure_table()
@@ -182,7 +184,11 @@ async def process_expired(bot) -> None:
         ).fetchall()
 
     for row in rows:
-        await _notify_expired(bot, row)
+        try:
+            await _notify_expired(bot, row)
+        except Exception:
+            # One broken timer must not starve the remaining expired timers.
+            continue
 
 
 async def expiry_loop(bot) -> None:
