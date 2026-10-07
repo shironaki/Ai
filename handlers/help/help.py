@@ -861,6 +861,15 @@ async def panel_pending_action(message: types.Message):
         return
 
 
+async def _is_current_chat_member(message: types.Message, user_id: int) -> bool:
+    """Require live Telegram membership before granting a chat-local role."""
+    try:
+        member = await message.bot.get_chat_member(message.chat.id, user_id)
+    except Exception:
+        return False
+    return getattr(member, "status", None) in {"member", "administrator", "creator", "restricted"}
+
+
 async def _apply_panel_role(message: types.Message, target_user_id: int, target_role: str) -> bool:
     actor_id = message.from_user.id
     actor_role = _panel_role(actor_id, message.chat.id)
@@ -876,6 +885,9 @@ async def _apply_panel_role(message: types.Message, target_user_id: int, target_
             return False
         audit_chat_id = 0
     else:
+        if not await _is_current_chat_member(message, target_user_id):
+            await message.reply("⛔ Локальная роль может быть назначена только текущему участнику этого чата.")
+            return False
         if not set_role(message.chat.id, target_user_id, target_role, actor_id):
             return False
         audit_chat_id = message.chat.id
