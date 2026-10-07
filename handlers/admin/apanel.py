@@ -4,6 +4,15 @@ from main import config, users, chats, random, bot, InlineKeyboardMarkup, dateti
 from core.permissions import has_admin_role, has_moderator_role
 from services.moderation_gateway import request as request_moderation
 
+async def _is_current_chat_member(message: types.Message, user_id: int) -> bool:
+    """Require a live Telegram membership before granting a chat-local role."""
+    try:
+        member = await message.bot.get_chat_member(message.chat.id, user_id)
+    except Exception:
+        return False
+    return getattr(member, "status", None) in {"member", "administrator", "creator", "restricted"}
+
+
 # Role assignment compatibility entry point.
 # The admin panel is the primary UI; this alias delegates to the same hierarchy.
 
@@ -44,6 +53,10 @@ async def set_status(message: types.Message):
 
     if not has_admin_role(message.from_user.id, message.chat.id):
         await message.reply("⛔ | Команда доступна только Администратору или Основателю.")
+        return
+
+    if not await _is_current_chat_member(message, target_id):
+        await message.reply("⛔ | Локальная роль может быть назначена только текущему участнику этого чата.")
         return
 
     if set_role(message.chat.id, target_id, target_role, actor_id):
