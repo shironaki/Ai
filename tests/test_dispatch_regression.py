@@ -213,7 +213,8 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn('confirmation.get("message_id") != call.message.message_id', source)
         self.assertIn('confirmation.get("expected_enabled")', source)
         self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)', source)
-        self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)\n    history = _PANEL_HISTORY.get(key)', source)
+        self.assertIn('_PANEL_CONFIRMATIONS.pop(key, None)\n    _PANEL_PENDING.pop(key, None)', source)
+        self.assertIn('await FSMContext.current().finish()', source)
 
     def test_legacy_admin_callback_names_are_not_reintroduced(self):
         source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
@@ -248,9 +249,11 @@ class DispatchRegressionTests(unittest.TestCase):
         end = source.find("\n@dp.", start)
         block = source[start:] if end == -1 else source[start:end]
         self.assertIn("from handlers.help.help import _PANEL_PENDING", block)
-        self.assertIn("_PANEL_PENDING.pop((call.from_user.id, call.message.chat.id), None)", block)
-        self.assertIn("_PANEL_CONFIRMATIONS.pop(_panel_key(call), None)", block)
-        self.assertIn("cancel_current_action(call.from_user.id, call.message.chat.id)", block)
+        self.assertIn("_PANEL_PENDING.pop(key, None)", block)
+        self.assertIn("_PANEL_CONFIRMATIONS.pop(key, None)", block)
+        self.assertIn("_REPORT_PENDING.pop(key, None)", block)
+        self.assertIn("await FSMContext.current().finish()", block)
+        self.assertIn("had_panel_state or cancel_current_action", block)
 
     def test_panel_callbacks_are_registered_and_callback_errors_are_visible(self):
         help_source = (ROOT / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
