@@ -39,7 +39,7 @@ def set_role(chat_id: int, user_id: int, role: str, granted_by: int):
         actor_is_chat_owner = get_chat_authority(chat_id, granted_by) == "Администратор"
     except Exception:
         actor_is_chat_owner = False
-    if resolve_role(user_id) == "Хелпер" and not actor_is_chat_owner:
+    if resolve_role(granted_by) == "Хелпер" and not actor_is_chat_owner:
         return False
     actor_role = get_display_role(granted_by, chat_id)
     if not can_assign(actor_role, role, actor_is_owner=is_owner(granted_by)):
