@@ -29,6 +29,16 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn('DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()', source)
         self.assertLess(source.index("_load_termux_env()"), source.index("DEVICE_ID ="))
 
+    def test_control_writes_lease_through_github_api_with_ref_guard(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        self.assertIn('"/git/blobs"', source)
+        self.assertIn('"/git/trees"', source)
+        self.assertIn('"/git/commits/" + parent', source)
+        self.assertIn('"/git/refs/heads/" + LEASE_BRANCH', source)
+        self.assertIn('"parents": [parent]', source)
+        self.assertIn('"force": False', source)
+        self.assertNotIn('git push", "--porcelain"', source)
+
     def test_control_preserves_lease_api_failure_details(self):
         source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
         self.assertIn("primary={primary_exc}; legacy={legacy_exc}", source)
