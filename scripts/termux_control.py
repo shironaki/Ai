@@ -6,7 +6,6 @@ import base64
 import json
 import os
 import subprocess
-import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -534,9 +533,8 @@ def heartbeat_loop() -> None:
             pass
 
 
-def main() -> int:
+def poll_once() -> int:
     touch_control_heartbeat()
-    threading.Thread(target=heartbeat_loop, daemon=True).start()
     role = ROLEFILE.read_text(encoding="utf-8").strip().casefold() if ROLEFILE.exists() else "active"
 
     if role == "active":
@@ -660,10 +658,21 @@ def main() -> int:
     return 0
 
 
+def main() -> int:
+    # Keep the control plane alive between polls. The supervisor still
+    # supervises this process, but commands no longer depend on a narrow
+    # start/reap timing window or on a fresh process every polling interval.
+    while True:
+        try:
+            poll_once()
+        except Exception as exc:
+            try:
+                with LOG.open("a", encoding="utf-8") as fh:
+                    fh.write(f"CONTROL: failed ({type(exc).__name__}: {exc})\\n")
+            except OSError:
+                pass
+        time.sleep(15)
+
+
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        with LOG.open("a", encoding="utf-8") as fh:
-            fh.write(f"CONTROL: failed ({type(exc).__name__}: {exc})\\n")
-        raise SystemExit(1)
+    raise SystemExit(main())
