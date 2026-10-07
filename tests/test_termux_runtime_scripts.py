@@ -11,6 +11,9 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn("def fetch_issue_comments(after_id: int | None = None)", source)
         self.assertIn("sort=created&direction=desc", source)
         self.assertIn("comments = fetch_issue_comments(last)", source)
+        self.assertIn("def poll_once() -> int:", source)
+        self.assertIn("while True:", source)
+        self.assertIn("poll_once()", source)
 
     def test_update_syncs_owned_untracked_qa_files(self):
         source = (ROOT / "scripts" / "termux_update.sh").read_text(encoding="utf-8")
