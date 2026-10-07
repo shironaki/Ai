@@ -29,6 +29,11 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn('DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()', source)
         self.assertLess(source.index("_load_termux_env()"), source.index("DEVICE_ID ="))
 
+    def test_control_retries_only_idempotent_get_requests(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        self.assertIn('attempts = 2 if method.upper() == "GET" else 1', source)
+        self.assertIn('if attempt + 1 < attempts:', source)
+
     def test_control_writes_lease_through_github_api_with_ref_guard(self):
         source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
         self.assertIn('"/git/blobs"', source)
