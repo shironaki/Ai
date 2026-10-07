@@ -29,6 +29,14 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn('DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()', source)
         self.assertLess(source.index("_load_termux_env()"), source.index("DEVICE_ID ="))
 
+    def test_control_preserves_lease_api_failure_details(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        self.assertIn("primary={primary_exc}; legacy={legacy_exc}", source)
+        self.assertIn("GitHub HTTP {exc.code}: {detail}", source)
+        self.assertIn("lease unavailable ({type(exc).__name__}: {exc})", source)
+        self.assertIn("with LOG.open", source)
+        self.assertIn('with LOG.open("a", encoding="utf-8") as log:', source)
+
     def test_supervisor_self_restart_uses_bash_for_non_executable_file(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
         self.assertIn('exec bash "$0"', source)
