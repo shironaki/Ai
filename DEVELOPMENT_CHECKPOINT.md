@@ -257,3 +257,19 @@ Next required work:
 - Current lease branch contains the historical CRLF path `lease.json\\r` with `owner=pc1` and an expired `expires_at`. Therefore the current physical runtime is **not freshly live-verified** from this session, and no claim of live synchronization is made.
 - Do not force a device takeover automatically without an explicit/verified active-device decision; continue code/security audit while live control-plane is unavailable.
 - Next continuation: re-check control-plane/lease, then perform live TEST verification when an active runtime is reachable; meanwhile continue hidden scope/state audit. Main/PROD remains untouched.
+
+
+## Protocol checkpoint — 2026-10-07 — blocks 1–3 command/STATE/role audit
+
+- Branch: `test-global-assistant-upgrade`; Main/PROD untouched.
+- Blocks 1–3 completed as one pass: authoritative command registry/handlers, command and pending-state isolation, Telegram/app role parity.
+- Command surface audit: registered aliases were checked against concrete handlers or explicitly documented non-decorator routing. Privileged commands remain Founder-gated and global-scope constrained; destructive moderation actions remain centralized behind confirmation/policy.
+- Direct legacy moderation aliases `/mute`, `/unmute`, `/ban`, `/unban` still delegate into `services/moderation_gateway.py`; no direct execution bypass was found.
+- Pending command, moderation and report/panel state is keyed by `(user_id, chat_id)`; global runtime undo uses the explicit `(user_id, 0)` key only for genuinely global actions.
+- Report access remains global only for Founder/Helper; local Administrator/Moderator access is constrained to the current chat/source chat.
+- Telegram authority parity: only actual Telegram creator/owner maps to local `Администратор`; ordinary Telegram administrators do not automatically receive bot Administrator authority.
+- Global Helper remains technical/report-center staff and does not inherit local moderation authority unless the same person is independently the Telegram creator of the current chat.
+- Previously found creator+Helper role-assignment mismatch is fixed in `41fd746d62c643f4b5fca62630ef5f96182066ae` and is covered by current regression tests.
+- Current TEST HEAD: `baaaa93161a8ee3658eff0244626196fcabe4230`.
+- CI Python integrity check run #2161 (`37513627874`) for the current HEAD completed **SUCCESS**; compile/import, AI-no-credentials, runtime regression, direct dependency and legacy dependency checks all passed.
+- No new permission/state-isolation defect requiring a code change was found in blocks 1–3. The next block is chained scenario execution and then the Termux/runtime/update verification sequence.
