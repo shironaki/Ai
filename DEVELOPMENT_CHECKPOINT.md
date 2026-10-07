@@ -273,3 +273,15 @@ Next required work:
 - Current TEST HEAD: `baaaa93161a8ee3658eff0244626196fcabe4230`.
 - CI Python integrity check run #2161 (`37513627874`) for the current HEAD completed **SUCCESS**; compile/import, AI-no-credentials, runtime regression, direct dependency and legacy dependency checks all passed.
 - No new permission/state-isolation defect requiring a code change was found in blocks 1–3. The next block is chained scenario execution and then the Termux/runtime/update verification sequence.
+
+
+## Protocol checkpoint — 2026-10-07 — blocks 4–7 completion pass
+
+- Branch remains `test-global-assistant-upgrade`; Main/PROD untouched.
+- Block 4: chained command scenarios reviewed across request → pending state → confirmation → execution → cancellation → repeat in another chat. No cross-chat pending collision found; destructive moderation remains centralized through the moderation gateway.
+- Block 5: hidden state audit completed for command, moderation, panel, report, runtime undo, AI history/rate-limit and chat-scoped runtime state. Boundaries remain user+chat; global runtime undo is explicitly keyed as global.
+- Block 6: Telegram authority/role transitions reviewed end-to-end. Creator authority is scoped to the current chat; ordinary Telegram administrators do not become bot Administrators; global Helper does not inherit local moderation unless independently creator. Found and fixed a hidden actor/target mix-up in `services/chat_roles.py`: the Helper restriction now evaluates `granted_by`, not the target user. Regression added in `tests/test_chat_roles.py`.
+- Security/runtime finding: Termux supervisor/control/report paths still wrote logs to repository-root files despite the protected `BOT_DATA_DIR` policy. Fixed supervisor, control and telemetry paths to route runtime logs through `BOT_DATA_DIR`; added regression coverage in `tests/test_runtime.py`.
+- Current code commit before this checkpoint: `25e8917514599f6cb7940ceea34ed290fb9dba2f`.
+- CI #2175 is running for that code commit; do not call it green until completion.
+- Block 7 runtime conclusion: the Termux control/update/watchdog code is statically and regression-covered for lease fencing, PID identity, singleton supervisor, update restart boundaries, rollback, stale runtime replacement and fail-closed watchdog behavior. Live physical runtime telemetry is currently not fresh: Issue #23 contains control commands but no corresponding current telemetry result. Therefore no false claim of live TEST synchronization is made. Once CI is green and a fresh telemetry response is available, the final runtime step is to verify active/standby process state and health on the physical device.
