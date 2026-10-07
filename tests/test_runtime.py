@@ -229,6 +229,18 @@ class RuntimeRegressionTests(unittest.TestCase):
         self.assertFalse(is_paused(1002))
         set_paused(False, scope="chat", chat_id=1001)
 
+    def test_global_stasis_preserves_chat_local_stasis_state(self):
+        from core.runtime_state import is_paused, set_paused
+
+        chat_id = 77001
+        set_paused(False, scope="global")
+        set_paused(True, scope="chat", chat_id=chat_id)
+        set_paused(True, scope="global")
+        self.assertTrue(is_paused(chat_id))
+        set_paused(False, scope="global")
+        self.assertTrue(is_paused(chat_id))
+        set_paused(False, scope="chat", chat_id=chat_id)
+
     def test_founder_interpret_uses_deterministic_path_before_ai(self):
         import services.command_gateway as command_gateway
 
