@@ -66,7 +66,7 @@ class CommandRegistryTests(unittest.TestCase):
 
         for value in ("/panel", "/cancel", "/mute", "/ban"):
             self.assertIn(value, moderator, value)
-        self.assertIn("/setstatus", moderator)
+        self.assertNotIn("/setstatus", moderator)
         self.assertNotIn("/status", moderator)
 
         self.assertIn("/panel", admin)
