@@ -100,8 +100,9 @@ def request(method: str, path: str, value=None):
             "Content-Type": "application/json",
         },
     )
+    attempts = 2 if method.upper() == "GET" else 1
     last_error = None
-    for attempt in range(2):
+    for attempt in range(attempts):
         try:
             with urllib.request.urlopen(req, timeout=8) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -112,11 +113,11 @@ def request(method: str, path: str, value=None):
             except Exception:
                 pass
             last_error = RuntimeError(f"GitHub HTTP {exc.code}: {detail}")
-            if attempt == 0:
+            if attempt + 1 < attempts:
                 time.sleep(1)
         except Exception as exc:
             last_error = exc
-            if attempt == 0:
+            if attempt + 1 < attempts:
                 time.sleep(1)
     raise last_error
 
