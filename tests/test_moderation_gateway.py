@@ -33,7 +33,12 @@ class ModerationGatewayTests(unittest.TestCase):
         from services.moderation_scheduler import supersede_timers
 
         db = sqlite3.connect(":memory:")
-        with patch("services.moderation_scheduler.connect_db", lambda _filename: contextmanager(lambda: (yield db))()):
+
+        @contextmanager
+        def connect(_filename):
+            yield db
+
+        with patch("services.moderation_scheduler.connect_db", connect):
             db.execute("CREATE TABLE moderation_timers(id INTEGER PRIMARY KEY, chat_id INTEGER, target_user_id INTEGER, notified INTEGER)")
             db.executemany(
                 "INSERT INTO moderation_timers(id,chat_id,target_user_id,notified) VALUES(?,?,?,?)",
