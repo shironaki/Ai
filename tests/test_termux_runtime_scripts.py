@@ -22,6 +22,13 @@ class TermuxRuntimeScriptRegressionTests(unittest.TestCase):
         self.assertIn('if [[ "$line" == "?? "* ]]; then', source)
         self.assertIn("backed up stale untracked Termux/QA file", source)
 
+    def test_control_loads_termux_env_before_reading_device_id(self):
+        source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        self.assertIn("def _load_termux_env()", source)
+        self.assertIn("_load_termux_env()", source)
+        self.assertIn('DEVICE_ID = os.getenv("TERMUX_DEVICE_ID", "").strip().casefold()', source)
+        self.assertLess(source.index("_load_termux_env()"), source.index("DEVICE_ID ="))
+
     def test_supervisor_self_restart_uses_bash_for_non_executable_file(self):
         source = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
         self.assertIn('exec bash "$0"', source)
