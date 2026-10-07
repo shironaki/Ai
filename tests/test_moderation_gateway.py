@@ -49,6 +49,27 @@ class ModerationGatewayTests(unittest.TestCase):
         self.assertEqual(rows, [(1, 1), (2, 0), (3, 0)])
         db.close()
 
+    def test_moderation_timer_replacement_is_atomic(self):
+        import sqlite3
+        from datetime import datetime, timezone, timedelta
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        from services.moderation_scheduler import replace_timer
+
+        db = sqlite3.connect(":memory:")
+        @contextmanager
+        def connect(_filename):
+            yield db
+        with patch("services.moderation_scheduler.connect_db", connect):
+            db.execute("CREATE TABLE moderation_timers(id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, target_user_id INTEGER, target_name TEXT, actor_user_id INTEGER, action TEXT, expires_at TEXT, notified INTEGER, created_at TEXT)")
+            db.execute("INSERT INTO moderation_timers(chat_id,target_user_id,target_name,actor_user_id,action,expires_at,notified,created_at) VALUES(?,?,?,?,?,?,0,?)", (100,7,"old",1,"mute","2030-01-01T00:00:00+00:00","2029-01-01T00:00:00+00:00"))
+            timer_id=replace_timer(chat_id=100,target_user_id=7,target_name="new",actor_user_id=2,action="ban",expires_at=datetime.now(timezone.utc)+timedelta(minutes=5))
+            rows=db.execute("SELECT id,action,notified FROM moderation_timers ORDER BY id").fetchall()
+        self.assertEqual(timer_id,2)
+        self.assertEqual(rows[0][1:],("mute",1))
+        self.assertEqual(rows[1][1:],("ban",0))
+        db.close()
+
     def test_founder_path_seeds_pending_intent_before_shared_confirm(self):
         from pathlib import Path
 
