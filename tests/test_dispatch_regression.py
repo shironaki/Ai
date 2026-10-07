@@ -252,7 +252,8 @@ class DispatchRegressionTests(unittest.TestCase):
         self.assertIn("_PANEL_PENDING.pop(key, None)", block)
         self.assertIn("_PANEL_CONFIRMATIONS.pop(key, None)", block)
         self.assertIn("_REPORT_PENDING.pop(key, None)", block)
-        self.assertIn("await FSMContext.current().finish()", block)
+        self.assertIn("state = FSMContext.current()", block)
+        self.assertIn("await state.finish()", block)
         self.assertIn("had_panel_state or cancel_current_action", block)
 
     def test_panel_callbacks_are_registered_and_callback_errors_are_visible(self):
