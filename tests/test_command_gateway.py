@@ -6,7 +6,8 @@ class CommandGatewayTests(unittest.TestCase):
         from services.command_gateway import is_cancel_request
         self.assertTrue(is_cancel_request("Отмени последний запрос"))
         self.assertTrue(is_cancel_request("отставить"))
-        self.assertTrue(is_cancel_request("Забудь"))
+        self.assertTrue(is_cancel_request("забудь последнее действие"))
+        self.assertFalse(is_cancel_request("забудь"))
 
     def test_unrelated_text_is_not_cancel(self):
         from services.command_gateway import is_cancel_request
