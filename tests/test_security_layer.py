@@ -88,6 +88,11 @@ class SecurityLayerTests(unittest.TestCase):
         self.assertTrue(chat.allowed)
         self.assertTrue(global_.allowed)
 
+    def test_moderation_gateway_resolves_role_in_current_chat(self):
+        source = __import__("pathlib").Path("services/moderation_gateway.py").read_text(encoding="utf-8")
+        self.assertIn("get_display_role(message.from_user.id, message.chat.id)", source)
+        self.assertNotIn("get_display_role(message.from_user.id)\\n", source)
+
     def test_pending_founder_command_is_bound_to_chat(self):
         from services.command_gateway import (
             has_pending,
