@@ -105,6 +105,15 @@ def request(method: str, path: str, value=None):
         try:
             with urllib.request.urlopen(req, timeout=8) as response:
                 return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")[:300].replace("\\n", " ")
+            except Exception:
+                pass
+            last_error = RuntimeError(f"GitHub HTTP {exc.code}: {detail}")
+            if attempt == 0:
+                time.sleep(1)
         except Exception as exc:
             last_error = exc
             if attempt == 0:
@@ -315,7 +324,7 @@ def result(command: str, message: str, source_comment_id: int | None = None) -> 
         return True
     except Exception as exc:
         with LOG.open("a", encoding="utf-8") as fh:
-            fh.write(f"CONTROL: result publish failed ({type(exc).__name__})\\n")
+            fh.write(f"CONTROL: result publish failed ({type(exc).__name__}: {exc})\\n")
         return False
 
 
