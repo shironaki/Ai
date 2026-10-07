@@ -285,3 +285,18 @@ Next required work:
 - Current code commit before this checkpoint: `25e8917514599f6cb7940ceea34ed290fb9dba2f`.
 - CI #2175 is running for that code commit; do not call it green until completion.
 - Block 7 runtime conclusion: the Termux control/update/watchdog code is statically and regression-covered for lease fencing, PID identity, singleton supervisor, update restart boundaries, rollback, stale runtime replacement and fail-closed watchdog behavior. Live physical runtime telemetry is currently not fresh: Issue #23 contains control commands but no corresponding current telemetry result. Therefore no false claim of live TEST synchronization is made. Once CI is green and a fresh telemetry response is available, the final runtime step is to verify active/standby process state and health on the physical device.
+
+
+## Protocol checkpoint — 2026-10-07 — final runtime-path correction and CI/live-control verification
+
+- Branch: `test-global-assistant-upgrade`; Main/PROD untouched.
+- Final code commit for this pass: `152a5b8d544bf3a163704ea8e509c956651120ef`.
+- Found one residual Termux supervisor logging path after the previous block-7 patch: three supervisor subprocesses still appended to repository-root `termux-autoupdate.log`. Replaced all three with the already protected `LOG_FILE`, which resolves through `BOT_DATA_DIR`.
+- Verified `QA_RUNNER` is explicitly initialized inside `start_qa_agent()`; no undefined-variable regression remains.
+- `tests/test_runtime.py::test_termux_runtime_logs_use_bot_data_dir` explicitly rejects the root log path and checks the BOT_DATA_DIR routing for supervisor/control/report.
+- CI Python integrity check run #2179 (`37575128823`) for commit `152a5b8d544bf3a163704ea8e509c956651120ef` completed **SUCCESS**. Setup, compile, import, AI-no-credentials, runtime regression tests, direct dependency audit and legacy dependency audit all passed.
+- A fresh TEST control-plane `UPDATE` and `STATUS` were submitted to Issue #23 after CI success. No new control acknowledgement/telemetry snapshot was returned during this verification window; the newest available runtime telemetry remains historical.
+- Last available physical Phone2 telemetry still showed `HEALTH OK`, `role=active`, Telegram polling `ready`, AI `ready`, but it predates the final supervisor log-path commit. Therefore physical runtime synchronization with commit `152a5b8d544bf3a163704ea8e509c956651120ef` is **not claimed**.
+- Repeated historical runtime log entries show `lease check unavailable; preserving active role`; this remains a runtime connectivity/lease-control issue, not a reason to weaken functional role/state tests. The user explicitly prioritized functional continuity over lease-owner cleanup.
+- Current branch comparison: TEST is intentionally diverged from Main; do not merge/rebase Main automatically. Main/PROD remains untouched.
+- Completion status for this pass: code audit + hidden state/role audit + runtime-path correction + CI validation are complete. The only unresolved item is fresh physical Termux telemetry/acknowledgement from the device.
