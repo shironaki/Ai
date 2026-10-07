@@ -7,6 +7,11 @@ PYTHON="${TERMUX_PYTHON:-$REPO/.venv/bin/python}"
 INTERVAL="${TERMUX_UPDATE_INTERVAL:-15}"
 REPORT_INTERVAL="${TERMUX_REPORT_INTERVAL:-300}"
 REPORT_ELAPSED=0
+DATA_DIR="${BOT_DATA_DIR:-$REPO/data/test/runtime}"
+LOG_FILE="$DATA_DIR/termux-autoupdate.log"
+BOT_LOG_FILE="$DATA_DIR/bot.log"
+QA_LOG_FILE="$DATA_DIR/qa-agent.log"
+BATTERY_LOG_FILE="$DATA_DIR/termux-battery-watchdog.log"
 CONTROL_MAX_AGE="${TERMUX_CONTROL_MAX_AGE:-45}"
 BATTERY_WATCHDOG="$REPO/scripts/termux_battery_watchdog.py"
 BATTERY_PIDFILE="$REPO/termux-battery-watchdog.pid"
@@ -65,11 +70,11 @@ if ! mkdir "$SUPERVISOR_LOCKDIR" 2>/dev/null; then
 fi
 
 echo "$$" > "$SUPERVISOR_PID"
-mkdir -p "$(dirname "$SUPERVISOR_HEARTBEAT")"
+mkdir -p "$DATA_DIR" "$(dirname "$SUPERVISOR_HEARTBEAT")"
 trap 'rm -f "$SUPERVISOR_PID"; rmdir "$SUPERVISOR_LOCKDIR" 2>/dev/null || true' EXIT
 
 report() {
-    "$PYTHON" "$REPO/scripts/termux_report.py" >> "$REPO/termux-autoupdate.log" 2>&1 || true
+    "$PYTHON" "$REPO/scripts/termux_report.py" >> "$LOG_FILE" 2>&1 || true
 }
 
 sync_control_plane_files() {
@@ -132,7 +137,7 @@ ensure_battery_watchdog() {
         fi
         rm -f "$BATTERY_PIDFILE" "$BATTERY_HASHFILE"
     fi
-    nohup "$PYTHON" "$BATTERY_WATCHDOG" >> "$REPO/termux-battery-watchdog.log" 2>&1 < /dev/null &
+    nohup "$PYTHON" "$BATTERY_WATCHDOG" >> "$BATTERY_LOG_FILE" 2>&1 < /dev/null &
     echo $! > "$BATTERY_PIDFILE"
     printf '%s\n' "$current_hash" > "$BATTERY_HASHFILE"
 }
@@ -226,7 +231,7 @@ start_qa_agent() {
     fi
     QA_RUNNER="${QA_PYTHON:-$HOME/Ai/qa_client/.venv/bin/python}"
     [ -x "$QA_RUNNER" ] || return 0
-    nohup "$QA_RUNNER" "$REPO/scripts/qa_agent.py" >> "$REPO/qa-agent.log" 2>&1 < /dev/null &
+    nohup "$QA_RUNNER" "$REPO/scripts/qa_agent.py" >> "$QA_LOG_FILE" 2>&1 < /dev/null &
     echo $! > "$QA_PIDFILE"
     printf "%s\n" "$current_hash" > "$QA_HASHFILE"
 }
