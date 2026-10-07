@@ -164,10 +164,16 @@ def read_lease() -> tuple[dict, str]:
 
     try:
         item = request("GET", f"/contents/{LEASE_PATH}?ref={LEASE_BRANCH}")
-    except Exception:
-        # Recover from the historical CRLF-created lease.json carriage-return path.
+    except Exception as primary_exc:
+        # Recover from the historical CRLF-created lease.json carriage-return path,
+        # but preserve BOTH failures so diagnostics identify the real API failure.
         legacy_path = LEASE_PATH + "%0D"
-        item = request("GET", f"/contents/{legacy_path}?ref={LEASE_BRANCH}")
+        try:
+            item = request("GET", f"/contents/{legacy_path}?ref={LEASE_BRANCH}")
+        except Exception as legacy_exc:
+            raise RuntimeError(
+                f"lease content read failed: primary={primary_exc}; legacy={legacy_exc}"
+            ) from legacy_exc
 
     encoded = item.get("content", "")
     if not encoded:
@@ -403,7 +409,7 @@ def restart_bot() -> str:
     PIDFILE.unlink(missing_ok=True)
 
     LOG.parent.mkdir(parents=True, exist_ok=True)
-    with (ROOT / "bot.log").open("a", encoding="utf-8") as log:
+    with LOG.open("a", encoding="utf-8") as log:
         process = subprocess.Popen(
             [str(PYTHON), str(BOT)],
             cwd=ROOT,
@@ -578,7 +584,7 @@ def poll_once() -> int:
         try:
             acquired, lease_message = acquire_or_renew_lease()
         except Exception as exc:
-            acquired, lease_message = False, f"lease unavailable ({type(exc).__name__})"
+            acquired, lease_message = False, f"lease unavailable ({type(exc).__name__}: {exc})"
         if not acquired:
             # A transient GitHub/HTTPS failure is not proof that the lease was
             # lost. Keep the active bot alive and let the independent lease
@@ -586,13 +592,13 @@ def poll_once() -> int:
             transient = lease_message.startswith("lease unavailable (")
             if transient:
                 with LOG.open("a", encoding="utf-8") as fh:
-                    fh.write(f"CONTROL: lease check unavailable; preserving active role ({lease_message})\\n")
+                    fh.write(f"CONTROL: lease check unavailable; preserving active role ({lease_message})\n")
             else:
                 stop_bot_for_role()
                 ROLEFILE.parent.mkdir(parents=True, exist_ok=True)
-                ROLEFILE.write_text("standby\\n", encoding="utf-8")
+                ROLEFILE.write_text("standby\n", encoding="utf-8")
                 with LOG.open("a", encoding="utf-8") as fh:
-                    fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\\n")
+                    fh.write(f"CONTROL: active lease lost; bot stopped ({lease_message})\n")
         if acquired:
             if bot_running():
                 if not WATCHDOG_PIDFILE.exists():
@@ -601,10 +607,10 @@ def poll_once() -> int:
                 health = restart_bot()
                 if health.startswith("HEALTH OK:"):
                     with LOG.open("a", encoding="utf-8") as fh:
-                        fh.write(f"CONTROL: active role repaired missing bot ({health})\\n")
+                        fh.write(f"CONTROL: active role repaired missing bot ({health})\n")
                 else:
                     with LOG.open("a", encoding="utf-8") as fh:
-                        fh.write(f"CONTROL: active role repair failed ({health})\\n")
+                        fh.write(f"CONTROL: active role repair failed ({health})\n")
         elif bot_running() and not WATCHDOG_PIDFILE.exists():
             start_watchdog()
 
@@ -623,7 +629,7 @@ def poll_once() -> int:
             release_lease()
             ROLEFILE.write_text("standby\n", encoding="utf-8")
             with LOG.open("a", encoding="utf-8") as fh:
-                fh.write(f"CONTROL: auto-failover start failed; lease released ({health})\\n")
+                fh.write(f"CONTROL: auto-failover start failed; lease released ({health})\n")
 
     last = load_state()
     comments = fetch_issue_comments(last)
@@ -664,7 +670,7 @@ def poll_once() -> int:
                     published = result(command, message.replace("\n", " "), comment_id)
                     if not published:
                         with LOG.open("a", encoding="utf-8") as fh:
-                            fh.write(f"CONTROL: migrated command {comment_id} retained for retry after result publish failure\\n")
+                            fh.write(f"CONTROL: migrated command {comment_id} retained for retry after result publish failure\n")
                         return 1
                 break
 
@@ -686,7 +692,7 @@ def poll_once() -> int:
             published = result(command, message.replace("\n", " "), comment_id)
             if not published:
                 with LOG.open("a", encoding="utf-8") as fh:
-                    fh.write(f"CONTROL: command {comment_id} retained for retry after result publish failure\\n")
+                    fh.write(f"CONTROL: command {comment_id} retained for retry after result publish failure\n")
                 return 1
         save_state(comment_id)
         touch_control_heartbeat()
@@ -705,7 +711,7 @@ def main() -> int:
         except Exception as exc:
             try:
                 with LOG.open("a", encoding="utf-8") as fh:
-                    fh.write(f"CONTROL: failed ({type(exc).__name__}: {exc})\\n")
+                    fh.write(f"CONTROL: failed ({type(exc).__name__}: {exc})\n")
             except OSError:
                 pass
         time.sleep(15)
