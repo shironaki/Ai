@@ -68,3 +68,10 @@ class ChatRoleIsolationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    def test_global_helper_target_does_not_block_admin_assignment(self):
+        from services.chat_roles import set_role, get_role
+        with patch("core.identity.resolve_role", return_value="Хелпер"), \
+             patch("core.permissions.get_display_role", return_value="Администратор"), \
+             patch("services.chat_members.get_chat_authority", return_value="Администратор"):
+            self.assertTrue(set_role(100, 7, "Модератор", 1))
+        self.assertEqual(get_role(100, 7), "Модератор")
