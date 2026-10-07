@@ -16,9 +16,9 @@ def set_paused(value: bool, scope: str = "global", chat_id=None) -> None:
     global _GLOBAL_PAUSED
 
     if scope == "global":
+        # Global stasis overlays chat-local state; it must not destroy it.
+        # When global stasis is lifted, each chat returns to its prior local state.
         _GLOBAL_PAUSED = bool(value)
-        if value:
-            _PAUSED_CHATS.clear()
         return
 
     if scope != "chat":
