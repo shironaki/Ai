@@ -425,6 +425,15 @@ class DispatchRegressionTests(unittest.TestCase):
             block = runtime_source[start:] if end == -1 else runtime_source[start:end]
             self.assertIn("await _founder_guard(", block, command)
 
+    def test_local_role_grants_require_live_chat_membership(self):
+        admin_source = (ROOT / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
+        help_source = (ROOT / "handlers" / "help" / "help.py").read_text(encoding="utf-8")
+        for source in (admin_source, help_source):
+            self.assertIn("get_chat_member(message.chat.id, user_id)", source) if "apanel.py" in source else self.assertIn("get_chat_member(message.chat.id, user_id)", source)
+            self.assertIn('{"member", "administrator", "creator", "restricted"}', source)
+        self.assertIn("Локальная роль может быть назначена только текущему участнику", admin_source)
+        self.assertIn("Локальная роль может быть назначена только текущему участнику", help_source)
+
     def test_setstatus_handler_has_runtime_admin_guard(self):
         source = (ROOT / "handlers" / "admin" / "apanel.py").read_text(encoding="utf-8")
         start = source.index("async def set_status(")
