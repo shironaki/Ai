@@ -26,6 +26,24 @@ class ModerationGatewayTests(unittest.TestCase):
         self.assertEqual(_parse_duration("заблокируй его на 2 дня"), (2, "дней"))
         self.assertIsNone(_parse_duration("замуть его"))
 
+    def test_moderation_timers_are_superseded_for_same_target(self):
+        import sqlite3
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        from services.moderation_scheduler import supersede_timers
+
+        db = sqlite3.connect(":memory:")
+        with patch("services.moderation_scheduler.connect_db", lambda _filename: contextmanager(lambda: (yield db))()):
+            db.execute("CREATE TABLE moderation_timers(id INTEGER PRIMARY KEY, chat_id INTEGER, target_user_id INTEGER, notified INTEGER)")
+            db.executemany(
+                "INSERT INTO moderation_timers(id,chat_id,target_user_id,notified) VALUES(?,?,?,?)",
+                [(1, 100, 7, 0), (2, 100, 8, 0), (3, 200, 7, 0)],
+            )
+            supersede_timers(chat_id=100, target_user_id=7)
+            rows = db.execute("SELECT id,notified FROM moderation_timers ORDER BY id").fetchall()
+        self.assertEqual(rows, [(1, 1), (2, 0), (3, 0)])
+        db.close()
+
     def test_founder_path_seeds_pending_intent_before_shared_confirm(self):
         from pathlib import Path
 
