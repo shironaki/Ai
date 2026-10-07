@@ -93,6 +93,12 @@ class SecurityLayerTests(unittest.TestCase):
         self.assertIn("get_display_role(message.from_user.id, message.chat.id)", source)
         self.assertNotIn("get_display_role(message.from_user.id)\\n", source)
 
+    def test_plain_forget_does_not_alias_to_cancel(self):
+        from services.command_gateway import is_cancel_request
+
+        self.assertFalse(is_cancel_request("забудь"))
+        self.assertTrue(is_cancel_request("забудь последнее действие"))
+
     def test_pending_founder_command_is_bound_to_chat(self):
         from services.command_gateway import (
             has_pending,
