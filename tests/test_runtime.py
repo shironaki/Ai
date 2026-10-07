@@ -729,3 +729,14 @@ class RuntimeRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    def test_termux_runtime_logs_use_bot_data_dir(self):
+        supervisor = (ROOT / "scripts" / "termux_supervisor.sh").read_text(encoding="utf-8")
+        control = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
+        report = (ROOT / "scripts" / "termux_report.py").read_text(encoding="utf-8")
+        self.assertIn('DATA_DIR="${BOT_DATA_DIR:-$REPO/data/test/runtime}"', supervisor)
+        self.assertIn('LOG_FILE="$DATA_DIR/termux-autoupdate.log"', supervisor)
+        self.assertNotIn("$REPO/termux-autoupdate.log", supervisor)
+        self.assertNotIn("$REPO/qa-agent.log", supervisor)
+        self.assertNotIn("$REPO/termux-battery-watchdog.log", supervisor)
+        self.assertIn('DATA_DIR = Path(os.getenv("BOT_DATA_DIR"', control)
+        self.assertIn('DATA_DIR = Path(os.getenv("BOT_DATA_DIR"', report)
