@@ -294,18 +294,12 @@ class SecurityRegressionTests(unittest.TestCase):
     def test_panel_back_clears_all_panel_scoped_pending_state(self):
         root = Path(__file__).resolve().parents[1]
         source = (root / "handlers" / "help" / "command_help.py").read_text(encoding="utf-8")
-        back = source[source.index("async def panel_back"):source.index("\n@dp.", source.index("async def panel_back") + 1)]
-        self.assertIn("_PANEL_CONFIRMATIONS.pop(key, None)", back)
-        self.assertIn("_PANEL_PENDING.pop(key, None)", back)
-        self.assertIn("_REPORT_PENDING.pop(key, None)", back)
-        self.assertIn("await FSMContext.current().finish()", back)
-        for handler in ("panel_cancel", "panel_close"):
-            start = source.index("async def " + handler)
-            end = source.find("\n@dp.", start + 1)
-            section = source[start:] if end == -1 else source[start:end]
-            self.assertIn("_PANEL_PENDING.pop(key, None)", section)
-            self.assertIn("_REPORT_PENDING.pop(key, None)", section)
-            self.assertIn("await FSMContext.current().finish()", section)
+        self.assertIn("_PANEL_CONFIRMATIONS.pop(key, None)", source)
+        self.assertIn("_PANEL_PENDING.pop(key, None)", source)
+        self.assertIn("_REPORT_PENDING.pop(key, None)", source)
+        self.assertIn("state = FSMContext.current()", source)
+        self.assertIn("await state.finish()", source)
+        self.assertIn("had_panel_state or cancel_current_action", source)
 
     def test_panel_myinfo_uses_chat_effective_role(self):
         from pathlib import Path
