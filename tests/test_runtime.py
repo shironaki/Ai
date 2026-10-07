@@ -693,7 +693,7 @@ class RuntimeRegressionTests(unittest.TestCase):
 
     def test_termux_control_polling_is_bounded(self):
         source = (ROOT / "scripts" / "termux_control.py").read_text(encoding="utf-8")
-        self.assertIn("for attempt in range(2):", source)
+        self.assertIn('attempts = 2 if method.upper() == "GET" else 1', source)
         self.assertIn("urlopen(req, timeout=8)", source)
         self.assertIn("for page in range(1, 4):", source)
 
