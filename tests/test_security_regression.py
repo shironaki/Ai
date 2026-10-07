@@ -299,6 +299,11 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("_PANEL_PENDING.pop(key, None)", block)
         self.assertIn("_REPORT_PENDING.pop(key, None)", block)
         self.assertIn("await FSMContext.current().finish()", block)
+        for handler in ("async def panel_cancel", "async def panel_close"):
+            section = source[source.index(handler):source.find("\n@dp.", source.index(handler) + 1)]
+            self.assertIn("_PANEL_PENDING.pop(key, None)", section)
+            self.assertIn("_REPORT_PENDING.pop(key, None)", section)
+            self.assertIn("await FSMContext.current().finish()", section)
 
     def test_panel_myinfo_uses_chat_effective_role(self):
         from pathlib import Path
