@@ -306,6 +306,12 @@ async def panel_back(call: types.CallbackQuery):
         return
     key = _panel_key(call)
     _PANEL_CONFIRMATIONS.pop(key, None)
+    _PANEL_PENDING.pop(key, None)
+    try:
+        from handlers.help.help import _REPORT_PENDING
+        _REPORT_PENDING.pop(key, None)
+    except Exception:
+        pass
     history = _PANEL_HISTORY.get(key) or []
     if history:
         target = history.pop()
