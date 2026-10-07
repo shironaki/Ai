@@ -50,6 +50,27 @@ def schedule(*, chat_id: int, target_user_id: int, target_name: str, actor_user_
         return int(cur.lastrowid)
 
 
+def replace_timer(*, chat_id: int, target_user_id: int, target_name: str, actor_user_id: int, action: str, expires_at: datetime) -> int:
+    """Atomically supersede older timers and create the new active timer."""
+    ensure_table()
+    now = datetime.now(timezone.utc).isoformat()
+    with connect_db("users.db") as db:
+        db.execute(
+            "UPDATE moderation_timers SET notified=1 "
+            "WHERE chat_id=? AND target_user_id=? AND notified=0",
+            (chat_id, target_user_id),
+        )
+        cur = db.execute(
+            """
+            INSERT INTO moderation_timers(
+                chat_id,target_user_id,target_name,actor_user_id,action,expires_at,notified,created_at
+            ) VALUES(?,?,?,?,?,?,0,?)
+            """,
+            (chat_id,target_user_id,target_name,actor_user_id,action,expires_at.astimezone(timezone.utc).isoformat(),now),
+        )
+        return int(cur.lastrowid)
+
+
 def supersede_timers(*, chat_id: int, target_user_id: int) -> None:
     """Invalidate older pending moderation timers for the same target/chat."""
     ensure_table()
