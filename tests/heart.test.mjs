@@ -67,6 +67,46 @@ test("a group is not interrupted: only an addressed message is answered", async 
   assert.equal(body.messages.at(-1).content, "привет");
 });
 
+test("/help lists only what the heart really does, and never asks the model", async () => {
+  reset();
+  const h = heart();
+  await h.onMessage(message("/help"));
+  const text = sdk().sent[0].text;
+  assert.equal(sdk().fetches.length, 0, "no provider call for a command list");
+  assert.match(text, /Что я умею/);
+  assert.match(text, /\/status/);
+  // The two commands the model invented on the live bot.
+  assert.doesNotMatch(text, /\/settings/);
+  assert.doesNotMatch(text, /\/feedback/);
+});
+
+test("an unknown slash command is named as unknown, without a provider call", async () => {
+  reset();
+  const h = heart();
+  await h.onMessage(message("/command2"));
+  assert.equal(sdk().fetches.length, 0);
+  assert.match(sdk().sent[0].text, /такой команды у меня нет/);
+  assert.match(sdk().sent[0].text, /\/help/);
+});
+
+test("in a group an unknown slash command is not answered at all", async () => {
+  reset();
+  const h = heart();
+  const result = await h.onMessage(message("/otherbot", { chat: -10, type: "supergroup" }));
+  assert.equal(result.ignored, true);
+  assert.equal(sdk().sent.length, 0);
+});
+
+test("a bare word names the ability, so the model never invents a profile", async () => {
+  reset();
+  const h = heart();
+  const result = await h.onMessage(message("Профиль"), KEY);
+  assert.equal(result.ok, true);
+  assert.equal(sdk().fetches.length, 0, "no invented profile from the model");
+  assert.equal(sdk().sent.length, 1);
+  assert.match(sdk().sent[0].text, /Юи|профил/i);
+});
+
 test("a refusal from the provider is said out loud, and the owner is told too", async () => {
   reset();
   sdk().fetchQueue.push(Error("network is down"));

@@ -132,6 +132,31 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
   }
 
+  /**
+   * Список того, что сердце действительно делает. Составляется здесь, а не
+   * моделью: на вопрос «/help» модель однажды перечислила /settings и
+   * /feedback, которых нет, — и человек пошёл их вводить.
+   */
+  function helpLines() {
+    const lines = [
+      `${NAME}. Что я умею:`,
+      "",
+      "• поговорить — пишите как есть, без команд;",
+      "• помнить, что вы рассказываете;",
+      "• /status — как я себя чувствую и что сломано;",
+      "• /start — поздороваться заново.",
+    ];
+    if (abilities.open()) {
+      lines.push("", `${SISTER} рядом: профиль, задания, игры и предупреждения — скажите словами, я передам.`);
+    }
+    return lines.join("\n");
+  }
+
+  /** Незнакомая команда — это не повод идти к модели и выдумывать ответ. */
+  function unknownCommandText() {
+    return `${NAME}: такой команды у меня нет. Я не исполняю команды — поговорите со мной словами. /help — что я умею.`;
+  }
+
   async function greeting(chatId, dry = false) {
     const lines = [
       `${NAME}. Я рядом.`,
@@ -228,7 +253,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
 
     if (/^\/start(?:@\w+)?(?:\s|$)/iu.test(text)) return greeting(chatId, dry);
-    if (/^\/(?:aidiag|диагностика)(?:@\w+)?(?:\s|$)/iu.test(text)) return diagnostic(chatId, ctx, actorId, dry);
+    if (/^\/help(?:@\w+)?(?:\s|$)/iu.test(text)) return say(chatId, helpLines(), { dry });
+    if (/^\/(?:status|aidiag|диагностика)(?:@\w+)?(?:\s|$)/iu.test(text)) return diagnostic(chatId, ctx, actorId, dry);
+    // Любая другая косая черта: команда — это не разговор. В группе молчим,
+    // чтобы не отвечать за чужие боты; в личке честно говорим, что такой нет.
+    const slash = text.match(/^\/([A-Za-zА-Яа-яЁё0-9_]+)(?:@\w+)?(?:\s|$)/u);
+    if (slash && !["ai"].includes(slash[1].toLowerCase())) {
+      if (["group", "supergroup"].includes(message?.chat?.type)) return { ignored: true, reason: "unknown_command_in_group" };
+      return say(chatId, unknownCommandText(), { dry });
+    }
 
     const inGroup = ["group", "supergroup"].includes(message?.chat?.type);
     const addressed = !inGroup || /^(?:\/ai|аи[,\s:])/iu.test(text) || message?.reply_to_message?.from?.is_bot === true;
