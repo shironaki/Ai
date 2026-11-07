@@ -1,0 +1,109 @@
+name: Heart
+
+# One workflow, two jobs: a test that proves the route without touching
+# Telegram, and a publish that only runs when asked for explicitly.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "smoke — проверка без отправки; deploy — публикация"
+        type: choice
+        required: true
+        default: smoke
+        options: [smoke, deploy]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Local checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm run ci
+
+  smoke:
+    name: Handler runs without sending
+    if: ${{ github.event_name == 'push' || inputs.mode == 'smoke' }}
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run /start in a no-side-effects context
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          if [ -z "$TGCLOUD_TOKEN" ]; then
+            echo "::error::Add the heart Serverless CLI token as secret TGCLOUD_HEART_TOKEN."; exit 1
+          fi
+          npx --yes @tgcloud/cli@0.2.0 run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }'
+      - name: Inspect deployed state (read-only)
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: npx --yes @tgcloud/cli@0.2.0 fetch
+
+  deploy:
+    name: Publish the heart
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy' }}
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: heart-serverless
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify token
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          if [ -z "$TGCLOUD_TOKEN" ]; then
+            echo "::error::Add the heart Serverless CLI token as secret TGCLOUD_HEART_TOKEN."; exit 1
+          fi
+      # The provider key and the owner's numeric ID travel into the deployed
+      # module: this platform has no environment variables, and AI is a public
+      # repository, so the ID is a secret here, not a line in config.js.
+      - name: Inject the provider key and the owner ID for this publish only
+        env:
+          AI_PROVIDER_KEY: ${{ secrets.AI_PROVIDER_KEY }}
+          OWNER_TG_ID: ${{ secrets.OWNER_TG_ID }}
+        run: |
+          if [ -z "$AI_PROVIDER_KEY" ]; then
+            echo "::error::Add the provider key as secret AI_PROVIDER_KEY."; exit 1
+          fi
+          if [ -z "$OWNER_TG_ID" ]; then
+            echo "::warning::OWNER_TG_ID is not set: the heart will answer, but fault reports will wait in the queue."
+          fi
+          node -e '
+            const fs = require("node:fs");
+            const file = "tgcloud/lib/secrets.js";
+            const key = JSON.stringify(process.env.AI_PROVIDER_KEY);
+            const owner = JSON.stringify(process.env.OWNER_TG_ID || "");
+            let text = fs.readFileSync(file, "utf8");
+            text = text.replace(/export const AI_API_KEY = .*;/u, `export const AI_API_KEY = ${key};`);
+            text = text.replace(/export const OWNER_TG_ID = .*;/u, `export const OWNER_TG_ID = ${owner};`);
+            fs.writeFileSync(file, text);
+          '
+      - name: Re-check deployed state
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: npx --yes @tgcloud/cli@0.2.0 fetch
+      - name: Publish
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: npx --yes @tgcloud/cli@0.2.0 push handlers/message lib/ai-character lib/ai-service lib/dialogue-policy lib/time lib/config lib/secrets lib/store lib/bridge lib/abilities lib/events lib/sibling lib/notices lib/heart schema
+      - name: Restore the empty secret slots
+        if: always()
+        run: git checkout -- tgcloud/lib/secrets.js

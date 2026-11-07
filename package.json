@@ -1,0 +1,13 @@
+{
+  "name": "ai-heart",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Сердце Аи: характер, память, провайдер и решения. Возможности — в отдельном боте.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs",
+    "test": "node --test --test-timeout=120000",
+    "ci": "npm run check && npm test"
+  }
+}
