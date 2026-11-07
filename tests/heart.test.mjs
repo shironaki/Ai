@@ -5,7 +5,7 @@ import { api as sdkApi, db as sdkDb, fetch as sdkFetch } from "./fixtures/sdk-st
 
 register(new URL("./fixtures/sdk-loader.mjs", import.meta.url));
 
-const { createHeart } = await import("../tgcloud/lib/heart.js");
+const { createHeart, pauseFor, rightsFrames } = await import("../tgcloud/lib/heart.js");
 const { createBridge } = await import("../tgcloud/lib/bridge.js");
 const { encodeEnvelope, decodeEnvelope, matchPhrase, createAbilities } = await import("../tgcloud/lib/abilities.js");
 
@@ -65,6 +65,58 @@ test("a group is not interrupted: only an addressed message is answered", async 
   // The prefix is a way to speak to her, not part of the sentence.
   const body = JSON.parse(sdk().fetches.at(-1).options.body);
   assert.equal(body.messages.at(-1).content, "привет");
+});
+
+test("the relationship is real: it shapes the reply and is spoken in words, not numbers", async () => {
+  reset();
+  const h = heart();
+  // A fresh acquaintance: the answer is honest about not knowing yet.
+  await h.onMessage(message("/ai relationship"), KEY);
+  assert.match(sdk().sent[0].text, /присматриваемся|отношени/i);
+  assert.doesNotMatch(sdk().sent[0].text, /\d/, "no numbers are shown to a person");
+
+  // The owner of the relationship can set it; the reply follows.
+  await h.policy.setAxes({ actorId: 7, userId: 5, sympathy: 80, trust: 70, respect: 60 });
+  sdk().sent.length = 0; sdk().fetches.length = 0;
+  await h.onMessage(message("как ты ко мне относишься?"), KEY);
+  assert.match(sdk().sent[0].text, /близост|нравишься/i);
+  assert.match(sdk().sent[0].text, /доверяю/i);
+  assert.equal(sdk().fetches.length, 0, "the relationship is data, not a model guess");
+});
+
+test("talking to her moves the relationship forward, and the character sees it", async () => {
+  reset();
+  const h = heart();
+  const before = (await h.policy.state(5)).score;
+  await h.onMessage(message("привет"), KEY);
+  const after = (await h.policy.state(5)).score;
+  assert.ok(after >= before, "a delivered conversation is recorded");
+
+  // The character profile receives the relationship, so tone can change at all.
+  sdk().sent.length = 0; sdk().fetches.length = 0;
+  await h.policy.setAxes({ actorId: 7, userId: 5, sympathy: 90, trust: 90, respect: 90 });
+  await h.onMessage(message("привет"), KEY);
+  const body = JSON.parse(sdk().fetches[0].options.body);
+  assert.match(body.messages[0].content, /Отношение очень хорошее|доверительн/i);
+});
+
+test("a cold relationship is allowed to stay silent, and that is not a fault", async () => {
+  reset();
+  // random() печатает 0 — значит «да, промолчать», и тест не гадает на монетке.
+  const h = heart({}, { random: () => 0 });
+  await h.policy.setAxes({ actorId: 7, userId: 5, sympathy: -50, trust: -50, respect: -50 });
+  let silent = 0;
+  for (let i = 0; i < 12; i++) {
+    const result = await h.onMessage(message("ну что"), KEY);
+    if (result.reason === "deliberate_silence") silent++;
+  }
+  assert.ok(silent > 0, "discretion exists at all");
+  assert.equal(sdk().fetches.length + silent, 12, "every message was either answered or deliberately ignored");
+  // The owner is never ignored by their own bot.
+  reset();
+  await h.policy.setAxes({ actorId: 7, userId: 7, sympathy: -100, trust: -100, respect: -100 }).catch(() => {});
+  const ownerReply = await h.onMessage(message("привет", { id: 7 }), KEY);
+  assert.notEqual(ownerReply.reason, "deliberate_silence");
 });
 
 test("/help lists only what the heart really does, and never asks the model", async () => {
@@ -396,4 +448,82 @@ test("the deployed entrypoint routes through the heart and never throws", async 
 
   const broken = await handle(null, {});
   assert.equal(broken.ignored, true);
+});
+
+test("VIP answers faster only when the status is confirmed, not because a word says so", async () => {
+  reset();
+  const limits = { AI_MIN_INTERVAL_MS: 1500, AI_VIP_INTERVAL_MS: 700 };
+  // Мост закрыт: фактов нет, значит и ускорения нет.
+  assert.equal(pauseFor({ facts: null, config: limits }), 1500);
+  // Сестра подтвердила VIP — пауза вдвое короче.
+  assert.equal(pauseFor({ facts: { vip: true }, config: limits }), 700);
+  // Слово в роли или в переписке статусом не является.
+  assert.equal(pauseFor({ facts: { vip: false, role: "VIP" }, config: limits }), 1500);
+
+  // И сердце действительно ждёт: второе сообщение в ту же секунду придержано.
+  const h = heart({ AI_MIN_INTERVAL_MS: 1500 }, { now: () => 1_000_000 });
+  await h.onMessage(message("привет"), KEY);
+  await h.onMessage(message("и ещё"), KEY);
+  assert.match(sdk().sent.at(-1).text, /секунду/);
+});
+
+test("«Вы и Аи» is one card in words, and two settings are said out loud", async () => {
+  reset();
+  const h = heart();
+  await h.onMessage(message("/ai"), KEY);
+  const card = sdk().sent[0].text;
+  assert.match(card, /Вы и Аи/);
+  assert.match(card, /только начали разговаривать/);
+  assert.doesNotMatch(card, /\d/, "никаких шкал и чисел на карточке");
+
+  // «/ai привет» — разговор, а не справка: вопрос человека важнее карточки.
+  sdk().sent.length = 0; sdk().fetches.length = 0;
+  await h.onMessage(message("/ai привет, как дела"), KEY);
+  assert.equal(sdk().fetches.length, 1);
+  assert.doesNotMatch(sdk().sent[0].text, /Вы и Аи/);
+
+  // Имя — просьба, а не команда: она запоминается и попадает в характер.
+  await h.onMessage(message("зови меня Алекс"), KEY);
+  assert.match(sdk().sent.at(-1).text, /Алекс/);
+  sdk().sent.length = 0; sdk().fetches.length = 0;
+  await h.onMessage(message("привет"), KEY);
+  const body = JSON.parse(sdk().fetches[0].options.body);
+  assert.match(body.messages[0].content, /Обращайся к собеседнику по имени «Алекс»/);
+
+  // Длина ответа — тоже пожелание словами, а не меню.
+  await h.onMessage(message("говори короче"), KEY);
+  assert.match(sdk().sent.at(-1).text, /коротко/);
+  assert.equal((await h.personal.settings(5)).length, "кратко");
+
+  sdk().sent.length = 0;
+  await h.onMessage(message("/ai профиль"), KEY);
+  assert.match(sdk().sent[0].text, /Ты для меня — Алекс/);
+  assert.match(sdk().sent[0].text, /Отвечаю коротко/);
+});
+
+test("the founder is recognised without a bridge, and a role from the sister is a fact, not a guess", async () => {
+  reset();
+  // Хозяин — это не «первый, кто написал»: ID из конфига узнаётся сразу.
+  const h = heart();
+  await h.onMessage(message("привет", { id: 7 }), KEY);
+  let body = JSON.parse(sdk().fetches.at(-1).options.body);
+  assert.match(body.messages[0].content, /создатель и хозяин|хозяин/);
+
+  // Чужой не получает слова о хозяине.
+  await h.onMessage(message("привет", { id: 9 }), KEY);
+  body = JSON.parse(sdk().fetches.at(-1).options.body);
+  assert.doesNotMatch(body.messages[0].content, /создатель и хозяин/);
+
+  // Роль и уровень приходят от сестры, а не угадываются по словам в чате.
+  const admin = rightsFrames({ role: "Администратор", level: 30 }).join("\n");
+  assert.match(admin, /администратор этого чата/i);
+  assert.match(admin, /не обещай результат/);
+  // Модератор — рабочие замечания, но не власть администратора.
+  const moderator = rightsFrames({ role: "Модератор", level: 20 }).join("\n");
+  assert.match(moderator, /модератор/i);
+  assert.doesNotMatch(moderator, /администратор этого чата/i);
+  // Обычный участник не получает ни одной рамки: власти нет — слов о власти тоже.
+  assert.deepEqual(rightsFrames({ role: "Игрок", level: 10 }), []);
+  // Нет ответа сестры — нет фактов. Никакого «наверное, админ».
+  assert.deepEqual(rightsFrames(null), []);
 });

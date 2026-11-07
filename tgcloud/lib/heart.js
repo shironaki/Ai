@@ -8,6 +8,44 @@ import { createAbilities, matchPhrase } from "./abilities.js";
 import { createEvents } from "./events.js";
 import { describeSister, missingAbilityText } from "./sibling.js";
 import { createNotices } from "./notices.js";
+import { createPersonal, addressRequest, lengthRequest } from "./personal.js";
+
+/**
+ * Сколько ждать между двумя запросами к провайдеру.
+ *
+ * VIP — это подтверждённый сестрой факт (`vip: true`), а не слово «VIP» в
+ * роли или в переписке. Нет моста — нет факта, значит обычная пауза: сердце
+ * не ускоряется по обещанию с витрины.
+ */
+export function pauseFor({ facts = null, config = CONFIG } = {}) {
+  const base = Number(config.AI_MIN_INTERVAL_MS) || 0;
+  if (!facts?.vip) return base;
+  const faster = Number(config.AI_VIP_INTERVAL_MS);
+  return Number.isFinite(faster) && faster >= 0 ? faster : base;
+}
+
+/**
+ * Права собеседника — рамки характера, а не новые полномочия.
+ *
+ * Уровень приходит от сестры (каталог ролей: 20 — модератор, 30 —
+ * администратор, 100 — хранитель). Сердце по нему решает, *как* говорить, и
+ * ни одного действия не обещает: исполняет сестра и подтверждает ответом.
+ * Нет фактов — нет рамок: выдумывать чужую власть запрещено.
+ */
+export function rightsFrames(facts = null) {
+  const frames = [];
+  const level = Number(facts?.level) || 0;
+  if (level >= 100) {
+    frames.push("Полномочия собеседника служебные и выше чата: не называй их вслух и не объясняй ими близость.");
+  } else if (level >= 30) {
+    frames.push("Собеседник — администратор этого чата: его распоряжения по порядку здесь имеют вес, отвечай как равному. Сама ты не исполняешь: действие подтверждает сестра, поэтому не обещай результат, которого нет в ответе.");
+  } else if (level >= 20) {
+    frames.push("Собеседник — модератор этого чата: его замечания о порядке принимай как рабочие, без лести.");
+  }
+  if (facts?.vip) frames.push("У собеседника подтверждённый VIP: говори персональнее и внимательнее к его вкладу, но не превращай статус в лесть, согласие или права.");
+  if (Number(facts?.warns) > 0) frames.push(`У собеседника ${Number(facts.warns)} активных предупреждений: не попрекай этим, не угрожай — это работа модерации, а не характера.`);
+  return frames;
+}
 
 /**
  * The heart: character, memory, provider and the decision what to answer.
@@ -16,7 +54,7 @@ import { createNotices } from "./notices.js";
  * deployment and is reached only through `abilities`. The heart is useful alone
  * and better with a sibling: that is the whole point of the split.
  */
-export function createHeart({ db = null, api = null, fetchImpl = null, now = () => Date.now(), config = CONFIG } = {}) {
+export function createHeart({ db = null, api = null, fetchImpl = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
   const store = createHeartStore({ db, now });
   // A deployment that predates these keys still gets sensible names, never
   // "undefined" in a sentence addressed to a person.
@@ -74,6 +112,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     },
   });
 
+  const personal = createPersonal({ store, now });
+
   const ai = createAiService({
     fetchImpl,
     getApiKey: (ctx) => ctx?.env?.AI_PROVIDER_KEY ?? ctx?.env?.GROQ_API_KEY ?? AI_API_KEY,
@@ -86,16 +126,39 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const items = Array.isArray(facts?.items) ? facts.items.slice(-10) : [];
       return items.length ? `Что известно о собеседнике:\n${items.map(item => `- ${item}`).join("\n")}` : "";
     },
-    responseProfile: async ({ userId, isPrivate = true }) => {
-      const settings = (await store.get(`heart:style:${userId}`)) ?? {};
-      const character = buildCharacterProfile({ settings, isPrivate, now });
+    responseProfile: async ({ userId, chatId = null, isPrivate = true }) => {
+      const settings = await personal.settings(userId);
+      // Отношения и первое впечатление — часть характера, а не отдельный экран.
+      let relationship = null;
+      let impression = null;
+      if (policy) {
+        try { relationship = await policy.state(userId); } catch { relationship = null; }
+        try { impression = await policy.impression(userId); } catch { impression = null; }
+      }
+      // Факты от сестры (VIP, роль, варны) — только если мост открыт; иначе
+      // ответ строится на том, что сердце знает само.
+      const facts = chatId == null ? null : await abilities.context({ actor: userId, chat: chatId }).catch(() => null);
+      const character = buildCharacterProfile({
+        settings: { ...settings, address: settings.address ?? "" }, isPrivate, now,
+        relationship: relationship ? { score: relationship.score } : {},
+        impression: impression ?? {},
+        familiarBond: Boolean(facts?.owner) || owner(userId),
+      });
+      const frames = [];
+      frames.push(...rightsFrames(facts));
       return {
-        instruction: character.instruction,
+        instruction: [character.instruction, ...frames].join("\n"),
         temperature: Number.isFinite(settings.temperature) ? settings.temperature : undefined,
         maxTokens: Number.isFinite(settings.maxTokens) ? settings.maxTokens : undefined,
       };
     },
     minimumIntervalMs: config.AI_MIN_INTERVAL_MS,
+    // Перк «отвечает быстрее» действует только по подтверждённому статусу;
+    // мост закрыт — работает обычная пауза, а не вера на слово.
+    intervalFor: async ({ userId, chatId }) => pauseFor({
+      facts: await abilities.context({ actor: userId, chat: chatId }).catch(() => null),
+      config,
+    }),
     now,
   });
 
@@ -112,7 +175,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return String(AI_API_KEY ?? "").trim();
   }
 
-  const policy = store.available ? createDialoguePolicy({ store, ownerId: config.OWNER_TG_ID, now }) : null;
+  /**
+   * Отношения принадлежат сердцу, и только ему.
+   *
+   * Раньше файл политики лежал рядом и не вызывался: симпатия, доверие,
+   * первое впечатление и охлаждение считались, но в ответ не попадали, а
+   * экран отношений у сестры читал чужую базу. Теперь единственный источник —
+   * `ai:relationship:*` здесь, и он же решает, как звучит ответ.
+   */
+  const policy = store.available ? createDialoguePolicy({ store, ownerId: OWNER, now, random }) : null;
   const owner = (id) => OWNER > 0 && String(id) === String(OWNER);
 
   // One place that sends, so every path reports the same shape: what was said,
@@ -152,6 +223,63 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return lines.join("\n");
   }
 
+  /**
+   * Отношения — словами, а не таблицей. Числа нужны коду (VIP, тон, частота
+   * ответов), человеку нужен ответ на вопрос «как ты ко мне относишься».
+   */
+  function relationshipText({ score = 0, trust = 0, respect = 0 } = {}) {
+    const level = score >= 75 ? "close" : score >= 25 ? "warm" : score >= -25 ? "first" : "cold";
+    const said = {
+      close: "Между нами настоящая близость. Я замечаю, когда тебя долго нет, и радуюсь, когда ты возвращаешься.",
+      warm: "Ты мне нравишься. Мне спокойно и интересно с тобой, и я замечаю больше, чем говорю вслух.",
+      first: "Мы ещё присматриваемся друг к другу. Я помню, что ты рассказывал, и не притворяюсь, будто знаю больше.",
+      cold: "Между нами прохладно, и я не стану это скрывать. Но я не мщу и не унижаю: разговор остаётся честным.",
+    }[level];
+    const detail = [
+      trust >= 50 ? "Я тебе доверяю." : trust <= -25 ? "Доверия пока мало." : "",
+      respect >= 50 ? "И уважаю то, что ты делаешь." : "",
+    ].filter(Boolean).join(" ");
+    return `${said}${detail ? ` ${detail}` : ""}`;
+  }
+
+  async function answerRelationship({ chatId, actorId, dry }) {
+    if (!policy) return say(chatId, "Я пока не умею помнить отношения: рядом нет хранилища.", { dry });
+    let state = null;
+    try { state = await policy.state(actorId); } catch { state = null; }
+    if (!state) return say(chatId, "Не могу заглянуть в свои записи — попробуй позже.", { dry });
+    if (state.blocked) return say(chatId, "Сейчас я не разговариваю: это не каприз, а решение, которое можно обсудить с владельцем.", { dry });
+    return say(chatId, relationshipText(state), { dry });
+  }
+
+  /**
+   * «Вы и Аи» — то же, что раньше называлось карточкой отношений, только
+   * словами и без анкеты. Экран один, настроек две, обе произносятся вслух.
+   */
+  async function profileCard({ chatId, actorId, dry }) {
+    const settings = (await personal.settings(actorId).catch(() => ({}))) ?? {};
+    let relationship = "";
+    if (policy) {
+      try {
+        const state = await policy.state(actorId);
+        relationship = state?.blocked
+          ? "Сейчас я не разговариваю: это не каприз, а решение, которое можно обсудить с владельцем."
+          : relationshipText(state);
+      } catch { relationship = ""; }
+    }
+    const [days, facts] = await Promise.all([
+      personal.daysWith(actorId).catch(() => ({ days: 0 })),
+      store.get(`heart:facts:${actorId}`).catch(() => null),
+    ]);
+    const memories = Array.isArray(facts?.items) ? facts.items.length : 0;
+    return say(chatId, personal.card({
+      address: settings.address ?? "",
+      days: days.days,
+      relationship,
+      memories,
+      length: settings.length ?? "обычно",
+    }), { dry });
+  }
+
   /** Незнакомая команда — это не повод идти к модели и выдумывать ответ. */
   function unknownCommandText() {
     return `${NAME}: такой команды у меня нет. Я не исполняю команды — поговорите со мной словами. /help — что я умею.`;
@@ -175,6 +303,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const lines = [
       "🧪 Проверка сердца",
       `Провайдер: ${probe.ok ? "отвечает" : `нет — ${probe.code ?? "ошибка"}`}`,
+      `Хозяин: ${OWNER > 0 ? (owner(actorId) ? "это ты — узнаю" : "задан") : "не задан — не узнаю никого"}`,
       `Модель: ${config.AI_MODEL}`,
       `Память: ${store.available ? "хранилище доступно" : "хранилища нет — отвечаю без истории"}`,
       `Способности: ${abilities.open() ? "мост открыт" : "мост закрыт — работаю одна"}`,
@@ -253,7 +382,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
 
     if (/^\/start(?:@\w+)?(?:\s|$)/iu.test(text)) return greeting(chatId, dry);
+    // Карточку открывает пустое /ai или /ai профиль. «/ai привет, как дела» —
+    // это разговор, а не команда: иначе вопрос человека превращался в справку.
+    if (/^\/ai(?:@\w+)?(?:\s+(?:профиль|profile|карточка))?\s*$/iu.test(text)) {
+      return profileCard({ chatId, actorId, dry });
+    }
     if (/^\/help(?:@\w+)?(?:\s|$)/iu.test(text)) return say(chatId, helpLines(), { dry });
+    if (/^\/(?:ai(?:@\w+)?\s+)?(?:relationship|отношени[ея]|отношения)(?:@\w+)?(?:\s|$)/iu.test(text)) {
+      return answerRelationship({ chatId, actorId, dry });
+    }
     if (/^\/(?:status|aidiag|диагностика)(?:@\w+)?(?:\s|$)/iu.test(text)) return diagnostic(chatId, ctx, actorId, dry);
     // Любая другая косая черта: команда — это не разговор. В группе молчим,
     // чтобы не отвечать за чужие боты; в личке честно говорим, что такой нет.
@@ -270,8 +407,42 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const prompt = text.replace(/^\/ai(?:@\w+)?\s*/iu, "").replace(/^аи[,\s:]+/iu, "").trim();
     if (!prompt) return { ignored: true };
 
+    if (/^(?:как\s+ты\s+(?:ко\s+мне\s+)?(?:относишься|отношение)|что\s+ты\s+ко\s+мне\s+чувствуешь|мы\s+(?:друзья|близки))\??$/iu.test(prompt)) {
+      return answerRelationship({ chatId, actorId, dry });
+    }
+
+    // Настройки — не команды: «зови меня …», «говори короче». Только в личке:
+    // в группе человек говорит с Аи, а не настраивает её для всех.
+    const isPrivateChat = String(chatId) === String(actorId);
+    if (isPrivateChat && !dry) {
+      const wanted = addressRequest(prompt);
+      if (wanted) {
+        const saved = await personal.setAddress(actorId, wanted).catch(() => ({ ok: false }));
+        return say(chatId, saved.ok
+          ? `Хорошо, буду обращаться к тебе «${wanted}». Если передумаешь — скажи «зови меня …» ещё раз.`
+          : "Имя не запомнилось: попробуй короче, без символов.", { dry });
+      }
+      const length = lengthRequest(prompt);
+      if (length) {
+        const saved = await personal.setLength(actorId, length).catch(() => ({ ok: false }));
+        return say(chatId, saved.ok
+          ? `Договорились, отвечаю ${({ кратко: "коротко", обычно: "обычно", подробно: "подробно" })[length]}.`
+          : "Не запомнилось — повторю попытку в следующий раз.", { dry });
+      }
+    }
+
     const viaAbility = await tryAbility({ text: prompt, chatId, actorId, chatType: message?.chat?.type ?? "private", dry });
     if (viaAbility) return { ok: true, action: "ability" };
+
+    // Она имеет право не ответить: это не отказ и не поломка, а часть
+    // характера. В частном разговоре и по делу молчание не применяется.
+    if (policy && !dry) {
+      try {
+        if (await policy.shouldIgnore({ userId: actorId, chatId, text: prompt })) {
+          return { ok: true, ignored: true, reason: "deliberate_silence" };
+        }
+      } catch { /* политика не должна глушить разговор */ }
+    }
 
     const answer = await ai.generateReply({
       userId: actorId,
@@ -281,6 +452,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       ctx,
       apiKey: await resolveKey(ctx),
     });
+    if (answer.ok && policy && !dry) {
+      // Разговор состоялся — отношения сдвигаются. Записываем только после
+      // доставки: недоставленный ответ не делает человека ближе.
+      try { await policy.recordCommunication({ userId: actorId, chatId }); } catch { /* следующий ответ попробует снова */ }
+    }
     if (!answer.ok) {
       const reason = PROVIDER_REASONS[answer.code];
       if (reason && !dry) {
@@ -320,6 +496,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     abilities,
     ai,
     policy,
+    personal,
     /** For tests and /aidiag: the same object the handler uses. */
     config,
   });

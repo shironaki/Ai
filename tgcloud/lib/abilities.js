@@ -17,6 +17,7 @@ import { createBridge } from "./bridge.js";
  */
 export const BUS_PREFIX = "AI-BRIDGE1 ";
 const CATALOG_TOOL = "__catalog";
+const CONTEXT_TOOL = "__context";
 
 export function encodeEnvelope(value) {
   return BUS_PREFIX + JSON.stringify(value);
@@ -36,6 +37,7 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   const open = () => bridge.enabled && String(channelId ?? "") !== "" && String(channelId) !== "0";
   const pending = new Map();
   const catalogCache = { at: 0, tools: [] };
+  const contextCache = new Map();
 
   async function post(line) {
     if (typeof send === "function") return send(line);
@@ -85,13 +87,32 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     return catalogCache.tools;
   }
 
+  /**
+   * Что сестра знает о человеке: роль, VIP, варны. Кэш короткий — минута.
+   * Права меняются: снятый админ не должен ещё десять минут разговаривать с
+   * сердцем как админ. Минуты хватает, чтобы серия сообщений не гоняла запрос
+   * по каналу на каждое слово.
+   */
+  async function context({ actor = null, chat = null, ttlMs = 60_000 } = {}) {
+    if (!open()) return null;
+    const cacheKey = `${chat}:${actor}`;
+    const cached = contextCache.get(cacheKey);
+    if (cached && now() - cached.at < ttlMs) return cached.value;
+    const result = await call(CONTEXT_TOOL, { actor, chat, timeout: 12_000 });
+    if (!result.ok) return null;
+    const value = result.data && typeof result.data === "object" ? result.data : {};
+    contextCache.set(cacheKey, { at: now(), value });
+    if (contextCache.size > 128) for (const [key, item] of contextCache) if (now() - item.at > ttlMs) contextCache.delete(key);
+    return value;
+  }
+
   /** Verification of an incoming envelope, for anything else that listens. */
   async function verify(envelope) {
     try { return await bridge.verify(envelope); }
     catch { return { ok: false, code: "crypto_unavailable" }; }
   }
 
-  return Object.freeze({ open, call, onPost, catalog, verify, decode: decodeEnvelope, bridge });
+  return Object.freeze({ open, call, onPost, catalog, context, verify, decode: decodeEnvelope, bridge });
 }
 
 /**
