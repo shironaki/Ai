@@ -26,8 +26,8 @@ export const CONFIG = Object.freeze({
   // deployment. The channel is the only transport: both bots are its admins, so
   // both receive every post. Empty values keep the bridge off and the heart
   // fully self-sufficient.
-  ABILITIES_CHANNEL_ID: "-1004294683725",
-  ABILITIES_SECRET: "most-chanel-yui-ai-2026-02-07-2503",
+  ABILITIES_CHANNEL_ID: "",
+  ABILITIES_SECRET: "",
 
   // What the heart says about itself when asked who it is.
   NAME: "Аи",

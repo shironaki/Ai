@@ -299,10 +299,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
   async function diagnostic(chatId, ctx, actorId, dry) {
     if (!owner(actorId)) return say(chatId, "Это внутренняя проверка.", { dry });
-    const probe = await ai.checkProvider({ ctx, apiKey: await resolveKey(ctx) });
+    // A rehearsal reports state, not a live call: a test run must not spend a
+    // provider request to find out whether the provider would answer.
+    const probe = dry ? null : await ai.checkProvider({ ctx, apiKey: await resolveKey(ctx) });
     const lines = [
       "🧪 Проверка сердца",
-      `Провайдер: ${probe.ok ? "отвечает" : `нет — ${probe.code ?? "ошибка"}`}`,
+      dry ? "Провайдер: пробный запуск — живая проверка не выполнялась." : `Провайдер: ${probe.ok ? "отвечает" : `нет — ${probe.code ?? "ошибка"}`}`,
       `Хозяин: ${OWNER > 0 ? (owner(actorId) ? "это ты — узнаю" : "задан") : "не задан — не узнаю никого"}`,
       `Модель: ${config.AI_MODEL}`,
       `Память: ${store.available ? "хранилище доступно" : "хранилища нет — отвечаю без истории"}`,
@@ -310,7 +312,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       await incidentLine(),
     ];
-    return say(chatId, lines.join("\n"));
+    // A rehearsal must not send the screen either: the caller asked what the
+    // answer would be, not to receive it.
+    return say(chatId, lines.join("\n"), { dry });
   }
 
   /**
@@ -332,6 +336,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }), { dry });
 
     if (!abilities.open()) return said("bridge_closed");
+    // The bridge is a signed post into a real channel: a rehearsal asks for
+    // nothing, and says only what it would have asked.
+    if (dry) return say(chatId, `${NAME}: пробный запуск — это умение я попросила бы у ${SISTER}. Ничего не отправлено.`, { dry });
 
     const tools = await abilities.catalog({ actor: actorId, chat: chatId });
     if (!tools.some(item => item.name === tool)) return said("not_in_chat");

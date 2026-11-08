@@ -329,6 +329,13 @@ export function createAiService({
       userId, chatId, prompt, role = "Пользователь", verifiedContext = "", ctx = {},
       apiKey: explicitKey = null, model: modelOverride = null,
     }) {
+      // A rehearsal answers the route, never the network. Without this, a test
+      // run still travelled through every hook below — and once the bridge to
+      // the sister was configured, that turned into two signed posts into her
+      // channel and twenty-four seconds of waiting for an answer nobody sent.
+      if (ctx?.testRun === true) {
+        return { ok: true, code: "test_run", text: "Пробный запуск: здесь был бы ответ Аи. Провайдер не вызывался.", testRun: true };
+      }
       // The caller may resolve the key from a store the service cannot see
       // (the bot database); explicit values win over the ctx-based default.
       const apiKey = String((explicitKey ?? getApiKey(ctx)) ?? "").trim();

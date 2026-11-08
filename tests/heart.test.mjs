@@ -6,6 +6,7 @@ import { api as sdkApi, db as sdkDb, fetch as sdkFetch } from "./fixtures/sdk-st
 register(new URL("./fixtures/sdk-loader.mjs", import.meta.url));
 
 const { createHeart, pauseFor, rightsFrames } = await import("../tgcloud/lib/heart.js");
+const { currentSympathy } = await import("../tgcloud/lib/dialogue-policy.js");
 const { createBridge } = await import("../tgcloud/lib/bridge.js");
 const { encodeEnvelope, decodeEnvelope, matchPhrase, createAbilities } = await import("../tgcloud/lib/abilities.js");
 
@@ -526,4 +527,43 @@ test("the founder is recognised without a bridge, and a role from the sister is 
   assert.deepEqual(rightsFrames({ role: "Игрок", level: 10 }), []);
   // Нет ответа сестры — нет фактов. Никакого «наверное, админ».
   assert.deepEqual(rightsFrames(null), []);
+});
+
+test("warmth cools slowly and only downwards; frost does not thaw by itself", () => {
+  const DAY = 86_400_000;
+  // Семь суток — grace: ничего не тает.
+  assert.equal(currentSympathy({ sympathy: 40, affinityAt: 0 }, 6 * DAY), 40);
+  // Дальше — пункт в сутки, до нуля, но не в минус.
+  assert.equal(currentSympathy({ sympathy: 40, affinityAt: 0 }, 10 * DAY), 37);
+  assert.equal(currentSympathy({ sympathy: 2, affinityAt: 0 }, 30 * DAY), 0);
+  // Холод сам не оттаивает, а старая запись без даты не пересчитывается задним числом.
+  assert.equal(currentSympathy({ sympathy: -40, affinityAt: 0 }, 90 * DAY), -40);
+  assert.equal(currentSympathy({ sympathy: 40 }, 90 * DAY), 40);
+});
+
+test("a rehearsal never posts into the bridge channel, even when the bridge is open", async () => {
+  // The regression this exists for: with a channel and a secret configured, a
+  // test run asked the sister twice (interval and profile), waited twelve
+  // seconds for each answer, and marked the result "side effects: none" while
+  // two signed lines had already landed in the channel.
+  reset();
+  const open = heart({ ABILITIES_CHANNEL_ID: "-100500", ABILITIES_SECRET: SECRET });
+  const conversation = await open.onMessage(message("привет"), { ...KEY, testRun: true });
+  assert.equal(conversation.side_effects, "none");
+  assert.equal(sdk().sent.length, 0, "a rehearsal sends nothing");
+  assert.equal(sdk().fetches.length, 0, "a rehearsal does not call the provider");
+
+  // The same for an ability phrase: nothing is asked of the sister.
+  reset();
+  const ability = await open.onMessage(message("покажи профиль"), { ...KEY, testRun: true });
+  assert.equal(ability.action, "ability");
+  assert.equal(sdk().sent.length, 0, "a rehearsal does not ask the sister");
+  assert.equal(sdk().fetches.length, 0);
+
+  // And a diagnostic does not probe the provider on a rehearsal.
+  reset();
+  const diag = await open.onMessage(message("/aidiag", { id: 7, chat: 7 }), { ...KEY, testRun: true });
+  assert.equal(diag.side_effects, "none");
+  assert.equal(sdk().fetches.length, 0);
+  assert.match(diag.text, /живая проверка не выполнялась/);
 });
