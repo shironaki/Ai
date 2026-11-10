@@ -103,7 +103,7 @@ jobs:
       - name: Publish
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
-        run: npx --yes @tgcloud/cli@0.2.0 push handlers/message lib/ai-character lib/ai-service lib/dialogue-policy lib/time lib/config lib/secrets lib/store lib/bridge lib/abilities lib/personal lib/events lib/sibling lib/notices lib/heart schema
+        run: npx --yes @tgcloud/cli@0.2.0 push handlers/message lib/ai-character lib/ai-service lib/dialogue-policy lib/time lib/config lib/secrets lib/store lib/bridge lib/abilities lib/personal lib/events lib/sibling lib/notices lib/heart lib/intents lib/memory schema
       - name: Restore the empty secret slots
         if: always()
         run: git checkout -- tgcloud/lib/secrets.js
