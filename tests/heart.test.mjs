@@ -472,6 +472,20 @@ test("an unsigned or foreign event is dropped without speaking", async () => {
   assert.equal(sdk().sent.length, 0);
 });
 
+test("the running build says its own name, so «я запушил» can be checked", async () => {
+  reset();
+  const { BUILD } = await import("../tgcloud/lib/heart.js");
+  const h = heart();
+  const state = await h.status({ chatId: 7, actorId: 7 });
+  assert.equal(state.build, BUILD);
+  assert.equal(state.intents >= 10, true);
+
+  // Владелец видит сборку в /status — это единственный способ узнать из
+  // Telegram, какой код реально запущен.
+  await h.onMessage(message("/status", { id: 7, chat: 7 }));
+  assert.match(sdk().sent.at(-1).text, new RegExp(`Сердце: ${BUILD.replace(/\./g, "\\.")}`));
+});
+
 test("status tells the truth about what is connected", async () => {
   reset();
   const alone = await heart().status({ chatId: 5, actorId: 5 });

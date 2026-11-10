@@ -10,7 +10,7 @@ import { describeSister, missingAbilityText } from "./sibling.js";
 import { createNotices } from "./notices.js";
 import { createPersonal, addressRequest, lengthRequest } from "./personal.js";
 import { createMemory } from "./memory.js";
-import { parseIntent, ABILITY_OF, SPOKEN_HELP } from "./intents.js";
+import { parseIntent, ABILITY_OF, SPOKEN_HELP, INTENTS } from "./intents.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -63,6 +63,13 @@ export function rightsFrames(facts = null) {
  * deployment and is reached only through `abilities`. The heart is useful alone
  * and better with a sibling: that is the whole point of the split.
  */
+/**
+ * Сборка сердца. Её видно в /status, потому что «я запушил» и «оно работает» —
+ * разные факты: 8–10 ноября код лежал в репозитории, а живой бот отвечал
+ * старым. Без этой строки проверить, что именно запущено, было нечем.
+ */
+export const BUILD = "0.20.93";
+
 export function createHeart({ db = null, api = null, fetchImpl = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
   const store = createHeartStore({ db, now });
   // A deployment that predates these keys still gets sensible names, never
@@ -319,6 +326,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const probe = dry ? null : await ai.checkProvider({ ctx, apiKey: await resolveKey(ctx) });
     const lines = [
       "🧪 Проверка сердца",
+      // Первая строка — сборка: по ней видно, доехал ли код до живого бота.
+      `Сердце: ${BUILD} · словом понимаю ${INTENTS.length} намерений`,
       dry ? "Провайдер: пробный запуск — живая проверка не выполнялась." : `Провайдер: ${probe.ok ? "отвечает" : `нет — ${probe.code ?? "ошибка"}`}`,
       `Хозяин: ${OWNER > 0 ? (owner(actorId) ? "это ты — узнаю" : "задан") : "не задан — не узнаю никого"}`,
       `Модель: ${config.AI_MODEL}`,
@@ -601,6 +610,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const tools = chatId == null ? [] : (await abilities.catalogue({ actor: actorId, chat: chatId })).tools;
     const recent = await notices.list({ limit: 5 });
     return {
+      build: BUILD,
+      intents: INTENTS.length,
       provider: config.AI_MODEL,
       memory: store.available,
       sister: describeSister({ open: abilities.open(), tools, username: SISTER_USERNAME, sister: SISTER }),
