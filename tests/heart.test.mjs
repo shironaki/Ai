@@ -282,6 +282,62 @@ test("memory survives between messages through the same store", async () => {
   assert.ok(body.messages.some(item => item.role === "assistant"), "the first answer is in history");
 });
 
+test("просьба словами записывается, показывается и забывается — без команд", async () => {
+  reset();
+  const h = heart();
+
+  const saved = await h.onMessage(message("Запомни, что я люблю кофе без сахара"));
+  assert.equal(saved.action, "intent");
+  assert.equal(sdk().fetches.length, 0, "память пишет код, а не модель");
+  assert.match(sdk().sent.at(-1).text, /Запомнила/);
+
+  await h.onMessage(message("что ты обо мне помнишь"));
+  assert.match(sdk().sent.at(-1).text, /кофе без сахара/);
+
+  // Повтор не размножает запись: человек вправе сказать одно и то же дважды.
+  await h.onMessage(message("запомни, что я люблю кофе без сахара"));
+  assert.match(sdk().sent.at(-1).text, /и так помню/);
+  await h.onMessage(message("что ты обо мне помнишь"));
+  assert.equal(sdk().sent.at(-1).text.match(/кофе без сахара/g).length, 1);
+
+  await h.onMessage(message("забудь 1"));
+  assert.match(sdk().sent.at(-1).text, /Забыла/);
+  await h.onMessage(message("что ты обо мне помнишь"));
+  assert.match(sdk().sent.at(-1).text, /ничего о себе не рассказывал/);
+});
+
+test("понятое наполовину — один вопрос вместо догадки и вместо модели", async () => {
+  reset();
+  const h = heart();
+  const result = await h.onMessage(message("запомни"));
+  assert.equal(result.action, "intent");
+  assert.match(sdk().sent.at(-1).text, /Что запомнить/);
+  assert.equal(sdk().fetches.length, 0);
+
+  const forget = await h.onMessage(message("забудь"));
+  assert.match(sdk().sent.at(-1).text, /всё или одну запись/);
+});
+
+test("наказания и деньги — не её работа: отказ вместо исполнения", async () => {
+  reset();
+  const h = heart();
+  const result = await h.onMessage(message("забань его"));
+  assert.equal(result.action, "intent");
+  const text = sdk().sent.at(-1).text;
+  assert.match(text, /не моё/);
+  assert.match(text, /Юи/);
+  assert.doesNotMatch(text, /забанила|забанен/);
+});
+
+test("репетиция не пишет память", async () => {
+  reset();
+  const h = heart();
+  await h.onMessage(message("запомни, что я люблю кофе"), { testRun: true });
+  assert.equal(sdk().kv.size, 0, "ничего не сохранено");
+  await h.onMessage(message("что ты обо мне помнишь"));
+  assert.match(sdk().sent.at(-1).text, /ничего о себе не рассказывал/);
+});
+
 test("phrases map to abilities, and a plain sentence never does", async () => {
   assert.equal(matchPhrase("покажи профиль"), "profile");
   assert.equal(matchPhrase("Аи, покажи профиль"), null, "the prefix is stripped before matching");
@@ -566,4 +622,84 @@ test("a rehearsal never posts into the bridge channel, even when the bridge is o
   assert.equal(diag.side_effects, "none");
   assert.equal(sdk().fetches.length, 0);
   assert.match(diag.text, /живая проверка не выполнялась/);
+});
+
+test("«покажи мне профиль» — та же просьба, что «покажи профиль»", () => {
+  // Лишнее слово не должно превращать факт в разговор с моделью: именно так
+  // Аи однажды нарисовала профиль из воздуха — «Создатель, полный доступ».
+  assert.equal(matchPhrase("покажи профиль"), "profile");
+  assert.equal(matchPhrase("Покажи мне профиль"), "profile");
+  assert.equal(matchPhrase("мой профиль"), "profile");
+  assert.equal(matchPhrase("моя карточка"), null, "карточка без просьбы — разговор");
+  assert.equal(matchPhrase("покажи, пожалуйста, профиль"), "profile");
+  assert.equal(matchPhrase("расскажи сказку"), null);
+});
+
+test("молчание сестры — это «не ответила», а не «её нет в этом чате»", async () => {
+  // Мост открыт, канал есть, а ответа нет: раньше каталог возвращал пустой
+  // список, и Аи уверенно говорила «профиля здесь нет». Человек шёл искать
+  // бота, который уже стоит в этом чате.
+  const calls = [];
+  const silent = createAbilities({
+    secret: SECRET,
+    channelId: "-100500",
+    now: () => 1_000_000,
+    async send(line) { calls.push(line); return { message_id: 1 }; }, // никто не отвечает
+  });
+  const listed = await silent.catalogue({ actor: 5, chat: 5 });
+  assert.equal(listed.ok, false);
+  assert.equal(listed.code, "bridge_timeout");
+  assert.deepEqual(listed.tools, []);
+  // И список совместимости остался списком.
+  assert.deepEqual(await silent.catalog({ actor: 5, chat: 5 }), []);
+});
+
+test("вопрос о профиле без данных не уходит к модели", async () => {
+  // Худший ответ — не «не знаю», а придуманный профиль с ролью и ID.
+  reset();
+  await heart().onMessage(message("покажи мне профиль"), KEY);
+  assert.equal(sdk().fetches.length, 0, "провайдер не вызывался");
+  assert.match(sdk().sent.at(-1).text, /профиль не входит в мои умения/);
+
+  // Вопрос словами, а не фразой-умением: модель его тоже не увидит.
+  reset();
+  await heart().onMessage(message("какая у меня роль?"), KEY);
+  assert.equal(sdk().fetches.length, 0, "факт не выдумывается моделью");
+  assert.match(sdk().sent.at(-1).text, /придумывать их я не стану/);
+  assert.doesNotMatch(sdk().sent.at(-1).text, /Создатель|Полный доступ|12345/);
+
+  // Вопрос, который не про факты, по-прежнему идёт к модели.
+  reset();
+  await heart().onMessage(message("как дела?"), KEY);
+  assert.equal(sdk().fetches.length, 1);
+});
+
+test("каталог спрашивается с типом чата и не переиспользуется между чатами", async () => {
+  // Список умений зависит от места: /warn есть только в группе. Раньше тип
+  // чата вообще не уходил по мосту, и сестра считала любой вопрос личным —
+  // в группе Аи не находила половину умений.
+  const seen = [];
+  const sibling = createBridge({ secret: SECRET, capabilities: { call: async () => ({}) }, now: () => 1_000_000 });
+  let bus = null;
+  bus = createAbilities({
+    secret: SECRET,
+    channelId: "-100500",
+    now: () => 1_000_000,
+    async send(line) {
+      const request = decodeEnvelope(line);
+      seen.push(request.chatType ?? null);
+      const data = request.chatType === "supergroup" ? [{ name: "warn" }] : [{ name: "actions" }];
+      const answer = await sibling.sealResult({ id: request.id, tool: request.tool, result: { ok: true, code: "ok", text: "", data } });
+      return bus.onPost(encodeEnvelope(answer.envelope));
+    },
+  });
+
+  const group = await bus.catalogue({ actor: 7, chat: -10, chatType: "supergroup" });
+  const priv = await bus.catalogue({ actor: 7, chat: 7, chatType: "private" });
+  assert.deepEqual(group.tools.map(tool => tool.name), ["warn"]);
+  assert.deepEqual(priv.tools.map(tool => tool.name), ["actions"]);
+  assert.deepEqual(seen, ["supergroup", "private"], "тип чата уходит и попадает в подпись");
+  // Повторный вопрос того же чата берётся из кэша: канал не гоняет лишнее.
+  await bus.catalogue({ actor: 7, chat: -10, chatType: "supergroup" });
+  assert.equal(seen.length, 2);
 });

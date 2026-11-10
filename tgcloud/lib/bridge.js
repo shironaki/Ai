@@ -80,8 +80,12 @@ export function createBridge({ secret = "", store = null, capabilities, now = ()
   const permit = Array.isArray(allowed) ? new Set(allowed) : null;
 
   /** Seal a call. The heart signs; this bot verifies the same bytes. */
-  async function seal({ tool, args = {}, actor, chat, ttl: lifetime = ttl } = {}) {
+  async function seal({ tool, args = {}, actor, chat, chatType = null, ttl: lifetime = ttl } = {}) {
     if (!enabled) return { ok: false, code: "bridge_not_configured", text: "Мост не настроен: нет общего секрета." };
+    // Chat type decides which tools exist: a group-only ability must not show up
+    // in a private chat, and vice versa. It travels inside the signature, so the
+    // other side cannot be told "this was a group" by anyone but us.
+    const scope = ["private", "group", "supergroup"].includes(chatType) ? chatType : null;
     const envelope = {
       v: BRIDGE_VERSION,
       id: `${now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
@@ -91,6 +95,7 @@ export function createBridge({ secret = "", store = null, capabilities, now = ()
       args,
       actor: actor == null ? null : String(actor),
       chat: chat == null ? null : String(chat),
+      ...(scope ? { chatType: scope } : {}),
     };
     try { return { ok: true, envelope: { ...envelope, sig: await hmac(secret, bridgePayload(envelope)) } }; }
     catch { return { ok: false, code: "crypto_unavailable", text: "Подпись недоступна: платформа не даёт WebCrypto." }; }

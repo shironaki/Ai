@@ -36,7 +36,8 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   const bridge = createBridge({ secret, capabilities: { call: async () => ({ ok: false }) }, now });
   const open = () => bridge.enabled && String(channelId ?? "") !== "" && String(channelId) !== "0";
   const pending = new Map();
-  const catalogCache = { at: 0, tools: [] };
+  /** `chatType:actor` → { at, tools }. Bounded below. */
+  const catalogCache = new Map();
   const contextCache = new Map();
 
   async function post(line) {
@@ -46,9 +47,9 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   }
 
   /** Seal one call, post it, and wait for the signed answer. */
-  async function call(tool, { actor = null, chat = null, args = {}, timeout = 20_000 } = {}) {
+  async function call(tool, { actor = null, chat = null, chatType = null, args = {}, timeout = 20_000 } = {}) {
     if (!open()) return { ok: false, code: "bridge_not_configured", text: "" };
-    const sealed = await bridge.seal({ tool, args, actor, chat, ttl });
+    const sealed = await bridge.seal({ tool, args, actor, chat, chatType, ttl });
     if (!sealed.ok) return { ok: false, code: sealed.code, text: "" };
 
     const answer = new Promise((resolve, reject) => {
@@ -75,16 +76,33 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     return true;
   }
 
-  /** What the other bot says it can do, scoped to this role. Cached. */
-  async function catalog({ actor = null, chat = null, ttlMs = 600_000 } = {}) {
-    if (!open()) return [];
-    if (now() - catalogCache.at < ttlMs && catalogCache.tools.length) return catalogCache.tools;
-    const result = await call(CATALOG_TOOL, { actor, chat, timeout: 15_000 });
+  /**
+   * What the other bot says it can do, scoped to this role. Cached.
+   *
+   * `ok` is the important half: a refused or unanswered catalogue used to come
+   * back as an empty list, and the heart then told the person "этого нет в этом
+   * чате". That is a guess dressed as a fact. Now silence is named as silence.
+   */
+  async function catalogue({ actor = null, chat = null, chatType = null, ttlMs = 600_000 } = {}) {
+    if (!open()) return { ok: false, code: "bridge_closed", tools: [] };
+    // Кэш по паре «тип чата + человек»: список зависит и от места, и от роли.
+    // Общий кэш показывал игроку умения владельца, а владельцу — только личные.
+    const key = `${chatType ?? "any"}:${actor ?? "any"}`;
+    const cached = catalogCache.get(key);
+    if (cached && now() - cached.at < ttlMs && cached.tools.length) return { ok: true, code: "ok", tools: cached.tools };
+    const result = await call(CATALOG_TOOL, { actor, chat, chatType, timeout: 15_000 });
     if (result.ok && Array.isArray(result.data)) {
-      catalogCache.tools = result.data.filter(tool => tool && tool.name);
-      catalogCache.at = now();
+      const tools = result.data.filter(tool => tool && tool.name);
+      catalogCache.set(key, { at: now(), tools });
+      if (catalogCache.size > 64) for (const [k, item] of catalogCache) if (now() - item.at > ttlMs) catalogCache.delete(k);
+      return { ok: true, code: "ok", tools };
     }
-    return catalogCache.tools;
+    return { ok: false, code: result.code ?? "bridge_no_answer", tools: cached?.tools ?? [] };
+  }
+
+  /** The list alone, for callers that only need it. */
+  async function catalog(options = {}) {
+    return (await catalogue(options)).tools;
   }
 
   /**
@@ -93,12 +111,12 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
    * сердцем как админ. Минуты хватает, чтобы серия сообщений не гоняла запрос
    * по каналу на каждое слово.
    */
-  async function context({ actor = null, chat = null, ttlMs = 60_000 } = {}) {
+  async function context({ actor = null, chat = null, chatType = null, ttlMs = 60_000 } = {}) {
     if (!open()) return null;
-    const cacheKey = `${chat}:${actor}`;
+    const cacheKey = `${chatType ?? "any"}:${chat}:${actor}`;
     const cached = contextCache.get(cacheKey);
     if (cached && now() - cached.at < ttlMs) return cached.value;
-    const result = await call(CONTEXT_TOOL, { actor, chat, timeout: 12_000 });
+    const result = await call(CONTEXT_TOOL, { actor, chat, chatType, timeout: 12_000 });
     if (!result.ok) return null;
     const value = result.data && typeof result.data === "object" ? result.data : {};
     contextCache.set(cacheKey, { at: now(), value });
@@ -112,7 +130,7 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     catch { return { ok: false, code: "crypto_unavailable" }; }
   }
 
-  return Object.freeze({ open, call, onPost, catalog, context, verify, decode: decodeEnvelope, bridge });
+  return Object.freeze({ open, call, onPost, catalog, catalogue, context, verify, decode: decodeEnvelope, bridge });
 }
 
 /**
@@ -131,8 +149,20 @@ export const PHRASES = Object.freeze([
   { tool: "report", test: /^(?:пожаловаться|жалоба|обращение)$/iu },
 ]);
 
+/**
+ * Живая речь не совпадает с образцом буква в букву: «покажи мне профиль» и
+ * «мой профиль» — та же просьба, что «покажи профиль». Раньше они уходили к
+ * модели, а модель на вопрос о профиле придумывала роль, ID и уровень. Одно
+ * лишнее слово не должно превращать факт в выдумку.
+ */
+const FILLER = /(?:^|\s)(?:пожалуйста|плиз|мне|мой|мою|моя|мои|моё|мое)(?=\s|$)/giu;
+
 export function matchPhrase(text) {
-  const value = String(text ?? "").trim();
+  const raw = String(text ?? "").trim();
+  if (!raw) return null;
+  for (const phrase of PHRASES) if (phrase.test.test(raw)) return phrase.tool;
+  // Запятые и точки — тоже шум: «покажи, пожалуйста, профиль».
+  const value = raw.replace(/[,.!?;:]/gu, " ").replace(FILLER, " ").replace(/\s+/gu, " ").trim();
   if (!value) return null;
   for (const phrase of PHRASES) if (phrase.test.test(value)) return phrase.tool;
   return null;

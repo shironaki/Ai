@@ -9,6 +9,8 @@ import { createEvents } from "./events.js";
 import { describeSister, missingAbilityText } from "./sibling.js";
 import { createNotices } from "./notices.js";
 import { createPersonal, addressRequest, lengthRequest } from "./personal.js";
+import { createMemory } from "./memory.js";
+import { parseIntent, ABILITY_OF, SPOKEN_HELP } from "./intents.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -17,6 +19,13 @@ import { createPersonal, addressRequest, lengthRequest } from "./personal.js";
  * роли или в переписке. Нет моста — нет факта, значит обычная пауза: сердце
  * не ускоряется по обещанию с витрины.
  */
+/**
+ * Вопросы, ответ на которые существует только в базе возможностей: профиль,
+ * роль, уровень, ID, VIP, варны. Модель не должна отвечать на них даже при
+ * пустом мосте — она не знает и выдумает.
+ */
+export const FACT_QUESTION = /^(?:(?:покажи|открой|скажи|что|какой|какая|каково|сколько)\s+)*(?:(?:у\s+меня|мне|мой|моя|мою|мои)\s+)*(?:профил[ья]?|карточк[ауи]|роль|уровень|варны|предупреждени[яй]|vip|id|ид)(?:[\s,.!?;:]|$)/iu;
+
 export function pauseFor({ facts = null, config = CONFIG } = {}) {
   const base = Number(config.AI_MIN_INTERVAL_MS) || 0;
   if (!facts?.vip) return base;
@@ -113,6 +122,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   });
 
   const personal = createPersonal({ store, now });
+  // Факты, которые человек попросил запомнить словами. Модель их не пишет:
+  // «запомни …» — это прямое действие, а не тема для разговора.
+  const memory = createMemory({ store });
 
   const ai = createAiService({
     fetchImpl,
@@ -137,7 +149,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
       // Факты от сестры (VIP, роль, варны) — только если мост открыт; иначе
       // ответ строится на том, что сердце знает само.
-      const facts = chatId == null ? null : await abilities.context({ actor: userId, chat: chatId }).catch(() => null);
+      const facts = chatId == null ? null : await abilities.context({ actor: userId, chat: chatId, chatType: isPrivate ? "private" : "group" }).catch(() => null);
       const character = buildCharacterProfile({
         settings: { ...settings, address: settings.address ?? "" }, isPrivate, now,
         relationship: relationship ? { score: relationship.score } : {},
@@ -213,7 +225,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       `${NAME}. Что я умею:`,
       "",
       "• поговорить — пишите как есть, без команд;",
-      "• помнить, что вы рассказываете;",
+      "",
+      "Сказать словами — я пойму:",
+      ...SPOKEN_HELP,
+      "",
       "• /status — как я себя чувствую и что сломано;",
       "• /start — поздороваться заново.",
     ];
@@ -327,6 +342,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   async function tryAbility({ text, chatId, actorId, chatType, dry }) {
     const tool = matchPhrase(text);
     if (!tool) return null;
+    return runAbility({ tool, chatId, actorId, chatType, dry });
+  }
+
+  /**
+   * Попросить сестру выполнить умение. Она сама решает, можно ли это здесь и
+   * этому человеку; сердце не подменяет её решение и не обещает результат.
+   */
+  async function runAbility({ tool, args = { args: "" }, chatId, actorId, chatType, dry }) {
     const said = (reason, extra = {}) => say(chatId, missingAbilityText({
       tool, reason, chatType,
       name: NAME,
@@ -340,10 +363,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // nothing, and says only what it would have asked.
     if (dry) return say(chatId, `${NAME}: пробный запуск — это умение я попросила бы у ${SISTER}. Ничего не отправлено.`, { dry });
 
-    const tools = await abilities.catalog({ actor: actorId, chat: chatId });
-    if (!tools.some(item => item.name === tool)) return said("not_in_chat");
+    const listed = await abilities.catalogue({ actor: actorId, chat: chatId, chatType });
+    // "Не ответила" and "её здесь нет" are different facts. Saying the second
+    // when the first happened sends the owner to look for a bot that is already
+    // standing right there.
+    if (!listed.ok) return say(chatId, `${NAME}: ${SISTER} не ответила на запрос умений (${listed.code}). Попробуйте ещё раз.`, { dry });
+    if (!listed.tools.some(item => item.name === tool)) return said("not_in_chat");
 
-    const result = await abilities.call(tool, { actor: actorId, chat: chatId, args: { args: "" } });
+    const result = await abilities.call(tool, { actor: actorId, chat: chatId, chatType, args });
     if (result.ok) return say(chatId, result.text || "Готово.", { dry });
     if (result.code === "module_disabled") return said("module_disabled");
     if (!dry) try {
@@ -355,6 +382,84 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       });
     } catch { /* отчёт не должен менять ответ */ }
     return say(chatId, `${NAME}: ${SISTER} не ответила (${result.code ?? "ошибка"}). Попробуйте ещё раз.`, { dry });
+  }
+
+  /**
+   * Один вход на смысл. Слова разбираются правилами, поэтому действие всегда
+   * одно и то же, а понятая наполовину просьба задаёт вопрос, а не угадывает.
+   */
+  async function handleIntent({ text, chatId, actorId, chatType, dry }) {
+    const parsed = parseIntent(text);
+    if (!parsed) return null;
+    if (parsed.confidence === "maybe") return say(chatId, `${NAME}: ${parsed.question}`, { dry });
+    // Репетиция ничего не записывает: она проверяет маршрут, а не меняет память.
+    if (dry) return say(chatId, `Разобрала бы это как «${parsed.intent}» — репетиция, ничего не меняю.`, { dry: true });
+
+    const tool = ABILITY_OF[parsed.intent];
+    if (tool) {
+      const args = parsed.intent === "no_reactions" ? { args: "off" } : { args: "" };
+      return runAbility({ tool, args, chatId, actorId, chatType, dry });
+    }
+
+    switch (parsed.intent) {
+      case "remember": {
+        const added = await memory.add(actorId, parsed.arg);
+        if (!added.ok) return say(chatId, "Не получилось сохранить: хранилище не отвечает. Попробуйте позже.", { dry });
+        return say(chatId, added.duplicate
+          ? `Это я и так помню: «${added.text}».`
+          : `Запомнила: «${added.text}». Спросите «что ты обо мне помнишь» — перескажу.`, { dry });
+      }
+      case "memories": {
+        const items = await memory.list(actorId);
+        if (!items.length) {
+          return say(chatId, "Ты пока ничего о себе не рассказывал. Скажи «запомни, …» — и я сохраню это надолго.", { dry });
+        }
+        return say(chatId, ["Помню о тебе:", "", ...items.map((item, i) => `${i + 1}. ${item}`)].join("\n"), { dry });
+      }
+      case "forget": {
+        if (parsed.arg?.mode === "index") {
+          const removed = await memory.removeAt(actorId, parsed.arg.index);
+          if (!removed.ok) {
+            return say(chatId, `Под номером ${parsed.arg.index} у меня ничего нет. Скажи «что ты обо мне помнишь» — покажу список.`, { dry });
+          }
+          return say(chatId, `Забыла: «${removed.removed}». Осталось ${removed.count}.`, { dry });
+        }
+        const cleared = await memory.clear(actorId);
+        if (!cleared.ok) return say(chatId, "Не получилось забыть: хранилище не отвечает.", { dry });
+        return say(chatId, cleared.removed
+          ? `Забыла всё, что ты просил запомнить (${cleared.removed}).`
+          : "Мне и нечего было забывать — ты ничего не просил запомнить.", { dry });
+      }
+      case "relationship":
+        return answerRelationship({ chatId, actorId, dry });
+      case "no_flirt": {
+        const saved = await personal.save(actorId, { flirt: false }).catch(() => ({ ok: false }));
+        return say(chatId, saved?.ok
+          ? "Хорошо. Флирта не будет — буду говорить тепло, но по-человечески."
+          : "Не запомнилось: хранилище не отвечает. Скажи ещё раз позже.", { dry });
+      }
+      case "no_night": {
+        const saved = await personal.save(actorId, { night: false }).catch(() => ({ ok: false }));
+        return say(chatId, saved?.ok
+          ? "Договорились: ночью я тебя не бужу. Я и сама не люблю писать первой без повода."
+          : "Не запомнилось: хранилище не отвечает.", { dry });
+      }
+      case "whyquiet": {
+        const reasons = [
+          "Я отвечаю не на каждое сообщение: в группе — когда обращаются ко мне, в личке — всегда.",
+          "Иногда я молчу намеренно: это часть характера, а не поломка.",
+          "Если я не ответила на прямое обращение — это сбой, и о нём я уже сообщила владельцу.",
+        ];
+        return say(chatId, reasons.join("\n"), { dry });
+      }
+      case "not_mine": {
+        // Наказания, роли и деньги исполняет сестра по своим правилам. Сердце
+        // не подменяет её решение даже из лучших побуждений.
+        return say(chatId, `${NAME}: это не моё. Наказания, роли и деньги ведёт ${SISTER} — и только по правилам чата. Я не буду ни банить, ни обещать за неё.`, { dry });
+      }
+      default:
+        return null;
+    }
   }
 
   /** Одна строка для /aidiag: что сломалось и сколько ждёт отправки. */
@@ -414,10 +519,6 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const prompt = text.replace(/^\/ai(?:@\w+)?\s*/iu, "").replace(/^аи[,\s:]+/iu, "").trim();
     if (!prompt) return { ignored: true };
 
-    if (/^(?:как\s+ты\s+(?:ко\s+мне\s+)?(?:относишься|отношение)|что\s+ты\s+ко\s+мне\s+чувствуешь|мы\s+(?:друзья|близки))\??$/iu.test(prompt)) {
-      return answerRelationship({ chatId, actorId, dry });
-    }
-
     // Настройки — не команды: «зови меня …», «говори короче». Только в личке:
     // в группе человек говорит с Аи, а не настраивает её для всех.
     const isPrivateChat = String(chatId) === String(actorId);
@@ -440,6 +541,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     const viaAbility = await tryAbility({ text: prompt, chatId, actorId, chatType: message?.chat?.type ?? "private", dry });
     if (viaAbility) return { ok: true, action: "ability" };
+
+    // Намерения — до модели: слова человека это просьба, а не тема для
+    // разговора. Понятое наполовину задаёт один вопрос, незнакомое уходит к
+    // разговору ниже. Команды выше остаются аварийным выходом.
+    const viaIntent = await handleIntent({ text: prompt, chatId, actorId, chatType: message?.chat?.type ?? "private", dry });
+    if (viaIntent) return { ok: true, action: "intent" };
+
+    // Профиль, роль, уровень, VIP и варны — это факты из базы, а не тема для
+    // разговора. Если способность не ответила, модель ответить не может: она
+    // придумает роль, ID и «полный доступ» — и это уже случалось. Честное «не
+    // знаю» дешевле красивой выдумки.
+    if (FACT_QUESTION.test(prompt)) {
+      return say(chatId, `Профиль, роль и награды ведёт ${SISTER} — у меня этих данных нет, и придумывать их я не стану. Спросите её: «покажи профиль».`, { dry });
+    }
 
     // Она имеет право не ответить: это не отказ и не поломка, а часть
     // характера. В частном разговоре и по делу молчание не применяется.
@@ -483,7 +598,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
   /** What is connected, in one object: used by /aidiag and by tests. */
   async function status({ chatId = null, actorId = null } = {}) {
-    const tools = chatId == null ? [] : await abilities.catalog({ actor: actorId, chat: chatId });
+    const tools = chatId == null ? [] : (await abilities.catalogue({ actor: actorId, chat: chatId })).tools;
     const recent = await notices.list({ limit: 5 });
     return {
       provider: config.AI_MODEL,
