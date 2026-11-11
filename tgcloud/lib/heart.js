@@ -68,7 +68,7 @@ export function rightsFrames(facts = null) {
  * разные факты: 8–10 ноября код лежал в репозитории, а живой бот отвечал
  * старым. Без этой строки проверить, что именно запущено, было нечем.
  */
-export const BUILD = "0.20.93";
+export const BUILD = "0.20.97";
 
 export function createHeart({ db = null, api = null, fetchImpl = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
   const store = createHeartStore({ db, now });
@@ -175,7 +175,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // Перк «отвечает быстрее» действует только по подтверждённому статусу;
     // мост закрыт — работает обычная пауза, а не вера на слово.
     intervalFor: async ({ userId, chatId }) => pauseFor({
-      facts: await abilities.context({ actor: userId, chat: chatId }).catch(() => null),
+      // Тот же тип чата, что и в профиле ответа: иначе это два разных вопроса
+      // к сестре, два конверта в канале и две разные записи кэша.
+      facts: await abilities.context({
+        actor: userId, chat: chatId,
+        chatType: String(chatId) === String(userId) ? "private" : "group",
+      }).catch(() => null),
       config,
     }),
     now,
@@ -319,6 +324,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return say(chatId, lines.join("\n"), { dry });
   }
 
+  /**
+   * Одна строка про память, в которой нельзя ошибиться. «Доступно» без пробы —
+   * это обещание, а не факт: объект базы может быть на месте, а таблиц нет.
+   */
+  function memoryLine(state) {
+    if (state?.read && state?.write) return "чтение и запись работают";
+    if (!state?.read && state?.code === "no_database") return "хранилища нет — отвечаю без истории";
+    if (state?.read && !state?.write) return "чтение есть, запись не проходит — схема базы не применена";
+    return "таблиц нет — схема базы не применена";
+  }
+
   async function diagnostic(chatId, ctx, actorId, dry) {
     if (!owner(actorId)) return say(chatId, "Это внутренняя проверка.", { dry });
     // A rehearsal reports state, not a live call: a test run must not spend a
@@ -331,7 +347,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       dry ? "Провайдер: пробный запуск — живая проверка не выполнялась." : `Провайдер: ${probe.ok ? "отвечает" : `нет — ${probe.code ?? "ошибка"}`}`,
       `Хозяин: ${OWNER > 0 ? (owner(actorId) ? "это ты — узнаю" : "задан") : "не задан — не узнаю никого"}`,
       `Модель: ${config.AI_MODEL}`,
-      `Память: ${store.available ? "хранилище доступно" : "хранилища нет — отвечаю без истории"}`,
+      `Память: ${memoryLine(await store.probe())}`,
       `Способности: ${abilities.open() ? "мост открыт" : "мост закрыт — работаю одна"}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       await incidentLine(),
@@ -413,7 +429,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     switch (parsed.intent) {
       case "remember": {
         const added = await memory.add(actorId, parsed.arg);
-        if (!added.ok) return say(chatId, "Не получилось сохранить: хранилище не отвечает. Попробуйте позже.", { dry });
+        if (!added.ok) {
+          // Не «попробуйте позже», а причина: запись не проходит, когда в базе
+          // нет таблиц, и это лечится деплоем, а не ожиданием.
+          return say(chatId, added.code === "storage_unavailable"
+            ? `${NAME}: хранилище не приняло запись — похоже, не применена схема базы. Уже сообщила владельцу.`
+            : `${NAME}: не получилось сохранить. Попробуй короче — одна фраза.`, { dry });
+        }
         return say(chatId, added.duplicate
           ? `Это я и так помню: «${added.text}».`
           : `Запомнила: «${added.text}». Спросите «что ты обо мне помнишь» — перескажу.`, { dry });

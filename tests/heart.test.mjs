@@ -338,6 +338,38 @@ test("репетиция не пишет память", async () => {
   assert.match(sdk().sent.at(-1).text, /ничего о себе не рассказывал/);
 });
 
+test("хранилище без таблиц говорит об этом прямо, а не «попробуйте позже»", async () => {
+  reset();
+  // Ровно то, что случилось в живом боте: объект базы есть, схемы нет. Проба
+  // обязана это увидеть, иначе /status снова соврёт «доступно».
+  const broken = { async get() { throw Error("no such table: kv_state"); }, async run() { throw Error("no such table: kv_state"); } };
+  const blind = createHeart({ db: broken, api: sdkApi, fetchImpl: sdkFetch, config: { ...CONFIG, OWNER_TG_ID: 7 } });
+  const state = await blind.store.probe();
+  assert.equal(state.read, false);
+  assert.equal(state.write, false);
+
+  await blind.onMessage(message("/status", { id: 7, chat: 7 }));
+  assert.match(sdk().sent.at(-1).text, /таблиц нет|схема базы не применена/);
+  assert.doesNotMatch(sdk().sent.at(-1).text, /память: хранилище доступно/iu);
+
+  // И запись факта не притворяется успешной.
+  await blind.onMessage(message("запомни, что я люблю кофе", { id: 7, chat: 7 }));
+  assert.match(sdk().sent.at(-1).text, /не приняло запись|схема базы/);
+});
+
+test("канал моста говорит словами, а подпись всё равно сходится", async () => {
+  const { encodeEnvelope, decodeEnvelope } = await import("../tgcloud/lib/abilities.js");
+  const bridge = createBridge({ secret: SECRET, capabilities: { call: async () => ({}) } });
+  const sealed = await bridge.seal({ tool: "__context", args: {}, actor: "5", chat: "5" });
+  const line = encodeEnvelope(sealed.envelope, "🤍 Аи → Юи · что известно о человеке · чат 5");
+  assert.match(line.split("\n")[0], /Аи → Юи · что известно о человеке/, "первая строка читается человеком");
+  const parsed = decodeEnvelope(line);
+  assert.equal(parsed.id, sealed.envelope.id);
+  assert.equal((await bridge.verify(parsed)).ok, true, "пояснение не ломает подпись");
+  // Отправитель без пояснения разбирается как раньше.
+  assert.equal(decodeEnvelope(encodeEnvelope(sealed.envelope)).id, sealed.envelope.id);
+});
+
 test("phrases map to abilities, and a plain sentence never does", async () => {
   assert.equal(matchPhrase("покажи профиль"), "profile");
   assert.equal(matchPhrase("Аи, покажи профиль"), null, "the prefix is stripped before matching");

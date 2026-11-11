@@ -19,18 +19,37 @@ export const BUS_PREFIX = "AI-BRIDGE1 ";
 const CATALOG_TOOL = "__catalog";
 const CONTEXT_TOOL = "__context";
 
-export function encodeEnvelope(value) {
-  return BUS_PREFIX + JSON.stringify(value);
+/**
+ * Конверт можно подписать словами. Канал моста читают люди — владелец прежде
+ * всего, — и строка «Аи просит: что известно о человеке» перед машинной
+ * строкой не мешает подписи: она вне конверта.
+ */
+export function encodeEnvelope(value, note = "") {
+  const line = BUS_PREFIX + JSON.stringify(value);
+  const clean = String(note ?? "").replace(/\s+/gu, " ").trim().slice(0, 160);
+  return clean ? `${clean}\n${line}` : line;
 }
 
+/**
+ * Разбор ищет префикс в любом месте текста, а не только в начале: конверт
+ * остаётся неизменным и проверяемым, а пояснительная строка перед ним — нет.
+ * Отправитель без пояснения (старая сборка) разбирается как раньше.
+ */
 export function decodeEnvelope(text) {
   const raw = String(text ?? "");
-  if (!raw.startsWith(BUS_PREFIX)) return null;
+  const at = raw.indexOf(BUS_PREFIX);
+  if (at < 0) return null;
   try {
-    const value = JSON.parse(raw.slice(BUS_PREFIX.length));
+    const value = JSON.parse(raw.slice(at + BUS_PREFIX.length));
     return value && typeof value === "object" ? value : null;
   } catch { return null; }
 }
+
+/** Человеческое имя умения: канал перестаёт быть свалкой JSON. */
+export const TOOL_NOTE = Object.freeze({
+  __catalog: "список умений",
+  __context: "что известно о человеке",
+});
 
 export function createAbilities({ secret = "", channelId = "", api = null, send = null, now = () => Date.now(), ttl = 60_000 } = {}) {
   const bridge = createBridge({ secret, capabilities: { call: async () => ({ ok: false }) }, now });
@@ -39,6 +58,8 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   /** `chatType:actor` → { at, tools }. Bounded below. */
   const catalogCache = new Map();
   const contextCache = new Map();
+  /** `chat:actor` → обещание: одновременные вопросы не дублируют конверт. */
+  const inflightContext = new Map();
 
   async function post(line) {
     if (typeof send === "function") return send(line);
@@ -57,7 +78,9 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
       pending.set(sealed.envelope.id, { resolve: (value) => { clearTimeout(timer); resolve(value); } });
     });
 
-    try { await post(encodeEnvelope(sealed.envelope)); }
+    const label = TOOL_NOTE[tool] ?? String(tool ?? "").slice(0, 32);
+    const note = `🤍 Аи → ${"Юи"} · ${label}${chat != null ? ` · чат ${chat}` : ""}`;
+    try { await post(encodeEnvelope(sealed.envelope, note)); }
     catch { pending.delete(sealed.envelope.id); return { ok: false, code: "bridge_send_failed", text: "" }; }
 
     try { return await answer; }
@@ -113,15 +136,25 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
    */
   async function context({ actor = null, chat = null, chatType = null, ttlMs = 60_000 } = {}) {
     if (!open()) return null;
-    const cacheKey = `${chatType ?? "any"}:${chat}:${actor}`;
+    // Тип чата нормализуется: «private» и «не указан» — один и тот же вопрос,
+    // а раньше это были две разные записи кэша и два запроса в канал.
+    const place = chatType === "private" ? "private" : "group";
+    const cacheKey = `${place}:${chat}:${actor}`;
     const cached = contextCache.get(cacheKey);
     if (cached && now() - cached.at < ttlMs) return cached.value;
-    const result = await call(CONTEXT_TOOL, { actor, chat, chatType, timeout: 12_000 });
-    if (!result.ok) return null;
-    const value = result.data && typeof result.data === "object" ? result.data : {};
-    contextCache.set(cacheKey, { at: now(), value });
-    if (contextCache.size > 128) for (const [key, item] of contextCache) if (now() - item.at > ttlMs) contextCache.delete(key);
-    return value;
+    // Один вопрос — один конверт, даже если его одновременно спросили два
+    // места: профиль ответа и пауза между ответами спрашивают об одном и том же.
+    if (inflightContext.has(cacheKey)) return inflightContext.get(cacheKey);
+    const task = (async () => {
+      const result = await call(CONTEXT_TOOL, { actor, chat, chatType: place, timeout: 12_000 });
+      if (!result.ok) return null;
+      const value = result.data && typeof result.data === "object" ? result.data : {};
+      contextCache.set(cacheKey, { at: now(), value });
+      if (contextCache.size > 128) for (const [key, item] of contextCache) if (now() - item.at > ttlMs) contextCache.delete(key);
+      return value;
+    })().finally(() => inflightContext.delete(cacheKey));
+    inflightContext.set(cacheKey, task);
+    return task;
   }
 
   /** Verification of an incoming envelope, for anything else that listens. */

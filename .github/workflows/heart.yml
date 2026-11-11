@@ -103,7 +103,15 @@ jobs:
       - name: Publish
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
-        run: npx --yes @tgcloud/cli@0.2.0 push handlers/message lib/ai-character lib/ai-service lib/dialogue-policy lib/time lib/config lib/secrets lib/store lib/bridge lib/abilities lib/personal lib/events lib/sibling lib/notices lib/heart lib/intents lib/memory schema
+        run: npx --yes @tgcloud/cli@0.2.0 push handlers lib schema
+      # Publishing a schema is not applying it. Without this step the heart ran
+      # against a database with no tables: reads returned null, writes failed,
+      # and «запомни, …» answered «хранилище не отвечает» while /status said the
+      # storage was available. The tables exist only after migrate.
+      - name: Apply database schema
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: npx --yes @tgcloud/cli@0.2.0 migrate --yes
       - name: Restore the empty secret slots
         if: always()
         run: git checkout -- tgcloud/lib/secrets.js

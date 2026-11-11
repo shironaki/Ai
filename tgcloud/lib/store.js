@@ -97,8 +97,24 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
     } catch { return false; }
   }
 
+  /**
+   * «Хранилище есть» и «хранилище работает» — разные факты, и разница стоила
+   * пользователю двух часов недоумения: /status отвечал «доступно» (объект
+   * базы передан), а «запомни, …» — «не отвечает» (таблиц не было).
+   *
+   * Проба делает настоящие чтение и запись. Обе половины называются отдельно:
+   * чтение есть, а записи нет — это неприменённая схема, а не поломка базы.
+   */
+  async function probe() {
+    if (!has) return { read: false, write: false, code: "no_database" };
+    const read = await getChecked("heart:probe").then(result => result.ok).catch(() => false);
+    const write = await set("heart:probe", { at: now() });
+    return { read, write, code: read && write ? "ok" : read ? "write_failed" : "read_failed" };
+  }
+
   return Object.freeze({
     available: has,
+    probe,
     get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded,
     memory: Object.freeze({ load, save, clear }),
   });
