@@ -39,6 +39,9 @@ export function parseQuiet(text) {
 }
 
 /** «Вопрос дня» → { more } или null. */
+/** Кнопка под вопросом дня: следующий вопрос без слов. */
+export const MORE_QUESTION = Object.freeze({ inline_keyboard: [[{ text: "Ещё вопрос", callback_data: "a:q" }]] });
+
 export function parseQuestion(text) {
   const value = fold(text).replace(/[?.!…]+$/u, "");
   if (QUESTION_MORE.test(value)) return { more: true };
@@ -185,22 +188,29 @@ export function createFun({
   }
 
   // ── вопрос дня ──────────────────────────────────────────────────────────
-  /** Один вопрос на день и чат; «ещё вопрос» — следующий по кругу. */
+  /**
+   * Вопрос дня для чата — текстом. Один на день и чат; `more` — следующий по
+   * кругу. Им пользуются и слова («вопрос дня»), и кнопка «Ещё вопрос», и
+   * утренняя рассылка в чатах, где о ней попросили.
+   */
+  async function questionFor(chatId, { more = false, day = "" } = {}) {
+    const key = `heart:question:${chatId}`;
+    const saved = store?.available ? await store.get(key).catch(() => null) : null;
+    const days = Math.floor(Date.parse(`${day || new Date(now()).toISOString().slice(0, 10)}T00:00:00Z`) / 86_400_000) || 0;
+    // Сдвиг по чату: в двух чатах в один день вопросы разные.
+    const base = Math.abs(days + Math.abs(Number(chatId) || 0) % 97) % QUESTIONS.length;
+    const same = saved?.day === days;
+    const step = same ? (Number(saved.step) || 0) + (more ? 1 : 0) : 0;
+    if (store?.available && (!same || more)) await store.set(key, { day: days, step, at: now() }).catch(() => false);
+    pulse?.bump("questions");
+    return `💬 ${step ? "Ещё вопрос" : "Вопрос дня"}:\n${QUESTIONS[(base + step) % QUESTIONS.length]}`;
+  }
+
   async function question(turn, prompt, { day = "" } = {}) {
     const asked = parseQuestion(prompt);
     if (!asked) return null;
     if (turn.dry) return say(turn, "Задала бы вопрос дня — репетиция.");
-    const key = `heart:question:${turn.chatId}`;
-    const saved = store?.available ? await store.get(key).catch(() => null) : null;
-    const days = Math.floor(Date.parse(`${day || new Date(now()).toISOString().slice(0, 10)}T00:00:00Z`) / 86_400_000) || 0;
-    // Сдвиг по чату: в двух чатах в один день вопросы разные.
-    const base = Math.abs(days + Math.abs(Number(turn.chatId) || 0) % 97) % QUESTIONS.length;
-    const same = saved?.day === days;
-    const step = same ? (Number(saved.step) || 0) + (asked.more ? 1 : 0) : 0;
-    if (store?.available && (!same || asked.more)) await store.set(key, { day: days, step, at: now() }).catch(() => false);
-    const text = QUESTIONS[(base + step) % QUESTIONS.length];
-    pulse?.bump("questions");
-    return say(turn, `💬 ${step ? "Ещё вопрос" : "Вопрос дня"}:\n${text}`);
+    return say(turn, await questionFor(turn.chatId, { more: asked.more, day }), { extra: { reply_markup: MORE_QUESTION } });
   }
 
   // ── отправка ────────────────────────────────────────────────────────────
@@ -467,5 +477,5 @@ export function createFun({
     return say(turn, lines.join("\n"));
   }
 
-  return Object.freeze({ roleplay, welcome, poll, whois, chatSetting, chatSettings, hush, quiet, question });
+  return Object.freeze({ roleplay, welcome, poll, whois, chatSetting, chatSettings, saveChat, canManage, hush, quiet, question, questionFor });
 }

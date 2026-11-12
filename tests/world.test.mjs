@@ -482,7 +482,7 @@ test("картинки: котик из коллекции, вид предме�
   source("page/summary/", page("Капибара", "Капибара — полуводное травоядное млекопитающее.", { description: "вид грызунов", originalimage: { source: "https://upload.example/capybara.jpg" }, thumbnail: { source: "https://upload.example/capybara-320.jpg" } }));
   const h = heart();
   await h.onMessage(message("покажи котика"), KEY);
-  assert.deepEqual(calls("sendPhoto").at(-1), { chat_id: 5, photo: "https://cdn.example/cat.jpg" });
+  assert.deepEqual(calls("sendPhoto").at(-1), { chat_id: 5, photo: "https://cdn.example/cat.jpg", reply_markup: { inline_keyboard: [[{ text: "Ещё", callback_data: "a:an:cat" }]] } });
   await h.onMessage(message("Как выглядит капибара?"), KEY);
   assert.deepEqual(calls("sendPhoto").at(-1), { chat_id: 5, photo: "https://upload.example/capybara.jpg", caption: "Капибара — вид грызунов\nВикипедия" });
   // Оригинал слишком велик — уходит уменьшенный.

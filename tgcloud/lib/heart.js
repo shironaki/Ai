@@ -22,7 +22,7 @@ import { createSources, detectSource, factQuery, parseTarget, knownCity } from "
 import { calculate } from "./calc.js";
 import { createGames } from "./games.js";
 import { parsePicture, moodOf, answerMoods, shelfOf, pickSticker } from "./pictures.js";
-import { createFun, parseChatSetting, parseQuiet, parseQuestion } from "./fun.js";
+import { createFun, parseChatSetting, parseQuiet, parseQuestion, MORE_QUESTION } from "./fun.js";
 import { createNotes, parseNote } from "./notes.js";
 import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
 import { parsePoll } from "./polls.js";
@@ -1368,6 +1368,45 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     } catch { return false; }
   }
 
+  // ── кнопка «Ещё» под обычным ответом ───────────────────────────────────
+  const moreOf = (what, text = "Ещё") => ({ inline_keyboard: [[{ text, callback_data: `a:${what}` }]] });
+
+  /**
+   * «Ещё» под вопросом дня и под картинкой зверя: то же самое ещё раз, без
+   * слов. Нажать может любой в чате; не чаще раза в две секунды на чат, и не
+   * тогда, когда её попросили помолчать.
+   */
+  async function pressAgain(query) {
+    const [, what = "", arg = ""] = String(query?.data ?? "").split(":");
+    const chatId = query?.message?.chat?.id;
+    const answer = async (text = "") => {
+      try { await api.answerCallbackQuery({ callback_query_id: query?.id, ...(text ? { text } : {}) }); } catch { /* ответ на нажатие не важнее самого ответа */ }
+    };
+    if (chatId == null || query?.from?.id == null) { await answer(); return { ignored: true }; }
+    if (await fun.quiet(chatId)) { await answer("Меня попросили помолчать."); return { ok: true, action: "again", quiet: true }; }
+    const gate = `heart:again:${chatId}`;
+    if (now() - (Number((await store.get(gate).catch(() => null))?.at) || 0) < 2000) { await answer("Не так быстро."); return { ok: true, action: "again", throttled: true }; }
+    await store.set(gate, { at: now() }).catch(() => false);
+    const thread = query.message.is_topic_message === true && query.message.message_thread_id != null ? { message_thread_id: query.message.message_thread_id } : {};
+    try {
+      if (what === "q") {
+        await api.sendMessage({ chat_id: chatId, text: await fun.questionFor(chatId, { more: true, day: dayOf(now()) }), reply_markup: MORE_QUESTION, ...thread });
+        await answer();
+        return { ok: true, action: "again", what };
+      }
+      if (what === "an" && ["cat", "dog", "fox"].includes(arg)) {
+        const url = await sources.animal(arg);
+        if (!url) { await answer("Коллекция картинок сейчас не отвечает."); return { ok: true, action: "again", what, empty: true }; }
+        await api.sendPhoto({ chat_id: chatId, photo: url, reply_markup: moreOf(`an:${arg}`), ...thread });
+        pulse.bump("sourced");
+        await answer();
+        return { ok: true, action: "again", what };
+      }
+    } catch { await answer("Не получилось. Ещё раз?"); return { ok: false, code: "send_failed" }; }
+    await answer();
+    return { ignored: true };
+  }
+
   const GESTURE_WORDS = Object.freeze({ hug: "Обнимаю.", pat: "Глажу по голове.", wave: "Машу рукой.", highfive: "Даю пять!", dance: "Танцую — жаль, не видно.", smile: "Улыбаюсь.", wink: "Подмигиваю." });
 
   /**
@@ -1380,7 +1419,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     if (turn.dry) return say(turn, "Разобрала бы это как просьбу показать картинку — репетиция, ничего не отправляю.");
     if (asked.kind === "animal") {
       const url = await sources.animal(asked.animal);
-      if (await sendMedia(turn, "sendPhoto", "photo", url)) { pulse.bump("sourced"); return { ok: true, action: "photo" }; }
+      if (await sendMedia(turn, "sendPhoto", "photo", url, "", { reply_markup: moreOf(`an:${asked.animal}`) })) { pulse.bump("sourced"); return { ok: true, action: "photo" }; }
       return say(turn, `Не вышло: ${asked.word} не нашёлся — коллекция картинок сейчас не отвечает.`);
     }
     if (asked.kind === "gesture") {
@@ -2149,6 +2188,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       await store.sweep("heart:welcome:", 2 * DAY);
       await store.sweep("heart:question:", 3 * DAY);
       await store.sweep("heart:rp:", 2 * DAY);
+      await store.sweep("heart:again:", DAY);
+      await store.sweep("heart:heard:", 3 * DAY);
       await store.sweep("heart:stickers:", 30 * DAY);
       await store.sweep("heart:quota:", 3 * DAY);
       await store.sweep("heart:mail:", 30 * DAY);
@@ -2378,7 +2419,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
     // в другой игре. Мимо — молча, с «🤔», чтобы было видно: услышала.
-    if (!dry && inGroup && turn.replyToMe && message.reply_to_message?.message_id != null) {
+    if (!dry && turn.replyToMe && message.reply_to_message?.message_id != null) {
       const guessed = await party.guess(turn, prompt, message.reply_to_message.message_id);
       if (guessed) {
         if (guessed.miss) await react(turn, "🤔");
@@ -2572,11 +2613,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
    */
   async function onCallback(query, ctx = {}) {
     const data = String(query?.data ?? "");
-    const route = data.startsWith("p:") ? "party" : "none";
+    const route = data.startsWith("p:") ? "party" : data.startsWith("a:") ? "again" : "none";
     if (ctx?.testRun === true) return { ok: true, route, side_effects: "none" };
     try {
       let result = { ignored: true };
       if (route === "party") result = await party.press(query);
+      else if (route === "again") result = await pressAgain(query);
       else if (query?.id != null && has("answerCallbackQuery")) {
         try { await api.answerCallbackQuery({ callback_query_id: query.id }); } catch { /* устаревшее нажатие — не поломка */ }
       }

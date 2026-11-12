@@ -16,6 +16,7 @@ import { TRUTHS, DARES, BOTTLE_FRIENDLY, BOTTLE_WARM } from "./data/party.js";
 import { ACTIONS, lineFor, accusative } from "./rp.js";
 import { fold } from "./sources.js";
 import { safeName } from "./address.js";
+import { storyEngines } from "./tables.js";
 
 export const PARTY_PREFIX = "heart:party:";
 export const PARTY_KEY = (chatId, messageId) => `${PARTY_PREFIX}${chatId}:${messageId}`;
@@ -29,6 +30,10 @@ export const PARTY_GAMES = Object.freeze([
   ["croc", "крокодил", "«крокодил»", false],
   ["tod", "правда или действие", "«правда или действие»", false],
   ["bottle", "бутылочка", "«бутылочка»", false],
+  ["quiz", "квиз", "«квиз»", true],
+  ["akin", "«угадай животное» (угадываю я)", "«угадай животное»", true],
+  ["hide", "«загадай животное» (угадываете вы)", "«загадай животное»", true],
+  ["quest", "приключение «Маяк»", "«приключение»", true],
 ]);
 
 const LEAD = "(?:(?:а|ну)\\s+)?(?:(?:давай(?:те)?|го|хочу|может|пошли|погнали)\\s+)?(?:(?:сыграем|поиграем|сыграть|поиграть|играем|играть|запусти|начни|устрой|крутим|покрутим|крути)\\s+)?(?:в\\s+)?";
@@ -38,6 +43,10 @@ const NAMED = [
   ["bottle", "бутылочк[ауи]"],
   ["croc", "крокодил[а]?"],
   ["rps", "(?:камень[\\s,-]+ножницы[\\s,-]+бумаг[ау]|кнб|цу[\\s-]?е[\\s-]?фа)\\s+(?:вдвоем|на\\s+двоих|с\\s+кем[\\s-]?(?:нибудь|то)|друг\\s+с\\s+другом|кнопками)"],
+  ["quiz", "квиз(?:ик)?(?:\\s+на\\s+эрудицию)?|вопросы\\s+на\\s+эрудицию"],
+  ["akin", "(?:угадай|отгадай)\\s+(?:мое\\s+)?животное|(?:угадай|отгадай)\\s+(?:кого|что)\\s+я\\s+загадал[а]?|акинатор[а]?|(?:20|двадцать)\\s+вопросов|данетк[иау]"],
+  ["hide", "загадай\\s+(?:мне\\s+|нам\\s+)?животное|(?:я\\s+)?угадаю\\s+животное"],
+  ["quest", "приключение|текстов(?:ое|ую)\\s+(?:приключение|игру)|текстовый\\s+квест|историю\\s+с\\s+выбором|маяк"],
 ].map(([kind, body]) => [kind, new RegExp(`^${LEAD}(?:${body})$`, "u")]);
 
 /** «Сыграем в крокодила» → "croc". Не игра с кнопками — null. */
@@ -344,6 +353,8 @@ export function createParty({
     },
   };
 
+  Object.assign(ENGINE, storyEngines({ btn, esc, pick, same }));
+
   /** Общее для столов с кругом игроков: войти, выйти, закончить. */
   function lobby(record, { verb, user }) {
     if (!["tod", "bottle"].includes(record.kind)) return null;
@@ -388,8 +399,8 @@ export function createParty({
     const kind = parseParty(prompt);
     if (!kind) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как игру с кнопками — репетиция, стол не открываю.");
-    const title = PARTY_GAMES.find(item => item[0] === kind)[1];
-    if (turn.isPrivate && kind !== "ttt") {
+    const [, title, , solo] = PARTY_GAMES.find(item => item[0] === kind);
+    if (turn.isPrivate && !solo) {
       return say(turn, kind === "rps"
         ? "Вдвоём — это в группе. Здесь сыграю сама: «камень, ножницы, бумага»."
         : `«${title[0].toUpperCase()}${title.slice(1)}» — игра для компании. Позовите меня в группу и скажите там: «Аи, ${title}».`);
@@ -451,7 +462,20 @@ export function createParty({
     if (!store?.available || messageId == null) return null;
     const key = PARTY_KEY(turn.chatId, messageId);
     const before = await store.get(key).catch(() => null);
-    if (!before || before.kind !== "croc" || now() - Number(before.at) > PARTY_TTL_MS) return null;
+    if (!before || !ENGINE[before.kind] || now() - Number(before.at) > PARTY_TTL_MS) return null;
+    if (before.kind !== "croc") {
+      // Стол со своей отгадкой («угадай животное»): решает он сам.
+      if (typeof ENGINE[before.kind].guess !== "function") return null;
+      const record = JSON.parse(JSON.stringify(before));
+      const out = ENGINE[before.kind].guess(record, { text, user: { id: turn.actorId, name: safeName(turn.name) || "Игрок" } });
+      if (!out) return null;
+      if (out.changed) {
+        record.at = now();
+        if (!(await store.compareSet(key, before, record))) return { ok: true, action: "party", kind: before.kind, late: true };
+        await redraw(turn.chatId, messageId, record);
+      }
+      return { ok: true, action: "party", kind: before.kind, ...out.result };
+    }
     if (before.phase !== "play") return { ok: true, action: "party", kind: "croc", idle: true };
     // Ведущий отвечает на стол — это подсказка, а не отгадка.
     if (same(before.host.id, turn.actorId)) return { ok: true, action: "party", kind: "croc", host: true };
