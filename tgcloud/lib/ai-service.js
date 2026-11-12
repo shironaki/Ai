@@ -480,7 +480,12 @@ export function createAiService({
      * Для «проверь мозги»: настроенный провайдер и отвечающий — разные факты,
      * а запасной иначе проверяется только в тот день, когда кончился основной.
      */
-    async probeBrains({ ctx = {}, apiKey: explicitKey = null, model: modelOverride = null } = {}) {
+    /**
+     * Живая проба: по одному запросу каждому провайдеру. `every` — каждой
+     * модели основного провайдера: запасные имена из настроек могли устареть,
+     * и узнать об этом лучше до дня, когда основная упрётся в лимит.
+     */
+    async probeBrains({ ctx = {}, apiKey: explicitKey = null, model: modelOverride = null, every = false } = {}) {
       const apiKey = String((explicitKey ?? getApiKey(ctx)) ?? "").trim();
       const doFetch = resolveFetch();
       if (!doFetch) return [];
@@ -491,7 +496,7 @@ export function createAiService({
       const seen = new Set();
       const report = [];
       for (const brain of chain) {
-        if (seen.has(brain.provider)) continue;
+        if (seen.has(brain.provider) && !(every && brain.provider === "main")) continue;
         seen.add(brain.provider);
         const started = now();
         const row = { provider: brain.provider, model: brain.model, ok: false, code: "", status: null, errorName: "", ms: 0 };
@@ -512,7 +517,12 @@ export function createAiService({
         const outcome = responseOutcome(response);
         if (!outcome.succeeded) {
           const detail = outcome.recognized ? await readProviderError(response) : { code: "", type: "" };
-          report.push({ ...row, code: "provider_http_error", status: outcome.status, providerCode: detail.code || detail.type, stage: "chat", ms: now() - started });
+          // Запасной модели у провайдера нет или она закрыта: сутки цепочка её не трогает.
+          const spare = brain.provider === "main" && brain.model !== wanted;
+          const reason = `${detail.code} ${detail.type}`.toLowerCase();
+          const gone = outcome.status === 404 || (outcome.status === 400 && /model|decommission|not_found/u.test(reason)) || (outcome.status === 403 && spare);
+          if (brains && gone) await brains.retire(brain.id, { why: "gone" });
+          report.push({ ...row, code: "provider_http_error", status: outcome.status, providerCode: detail.code || detail.type, stage: "chat", gone, ms: now() - started });
           continue;
         }
         if (brains) await brains.healthy(brain.id);
@@ -677,15 +687,18 @@ export function createAiService({
             await sleep(limits.retryAfterMs + 100);
             return ask(brain, { timeout, plain, retried: true });
           }
+          // 403 на запасной модели того же ключа — модель закрыта для этого
+          // тарифа, а не ключ отозван: сутки её не трогаем, остальные пробуем.
+          const denied = status === 403 && brain.provider === "main" && brain.model !== wanted;
           if (brains) {
             if (limited) await brains.rest(brain.id, { ms: limits.retryAfterMs ?? DEFAULT_REST_MS, why: "limit" });
-            else if (gone) await brains.retire(brain.id, { why: "gone" });
+            else if (gone || denied) await brains.retire(brain.id, { why: "gone" });
             else if (status >= 500) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "down" });
           }
           return {
-            ok: false, code: "provider_http_error", status, limited, gone,
+            ok: false, code: "provider_http_error", status, limited, gone: gone || denied,
             transient: limited || status >= 500,
-            keyRejected: status === 401 || status === 403,
+            keyRejected: status === 401 || (status === 403 && !denied),
             providerCode: detail.code, providerType: detail.type, contentType: detail.contentType,
             model: brain.model,
             text: `AI-провайдер вернул ошибку: ${describeProviderFailure({ status, providerCode: detail.code || detail.type, model: brain.model })}`,

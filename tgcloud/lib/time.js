@@ -50,6 +50,13 @@ export function nowLine(at, timeZone) {
   } catch { return new Date(at).toISOString().slice(0, 16).replace("T", " "); }
 }
 
+/** «пятница, 13 ноября» — день словами, без года и часов: для утреннего приветствия. */
+export function dayLine(at, timeZone) {
+  try {
+    return new Intl.DateTimeFormat("ru-RU", { timeZone: effectiveTimeZone(timeZone), weekday: "long", day: "numeric", month: "long" }).format(new Date(at));
+  } catch { return new Date(at).toISOString().slice(0, 10); }
+}
+
 /** Смещение пояса от UTC в минутах на данный момент: Москва → 180. */
 export function zoneOffsetMinutes(at, timeZone) {
   try {

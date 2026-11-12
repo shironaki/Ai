@@ -16,8 +16,8 @@ import { createLessons } from "./lessons.js";
 import { createPulse } from "./pulse.js";
 import { createQueue } from "./queue.js";
 import { parseCommand, mentions, stripMention, vocative, isReplyToMe, safeName } from "./address.js";
-import { calendarDate, localHour, localClock, nowLine, localParts, validTimeZone } from "./time.js";
-import { createReminders, parseReminder } from "./reminders.js";
+import { calendarDate, localHour, localClock, nowLine, dayLine, localParts, validTimeZone } from "./time.js";
+import { createReminders, parseReminder, REPEAT_LABEL } from "./reminders.js";
 import { createSources, detectSource, factQuery, parseTarget, knownCity } from "./sources.js";
 import { calculate } from "./calc.js";
 import { createGames } from "./games.js";
@@ -347,6 +347,29 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return saved?.id != null ? saved : fallback;
   }
 
+  /**
+   * Длинный текст — частями. Telegram не принимает сообщение длиннее 4096
+   * знаков: раньше такой ответ не уходил вовсе. Режется по абзацу, затем по
+   * фразе, затем по слову — никогда посреди слова.
+   */
+  function partsOf(text, limit = 3900) {
+    const out = [];
+    let rest = String(text ?? "");
+    while (rest.length > limit) {
+      const slice = rest.slice(0, limit);
+      const floor = limit * 0.4;
+      let at = slice.lastIndexOf("\n\n");
+      if (at < floor) at = slice.lastIndexOf("\n");
+      if (at < floor) at = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "), slice.lastIndexOf("… ")) + 1;
+      if (at < floor) at = slice.lastIndexOf(" ");
+      if (at < floor) at = limit;
+      out.push(rest.slice(0, at).trim());
+      rest = rest.slice(at).trim();
+    }
+    if (rest) out.push(rest);
+    return out.length ? out : [""];
+  }
+
   // One place that sends, so every path reports the same shape: what was said,
   // and whether it reached Telegram at all.
   async function say(turn, text, { extra = {} } = {}) {
@@ -354,9 +377,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // contract, and the reason a green test cannot be mistaken for delivery.
     if (turn.dry) return { ok: true, text, side_effects: "none" };
     try {
-      const sent = await api.sendMessage({ chat_id: turn.chatId, text, ...turn.extra, ...extra });
+      const [head, ...tail] = partsOf(text);
+      const sent = await api.sendMessage({ chat_id: turn.chatId, text: head, ...turn.extra, ...extra });
       turn.delivered = true;
-      return { ok: true, text, messageId: sent?.message_id ?? null };
+      // Продолжение идёт следом в ту же тему, но уже не «ответом»: цитата одна.
+      const next = turn.extra?.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {};
+      for (const part of tail) await api.sendMessage({ chat_id: turn.chatId, text: part, ...next });
+      return { ok: true, text, messageId: sent?.message_id ?? null, parts: 1 + tail.length };
     } catch {
       // Не дошло до человека — это поломка, а не настроение. Владелец узнает
       // сам, а собеседник всё равно получит текст в ответе ниже.
@@ -599,16 +626,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       // Самая частая причина у провайдера со своими сертификатами: платформа им не доверяет.
       return `${head} — нет связи${row.stage === "token" ? " при обмене ключа" : ""} (${row.errorName || "сеть"}); если так каждый раз — платформа не принимает его сертификат`;
     }
-    if (row.code === "provider_http_error") return `${head} — ${describeProviderFailure({ status: row.status, providerCode: row.providerCode, model: row.model })}`;
+    if (row.code === "provider_http_error") {
+      return `${head} — ${describeProviderFailure({ status: row.status, providerCode: row.providerCode, model: row.model })}${row.gone ? "; сутки не трогаю — имя стоит заменить в настройках" : ""}`;
+    }
     return `${head} — нет (${row.code || "ошибка"})`;
   }
 
   /** «Проверь мозги»: живой запрос к каждому провайдеру, а не список из настроек. */
   async function probeBrains(turn) {
     if (turn.dry) return say(turn, "Пробный запуск: живая проба провайдеров не выполнялась.");
-    const rows = await ai.probeBrains({ ctx: turn.ctx, apiKey: await resolveKey(turn.ctx) }).catch(() => []);
+    const rows = await ai.probeBrains({ ctx: turn.ctx, apiKey: await resolveKey(turn.ctx), every: true }).catch(() => []);
     if (!rows.length) return say(turn, "Проверять нечего: ни одного ключа провайдера не задано.");
-    return say(turn, ["Проба мозгов — по одному живому запросу каждому провайдеру:", "", ...rows.map(row => `• ${probeLine(row)}`)].join("\n"));
+    return say(turn, ["Проба мозгов — живой запрос каждой модели основного провайдера и каждому запасному:", "", ...rows.map(row => `• ${probeLine(row)}`)].join("\n"));
   }
 
   async function diagnostic(turn) {
@@ -809,6 +838,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const known = {
       silence: "В прошлый раз я промолчала сама: это мой выбор и часть характера, а не поломка.",
       queued: "В прошлый раз мне было нечем думать: лимит модели вышел. Вопрос я записала и отвечаю на такие сама, когда могу.",
+      cap: "Вчера или сегодня мы упёрлись в дневной предел разговора: мыслей на день у меня не бесконечно. Это не обида — завтра продолжаем.",
       fault: "В прошлый раз у меня была неполадка, и ответ не получился. Владелец о ней знает.",
     }[recent];
     if (known) return say(turn, known);
@@ -963,6 +993,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
       case "why_answer":
         return whyAnswer(turn);
+      case "tell_owner": {
+        if (owner(actorId)) return say(turn, "Хозяин — это вы: передавать некому.");
+        if (OWNER <= 0) return say(turn, "Хозяин у меня не задан: передать некому.");
+        const counter = `heart:mail:${dayOf(now())}:${actorId}`;
+        const used = Number(await store.get(counter).catch(() => 0)) || 0;
+        if (used >= 3) return say(turn, `Сегодня я уже передала три ${you(turn, "ваших", "твоих")} сообщения. Остальное — завтра.`);
+        const who = authorName(turn);
+        let sent = null;
+        try {
+          sent = await api.sendMessage({
+            chat_id: OWNER,
+            text: `✉️ Хозяин, вам пишет ${who}${inGroup ? " (сказано в группе)" : ""}:\n\n${String(parsed.arg).slice(0, 1500)}\n\nОтветить — ответом на это сообщение: передам слово в слово.`,
+          });
+        } catch { sent = null; }
+        if (!sent) return say(turn, `Не получилось передать: хозяин сейчас недоступен. ${you(turn, "Попробуйте", "Попробуй")} позже.`);
+        await store.set(counter, used + 1);
+        // По номеру сообщения ответ хозяина найдёт адресата; ID человека хозяин не видит.
+        if (sent?.message_id != null) await store.set(`heart:mail:msg:${sent.message_id}`, { to: actorId, name: who, at: now() });
+        await react(turn, "✍");
+        return say(turn, "Передала — слово в слово. Если хозяин ответит, принесу ответ в личку.");
+      }
       case "play": {
         if (!parsed.arg) return say(turn, games.menu({ sister: abilities.open() ? SISTER : "" }));
         const started = await games.start(turn.chatId, parsed.arg.game, { formal: turn.manner?.formal !== false, from: parsed.arg.from, to: parsed.arg.to });
@@ -989,7 +1040,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       case "reminders": {
         const items = await reminders.list(actorId);
         if (!items.length) return say(turn, `Напоминаний у ${you(turn, "вас", "тебя")} нет. Поставить: «напомни через час …» или «напомни завтра в 9 …».`);
-        return say(turn, ["Напоминания:", "", ...items.map((item, i) => `${i + 1}. ${whenText(item.at, zoneOf(turn))}${item.text ? ` — ${item.text}` : ""}`), "", "Отменить: «отмени напоминание 2»."].join("\n"));
+        return say(turn, ["Напоминания:", "", ...items.map((item, i) => `${i + 1}. ${whenText(item.at, zoneOf(turn))}${item.repeat?.kind ? ` (${REPEAT_LABEL[item.repeat.kind]})` : ""}${item.kind === "morning" ? " — побудка" : item.kind === "capsule" ? " — капсула времени" : ""}${item.text && item.kind !== "capsule" ? ` — ${item.text}` : ""}`), "", "Отменить: «отмени напоминание 2»."].join("\n"));
       }
       case "unremind": {
         const gone = await reminders.cancel(actorId, parsed.arg.index);
@@ -1024,9 +1075,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         : "Это время уже прошло или слишком далеко: я ставлю напоминания от полминуты до года вперёд.");
     }
     const text = parsed.text || quoted;
+    // Капсуле нужно письмо: пустую закапывать незачем.
+    if (parsed.kind === "capsule" && !text) return say(turn, `Что положить в капсулу? Одной фразой: «капсула времени на год: …».`);
     const added = await reminders.add({
       userId: turn.actorId, chatId: turn.chatId, at: parsed.at, text,
       messageId: turn.message?.message_id ?? null, threadId: turn.extra.message_thread_id ?? null, inGroup: turn.inGroup,
+      repeat: parsed.repeat ?? null, kind: parsed.kind ?? "", zone,
     });
     if (!added.ok) {
       return say(turn, added.code === "too_many"
@@ -1043,23 +1097,68 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         : " Точного будильника у меня пока нет: напомню, как только проснусь после этого времени — от любого сообщения.";
     // Пояс назван, только когда он не тот, что у хозяина: иначе это шум.
     const where = zone !== TZ && turn.manner?.settings?.city ? ` (по времени: ${turn.manner.settings.city})` : "";
-    return say(turn, `Хорошо, напомню ${whenText(parsed.at, zone)}${where}${text ? `: «${text}»` : ""}.${note}`);
+    const often = parsed.repeat ? `${REPEAT_LABEL[parsed.repeat.kind]}, начиная ` : "";
+    if (parsed.kind === "capsule") {
+      const day = calendarDate(parsed.at, zone);
+      return say(turn, `Запечатала. Открою ${day.slice(8, 10)}.${day.slice(5, 7)}.${day.slice(0, 4)} и пришлю ${you(turn, "вам", "тебе")} эти слова. Передумать — «мои напоминания».`);
+    }
+    if (parsed.kind === "morning") {
+      const city = turn.manner?.settings?.city;
+      return say(turn, `Хорошо, разбужу ${often ? `${REPEAT_LABEL[parsed.repeat.kind]} — первый раз ` : ""}${whenText(parsed.at, zone)}${where}: ${city ? `с погодой (${city}) и делами на день` : "с делами на день; назовёте город — «мой город — …» — добавлю погоду"}.${note}`);
+    }
+    return say(turn, `Хорошо, напомню ${often}${whenText(parsed.at, zone)}${where}${text ? `: «${text}»` : ""}.${note}`);
+  }
+
+  /**
+   * Что сказать, когда срок пришёл. Обычное напоминание — слова человека;
+   * побудка — утро целиком: день, погода и дела; капсула — письмо из прошлого.
+   * `null` — говорить уже незачем («доброе утро» в девять вечера).
+   */
+  async function ringText(item) {
+    const late = now() - Number(item.at);
+    const zone = item.zone || TZ;
+    const lateNote = late > 10 * 60_000 ? ` с опозданием на ${spanText(late)} — раньше меня никто не разбудил` : "";
+    if (item.kind === "capsule") {
+      const day = calendarDate(Number(item.created) || Number(item.at), zone);
+      const manner = await mannerFor(item.userId, { dry: true }).catch(() => ({ formal: true }));
+      return `📦 Капсула времени. ${day.slice(8, 10)}.${day.slice(5, 7)}.${day.slice(0, 4)} ${manner.formal === false ? "ты написал(а) себе" : "вы написали себе"}:\n\n«${item.text}»`;
+    }
+    if (item.kind === "morning") {
+      if (late > 6 * 3_600_000) return null;
+      const settings = (await personal.settings(item.userId).catch(() => ({}))) ?? {};
+      const lines = [`☀️ Доброе утро${settings.address ? `, ${settings.address}` : ""}! Сегодня ${dayLine(now(), zone)}.${lateNote ? ` Бужу${lateNote}.` : ""}`];
+      if (settings.city) {
+        const weather = await sources.weather(settings.city).catch(() => null);
+        if (weather?.ok) lines.push("", weather.text);
+      }
+      const today = calendarDate(now(), zone);
+      const plans = (await reminders.list(item.userId).catch(() => []))
+        .filter(other => other.id !== item.id && other.kind !== "capsule" && calendarDate(other.at, zone) === today)
+        .slice(0, 5).map(other => `• ${localClock(other.at, zone)}${other.text ? ` — ${other.text}` : ""}`);
+      if (plans.length) lines.push("", "Сегодня напомню:", ...plans);
+      if (item.text) lines.push("", item.text);
+      return lines.join("\n");
+    }
+    const head = `⏰ Напоминаю${lateNote}`;
+    return item.text ? `${head}: ${item.text}` : `${head}, как договаривались.`;
   }
 
   /** Напоминания, чей срок пришёл. Опоздала — говорит, на сколько. */
   async function ring() {
     const due = await reminders.due();
     for (const item of due) {
-      const late = now() - Number(item.at);
-      const head = late > 10 * 60_000 ? `⏰ Напоминаю с опозданием на ${spanText(late)} — раньше меня никто не разбудил` : "⏰ Напоминаю";
       const extra = {};
       if (item.threadId != null) extra.message_thread_id = item.threadId;
-      if (item.inGroup && item.messageId != null) extra.reply_parameters = { message_id: item.messageId, allow_sending_without_reply: true };
+      // Повторяющееся не цепляется к давней просьбе: ответ на сообщение месячной давности только путает.
+      if (item.inGroup && item.messageId != null && !item.repeat) extra.reply_parameters = { message_id: item.messageId, allow_sending_without_reply: true };
       let delivered = false;
       try {
-        await api.sendMessage({ chat_id: item.chatId, text: item.text ? `${head}: ${item.text}` : `${head}, как договаривались.`, ...extra });
+        const text = await ringText(item);
+        if (text) {
+          await api.sendMessage({ chat_id: item.chatId, text, ...extra });
+          pulse.bump("reminded");
+        }
         delivered = true;
-        pulse.bump("reminded");
       } catch { delivered = false; }
       const settled = await reminders.settle(item.id, delivered);
       if (settled.dropped) {
@@ -1473,6 +1572,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     pulse.bump("replies");
     pulse.bump("tokens", answer.usage?.total ?? 0);
     if (short) pulse.bump(`model:${short}`);
+    if (DAILY && !owner(turn.actorId)) {
+      const key = quotaKey(turn.actorId);
+      const used = await store.get(key).catch(() => null);
+      await store.set(key, { n: (Number(used?.n) || 0) + 1 });
+    }
+    // Лимит на исходе: владелец узнаёт заранее, а не когда она уже замолчала.
+    const left = Number(answer.remainingRequests), cap = Number(answer.limitRequests);
+    if (answer.remainingRequests != null && Number.isFinite(left) && cap > 0 && left / cap <= 0.1) {
+      try { await notices.report({ component: "brains", code: "low", severity: "degraded", detail: `лимит модели ${short} на исходе: осталось ${left} из ${cap} запросов до сброса` }); } catch { /* ответ важнее отчёта */ }
+    }
     if (answer.switched) {
       pulse.bump("switched");
       try { await notices.report({ component: "brains", code: "switched", severity: "degraded", detail: `основная модель недоступна — думаю запасной (${short})` }); } catch { /* ответ важнее отчёта */ }
@@ -1554,6 +1663,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // Технические подробности — только хозяину в его личке; остальным — суть.
     const detail = owner(actorId) && turn.isPrivate && answer.text ? `\n\n${answer.text}` : "";
     return say(turn, `У меня не получилось ответить: неполадка на моей стороне, владелец уже знает.${detail}`);
+  }
+
+  /**
+   * Дневной предел мыслей на человека. Лимит модели общий: один разговорчивый
+   * собеседник не должен оставить без ответа остальных. Хозяина предел не
+   * касается; игры, память, источники и напоминания под него не попадают —
+   * они модель не тратят.
+   */
+  const DAILY = Number.isFinite(Number(config.AI_DAILY_PER_PERSON)) ? Math.max(0, Math.round(Number(config.AI_DAILY_PER_PERSON))) : 200;
+  const quotaKey = (userId) => `heart:quota:${dayOf(now())}:${userId}`;
+
+  /** Исчерпан ли предел. Сказать об этом — один раз в день; дальше — «видела». */
+  async function overQuota(turn) {
+    if (!DAILY || owner(turn.actorId)) return null;
+    const used = await store.get(quotaKey(turn.actorId)).catch(() => null);
+    if (!(Number(used?.n) >= DAILY)) return null;
+    pulse.bump("capped");
+    if (used.told) { await react(turn, "👀"); return { ok: true, ignored: true, reason: "daily_cap" }; }
+    await store.set(quotaKey(turn.actorId), { ...used, told: true });
+    await store.set(`heart:quiet:${turn.chatId}:${turn.actorId}`, { reason: "cap", at: now() });
+    return say(turn, `На сегодня мы с ${you(turn, "вами", "тобой")} наговорились: мыслей на день у меня не бесконечно, и они нужны всем. Память, напоминания, игры, погода и счёт работают, а разговор продолжим завтра.`);
   }
 
   /** Разговор: всё, что не команда, не настройка, не умение и не намерение. */
@@ -1747,6 +1877,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       await store.sweep("heart:src:", 30 * DAY);
       await store.sweep("heart:game:", 30 * DAY);
       await store.sweep("heart:stickers:", 30 * DAY);
+      await store.sweep("heart:quota:", 3 * DAY);
+      await store.sweep("heart:mail:", 30 * DAY);
     } catch { /* уборка подождёт */ }
     try { await pulse.commit(); } catch { /* счётчики не важнее */ }
     return {
@@ -1890,6 +2022,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       return ruled(await say(turn, !saved.ok ? "Не запомнилось: хранилище не отвечает." : form === "ты" ? "Хорошо, давай на «ты»." : "Хорошо, перехожу на «вы»."));
     }
 
+    // Хозяин отвечает на переданное ему письмо: ответ уходит автору, дословно.
+    if (!dry && owner(actorId) && turn.isPrivate && message.reply_to_message?.message_id != null) {
+      const mail = await store.get(`heart:mail:msg:${message.reply_to_message.message_id}`).catch(() => null);
+      if (mail?.to != null) {
+        try {
+          await api.sendMessage({ chat_id: mail.to, text: `✉️ Хозяин отвечает:\n\n${prompt}` });
+          return ruled(await say(turn, `Передала: ${mail.name}.`));
+        } catch {
+          return ruled(await say(turn, `Не дошло: ${mail.name} не открывал(а) личку со мной или закрыл(а) её.`));
+        }
+      }
+    }
+
     // Слово владельца о чужой поправке: ответ «да» или «нет» на её вопрос.
     if (!dry && owner(actorId) && turn.isPrivate && message.reply_to_message?.message_id != null && (YES.test(prompt) || NO.test(prompt))) {
       const asked = await lessons.byAskMessage(message.reply_to_message.message_id).catch(() => null);
@@ -1951,6 +2096,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
           return { ok: true, ignored: true, reason: "deliberate_silence" };
         }
       } catch { /* политика не должна глушить разговор */ }
+    }
+
+    if (!dry) {
+      const capped = await overQuota(turn);
+      if (capped) return capped;
     }
 
     // «Что такое …», «кто такой …»: сначала статья, потом её голос. Модель
