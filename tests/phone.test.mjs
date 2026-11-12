@@ -422,7 +422,7 @@ test("первый запуск без файла ключей: проверка
     const first = box.run("check");
     assert.equal(first.code, 1);
     assert.match(first.out, /файла не было, создан пустой/u);
-    assert.match(first.out, /Дальше: nano \S+\.heart\.env — вписать значения/u);
+    assert.match(first.out, /Дальше: (?:nano|pkg install -y nano && nano|\S+) \S+\.heart\.env — вписать значения/u);
     const made = readFileSync(file, "utf8");
     assert.match(made, /^TGCLOUD_HEART_TOKEN=$/mu);
     assert.match(made, /^AI_PROVIDER_KEY=$/mu);
@@ -440,6 +440,14 @@ test("первый запуск без файла ключей: проверка
     assert.equal(idle.code, 1);
     assert.match(idle.out, /делать нечего\. Начните с проверки/u);
     assert.equal(box.cli().length, 0);
+
+    // Ключ вставлен отдельной строкой, под именем: названы номера строк, сам текст — нет.
+    box.keys(["# ключи", "TGCLOUD_HEART_TOKEN=", TOKEN, "", "AI_PROVIDER_KEY=", "QWxhZGRpbjpvcGVuIHNlc2FtZQ=="]);
+    const loose = box.run("check");
+    assert.equal(loose.code, 1);
+    assert.match(loose.out, /✗ в файле ключей не читаются строки: 3 6 — нужно «ИМЯ=значение» в одной строке/u);
+    assert.match(loose.out, /✗ нет TGCLOUD_HEART_TOKEN/u);
+    assert.ok(!loose.out.includes(TOKEN) && !loose.out.includes("QWxhZGRp"), "содержимое непонятой строки не печатается");
 
     // Заполненный файл проверка не трогает никогда.
     box.keys([`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`]);

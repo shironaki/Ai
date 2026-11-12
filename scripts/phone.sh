@@ -67,16 +67,23 @@ main() {
 
   # Файл ключей читается как текст, а не исполняется: JSON с кавычками и
   # знаки вроде «$» в ключе остаются собой.
+  # Имя — заглавные латинские буквы, цифры и «_»: всё остальное — не настройка,
+  # а, скорее всего, ключ, вставленный отдельной строкой. Такие строки не
+  # читаются, а их номера запоминаются для проверки (сам текст — никогда).
+  local UNREAD=""
   load_env() {
-    local file="$1" line key value
+    local file="$1" line key value n=0
     [ -f "$file" ] || return 1
+    UNREAD=""
     while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
       line="${line%$'\r'}"
       case "$line" in ''|'#'*) continue ;; esac
-      case "$line" in *=*) ;; *) continue ;; esac
+      case "${line// /}" in '') continue ;; esac
+      case "$line" in *=*) ;; *) UNREAD="$UNREAD $n"; continue ;; esac
       key="${line%%=*}"; value="${line#*=}"
       key="${key#export }"; key="${key// /}"
-      case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+      case "$key" in ''|[!A-Z]*|*[!A-Z0-9_]*) UNREAD="$UNREAD $n"; continue ;; esac
       value="${value#"${value%%[![:space:]]*}"}"; value="${value%"${value##*[![:space:]]}"}"
       case "$value" in
         \'*\') value="${value#\'}"; value="${value%\'}" ;;
@@ -88,6 +95,7 @@ main() {
   }
   # Прежний файл будильника тоже годится: в нём те же два имени.
   load_env "$HOME/.heart-alarm.env" || true
+  UNREAD=""
   local HAVE_ENV=0
   load_env "$ENV_FILE" && HAVE_ENV=1
 
@@ -154,6 +162,8 @@ main() {
       *"ouldn't find remote ref"*) echo "ветки «$BRANCH» в GitHub нет — сверьте строку HEART_BRANCH" ;;
       *"could not read Username"*|*"terminal prompts disabled"*|*"Authentication failed"*|*"nvalid username or password"*|*"epository not found"*|*"error: 403"*)
         echo "GitHub не пускает: выполните «gh auth login», затем «gh auth setup-git»" ;;
+      *"ermission denied"*|*"publickey"*|*"ost key verification failed"*)
+        echo "GitHub не пускает по SSH: выполните «gh auth login» с выбором HTTPS, затем «git -C $REPO remote set-url origin https://github.com/$(git -C "$REPO" remote get-url origin 2>/dev/null | sed -e 's#^.*github\.com[:/]##' -e 's#\.git$##').git»" ;;
       *"ould not resolve host"*|*"ailed to connect"*|*"timed out"*|*"unable to access"*) echo "нет связи с GitHub" ;;
       *"ot a git repository"*) echo "папка $REPO — не копия репозитория: см. docs/PHONE.md, раздел 1" ;;
       *) echo "GitHub не отвечает или ветки «$BRANCH» нет" ;;
@@ -547,6 +557,13 @@ EOF
     ) 2>/dev/null
   }
 
+  # Чем открыть файл ключей: nano в Termux обычно есть, но не обязан.
+  edit_hint() {
+    if command -v nano > /dev/null 2>&1; then echo "nano $ENV_FILE"
+    elif command -v pkg > /dev/null 2>&1; then echo "pkg install -y nano && nano $ENV_FILE"
+    else echo "${EDITOR:-vi} $ENV_FILE"; fi
+  }
+
   # ── проверка настройки ───────────────────────────────────────────────────
   check() {
     local bad=0 who title extra made=0
@@ -555,6 +572,9 @@ EOF
     elif keys_template; then made=1; echo "Ключи:   $ENV_FILE — файла не было, создан пустой: в него нужно вписать значения"
     else echo "Ключи:   $ENV_FILE — НЕТ ФАЙЛА"; fi
     [ -f "$HOME/.heart-alarm.env" ] && echo "         и прежний $HOME/.heart-alarm.env — его строки тоже читаются; не нужен — удалите"
+    if [ -n "$UNREAD" ]; then
+      echo "✗ в файле ключей не читаются строки:$UNREAD — нужно «ИМЯ=значение» в одной строке, значение сразу после «=»"; bad=1
+    fi
     echo "Ветка:   $BRANCH ($BRANCH_FROM) · публиковать: $([ "$DEPLOY_ON" = commit ] && echo 'каждый коммит' || echo 'когда сменился номер сборки')"
     for tool in git node npm curl; do
       command -v "$tool" > /dev/null 2>&1 || { echo "✗ нет программы «$tool»"; bad=1; }
@@ -626,7 +646,7 @@ EOF
       else echo "✗ тесты на этом устройстве не проходят (журнал: $TEST_LOG). Если дело в устройстве — HEART_TESTS=off."; bad=1; fi
     fi
     if [ "$bad" = 0 ]; then echo "Готово к работе: bash scripts/phone.sh"
-    elif [ "$made" = 1 ] || [ "$HAVE_ENV" = 0 ]; then echo "Дальше: nano $ENV_FILE — вписать значения после «=», затем снова: bash scripts/phone.sh check"
+    elif [ "$made" = 1 ] || [ "$HAVE_ENV" = 0 ]; then echo "Дальше: $(edit_hint) — вписать значения после «=», затем снова: bash scripts/phone.sh check"
     else echo "Сначала поправьте строки с ✗ (ключи — в $ENV_FILE), затем снова: bash scripts/phone.sh check"; fi
     return "$bad"
   }
@@ -675,6 +695,7 @@ EOF
   # Запуск руками — это «попробуй ещё раз»: прошлые неудачи не в счёт.
   rm -f "$FAILED"
   log "Дом запущен: ветка «$BRANCH», сборка в папке $(build_of). Остановить — Ctrl+C."
+  [ -z "$UNREAD" ] || log "В файле ключей не читаются строки:$UNREAD — подробнее: bash scripts/phone.sh check"
   [ "$VOICE_BAD$ROOM_BAD" = "00" ] || log "В строках ALARM_* образец вместо значения — будильник через канал выключен."
   if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then log "Будильник: раз в ${EVERY} с через канал."
   else log "Будильник: раз в $((RUN_EVERY / 60)) мин через платформу (второго бота нет)."; fi
