@@ -7,8 +7,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, chmodSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, existsSync, chmodSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,8 +23,19 @@ const KEYS = { model: "gsk-SECRET-MODEL-KEY", giga: "GIGA-SECRET-KEY", voice: "7
 
 const FAKE_CLI = `
 import { appendFileSync, readFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
 const args = process.argv.slice(2);
-const secrets = readFileSync("tgcloud/lib/secrets.js", "utf8");
+// Как настоящий инструмент: работает из ближайшей вверх по дереву папки с .tgcloud.
+const started = resolve(process.cwd());
+let root = started;
+for (let dir = started; ; dir = dirname(dir)) {
+  if (existsSync(dir + "/.tgcloud")) { root = dir; break; }
+  if (dirname(dir) === dir) break;
+}
+process.chdir(root);
+const found = existsSync("tgcloud/lib/secrets.js");
+const secrets = found ? readFileSync("tgcloud/lib/secrets.js", "utf8") : "";
 appendFileSync(process.env.FAKE_LOG, JSON.stringify({
   args,
   token: process.env.TGCLOUD_TOKEN === ${JSON.stringify(TOKEN)},
@@ -34,7 +45,14 @@ appendFileSync(process.env.FAKE_LOG, JSON.stringify({
   // Чей код исполняется: недоделанный коммит песочницы несёт tgcloud/wip.js.
   wip: existsSync("tgcloud/wip.js"),
   inRepo: existsSync(".git"),
+  strayed: root !== started,
 }) + "\\n");
+if (!found) { console.log("✗ Module not found"); process.exit(1); }
+// В соседнем окне посреди публикации запускают что-то ещё.
+if (process.env.FAKE_MEANWHILE && args[0] === "fetch") {
+  const other = spawnSync("bash", ["-c", process.env.FAKE_MEANWHILE], { cwd: started, encoding: "utf8", env: { ...process.env, FAKE_MEANWHILE: "" } });
+  appendFileSync(process.env.FAKE_LOG + ".meanwhile", String(other.stdout) + String(other.stderr));
+}
 const fail = String(process.env.FAKE_FAIL || "");
 const name = args[0] === "run" ? "run:" + args[1] : args[0];
 if (fail && (fail === args[0] || fail === name)) { console.log("✗ boom"); process.exit(1); }
@@ -83,12 +101,34 @@ function sandbox({ lines = null } = {}) {
     HEART_CLI: join(dir, "fake-cli.mjs"), HEART_TESTS: "off", FAKE_LOG: join(dir, "cli.log"), FAKE_CURL_LOG: join(dir, "curl.log"),
   };
   const read = (path) => (existsSync(path) ? readFileSync(path, "utf8") : "");
+  // Ни один режим не должен кончаться ошибкой самого bash: такая строка в
+  // Termux выглядит как поломка, даже когда всё сделано.
+  const sane = (out) => { assert.doesNotMatch(out, /unbound variable|syntax error|command not found/u); return out; };
   return {
-    dir, phone, home,
+    dir, phone, home, seed,
     run(mode = "once", extra = {}) {
       const done = spawnSync("bash", ["scripts/phone.sh", ...String(mode).split(" ")], { cwd: phone, env: { ...process.env, ...GIT_ENV, ...env, ...extra }, encoding: "utf8", timeout: 60_000 });
-      return { code: done.status, out: `${done.stdout}${done.stderr}` };
+      return { code: done.status, out: sane(`${done.stdout}${done.stderr}`) };
     },
+    /** Вечный цикл: работает, пока не выполнится условие, затем его останавливают, как Ctrl+C. */
+    loop(until, extra = {}) {
+      return new Promise((resolveLoop) => {
+        // Своя группа процессов: Ctrl+C в терминале получают все, кто в ней, — и bash, и его sleep.
+        const child = spawn("bash", ["scripts/phone.sh"], { cwd: phone, env: { ...process.env, ...GIT_ENV, ...env, ...extra }, detached: true });
+        let out = "", asked = false;
+        child.stdout.on("data", chunk => { out += chunk; });
+        child.stderr.on("data", chunk => { out += chunk; });
+        const started = Date.now();
+        const watch = setInterval(() => {
+          if (asked || !(until() || Date.now() - started > 40_000)) return;
+          asked = true;
+          try { process.kill(-child.pid, "SIGINT"); } catch { child.kill("SIGINT"); }
+        }, 100);
+        child.on("close", (code, signal) => { clearInterval(watch); resolveLoop({ code, signal, out: sane(out), ms: Date.now() - started }); });
+      });
+    },
+    meanwhile: () => read(`${env.FAKE_LOG}.meanwhile`),
+    keys: (lines) => writeFileSync(join(home, ".heart.env"), lines.join("\n") + "\n"),
     cli: () => read(env.FAKE_LOG).split("\n").filter(Boolean).map(line => JSON.parse(line)),
     curl: () => read(env.FAKE_CURL_LOG).split("\n").filter(Boolean),
     /** Новый коммит в «GitHub»: по желанию — с новым номером сборки. */
@@ -157,7 +197,7 @@ test("новый коммит без нового номера сборки жд
   } finally { box.clean(); }
 });
 
-test("репетиция упала — публикации нет; владелец узнаёт один раз; после трёх попыток ждёт нового коммита", { skip }, () => {
+test("репетиция упала — публикации нет; владелец узнаёт один раз; после трёх попыток — раз в час", { skip }, () => {
   const box = sandbox();
   try {
     const first = box.run("once", { FAKE_FAIL: "run:handlers/channel_post" });
@@ -170,11 +210,22 @@ test("репетиция упала — публикации нет; владе�
     assert.match(told()[0], /не опубликована/u);
 
     box.run("once", { FAKE_FAIL: "run:handlers/channel_post" });
-    box.run("once", { FAKE_FAIL: "run:handlers/channel_post" });
+    const third = box.run("once", { FAKE_FAIL: "run:handlers/channel_post" });
+    assert.match(third.out, /Три попытки подряд не вышли\. Этот коммит дальше пробую раз в 60 мин; новый коммит — сразу/u);
     assert.equal(told().length, 1, "об одной и той же поломке — одно сообщение");
     const tried = box.cli().length;
     box.run("once");
-    assert.equal(box.cli().length, tried, "три неудачи — этот коммит больше не трогается");
+    assert.equal(box.cli().length, tried, "три неудачи — в ближайший час этот коммит не трогается");
+    // Причина бывает временной (связь): через час — ещё попытка, без нового сообщения владельцу.
+    const [commit, count] = box.state("failed").split("\n");
+    assert.equal(count, "3");
+    writeFileSync(join(box.home, ".heart/failed"), `${commit}\n3\n${Math.floor(Date.now() / 1000) - 3700}\n`);
+    box.run("once", { FAKE_FAIL: "run:handlers/channel_post" });
+    assert.ok(box.cli().length > tried, "час прошёл — попытка повторяется");
+    assert.equal(told().length, 1);
+    const again = box.cli().length;
+    box.run("once");
+    assert.equal(box.cli().length, again, "и снова ждёт час");
 
     box.commit("1.0.1");
     const fixed = box.run("once");
@@ -242,10 +293,20 @@ test("строка-образец вместо ключа в живого бот
 
     const before = box.cli().length;
     const done = box.run("once");
-    assert.match(done.out, /AI_PROVIDER_KEY .* не похож на ключ .* публикации нет/u);
+    assert.match(done.out, /✗ Публикации нет, бот на прежней сборке: AI_PROVIDER_KEY .* не похож на ключ/u);
     assert.equal(box.cli().length, before, "в облако не ушло ничего: ни репетиции, ни публикации, ни удара");
     assert.equal(box.state("published"), "");
     assert.equal(box.status(), "");
+    // Нехватка настройки — не попытка: сколько бы кругов ни прошло, исправленный файл публикуется сразу.
+    for (let round = 0; round < 4; round += 1) box.run("once");
+    assert.equal(box.state("failed"), "", "счёт неудач не тронут");
+    assert.equal(box.cli().length, before);
+    // Вечный цикл с такими ключами не крутится впустую, а говорит сразу.
+    const refused = box.run("run");
+    assert.equal(refused.code, 1);
+    assert.match(refused.out, /✗ С такими ключами публиковать нельзя: AI_PROVIDER_KEY/u);
+    box.keys([`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`, "HEART_BRANCH=work"]);
+    assert.match(box.run("once").out, /Сборка 1\.0\.0 опубликована/u);
   } finally { box.clean(); }
 
   // Ключ модели настоящий, а запасной и ID — образцы: публикация идёт, образцы в код не попадают.
@@ -329,5 +390,131 @@ test("удар через платформу идёт опубликованны
     assert.equal(next.code, 0, next.out);
     assert.equal(box.cli().at(-1).wip, true, "после публикации слепок — новая сборка");
     assert.match(readFileSync(join(box.home, ".heart/live/tgcloud/lib/heart.js"), "utf8"), /1\.1\.0/u);
+  } finally { box.clean(); }
+});
+
+test("первый запуск без файла ключей: проверка создаёт пустой файл с готовыми именами и говорит, что дальше", { skip }, () => {
+  const box = sandbox();
+  const file = join(box.home, ".heart.env");
+  try {
+    rmSync(file);
+    const first = box.run("check");
+    assert.equal(first.code, 1);
+    assert.match(first.out, /файла не было, создан пустой/u);
+    assert.match(first.out, /Дальше: nano \S+\.heart\.env — вписать значения/u);
+    const made = readFileSync(file, "utf8");
+    assert.match(made, /^TGCLOUD_HEART_TOKEN=$/mu);
+    assert.match(made, /^AI_PROVIDER_KEY=$/mu);
+    assert.match(made, /^HEART_BRANCH=work$/mu, "ветка — та, с которой склонирована папка");
+    assert.match(made, /^# ALARM_BOT_TOKEN=$/mu);
+    assert.equal(statSync(file).mode & 0o777, 0o600, "файл ключей закрыт от чужих глаз");
+    assert.equal(box.cli().length, 0);
+
+    // Пустой файл — ещё не настройка: ни цикл, ни публикация не начинаются.
+    const second = box.run("check");
+    assert.match(second.out, /— найден/u);
+    assert.match(second.out, /✗ нет TGCLOUD_HEART_TOKEN/u);
+    assert.match(second.out, /Сначала поправьте строки с ✗ \(ключи — в \S+\.heart\.env\)/u);
+    const idle = box.run("run");
+    assert.equal(idle.code, 1);
+    assert.match(idle.out, /делать нечего\. Начните с проверки/u);
+    assert.equal(box.cli().length, 0);
+
+    // Заполненный файл проверка не трогает никогда.
+    box.keys([`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`]);
+    const ready = box.run("check");
+    assert.equal(ready.code, 0, ready.out);
+    assert.match(ready.out, /Готово к работе: bash scripts\/phone\.sh/u);
+    assert.match(readFileSync(file, "utf8"), /^AI_PROVIDER_KEY=gsk-/mu);
+  } finally { box.clean(); }
+});
+
+test("без строки HEART_BRANCH дом идёт за веткой, с которой склонирована папка", { skip }, () => {
+  const box = sandbox({ lines: [`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`] });
+  try {
+    assert.match(box.run("check").out, /Ветка:\s+work \(ветка папки\)/u);
+    assert.match(box.run("once").out, /Сборка 1\.0\.0 опубликована/u);
+    // После первого обновления папка стоит на коммите, а не на ветке: имя помнится.
+    const fresh = box.commit("1.1.0");
+    assert.match(box.run("once").out, /Сборка 1\.1\.0 опубликована/u);
+    assert.equal(box.head(), fresh);
+    assert.match(box.run("check").out, /Ветка:\s+work \(ветка папки, как в прошлый раз\)/u);
+    box.commit("1.2.0");
+    assert.match(box.run("once").out, /Сборка 1\.2\.0 опубликована/u);
+  } finally { box.clean(); }
+});
+
+test("ветка, где этого скрипта нет (main до слияния): папка туда не уходит и ничего не публикуется", { skip }, () => {
+  const box = sandbox({ lines: [`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`, "HEART_BRANCH=main"] });
+  try {
+    sh(box.seed, "git checkout -q -b main && git rm -q scripts/phone.sh && git commit -q -m old && git push -q origin main && git checkout -q work");
+    const before = box.head();
+    const check = box.run("check");
+    assert.equal(check.code, 1);
+    assert.match(check.out, /✗ в ветке «main» нет scripts\/phone\.sh/u);
+    for (const mode of ["once", "deploy"]) {
+      const done = box.run(mode);
+      assert.match(done.out, /В ветке «main» нет scripts\/phone\.sh — на неё не перехожу и ничего не публикую/u);
+      assert.equal(box.head(), before);
+      assert.ok(existsSync(join(box.phone, "scripts/phone.sh")), "дом остался на месте");
+    }
+    assert.equal(box.run("deploy").code, 1);
+    assert.deepEqual([...new Set(names(box.cli()))], ["fetch"], "то, что лежит в папке, под именем чужой ветки не публикуется: в облако ходила только проверка токена");
+    assert.equal(box.state("published"), "");
+  } finally { box.clean(); }
+});
+
+test("чужая папка .tgcloud выше по дереву инструмент не уводит; образцы в строках будильника — как пустые", { skip }, () => {
+  const box = sandbox({ lines: [`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`, "HEART_BRANCH=work", "ALARM_BOT_TOKEN=токен тестового бота", "ALARM_CHAT_ID=числовой ID канала «Мост»"] });
+  try {
+    // Настоящий инструмент работает из ближайшей вверх папки с .tgcloud: такая могла остаться в домашней.
+    mkdirSync(join(box.dir, ".tgcloud"));
+    mkdirSync(join(box.home, ".tgcloud"));
+    const check = box.run("check");
+    assert.equal(check.code, 1);
+    assert.match(check.out, /✗ ALARM_BOT_TOKEN не похож на токен бота/u);
+    assert.match(check.out, /✗ ALARM_CHAT_ID не похож на ID канала/u);
+    assert.match(check.out, /✓ платформа: токен принят/u);
+    const done = box.run("once");
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+    const calls = box.cli();
+    assert.ok(calls.every(item => !item.strayed), "и публикация, и удар идут из своих папок");
+    assert.equal(names(calls).at(-1), "run:handlers/message:tick", "с образцом вместо токена будильник не стучится в Telegram, а идёт через платформу");
+    assert.equal(calls.at(-1).inRepo, false);
+    assert.equal(box.curl().length, 0);
+    assert.equal(box.status(), "");
+  } finally { box.clean(); }
+});
+
+test("проверка в соседнем окне не стирает ключи посреди публикации; второй дом рядом не запускается", { skip }, () => {
+  const box = sandbox();
+  try {
+    const done = box.run("once", { FAKE_MEANWHILE: 'bash scripts/phone.sh check; bash scripts/phone.sh once; echo "код: $?"' });
+    assert.match(box.meanwhile(), /Готово к работе/u);
+    assert.match(box.meanwhile(), /Дом уже запущен \(процесс \d+\)\. Второй не нужен\./u);
+    assert.match(box.meanwhile(), /код: 1/u);
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+    const calls = box.cli();
+    const after = calls.slice(calls.findIndex(item => item.args[0] === "push"));
+    assert.deepEqual(names(after), ["push handlers", "migrate --yes", "webhook", "run:handlers/message:deployed"]);
+    assert.ok(after.every(item => item.key && item.giga), "ключи на месте: бот не уходит в облако пустым");
+    assert.equal(box.status(), "");
+  } finally { box.clean(); }
+});
+
+test("вечный цикл: публикует сразу, прошлые неудачи при запуске не в счёт, по Ctrl+C уходит чисто", { skip }, async () => {
+  const box = sandbox();
+  try {
+    // Прошлый запуск трижды не смог; владелец поправил причину и запустил снова.
+    for (let round = 0; round < 3; round += 1) box.run("once", { FAKE_FAIL: "fetch" });
+    assert.match(box.state("failed"), /\n3\n/u);
+    const done = await box.loop(() => box.state("published") !== "" && box.state("alarm.msg") !== "");
+    assert.match(done.out, /Дом запущен: ветка «work»/u);
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+    assert.equal(done.code, 0, "остановка — не ошибка");
+    assert.ok(done.ms < 30_000, "и конца минуты не ждёт");
+    assert.ok(!existsSync(join(box.home, ".heart/lock")), "замок снят");
+    assert.equal(box.status(), "");
+    assert.equal(box.run("once").code, 0, "следующему запуску ничто не мешает");
   } finally { box.clean(); }
 });

@@ -7,19 +7,21 @@
 #   • будит сердце, чтобы напоминания и сводка приходили без сообщений.
 #
 #   bash scripts/phone.sh           работать: вечный цикл (остановить — Ctrl+C)
-#   bash scripts/phone.sh check     проверить настройку; ничего не публикует
+#   bash scripts/phone.sh check     проверить настройку; ничего не публикует.
+#                                   Нет файла ключей — кладёт пустой
 #   bash scripts/phone.sh deploy    опубликовать сейчас то, что лежит в ветке
 #   bash scripts/phone.sh tick      разбудить сердце один раз
 #   bash scripts/phone.sh once      один круг цикла — для cron и для тестов
 #
 # Ключи живут вне репозитория, в файле ~/.heart.env — строки «ИМЯ=значение»,
-# кавычки не нужны. Подробно — docs/PHONE.md.
+# кавычки не нужны. Читаются один раз, при запуске. Подробно — docs/PHONE.md.
 #
 #   TGCLOUD_HEART_TOKEN=…   токен публикации (app…:…)
 #   AI_PROVIDER_KEY=…       ключ модели
 #   OWNER_TG_ID=…           числовой ID владельца
 #   KEY_GIGACHAT=…          ключ запасных мозгов: имя после KEY_ — id провайдера
-#   HEART_BRANCH=…          за какой веткой следить (по умолчанию main)
+#   HEART_BRANCH=…          за какой веткой следить (без строки — ветка, с
+#                           которой склонирована папка)
 #   ALARM_BOT_TOKEN=…       токен любого бота, кроме Аи, — минутный будильник
 #   ALARM_CHAT_ID=…         числовой ID канала «Мост»
 #
@@ -30,6 +32,7 @@
 #   HEART_SYNC_EVERY=180    как часто смотреть в GitHub, секунд
 #   ALARM_EVERY=60          период будильника через канал, секунд
 #   ALARM_RUN_EVERY=600     период будильника без второго бота, секунд
+#   HEART_RETRY_EVERY=3600  как часто повторять публикацию, не вышедшую трижды
 #
 # Весь файл — одна функция: bash читает её целиком до запуска, поэтому
 # обновление самого скрипта из GitHub не ломает идущий процесс.
@@ -37,7 +40,9 @@ set -u
 
 main() {
   local MODE="${1:-run}"
-  local SELF REPO
+  # REPO, LIVE, LIVE_CLEAN, LOCK, LOCKED, NAP — не local: ими пользуется уборка
+  # при выходе, а она срабатывает уже после main, когда local-переменных нет.
+  local SELF
   SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
   REPO="$(cd "$(dirname "$SELF")/.." && pwd)"
   cd "$REPO" || { echo "Нет папки репозитория: $REPO" >&2; return 1; }
@@ -86,17 +91,35 @@ main() {
   local HAVE_ENV=0
   load_env "$ENV_FILE" && HAVE_ENV=1
 
-  local BRANCH="${HEART_BRANCH:-main}"
+  # За какой веткой следить. Строка HEART_BRANCH — главное слово. Нет её —
+  # ветка, с которой склонирована папка, а не main: в main этого скрипта может
+  # ещё не быть. После первого обновления папка стоит на коммите, а не на
+  # ветке, поэтому имя запоминается.
+  local BRANCH="${HEART_BRANCH:-}" BRANCH_FROM="строка HEART_BRANCH"
+  if [ -z "$BRANCH" ]; then
+    BRANCH="$(git -C "$REPO" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+    if [ -n "$BRANCH" ]; then
+      BRANCH_FROM="ветка папки"
+      printf '%s\n' "$BRANCH" > "$HOME_DIR/branch" 2>/dev/null
+    else
+      BRANCH="$(sed -n '1p' "$HOME_DIR/branch" 2>/dev/null || true)"
+      BRANCH_FROM="ветка папки, как в прошлый раз"
+    fi
+    [ -n "$BRANCH" ] || { BRANCH="main"; BRANCH_FROM="по умолчанию"; }
+  fi
   local DEPLOY_ON="${HEART_DEPLOY_ON:-build}"
   local SYNC_EVERY="${HEART_SYNC_EVERY:-180}"
   local EVERY="${ALARM_EVERY:-60}"
   local RUN_EVERY="${ALARM_RUN_EVERY:-600}"
+  local RETRY_EVERY="${HEART_RETRY_EVERY:-3600}"
   case "$SYNC_EVERY" in ''|*[!0-9]*) SYNC_EVERY=180 ;; esac
   case "$EVERY" in ''|*[!0-9]*) EVERY=60 ;; esac
   case "$RUN_EVERY" in ''|*[!0-9]*) RUN_EVERY=600 ;; esac
   [ "$EVERY" -lt 20 ] && EVERY=20
   [ "$RUN_EVERY" -lt 120 ] && RUN_EVERY=120
   [ "$SYNC_EVERY" -lt 30 ] && SYNC_EVERY=30
+  case "$RETRY_EVERY" in ''|*[!0-9]*) RETRY_EVERY=3600 ;; esac
+  [ "$RETRY_EVERY" -lt 300 ] && RETRY_EVERY=300
   # В Git Bash на Windows тесты падают из-за среды, а не кода (PROJECT.md §4.5).
   local TESTS="${HEART_TESTS:-}"
   if [ -z "$TESTS" ]; then
@@ -105,6 +128,11 @@ main() {
 
   local TOKEN="${TGCLOUD_HEART_TOKEN:-}"
   local VOICE="${ALARM_BOT_TOKEN:-}" ROOM="${ALARM_CHAT_ID:-}"
+  # Образец вместо токена бота или ID канала — всё равно что пустая строка:
+  # будильник тогда идёт через платформу, а не стучится в Telegram впустую.
+  local VOICE_BAD=0 ROOM_BAD=0
+  if [ -n "$VOICE" ] && ! printf '%s' "$VOICE" | LC_ALL=C grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then VOICE_BAD=1; VOICE=""; fi
+  if [ -n "$ROOM" ] && ! printf '%s' "$ROOM" | LC_ALL=C grep -Eq '^(-?[0-9]+|@[A-Za-z0-9_]+)$'; then ROOM_BAD=1; ROOM=""; fi
   local TG_API="https://api.telegram.org/bot${VOICE}"
 
   # Пароль в терминале git не спрашивает никогда: вопрос посреди цикла — это
@@ -138,9 +166,15 @@ main() {
     ! printf '%s' "$1" | LC_ALL=C grep -q '[^!-~]'
   }
 
+  # Вид токена публикации — тот же, что проверяет сам инструмент.
+  tokenlike() { printf '%s' "${1:-}" | LC_ALL=C grep -Eq '^app[0-9]+:[A-Za-z0-9_-]+$'; }
+
   build_of() { sed -n 's/^export const BUILD = "\([^"]*\)";.*/\1/p' "$REPO/tgcloud/lib/heart.js" 2>/dev/null | head -n 1; }
   short() { printf '%s' "${1:-}" | cut -c1-7; }
-  tg() { ( cd "$REPO" && TGCLOUD_TOKEN="$TOKEN" node "$CLI" "$@" ) < /dev/null; }
+  # Инструмент ищет проект вверх по дереву — по папке .tgcloud — и работает из
+  # найденного места. Своя такая папка прямо здесь (она в .gitignore) — и
+  # чужая, оставшаяся где-нибудь выше, его не уведёт.
+  tg() { ( cd "$REPO" && mkdir -p .tgcloud && TGCLOUD_TOKEN="$TOKEN" node "$CLI" "$@" ) < /dev/null; }
   voice() { curl -sS --max-time 20 "$TG_API/$1" "${@:2}" 2>/dev/null; }
   restore() { git -C "$REPO" checkout -q -- tgcloud/lib/secrets.js 2>/dev/null; }
   inject() { ( cd "$REPO" && node scripts/inject-secrets.mjs "$@" ) < /dev/null; }
@@ -167,12 +201,14 @@ main() {
   # только тот код, что уже в боте, — поэтому удар берётся из слепка, снятого
   # в момент публикации. Нет слепка — этот телефон ещё ничего не публиковал,
   # и бить нечем.
-  local LIVE="$HOME_DIR/live" LIVE_CLEAN="$HOME_DIR/live.secrets.js" NO_LIVE_SAID=0
+  LIVE="$HOME_DIR/live"; LIVE_CLEAN="$HOME_DIR/live.secrets.js"
+  local NO_LIVE_SAID=0
   snapshot() {
     rm -rf "$LIVE.new" 2>/dev/null
     mkdir -p "$LIVE.new" || return 1
     if git -C "$REPO" archive "$1" tgcloud scripts package.json 2>/dev/null | tar -x -C "$LIVE.new" 2>/dev/null \
-      && [ -f "$LIVE.new/tgcloud/handlers/message.js" ] && [ -f "$LIVE.new/tgcloud/lib/secrets.js" ]; then
+      && [ -f "$LIVE.new/tgcloud/handlers/message.js" ] && [ -f "$LIVE.new/tgcloud/lib/secrets.js" ] \
+      && mkdir -p "$LIVE.new/.tgcloud"; then
       rm -rf "$LIVE" && mv "$LIVE.new" "$LIVE" && cp "$LIVE/tgcloud/lib/secrets.js" "$LIVE_CLEAN" && return 0
     fi
     rm -rf "$LIVE.new" 2>/dev/null
@@ -185,7 +221,7 @@ main() {
   }
 
   # ── один процесс на телефон ──────────────────────────────────────────────
-  local LOCK="$HOME_DIR/lock" LOCKED=0
+  LOCK="$HOME_DIR/lock"; LOCKED=0; NAP=""
   take_lock() {
     if mkdir "$LOCK" 2>/dev/null; then echo $$ > "$LOCK/pid"; LOCKED=1; return 0; fi
     local other
@@ -199,8 +235,18 @@ main() {
     return 0
   }
   drop_lock() { [ "$LOCKED" = 1 ] && rm -rf "$LOCK" 2>/dev/null; LOCKED=0; }
+  # Ключи из кода убирает только тот процесс, что держит замок: проверка,
+  # запущенная в соседнем окне, не должна стереть их посреди чужой публикации.
   # shellcheck disable=SC2317
-  leave() { restore; restore_live; drop_lock; }
+  leave() {
+    [ -n "$NAP" ] && kill "$NAP" 2>/dev/null
+    NAP=""
+    if [ "$LOCKED" = 1 ]; then restore; restore_live; fi
+    drop_lock
+  }
+  # Замок взят — значит, других нет: ключи, оставшиеся в файлах после процесса,
+  # который убили без предупреждения, убираются сразу.
+  enter() { take_lock || return 1; restore; restore_live; return 0; }
   trap 'leave; exit 0' INT TERM
   trap 'leave' EXIT
 
@@ -210,13 +256,16 @@ main() {
   published_build() { sed -n '2p' "$PUBLISHED" 2>/dev/null; }
   failed_commit() { sed -n '1p' "$FAILED" 2>/dev/null; }
   failed_count() { local n; n="$(sed -n '2p' "$FAILED" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; echo "$n"; }
+  failed_at() { local n; n="$(sed -n '3p' "$FAILED" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; echo "$n"; }
 
   dirty() {
     git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null | grep -v ' tgcloud/lib/secrets\.js$' | grep -q .
   }
 
   # ── ветка: есть ли новое ─────────────────────────────────────────────────
-  local DIRTY_SAID=0 OFFLINE_SAID=0
+  # Возвращает 0, только когда папка стоит на вершине ветки из GitHub: лишь
+  # такое и публикуется.
+  local DIRTY_SAID=0 OFFLINE_SAID=0 NOHOME_SAID=0
   sync() {
     if ! fetch_branch; then
       [ "$OFFLINE_SAID" = 0 ] && log "Новое из GitHub не взять: $(why_fetch). Попробую позже."
@@ -229,6 +278,14 @@ main() {
     here="$(git -C "$REPO" rev-parse -q --verify HEAD 2>/dev/null)"
     [ -n "$remote" ] || return 1
     [ "$remote" = "$here" ] && return 0
+    # В той ветке нет этого скрипта (так выглядит main до слияния): перейти —
+    # значит остаться без дома, запускать после этого было бы нечего.
+    if ! git -C "$REPO" cat-file -e "$remote:scripts/phone.sh" 2>/dev/null; then
+      [ "$NOHOME_SAID" = 0 ] && log "✗ В ветке «$BRANCH» нет scripts/phone.sh — на неё не перехожу и ничего не публикую. Нужная ветка — строкой HEART_BRANCH в $ENV_FILE."
+      NOHOME_SAID=1
+      return 1
+    fi
+    NOHOME_SAID=0
     if dirty; then
       [ "$DIRTY_SAID" = 0 ] && log "В папке есть несохранённые правки — новое из GitHub не беру, чтобы их не стереть."
       DIRTY_SAID=1
@@ -251,7 +308,17 @@ main() {
   }
 
   # ── публикация ───────────────────────────────────────────────────────────
-  local WHY=""
+  local WHY="" LACK_SAID=""
+  # Чего не хватает, чтобы публиковать; пусто — всё на месте. Попыткой это не
+  # считается: чинится не новым коммитом, а строкой в файле ключей.
+  lacking() {
+    if [ -z "$TOKEN" ]; then echo "нет TGCLOUD_HEART_TOKEN в $ENV_FILE"
+    elif ! tokenlike "$TOKEN"; then echo "TGCLOUD_HEART_TOKEN в $ENV_FILE не похож на токен публикации (app…:…)"
+    elif ! keylike "${AI_PROVIDER_KEY:-}"; then echo "AI_PROVIDER_KEY в $ENV_FILE пуст или не похож на ключ (пробелы, русские буквы)"
+    elif dirty; then echo "в папке несохранённые правки, а публикуется только то, что лежит в ветке (убрать их: git -C $REPO checkout -- .)"
+    fi
+    return 0
+  }
   step() {
     local title="$1"; shift
     printf '\n== %s ==\n' "$title" >> "$DEPLOY_LOG"
@@ -277,18 +344,21 @@ main() {
     printf '%s' "$out" | grep -Eq "ok: ?true"
   }
 
+  # 0 — опубликовано; 1 — попытка не вышла; 2 — не хватает настроек, попытки
+  # не было.
   publish() {
-    local head build
+    local head build lack
     head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"; build="$(build_of)"
     WHY=""
-    : > "$DEPLOY_LOG"
-    if [ -z "$TOKEN" ]; then log "Нет TGCLOUD_HEART_TOKEN в $ENV_FILE — публиковать нечем."; WHY="нет токена публикации"; return 1; fi
-    if ! keylike "${AI_PROVIDER_KEY:-}"; then
-      log "✗ AI_PROVIDER_KEY в $ENV_FILE пуст или не похож на ключ (пробелы, русские буквы) — публикации нет, бот на прежней сборке."
-      WHY="ключ модели не вписан"
-      return 1
+    lack="$(lacking)"
+    if [ -n "$lack" ]; then
+      [ "$lack" = "$LACK_SAID" ] || log "✗ Публикации нет, бот на прежней сборке: $lack."
+      LACK_SAID="$lack"; WHY="$lack"
+      return 2
     fi
-    ensure_cli || { WHY="инструмент публикации"; return 1; }
+    LACK_SAID=""
+    ensure_cli || { WHY="инструмент публикации не поставился"; return 2; }
+    : > "$DEPLOY_LOG"
     log "Публикую сборку $build ($(short "$head"))…"
     if [ "$TESTS" = "on" ]; then
       log "Проверяю сборку тестами — на телефоне это несколько минут."
@@ -338,12 +408,13 @@ main() {
     head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"
     count=0; [ "$(failed_commit)" = "$head" ] && count="$(failed_count)"
     count=$((count + 1))
-    printf '%s\n%s\n' "$head" "$count" > "$FAILED"
+    printf '%s\n%s\n%s\n' "$head" "$count" "$(date +%s)" > "$FAILED"
     if [ "$count" = 1 ]; then
       tell_owner "⚠️ Сборка $(build_of) не опубликована: ${WHY:-причина в журнале}. Бот на прежней сборке."
     fi
-    if [ "$count" -ge 3 ]; then
-      log "Три попытки подряд — жду нового коммита, этот больше не трогаю."
+    # Причина бывает и временной (связь), поэтому не «никогда», а «реже».
+    if [ "$count" = 3 ]; then
+      log "Три попытки подряд не вышли. Этот коммит дальше пробую раз в $((RETRY_EVERY / 60)) мин; новый коммит — сразу."
     fi
   }
 
@@ -356,8 +427,9 @@ main() {
     else
       [ "$build" = "$(published_build)" ] && return 0
     fi
-    [ "$(failed_commit)" = "$head" ] && [ "$(failed_count)" -ge 3 ] && return 0
-    publish || failed
+    if [ "$(failed_commit)" = "$head" ] && [ "$(failed_count)" -ge 3 ] && [ $(( $(date +%s) - $(failed_at) )) -lt "$RETRY_EVERY" ]; then return 0; fi
+    publish
+    case $? in 0|2) ;; *) failed ;; esac
     return 0
   }
 
@@ -424,13 +496,45 @@ main() {
     return 0
   }
 
+  # ── файл ключей ──────────────────────────────────────────────────────────
+  # Пустой файл с готовыми именами: вписать остаётся только значения.
+  # Существующий файл не трогается никогда.
+  keys_template() {
+    [ -e "$ENV_FILE" ] && return 1
+    ( umask 077
+      cat > "$ENV_FILE" <<EOF
+# Ключи Аи для этого устройства. Значение — сразу после «=», без кавычек.
+# В nano: сохранить — Ctrl+O, Enter; выйти — Ctrl+X.
+
+# Токен публикации: @BotFather → бот Аи → Serverless → CLI Access → Access token
+TGCLOUD_HEART_TOKEN=
+# Ключ модели — тот же, что в секрете AI_PROVIDER_KEY
+AI_PROVIDER_KEY=
+# Ваш числовой ID в Telegram: кому писать, если публикация не вышла
+OWNER_TG_ID=
+# За какой веткой следить
+HEART_BRANCH=$BRANCH
+
+# По желанию: уберите «#» в начале строки и впишите значение.
+# Запасные мозги:
+# KEY_GIGACHAT=
+# KEY_EXPLABS=
+# Минутный будильник — токен любого бота, кроме Аи, и числовой ID канала «Мост»:
+# ALARM_BOT_TOKEN=
+# ALARM_CHAT_ID=
+EOF
+    ) 2>/dev/null
+  }
+
   # ── проверка настройки ───────────────────────────────────────────────────
   check() {
-    local bad=0 who title extra
+    local bad=0 who title extra made=0
     echo "Папка:   $REPO"
-    echo "Ключи:   $ENV_FILE $([ "$HAVE_ENV" = 1 ] && echo '— найден' || echo '— НЕТ ФАЙЛА')"
+    if [ "$HAVE_ENV" = 1 ]; then echo "Ключи:   $ENV_FILE — найден"
+    elif keys_template; then made=1; echo "Ключи:   $ENV_FILE — файла не было, создан пустой: в него нужно вписать значения"
+    else echo "Ключи:   $ENV_FILE — НЕТ ФАЙЛА"; fi
     [ -f "$HOME/.heart-alarm.env" ] && echo "         и прежний $HOME/.heart-alarm.env — его строки тоже читаются; не нужен — удалите"
-    echo "Ветка:   $BRANCH · публиковать: $([ "$DEPLOY_ON" = commit ] && echo 'каждый коммит' || echo 'когда сменился номер сборки')"
+    echo "Ветка:   $BRANCH ($BRANCH_FROM) · публиковать: $([ "$DEPLOY_ON" = commit ] && echo 'каждый коммит' || echo 'когда сменился номер сборки')"
     for tool in git node npm curl; do
       command -v "$tool" > /dev/null 2>&1 || { echo "✗ нет программы «$tool»"; bad=1; }
     done
@@ -439,11 +543,9 @@ main() {
       major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
       [ "$major" -ge 22 ] 2>/dev/null && echo "✓ node $major" || { echo "✗ нужен node 22 или новее (сейчас $major)"; bad=1; }
     fi
-    case "$TOKEN" in
-      app[0-9]*:?*) echo "✓ токен публикации: вид правильный" ;;
-      '') echo "✗ нет TGCLOUD_HEART_TOKEN — публиковать нечем"; bad=1 ;;
-      *) echo "✗ TGCLOUD_HEART_TOKEN не похож на токен публикации (app…:…)"; bad=1 ;;
-    esac
+    if [ -z "$TOKEN" ]; then echo "✗ нет TGCLOUD_HEART_TOKEN — публиковать нечем"; bad=1
+    elif tokenlike "$TOKEN"; then echo "✓ токен публикации: вид правильный"
+    else echo "✗ TGCLOUD_HEART_TOKEN не похож на токен публикации (app…:…) — впишите сам токен вместо образца"; bad=1; fi
     if [ -z "${AI_PROVIDER_KEY:-}" ]; then echo "✗ нет AI_PROVIDER_KEY"; bad=1
     elif keylike "$AI_PROVIDER_KEY"; then echo "✓ ключ модели: есть"
     else echo "✗ AI_PROVIDER_KEY не похож на ключ: в нём пробелы или русские буквы — впишите сам ключ вместо образца"; bad=1; fi
@@ -463,26 +565,31 @@ main() {
       local theirs mine
       theirs="$(git -C "$REPO" rev-parse -q --verify FETCH_HEAD 2>/dev/null)"; mine="$(git -C "$REPO" rev-parse -q --verify HEAD 2>/dev/null)"
       echo "✓ GitHub: ветка «$BRANCH» на месте, коммит $(short "$theirs")"
-      if [ "$theirs" != "$mine" ]; then
+      if ! git -C "$REPO" cat-file -e "$theirs:scripts/phone.sh" 2>/dev/null; then
+        echo "✗ в ветке «$BRANCH» нет scripts/phone.sh — следить за ней этот скрипт не может (так выглядит main до слияния). Нужная ветка — строкой HEART_BRANCH в $ENV_FILE"; bad=1
+      elif [ "$theirs" != "$mine" ]; then
         if dirty; then echo "✗ папка на другом коммите ($(short "$mine")), и в ней есть несохранённые правки — сама она не обновится: git -C $REPO checkout -- ."; bad=1
         else echo "• папка пока на коммите $(short "$mine") — при запуске обновится сама"; fi
       fi
     else
       echo "✗ $(why_fetch)"; bad=1
     fi
-    if [ -n "$TOKEN" ] && ensure_cli; then
+    if tokenlike "$TOKEN" && ensure_cli; then
       if tg fetch > "$DEPLOY_LOG" 2>&1; then echo "✓ платформа: токен принят"; else echo "✗ платформа не приняла токен или нет связи (подробности: $DEPLOY_LOG)"; bad=1; fi
     fi
+    [ "$VOICE_BAD" = 1 ] && { echo "✗ ALARM_BOT_TOKEN не похож на токен бота (цифры, двоеточие, буквы) — впишите токен или уберите строку"; bad=1; }
+    [ "$ROOM_BAD" = 1 ] && { echo "✗ ALARM_CHAT_ID не похож на ID канала (число вида -100…) — впишите число или уберите строку"; bad=1; }
     if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then
-      who=""
-      keylike "$VOICE" && who="$(voice getMe | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')"
-      if [ -z "$who" ]; then echo "✗ будильник: Telegram не принял ALARM_BOT_TOKEN (или в строке образец вместо токена)"; bad=1
+      who="$(voice getMe | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')"
+      if [ -z "$who" ]; then echo "✗ будильник: Telegram не принял ALARM_BOT_TOKEN"; bad=1
       else
         title="$(voice getChat -d "chat_id=$ROOM" | sed -n 's/.*"title":"\([^"]*\)".*/\1/p')"
         echo "✓ будильник: раз в ${EVERY} с от имени @${who}$([ -n "$title" ] && echo ", канал «$title»" || echo " — но канал ему не виден: добавьте его админом")"
         echo "  Если @${who} — это сама Аи, она себя не услышит: нужен токен другого бота."
         [ -n "$title" ] || bad=1
       fi
+    elif [ "$VOICE_BAD$ROOM_BAD" != "00" ]; then
+      echo "• будильник: пока строки ALARM_* не поправлены — раз в $((RUN_EVERY / 60)) мин через платформу"
     elif [ -n "$VOICE" ] || [ -n "$ROOM" ]; then
       echo "✗ будильник: нужны оба — ALARM_BOT_TOKEN и ALARM_CHAT_ID"; bad=1
     else
@@ -494,7 +601,9 @@ main() {
       if ( cd "$REPO" && npm run ci ) > "$TEST_LOG" 2>&1 < /dev/null; then echo "✓ тесты на этом устройстве проходят"
       else echo "✗ тесты на этом устройстве не проходят (журнал: $TEST_LOG). Если дело в устройстве — HEART_TESTS=off."; bad=1; fi
     fi
-    [ "$bad" = 0 ] && echo "Готово к работе: bash scripts/phone.sh" || echo "Сначала поправьте строки с ✗."
+    if [ "$bad" = 0 ]; then echo "Готово к работе: bash scripts/phone.sh"
+    elif [ "$made" = 1 ] || [ "$HAVE_ENV" = 0 ]; then echo "Дальше: nano $ENV_FILE — вписать значения после «=», затем снова: bash scripts/phone.sh check"
+    else echo "Сначала поправьте строки с ✗ (ключи — в $ENV_FILE), затем снова: bash scripts/phone.sh check"; fi
     return "$bad"
   }
 
@@ -503,32 +612,46 @@ main() {
     check) check "$@"; return $? ;;
     tick)
       if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then tick_channel && echo "Удар ушёл в канал." || { echo "Удар не ушёл."; return 1; }
-      else tick_run && echo "Сердце проснулось." || { echo "Пробуждение не подтвердилось."; restore_live; return 1; }
+      else
+        # Удар через платформу на время вписывает ключи в слепок: вдвоём с
+        # работающим домом этого делать нельзя.
+        enter || return 1
+        tick_run && echo "Сердце проснулось." || { echo "Пробуждение не подтвердилось."; return 1; }
       fi
       return 0 ;;
     deploy)
-      take_lock || return 1
-      sync || true
-      publish && return 0
+      enter || return 1
+      sync || { echo "С веткой «$BRANCH» в GitHub свериться не вышло — публикации нет." >&2; return 1; }
+      publish
+      case $? in 0) return 0 ;; 2) return 1 ;; esac
       failed; return 1 ;;
     once)
-      take_lock || return 1
-      sync || true
-      publish_if_needed
+      enter || return 1
+      sync && publish_if_needed
       alarm
       return 0 ;;
     run) ;;
     *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once." >&2; return 1 ;;
   esac
 
-  take_lock || return 1
-  # Телефон не должен усыплять Termux, пока дом работает.
-  command -v termux-wake-lock > /dev/null 2>&1 && termux-wake-lock
   if [ -z "$TOKEN" ] && { [ -z "$VOICE" ] || [ -z "$ROOM" ]; }; then
-    echo "В $ENV_FILE нет ни токена публикации, ни будильника — делать нечего. См. docs/PHONE.md." >&2
+    echo "В $ENV_FILE нет ни токена публикации, ни будильника — делать нечего. Начните с проверки: bash scripts/phone.sh check" >&2
     return 1
   fi
+  # Ключи читаются один раз, при запуске: с образцом вместо ключа цикл крутился
+  # бы впустую — лучше сказать сразу.
+  if [ -n "$TOKEN" ] && { ! tokenlike "$TOKEN" || ! keylike "${AI_PROVIDER_KEY:-}"; }; then
+    echo "✗ С такими ключами публиковать нельзя: $(lacking)." >&2
+    echo "  Поправьте файл и запустите снова. Проверка: bash scripts/phone.sh check" >&2
+    return 1
+  fi
+  enter || return 1
+  # Телефон не должен усыплять Termux, пока дом работает.
+  command -v termux-wake-lock > /dev/null 2>&1 && termux-wake-lock
+  # Запуск руками — это «попробуй ещё раз»: прошлые неудачи не в счёт.
+  rm -f "$FAILED"
   log "Дом запущен: ветка «$BRANCH», сборка в папке $(build_of). Остановить — Ctrl+C."
+  [ "$VOICE_BAD$ROOM_BAD" = "00" ] || log "В строках ALARM_* образец вместо значения — будильник через канал выключен."
   if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then log "Будильник: раз в ${EVERY} с через канал."
   else log "Будильник: раз в $((RUN_EVERY / 60)) мин через платформу (второго бота нет)."; fi
   [ -n "$TOKEN" ] || log "Токена публикации нет: только будильник."
@@ -538,15 +661,16 @@ main() {
     now="$(date +%s)"
     if [ -n "$TOKEN" ] && [ $((now - last_sync)) -ge "$SYNC_EVERY" ]; then
       last_sync="$now"
-      sync || true
-      publish_if_needed
+      sync && publish_if_needed
     fi
     alarm
     # Спать до следующей границы периода: удары приходятся на начало минуты.
     # «sleep & wait» — чтобы остановка (Ctrl+C, kill) срабатывала сразу.
     now="$(date +%s)"
     sleep $((EVERY - now % EVERY)) &
-    wait $! 2>/dev/null
+    NAP=$!
+    wait "$NAP" 2>/dev/null
+    NAP=""
   done
 }
 
