@@ -42,7 +42,9 @@ jobs:
 
   smoke:
     name: Handler runs without sending
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'smoke' }}
+    # Как и раньше — на каждый коммит в main; при автопубликации ту же
+    # репетицию делает сама публикация.
+    if: ${{ (github.event_name == 'push' && vars.HEART_AUTODEPLOY != 'on') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'smoke') }}
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
