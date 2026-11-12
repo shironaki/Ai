@@ -102,10 +102,19 @@ export function createBrains({
       const url = String(provider?.baseUrl ?? "").trim().replace(/\/+$/u, "");
       if (!key || !url || !provider?.id) continue;
       // `kind` — особый вход: «gigachat» сначала меняет ключ на получасовой токен.
-      const extra = { kind: String(provider.kind ?? ""), authUrl: String(provider.authUrl ?? ""), scope: String(provider.scope ?? "") };
+      // `effort` — усилие рассуждения для всех моделей провайдера; `name` — как назвать его владельцу.
+      const extra = {
+        kind: String(provider.kind ?? ""), authUrl: String(provider.authUrl ?? ""), scope: String(provider.scope ?? ""),
+        effort: String(provider.effort ?? ""), name: String(provider.name ?? ""),
+      };
       for (const name of unique(provider.models ?? [])) list.push({ id: `${provider.id}:${name}`, provider: String(provider.id), model: name, baseUrl: url, key, ...extra });
     }
-    return list.map(item => ({ ...item, plain: state.models[item.id]?.plain === true }));
+    return list.map(item => ({
+      ...item,
+      plain: state.models[item.id]?.plain === true,
+      // Поля запроса, от которых модель отказалась: впредь их ей не шлют.
+      drop: Array.isArray(state.models[item.id]?.drop) ? state.models[item.id].drop : [],
+    }));
   }
 
   /** Те, кто не отдыхает. Пустой список — думать сейчас нечем. */
@@ -139,6 +148,14 @@ export function createBrains({
 
   /** Модель не принимает дополнительные параметры: впредь спрашиваем проще. */
   const simplify = (id) => patch(id, { plain: true });
+
+  /** Модель не приняла одно поле запроса: запомнить и больше его не слать. */
+  async function forgo(id, field) {
+    const state = await read();
+    const before = Array.isArray(state.models[id]?.drop) ? state.models[id].drop : [];
+    if (before.includes(field)) return;
+    await patch(id, { drop: [...before, String(field)].slice(0, 6), ...(field === "reasoning_effort" ? { plain: true } : {}) });
+  }
 
   /**
    * Запомнить остаток лимита. Пишется, только когда остаток заметно изменился:
@@ -196,7 +213,7 @@ export function createBrains({
       const row = state.models[item.id] ?? {};
       const resting = Number(row.until) > now();
       return {
-        id: item.id, model: item.model, provider: item.provider,
+        id: item.id, model: item.model, provider: item.provider, name: item.name ?? "",
         ok: !resting, until: resting ? Number(row.until) : 0, why: resting ? String(row.why ?? "") : "",
         remainingRequests: row.remainReq ?? null, remainingTokens: row.remainTok ?? null,
         limitRequests: row.limitReq ?? null, limitTokens: row.limitTok ?? null,
@@ -221,5 +238,5 @@ export function createBrains({
     return list.every(item => item.why === "limit") ? "limit" : list.some(item => item.why === "limit") ? "mixed" : "fault";
   }
 
-  return Object.freeze({ all, available, rest, retire, simplify, note, healthy, discover, describe, nextAt, whyResting });
+  return Object.freeze({ all, available, rest, retire, simplify, forgo, note, healthy, discover, describe, nextAt, whyResting });
 }

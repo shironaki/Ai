@@ -614,13 +614,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     if (!list.length) return "нет — ключ провайдера не задан";
     return list.map((item, index) => {
       const short = item.model.replace(/^[^/]+\//u, "");
-      const why = ({ limit: "лимит", network: "нет связи", down: "сбой", gone: "снята" })[item.why] ?? "отдыхает";
+      const why = ({ limit: "лимит", network: "нет связи", down: "сбой", gone: "снята", payment: "ждёт шага в кабинете провайдера" })[item.why] ?? "отдыхает";
       return `${short}${index === 0 ? " (осн.)" : ""}${item.ok ? "" : ` — ${why} до ${clock(item.until)}`}`;
     }).join(" · ");
   }
 
   /** Имя провайдера для владельца: «основной» или то, как он назван в настройках. */
-  const providerName = (id) => (id === "main" ? "основной" : String(id));
+  const PROVIDER_NAMES = new Map((Array.isArray(config.AI_PROVIDERS) ? config.AI_PROVIDERS : []).filter(item => item?.id && item?.name).map(item => [String(item.id), String(item.name)]));
+  const providerName = (id) => (id === "main" ? "основной" : PROVIDER_NAMES.get(String(id)) ?? String(id));
 
   /** Одна строка о пробе провайдера: отвечает — за сколько, нет — почему. */
   function probeLine(row) {
@@ -632,7 +633,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
     if (row.code === "provider_http_error") {
       const why = describeProviderFailure({ status: row.status, providerCode: row.providerCode, model: row.model }).replace(/[.\s]+$/u, "");
-      return `${head} — ${why}${row.gone ? ". Сутки её не трогаю; имя стоит заменить в настройках" : ""}`;
+      return `${head} — ${why}${row.gone ? ". Сутки её не трогаю; имя стоит заменить в настройках" : row.unpaid ? ". Сутки её не трогаю" : ""}`;
     }
     return `${head} — нет (${row.code || "ошибка"})`;
   }
@@ -642,7 +643,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     if (turn.dry) return say(turn, "Пробный запуск: живая проба провайдеров не выполнялась.");
     const rows = await ai.probeBrains({ ctx: turn.ctx, apiKey: await resolveKey(turn.ctx), every: true }).catch(() => []);
     if (!rows.length) return say(turn, "Проверять нечего: ни одного ключа провайдера не задано.");
-    return say(turn, ["Проба мозгов — живой запрос каждой модели основного провайдера и каждому запасному:", "", ...rows.map(row => `• ${probeLine(row)}`)].join("\n"));
+    return say(turn, ["Проба мозгов — живой запрос каждой модели каждого провайдера:", "", ...rows.map(row => `• ${probeLine(row)}`)].join("\n"));
   }
 
   async function diagnostic(turn) {

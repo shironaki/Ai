@@ -27,16 +27,36 @@ export const CONFIG = Object.freeze({
   // GitHub-секрета AI_EXTRA_KEYS ({"имя": "ключ"}) только на время публикации.
   // Пример записи: { id: "cerebras", baseUrl: "https://api.cerebras.ai/v1", models: ["llama-3.3-70b"] }
   AI_PROVIDERS: [
-    // GigaChat (Сбер): бесплатный Freemium для физлиц. Ключ авторизации кладётся
-    // в секрет AI_EXTRA_KEYS как {"gigachat": "<Authorization Key>"}; без него
-    // запись спит. Вход особый (`kind`): ключ меняется на получасовой токен.
-    // Сертификаты у Сбера свои — примет ли их платформа, покажет «проверь мозги».
+    // Experiential Labs: шлюз с OpenAI-совместимым API. В бесплатном плане две
+    // разговорные модели делят миллион токенов в сутки (сброс в 00:00 UTC) и
+    // десять запросов в минуту. Суффикс «:free» — только бесплатный объём:
+    // кончился — запрос останавливается, денег не списывает никогда.
+    // Условия на 12.11.2026: нужна разовая проверка карты ($1, возвращается);
+    // на бесплатном плане шлюз хранит тексты запросов, и выключить это нельзя.
+    // Ключ — в секрет AI_EXTRA_KEYS как {"explabs": "xpl_…"}; без него запись спит.
     {
-      id: "gigachat", kind: "gigachat",
+      id: "explabs", name: "Experiential Labs",
+      baseUrl: "https://api.experientiallabs.ai/v1",
+      models: ["deepseek-v4.1-flash:free", "gpt-6-luna:free"],
+      // Обе модели рассуждают перед ответом; для разговора хватает малого усилия.
+      effort: "low",
+    },
+    // GigaChat (Сбер): бесплатный Freemium для физлиц по Сбер ID, без карты —
+    // на год 50 млн токенов Ultra, 25 млн Max, 40 млн Pro и 250 млн Lite. Объём
+    // у каждой модели свой: кончился — она отвечает 402, и в ход идёт следующая.
+    // Ключ авторизации — в секрет AI_EXTRA_KEYS как {"gigachat": "<Authorization
+    // Key>"}; без него запись спит. Вход особый (`kind`): ключ меняется на
+    // получасовой токен.
+    // ВАЖНО: адреса Сбера подписаны сертификатом Минцифры. Зарубежное облако
+    // ему обычно не доверяет — тогда «проверь мозги» скажет «нет связи при
+    // обмене ключа», и напрямую GigaChat недоступен. Сердце при этом не
+    // страдает: провайдер без связи отдыхает всё дольше, до шести часов.
+    {
+      id: "gigachat", name: "GigaChat", kind: "gigachat",
       baseUrl: "https://api.giga.chat/v1",
       authUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
       scope: "GIGACHAT_API_PERS",
-      models: ["GigaChat-2", "GigaChat-2-Pro", "GigaChat-2-Max"],
+      models: ["GigaChat-3-Ultra", "GigaChat-2-Max", "GigaChat-2-Pro", "GigaChat-2"],
     },
   ],
 

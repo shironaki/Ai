@@ -81,9 +81,9 @@ export const says = (content, { finish = "stop", usage = { prompt_tokens: 20, co
   json: async () => ({ choices: [{ message: { content }, finish_reason: finish }], usage }),
 });
 /** Отказ провайдера: статус, код ошибки и заголовки. */
-export const refuses = (status, { code = "", headers = {} } = {}) => ({
+export const refuses = (status, { code = "", param = null, headers = {} } = {}) => ({
   ok: false, status, headers: headersOf(headers),
-  text: async () => JSON.stringify({ error: { code } }),
+  text: async () => JSON.stringify({ error: { code, ...(param ? { param } : {}) } }),
 });
 
 /**
