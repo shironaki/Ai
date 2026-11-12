@@ -93,7 +93,7 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
    * Записать урок. Владелец учит всех сразу; остальные — только то, как Аи
    * говорит с ними самими, и запись ждёт слова владельца.
    */
-  async function add({ kind = "lesson", text = "", author = null, when = "", personal = false } = {}) {
+  async function add({ kind = "lesson", text = "", author = null, when = "", personal = false, propose = true } = {}) {
     const clean = cleanLesson(text);
     if (!KINDS.includes(kind)) return { ok: false, code: "invalid_kind" };
     if (clean.length < 3) return { ok: false, code: "empty" };
@@ -112,7 +112,9 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
       author: String(author),
       scope: trusted ? "all" : `user:${author}`,
       status: "active",
-      proposed: !isOwner(author),
+      // Владельцу предлагается только то, о чём автор знает: явный урок или
+      // сказанное при всех. Поправка из личного разговора остаётся личной.
+      proposed: !isOwner(author) && propose,
       at: now(), helped: 0, hurt: 0,
     };
     // Место кончилось — уходят сначала отменённые, затем самые старые чужие.
@@ -176,9 +178,12 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
     const mine = state.items.filter(item => applies(item, userId));
     if (!mine.length) return { lines: [], ids: [] };
     const words = stems(text);
-    const rules = mine.filter(item => item.kind === "rule").sort((a, b) => b.at - a.at).slice(0, maxRules);
+    // Урок без случая — это правило: «так не надо: не зови меня другом»
+    // касается любого разговора, а не только похожего по словам.
+    const always = (item) => item.kind === "rule" || (item.kind === "lesson" && !item.when);
+    const rules = mine.filter(always).sort((a, b) => b.at - a.at).slice(0, maxRules);
     const topical = mine
-      .filter(item => item.kind !== "rule")
+      .filter(item => !always(item))
       .map(item => {
         let overlap = 0;
         for (const stem of stems(`${item.text} ${item.when ?? ""}`)) if (words.has(stem)) overlap++;

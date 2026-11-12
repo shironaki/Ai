@@ -72,13 +72,14 @@ jobs:
           if [ -z "$TGCLOUD_TOKEN" ]; then
             echo "::error::Add the heart Serverless CLI token as secret TGCLOUD_HEART_TOKEN."; exit 1
           fi
-      # The provider key and the owner's numeric ID travel into the deployed
-      # module: this platform has no environment variables, and AI is a public
-      # repository, so the ID is a secret here, not a line in config.js.
+      # The provider key travels into the deployed module: this platform has no
+      # environment variables. The owner's ID is a fallback for config.js, and
+      # AI_EXTRA_KEYS ({"name":"key"} for spare providers) is optional.
       - name: Inject the provider key and the owner ID for this publish only
         env:
           AI_PROVIDER_KEY: ${{ secrets.AI_PROVIDER_KEY }}
           OWNER_TG_ID: ${{ secrets.OWNER_TG_ID }}
+          AI_EXTRA_KEYS: ${{ secrets.AI_EXTRA_KEYS }}
         run: |
           if [ -z "$AI_PROVIDER_KEY" ]; then
             echo "::error::Add the provider key as secret AI_PROVIDER_KEY."; exit 1
@@ -92,8 +93,18 @@ jobs:
             const key = JSON.stringify(process.env.AI_PROVIDER_KEY);
             const owner = JSON.stringify(process.env.OWNER_TG_ID || "");
             let text = fs.readFileSync(file, "utf8");
-            text = text.replace(/export const AI_API_KEY = .*;/u, `export const AI_API_KEY = ${key};`);
-            text = text.replace(/export const OWNER_TG_ID = .*;/u, `export const OWNER_TG_ID = ${owner};`);
+            // A function replacer: a key that happens to contain "$&" stays itself.
+            text = text.replace(/export const AI_API_KEY = .*;/u, () => `export const AI_API_KEY = ${key};`);
+            text = text.replace(/export const OWNER_TG_ID = .*;/u, () => `export const OWNER_TG_ID = ${owner};`);
+            // Spare provider keys: a JSON object of strings, or nothing at all.
+            let extra = {};
+            try {
+              const parsed = JSON.parse(process.env.AI_EXTRA_KEYS || "{}");
+              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                for (const [name, value] of Object.entries(parsed)) if (typeof value === "string" && value) extra[name] = value;
+              }
+            } catch { console.log("::warning::AI_EXTRA_KEYS is not valid JSON: spare providers stay off."); }
+            text = text.replace(/export const AI_EXTRA_KEYS = .*;/u, () => `export const AI_EXTRA_KEYS = ${JSON.stringify(extra)};`);
             fs.writeFileSync(file, text);
           '
       - name: Re-check deployed state

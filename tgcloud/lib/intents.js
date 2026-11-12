@@ -42,9 +42,16 @@ export const ABILITY_OF = Object.freeze({
  * человек просил запомнить: раньше факт сохранялся в нижнем регистре, и
  * «Берлин» превращался в «берлин».
  */
-export function soften(text) {
-  return String(text ?? "")
-    .replace(/[«»“”"']/gu, " ")
+export function soften(text, { keepQuotes = false } = {}) {
+  let value = String(text ?? "");
+  if (keepQuotes) {
+    // Кавычки снимаются, только когда в них взята вся фраза целиком.
+    const wrapped = value.trim().match(/^[«“"']([^«»“”"]*)[»”"']$/u);
+    if (wrapped) value = wrapped[1];
+  } else {
+    value = value.replace(/[«»“”"']/gu, " ");
+  }
+  return value
     .replace(/(?:^|\s)(?:пожалуйста|плиз|будь\s+добра|будь\s+добр|будьте\s+добры)(?=\s|$)/giu, " ")
     // Обращение в начале — не часть просьбы: «слушай, запомни» и «запомни»
     // это одно и то же действие.
@@ -92,8 +99,9 @@ const TEACH = [
 export function parseIntent(text) {
   const value = normalize(text);
   if (!value) return null;
-  // Та же фраза с исходным регистром: из неё берутся слова человека.
-  const soft = soften(text);
+  // Та же фраза с исходным регистром и кавычками: из неё берутся слова
+  // человека — «не называй меня «другом»» должно сохраниться как сказано.
+  const soft = soften(text, { keepQuotes: true });
 
   // ── уроки: чему её учат ───────────────────────────────────────────────
   for (const [kind, pattern] of TEACH) {

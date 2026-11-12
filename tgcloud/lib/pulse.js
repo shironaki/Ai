@@ -13,7 +13,11 @@ import { plural } from "./sibling.js";
  */
 export const pulseKey = (day) => `heart:pulse:${day}`;
 
-const number = (value) => new Intl.NumberFormat("ru-RU").format(Number(value) || 0);
+/** «18 400» вместо «18400». Изолят без Intl получает число как есть. */
+function number(value) {
+  try { return new Intl.NumberFormat("ru-RU").format(Number(value) || 0); }
+  catch { return String(Number(value) || 0); }
+}
 
 export function createPulse({ store = null, now = () => Date.now(), dayOf = (at) => new Date(at).toISOString().slice(0, 10) } = {}) {
   let pending = {};

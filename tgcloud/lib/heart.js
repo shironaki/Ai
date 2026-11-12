@@ -95,8 +95,8 @@ const DAY = 86_400_000;
 const THANKS_ONLY = /^(?:спасибо(?:\s+(?:большое|огромное|тебе|вам))?|благодарю|спс|пасиб(?:о|ки)?|мерси|thanks|thx|ты\s+лучшая|умница)[\s!.)]*$/iu;
 const THANKS = /(?:^|[\s,])(?:спасибо|благодарю|спс|пасиб|мерси)(?=$|[\s,.!)])/iu;
 /** Короткое «принято»: ответом будет реакция, а не запрос к модели. */
-const ACK_ONLY = /^(?:ок(?:ей)?|ok|okay|угу|ага|ясно|понятно|понял[аи]?|хорошо|ладно|договорились|принято|супер|отлично|класс|круто|лол|кек|а?ха(?:ха)+|\)+)[\s!.)]*$/iu;
-const LAUGH = /^(?:лол|кек|а?ха(?:ха)+|\)\)+)[\s!.)]*$/iu;
+const ACK_ONLY = /^(?:ок(?:ей)?|ok|okay|угу|ага|ясно|понятно|понял[аи]?|хорошо|ладно|договорились|принято|супер|отлично|класс|круто|лол|кек|а?(?:ха){2,}х?|а?хах|\)+)[\s!.)]*$/iu;
+const LAUGH = /^(?:лол|кек|а?(?:ха){2,}х?|а?хах|\)\)+)[\s!.)]*$/iu;
 const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:тупая|глупая|никч[её]мная|бесполезная)|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+)(?=$|[\s,.!?])/iu;
 const APOLOGY = /(?:^|[\s,])(?:прости|простите|извини|извините|извиняюсь|сорян|сорри|sorry|виновата?)(?=$|[\s,.!])/iu;
 /** Человек поправляет её ответ: это сигнал ошибки и повод для урока. */
@@ -229,11 +229,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
    * близко, что он просил. С хозяином — всегда на «вы»; с остальными «ты»
    * приходит с теплом отношений или по прямой просьбе.
    */
-  async function mannerFor(userId) {
+  async function mannerFor(userId, { dry = false } = {}) {
     const settings = (await personal.settings(userId).catch(() => ({}))) ?? {};
     if (owner(userId)) return { formal: true, score: 100, trust: 100, respect: 100, blocked: false, settings };
     let state = { score: 0, trust: 0, respect: 0, blocked: false };
-    if (policy) { try { state = await policy.state(userId); } catch { /* без записей — как с незнакомым */ } }
+    // Репетиция только читает: якорь остывания в ней не ставится.
+    if (policy) { try { state = await policy.state(userId, { initialize: !dry }); } catch { /* без записей — как с незнакомым */ } }
     const formal = settings.form === "вы" ? true : settings.form === "ты" ? false : state.score < 25;
     return { formal, score: state.score, trust: state.trust, respect: state.respect, blocked: Boolean(state.blocked), settings };
   }
@@ -994,13 +995,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         if (substance.length >= 15 && trace.q) {
           // Поправка действует в разговоре с тем, кто поправил; общей её
           // делает только слово владельца — сказанное явно, «урок: …».
+          // Сказанное в личке владельцу не пересказывается: такая поправка
+          // остаётся между Аи и человеком. При всех — можно спросить.
+          const shareable = turn.inGroup && !owner(actorId);
           const added = await lessons.add({
-            kind: "lesson", author: actorId, when: trace.q, personal: true,
+            kind: "lesson", author: actorId, when: trace.q, personal: true, propose: shareable,
             text: `На «${String(trace.q).slice(0, 80)}» поправка: ${substance.slice(0, 140)}`,
           }).catch(() => ({ ok: false }));
           if (added.ok && !added.duplicate) {
             pulse.bump("lessons");
-            if (!owner(actorId)) await askOwnerAbout(turn, added);
+            if (shareable) await askOwnerAbout(turn, added);
           }
         }
       }
@@ -1034,9 +1038,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // Она сама сказала «не знаю»: вопрос уходит в список для владельца.
     if (UNSURE.test(answer.text) && prompt.length >= 12 && !FACT_QUESTION.test(prompt)) {
       pulse.bump("unknown");
-      const saved = await store.get("heart:unknown:v1").catch(() => null);
-      const items = [...(Array.isArray(saved?.items) ? saved.items : []), { q: prompt.slice(0, 140), at: now() }].slice(-20);
-      await store.set("heart:unknown:v1", { items });
+      // Текст чужого личного вопроса владельцу не показывается — только счёт.
+      // В список идут вопросы, заданные при всех, и вопросы самого владельца.
+      if (turn.inGroup || owner(turn.actorId)) {
+        const saved = await store.get("heart:unknown:v1").catch(() => null);
+        const items = [...(Array.isArray(saved?.items) ? saved.items : []), { q: prompt.slice(0, 140), at: now() }].slice(-20);
+        await store.set("heart:unknown:v1", { items });
+      }
     }
   }
 
@@ -1269,7 +1277,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     if (!text) {
       if (inGroup) return { ignored: true };
-      turn.manner = await mannerFor(actorId);
+      turn.manner = await mannerFor(actorId, { dry });
       return mediaOnly(turn, kind);
     }
 
@@ -1283,7 +1291,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         if (command.target !== String(self?.username ?? "").toLowerCase()) return { ignored: true, reason: "foreign_command" };
       }
       turn.addressed = true;
-      turn.manner = await mannerFor(actorId);
+      turn.manner = await mannerFor(actorId, { dry });
       const sub = command.rest.toLowerCase();
       if (command.name === "start") return ruled(await greeting(turn));
       if (command.name === "help") return ruled(await say(turn, helpLines(turn)));
@@ -1319,7 +1327,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const called = vocative(prompt, [NAME.toLowerCase()]);
       if (called.addressed) { prompt = called.prompt; bare = !prompt; }
     }
-    turn.manner ??= await mannerFor(actorId);
+    turn.manner ??= await mannerFor(actorId, { dry });
     // Позвали по имени и ничего не сказали: отозваться можно и без модели.
     if (bare) return ruled(await say(turn, ["Я здесь.", "Слушаю.", "Да?"][Math.abs(Number(message.message_id) || 0) % 3]));
 

@@ -72,7 +72,10 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     if (health && (health.until > now() || now() - healthAt < 60_000)) return health;
     let saved = null;
     try { saved = store && typeof store.get === "function" ? await store.get(BRIDGE_HEALTH_KEY) : null; } catch { saved = null; }
-    health = { until: Number(saved?.until) || 0, failures: Number(saved?.failures) || 0, since: Number(saved?.since) || 0 };
+    // Нет записи в базе — остаётся то, что помнит изолят: счёт пропусков не
+    // должен обнуляться только потому, что базы нет или она не ответила.
+    if (saved && typeof saved === "object") health = { until: Number(saved.until) || 0, failures: Number(saved.failures) || 0, since: Number(saved.since) || 0 };
+    else health ??= { until: 0, failures: 0, since: 0 };
     healthAt = now();
     return health;
   }

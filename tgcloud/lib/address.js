@@ -16,6 +16,9 @@ const escape = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 /** Слова, после которых имя всё ещё стоит «в начале»: «привет, Аи», «эй, Аи». */
 const LEAD = "(?:эй|хей|слушай|привет|приветик|здравствуй|здравствуйте|доброе\\s+утро|добрый\\s+день|добрый\\s+вечер|доброй\\s+ночи|спасибо|ну|ок|окей|так)";
 
+/** Предлог перед именем: «у Аи», «про Аи», «для Аи» — о ней, а не к ней. */
+const PREPOSITION = /(?:^|[\s,])(?:у|к|ко|от|для|про|об|о|с|со|на|за|без|по|из|до|при|через|над|под|перед|между|как|или|и|это|была|есть)$/iu;
+
 /**
  * Разобрать команду: «/ai@Bot привет» → { name: "ai", target: "bot", rest: "привет" }.
  * `target` пуст, когда команда без адресата.
@@ -65,9 +68,12 @@ export function vocative(text, names = ["аи"], strict = ["ai"]) {
       const rest = raw.slice(head[0].length);
       return { addressed: true, prompt: clean(head[1] && rest ? `${head[1]}, ${rest}` : (head[1] ?? "") + rest) };
     }
-    // «ты тут, Аи?», «спасибо, Аи!» — знак в конце остаётся при фразе.
-    const tail = raw.match(new RegExp(`[\\s,]+(?:${soft})([\\s!?.…)]*)$`, "iu"));
-    if (tail) return { addressed: true, prompt: clean(raw.slice(0, tail.index) + tail[1].trim()) };
+    // «ты тут, Аи?», «спасибо, Аи!», «привет Аи» — знак в конце остаётся при
+    // фразе. Без запятой имя после предлога — упоминание: «спросим у Аи».
+    const tail = raw.match(new RegExp(`^([\\s\\S]*?)([\\s,]+)(?:${soft})([\\s!?.…)]*)$`, "iu"));
+    if (tail && (tail[2].includes(",") || !PREPOSITION.test(tail[1]))) {
+      return { addressed: true, prompt: clean(tail[1] + tail[3].trim()) };
+    }
     // «слушай, Аи, а ты…» — имя обособлено запятыми.
     const mid = raw.match(new RegExp(`,\\s*(?:${soft})\\s*,\\s*`, "iu"));
     if (mid) return { addressed: true, prompt: clean(`${raw.slice(0, mid.index)}, ${raw.slice(mid.index + mid[0].length)}`) };
