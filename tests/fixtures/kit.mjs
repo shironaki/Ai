@@ -39,6 +39,7 @@ export function reset() {
   state.fetchQueue.length = 0;
   state.calls.length = 0;
   state.kv.clear();
+  state.kvAt.clear();
   state.memory.clear();
   for (const name of Object.keys(state.failing)) delete state.failing[name];
   delete state.me;

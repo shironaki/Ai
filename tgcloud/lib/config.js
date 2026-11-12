@@ -26,7 +26,19 @@ export const CONFIG = Object.freeze({
   // когда кончились все модели основного. Ключа здесь нет: он приходит из
   // GitHub-секрета AI_EXTRA_KEYS ({"имя": "ключ"}) только на время публикации.
   // Пример записи: { id: "cerebras", baseUrl: "https://api.cerebras.ai/v1", models: ["llama-3.3-70b"] }
-  AI_PROVIDERS: [],
+  AI_PROVIDERS: [
+    // GigaChat (Сбер): бесплатный Freemium для физлиц. Ключ авторизации кладётся
+    // в секрет AI_EXTRA_KEYS как {"gigachat": "<Authorization Key>"}; без него
+    // запись спит. Вход особый (`kind`): ключ меняется на получасовой токен.
+    // Сертификаты у Сбера свои — примет ли их платформа, покажет «проверь мозги».
+    {
+      id: "gigachat", kind: "gigachat",
+      baseUrl: "https://api.giga.chat/v1",
+      authUrl: "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+      scope: "GIGACHAT_API_PERS",
+      models: ["GigaChat-2", "GigaChat-2-Pro", "GigaChat-2-Max"],
+    },
+  ],
 
   // Своё имя в Telegram без «@». Обычно сердце узнаёт его само (getMe); это
   // запасной вариант, чтобы «@имя привет» в группе понималось и без него.

@@ -8,6 +8,7 @@ const state = globalThis.__sdkStub = globalThis.__sdkStub ?? {
 };
 
 state.calls ??= [];
+state.kvAt ??= new Map();
 state.failing ??= {};
 
 const methods = {
@@ -61,7 +62,17 @@ export const db = {
   },
   async run(query, params = {}) {
     if (query.includes("INSERT INTO kv_state")) {
+      // «Только если нет» — отдельный запрос: существующую запись он не трогает.
+      if (query.includes("DO NOTHING") && state.kv.has(params[":key"])) return true;
       state.kv.set(params[":key"], params[":value"]);
+      state.kvAt.set(params[":key"], Number(params[":at"]) || 0);
+      return true;
+    }
+    if (query.includes("DELETE FROM kv_state WHERE key LIKE")) {
+      const prefix = String(params[":prefix"]).replace(/%$/u, "");
+      for (const key of [...state.kv.keys()]) {
+        if (key.startsWith(prefix) && (state.kvAt.get(key) ?? 0) < params[":before"]) { state.kv.delete(key); state.kvAt.delete(key); }
+      }
       return true;
     }
     if (query.includes("INSERT INTO ai_memory")) {

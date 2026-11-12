@@ -60,7 +60,7 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
 
   /** Был ли день вообще: пустой день не стоит вести владельцу. */
   function active(counters = {}) {
-    return ["replies", "ruled", "reactions", "failed", "queued", "limited", "corrected", "lessons"].some(name => Number(counters[name]) > 0);
+    return ["replies", "ruled", "reactions", "failed", "queued", "limited", "corrected", "lessons", "sourced", "games", "reminded"].some(name => Number(counters[name]) > 0);
   }
 
   /** Сводка словами. Строки с нулями не печатаются: тишина — не новость. */
@@ -94,6 +94,13 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
       c("unknown") ? `не знала ответа: ${number(c("unknown"))}` : "",
     ].filter(Boolean);
     if (study.length) out.push(`Учёба: ${study.join(" · ")}`);
+    const deeds = [
+      c("sourced") ? `ответила из источников: ${number(c("sourced"))}` : "",
+      c("games") ? `игр: ${number(c("games"))}` : "",
+      c("reminders") ? `поставила напоминаний: ${number(c("reminders"))}` : "",
+      c("reminded") ? `напомнила: ${number(c("reminded"))}` : "",
+    ].filter(Boolean);
+    if (deeds.length) out.push(`Дела: ${deeds.join(" · ")}`);
     if (c("failed")) out.push(`Не смогла ответить: ${number(c("failed"))}`);
     if (c("bridge_missed")) out.push(`Мост молчал: ${number(c("bridge_missed"))}`);
     return out;

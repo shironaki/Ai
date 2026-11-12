@@ -57,6 +57,21 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
     } catch { return false; }
   }
 
+  /**
+   * Убрать устаревшие записи с общим началом ключа: ответы моста, которых
+   * никто не дождался, отметки одноразовых событий. Сами не исчезают.
+   */
+  async function sweep(prefix, olderThanMs) {
+    if (!has) return false;
+    try {
+      await db.run(
+        "DELETE FROM kv_state WHERE key LIKE :prefix AND updated_at < :before",
+        { ":prefix": `${String(prefix)}%`, ":before": now() - Math.max(0, Number(olderThanMs) || 0) },
+      );
+      return true;
+    } catch { return false; }
+  }
+
   // Optimistic write: the caller read `before`, and only that exact value is
   // replaced. A lost race returns false instead of overwriting a newer state.
   async function compareSet(key, before, next) {
@@ -133,7 +148,7 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
   return Object.freeze({
     available: has,
     probe,
-    get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded, remove,
+    get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded, remove, sweep,
     memory: Object.freeze({ load, save, clear, clearUser }),
   });
 }

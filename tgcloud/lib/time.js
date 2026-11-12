@@ -49,3 +49,36 @@ export function nowLine(at, timeZone) {
     }).format(new Date(at));
   } catch { return new Date(at).toISOString().slice(0, 16).replace("T", " "); }
 }
+
+/** Смещение пояса от UTC в минутах на данный момент: Москва → 180. */
+export function zoneOffsetMinutes(at, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: effectiveTimeZone(timeZone), year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(at));
+    const get = (type) => Number(parts.find(part => part.type === type)?.value);
+    const local = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"));
+    return Math.round((local - Math.floor(at / 60_000) * 60_000) / 60_000);
+  } catch { return 0; }
+}
+
+/** Местные дата и время по частям: для «завтра в 9» и «сколько времени в Токио». */
+export function localParts(at, timeZone) {
+  const shifted = new Date(Math.floor(at / 60_000) * 60_000 + zoneOffsetMinutes(at, timeZone) * 60_000);
+  return {
+    y: shifted.getUTCFullYear(), m: shifted.getUTCMonth() + 1, d: shifted.getUTCDate(),
+    hh: shifted.getUTCHours(), mm: shifted.getUTCMinutes(), weekday: shifted.getUTCDay(),
+  };
+}
+
+/**
+ * Местное «год-месяц-день час:минута» → момент времени. Два прохода: смещение
+ * пояса зависит от самого момента (переход на летнее время).
+ */
+export function zonedEpoch({ y, m, d, hh = 0, mm = 0 }, timeZone) {
+  const wall = Date.UTC(y, m - 1, d, hh, mm);
+  let guess = wall;
+  for (let pass = 0; pass < 2; pass++) guess = wall - zoneOffsetMinutes(guess, timeZone) * 60_000;
+  return guess;
+}

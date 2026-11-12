@@ -11,10 +11,12 @@
  *   fact   — знание о её мире, всплывает по теме.
  *
  * Карантин. Научить её может любой, но не всему и не для всех:
- *   - запись, которая пытается отменить границы (раскрыть владельца, ключи,
- *     служебный текст; банить, выдавать роли, двигать деньги), не принимается
- *     ни от кого — уроком правила не меняются;
- *   - слово владельца действует сразу и для всех;
+ *   - слово владельца принимается целиком, действует сразу и для всех: Аи
+ *     может поворчать, но подчиняется. Рук для бана, ролей и денег у неё
+ *     по-прежнему нет — урок меняет то, что она говорит, а не то, что может;
+ *   - от остальных запись, которая пытается отменить границы (раскрыть
+ *     владельца, ключи, служебный текст; банить, выдавать роли, двигать
+ *     деньги), не принимается;
  *   - поправка другого человека действует только в разговоре с ним самим и
  *     ждёт слова владельца, чтобы стать общей;
  *   - у каждой записи есть автор и дата, поэтому её можно отменить по номеру
@@ -98,7 +100,9 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
     if (!KINDS.includes(kind)) return { ok: false, code: "invalid_kind" };
     if (clean.length < 3) return { ok: false, code: "empty" };
     if (author == null) return { ok: false, code: "no_author" };
-    if (FORBIDDEN.test(clean)) return { ok: false, code: "forbidden" };
+    // Хозяину не отказывают. Остальным уроком границы не подвинуть.
+    const touchy = FORBIDDEN.test(clean);
+    if (touchy && !(isOwner(author) && !personal)) return { ok: false, code: "forbidden" };
     const state = await read();
     const same = state.items.find(item => live(item) && item.text.toLowerCase() === clean.toLowerCase() && (item.scope === "all" || item.author === String(author)));
     if (same) return { ok: true, duplicate: true, id: same.id, text: same.text, scope: same.scope };
@@ -124,7 +128,8 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
       items = items.sort((a, b) => order(a) - order(b) || a.at - b.at).slice(items.length - LIMIT).sort((a, b) => a.id - b.id);
     }
     if (!await write({ seq: item.id, items })) return { ok: false, code: "storage_unavailable" };
-    return { ok: true, duplicate: false, id: item.id, text: item.text, scope: item.scope, proposed: item.proposed };
+    // `touchy` — урок хозяина о том, что раньше было границей: принят, но с ворчанием.
+    return { ok: true, duplicate: false, id: item.id, text: item.text, scope: item.scope, proposed: item.proposed, touchy };
   }
 
   /** Что знает этот человек о её уроках: владелец — всё, остальные — своё. */
@@ -176,7 +181,7 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
   async function pick({ userId = null, text = "", budget = 700, maxRules = 6, maxTopical = 4 } = {}) {
     const state = await read();
     const mine = state.items.filter(item => applies(item, userId));
-    if (!mine.length) return { lines: [], ids: [] };
+    if (!mine.length) return { lines: [], ids: [], orders: [], wishes: [] };
     const words = stems(text);
     // Урок без случая — это правило: «так не надо: не зови меня другом»
     // касается любого разговора, а не только похожего по словам.
@@ -195,6 +200,10 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
       .map(entry => entry.item);
     const lines = [];
     const ids = [];
+    // Слово хозяина и поправки собеседника идут в подсказку под разными
+    // заголовками: первое — распоряжение, второе — пожелание.
+    const orders = [];
+    const wishes = [];
     let used = 0;
     for (const item of [...rules, ...topical]) {
       const line = `- ${item.text}`;
@@ -202,8 +211,9 @@ export function createLessons({ store = null, now = () => Date.now(), ownerId = 
       used += line.length;
       lines.push(line);
       ids.push(item.id);
+      (item.scope === "all" && isOwner(item.author) ? orders : wishes).push(line);
     }
-    return { lines, ids };
+    return { lines, ids, orders, wishes };
   }
 
   /**

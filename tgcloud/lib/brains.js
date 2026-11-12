@@ -101,7 +101,9 @@ export function createBrains({
       const key = String(provider?.key ?? "").trim();
       const url = String(provider?.baseUrl ?? "").trim().replace(/\/+$/u, "");
       if (!key || !url || !provider?.id) continue;
-      for (const name of unique(provider.models ?? [])) list.push({ id: `${provider.id}:${name}`, provider: String(provider.id), model: name, baseUrl: url, key });
+      // `kind` — особый вход: «gigachat» сначала меняет ключ на получасовой токен.
+      const extra = { kind: String(provider.kind ?? ""), authUrl: String(provider.authUrl ?? ""), scope: String(provider.scope ?? "") };
+      for (const name of unique(provider.models ?? [])) list.push({ id: `${provider.id}:${name}`, provider: String(provider.id), model: name, baseUrl: url, key, ...extra });
     }
     return list.map(item => ({ ...item, plain: state.models[item.id]?.plain === true }));
   }
@@ -118,9 +120,19 @@ export function createBrains({
     await write(next);
   }
 
-  /** Модель упёрлась в лимит или упала: отдыхает `ms`, не больше суток. */
-  const rest = (id, { ms = DEFAULT_REST_MS, why = "limit" } = {}) =>
-    patch(id, { until: now() + Math.max(1000, Math.min(DAY, Number(ms) || DEFAULT_REST_MS)), why });
+  /**
+   * Модель упёрлась в лимит или упала: отдыхает `ms`, не больше суток. Нет
+   * связи раз за разом — отдых растёт вчетверо, до шести часов: провайдер,
+   * чей сертификат платформа не принимает, не должен стоить попытки на
+   * каждое сообщение.
+   */
+  async function rest(id, { ms = DEFAULT_REST_MS, why = "limit" } = {}) {
+    const state = await read();
+    const fails = why === "network" ? Number(state.models[id]?.fails ?? 0) + 1 : 0;
+    const base = Math.max(1000, Number(ms) || DEFAULT_REST_MS);
+    const pause = why === "network" ? Math.min(6 * 3_600_000, base * 4 ** Math.min(fails - 1, 6)) : Math.min(DAY, base);
+    await patch(id, { until: now() + pause, why, fails });
+  }
 
   /** Модели больше нет у провайдера: сутки не трогаем, потом проверим снова. */
   const retire = (id, { why = "gone" } = {}) => patch(id, { until: now() + DAY, why });
@@ -137,12 +149,20 @@ export function createBrains({
     const state = await read();
     const before = state.models[id] ?? {};
     const drift = (a, b) => a == null || b == null ? a !== b : Math.abs(a - b) >= Math.max(5, Math.abs(b) * 0.1);
-    if (!drift(limits.remainingRequests, before.remainReq ?? null) && !drift(limits.remainingTokens, before.remainTok ?? null) && !(Number(before.until) > 0)) return;
+    if (!drift(limits.remainingRequests, before.remainReq ?? null) && !drift(limits.remainingTokens, before.remainTok ?? null) && !(Number(before.until) > 0) && !(Number(before.fails) > 0)) return;
     await patch(id, {
       remainReq: limits.remainingRequests, limitReq: limits.limitRequests,
       remainTok: limits.remainingTokens, limitTok: limits.limitTokens,
-      until: 0, why: "",
+      until: 0, why: "", fails: 0,
     });
+  }
+
+  /** Ответила — значит, связь есть: счёт неудач обнуляется и без заголовков о лимите. */
+  async function healthy(id) {
+    const state = await read();
+    const before = state.models[id] ?? {};
+    if (!(Number(before.fails) > 0) && !(Number(before.until) > 0)) return;
+    await patch(id, { until: 0, why: "", fails: 0 });
   }
 
   /**
@@ -179,6 +199,7 @@ export function createBrains({
         id: item.id, model: item.model, provider: item.provider,
         ok: !resting, until: resting ? Number(row.until) : 0, why: resting ? String(row.why ?? "") : "",
         remainingRequests: row.remainReq ?? null, remainingTokens: row.remainTok ?? null,
+        limitRequests: row.limitReq ?? null, limitTokens: row.limitTok ?? null,
       };
     });
   }
@@ -200,5 +221,5 @@ export function createBrains({
     return list.every(item => item.why === "limit") ? "limit" : list.some(item => item.why === "limit") ? "mixed" : "fault";
   }
 
-  return Object.freeze({ all, available, rest, retire, simplify, note, discover, describe, nextAt, whyResting });
+  return Object.freeze({ all, available, rest, retire, simplify, note, healthy, discover, describe, nextAt, whyResting });
 }

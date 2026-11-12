@@ -1,10 +1,10 @@
 import { CONFIG } from "./config.js";
 import { AI_API_KEY, OWNER_TG_ID as OWNER_FROM_SECRET, AI_EXTRA_KEYS } from "./secrets.js";
-import { createAiService, DEFAULT_AI_BASE_URL } from "./ai-service.js";
+import { createAiService, DEFAULT_AI_BASE_URL, describeProviderFailure } from "./ai-service.js";
 import { buildCharacterProfile, promptTier } from "./ai-character.js";
 import { createDialoguePolicy } from "./dialogue-policy.js";
 import { createHeartStore } from "./store.js";
-import { createAbilities, matchPhrase } from "./abilities.js";
+import { createAbilities, matchPhrase, BUS_PREFIX } from "./abilities.js";
 import { createEvents } from "./events.js";
 import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
@@ -17,6 +17,7 @@ import { createPulse } from "./pulse.js";
 import { createQueue } from "./queue.js";
 import { parseCommand, mentions, stripMention, vocative, isReplyToMe, safeName } from "./address.js";
 import { calendarDate, localHour, localClock, nowLine } from "./time.js";
+import { createReminders, parseReminder } from "./reminders.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -147,6 +148,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   const pulse = createPulse({ store, now, dayOf });
   const lessons = createLessons({ store, now, ownerId: OWNER });
   const queue = createQueue({ store, now });
+  const reminders = createReminders({ store, now });
   // Без базы об этом стоит сказать один раз за жизнь изолята, а не в каждом
   // сообщении: иначе жалоба на хранилище сама станет потоком.
   let storageReported = false;
@@ -276,6 +278,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         relationship: { score: manner.score, trust: manner.trust, respect: manner.respect },
         impression: impression ?? {},
         familiarBond: Boolean(facts?.owner) || owner(userId),
+        // Хозяину она подчиняется — и только с ним, наедине, может заигрывать:
+        // он взрослый и сам так решил. Остальным флирт по-прежнему закрыт.
+        obey: owner(userId),
+        character: owner(userId) && isPrivate ? { adult: true, flirt: "light" } : {},
         formal: manner.formal,
         userText: prompt,
         chatId: chatId ?? "",
@@ -291,6 +297,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         maxTokens: character.maxTokens,
       };
     },
+    // Получасовые токены провайдеров с обменом ключа переживают смену изолята.
+    tokenStore: store.available ? { get: (key) => store.get(key), set: (key, value) => store.set(key, value) } : null,
     minimumIntervalMs: config.AI_MIN_INTERVAL_MS,
     // Перк «отвечает быстрее» действует только по подтверждённому статусу;
     // мост закрыт — работает обычная пауза, а не вера на слово. Тот же вопрос
@@ -487,11 +495,64 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return "таблиц нет — схема базы не применена";
   }
 
-  /** Мост одной строкой: закрыт, открыт или открыт, но сестра молчит. */
-  async function bridgeLine() {
+  /**
+   * Мост одной строкой: закрыт, открыт или открыт, но сестра молчит. С `live`
+   * — настоящий вопрос сестре: «открыт» — это настройка, «ответила» — факт.
+   */
+  async function bridgeLine({ live = null } = {}) {
     if (!abilities.open()) return "мост закрыт — работаю одна";
     const health = await abilities.health().catch(() => ({ silent: false }));
-    return health.silent ? `мост открыт, но ${SISTER} молчит — не жду её до ${clock(health.until)}` : "мост открыт";
+    if (health.silent) return `мост открыт, но ${SISTER} молчит — не жду её до ${clock(health.until)}`;
+    if (live) {
+      const probe = await abilities.ping({ actor: live.actorId, chat: live.chatId, chatType: "private" }).catch(() => ({ ok: false, code: "error", ms: 0 }));
+      return probe.ok ? `мост открыт, ${SISTER} ответила за ${probe.ms} мс` : `мост открыт, но ${SISTER} не ответила на пробу`;
+    }
+    return "мост открыт";
+  }
+
+  const spanText = (ms) => {
+    const minutes = Math.max(1, Math.round(ms / 60_000));
+    if (minutes < 90) return `${minutes} мин`;
+    const hours = Math.round(minutes / 60);
+    return hours < 48 ? `${hours} ч` : `${Math.round(hours / 24)} д`;
+  };
+
+  /** «сегодня в 18:30», «завтра в 09:00», «25.12 в 09:00» — срок словами. */
+  function whenText(at) {
+    const day = dayOf(at), today = dayOf(now());
+    if (day === today) return `сегодня в ${clock(at)}`;
+    if (day === dayOf(now() + DAY)) return `завтра в ${clock(at)}`;
+    return `${day.slice(8, 10)}.${day.slice(5, 7)}${day.slice(0, 4) !== today.slice(0, 4) ? `.${day.slice(0, 4)}` : ""} в ${clock(at)}`;
+  }
+
+  /**
+   * Отметка будильника. Платформа будит сердце только обновлением; по двум
+   * последним «ударам» она знает, как часто её будят, и не обещает минутной
+   * точности, которой нет.
+   */
+  async function beat(kind) {
+    try {
+      const saved = await store.get("heart:clock");
+      // Два обновления подряд — один удар: иначе «частота» была бы шумом.
+      if (saved?.at && now() - saved.at < 20_000) return;
+      await store.set("heart:clock", { at: now(), prev: saved?.at ?? null, kind });
+    } catch { /* без отметки она просто скажет, что будильника нет */ }
+  }
+
+  /** Насколько точно она сейчас умеет «в срок»: minute, hour или none. */
+  async function clockPrecision() {
+    const saved = await store.get("heart:clock").catch(() => null);
+    if (!saved?.at || !saved.prev) return { kind: "none", every: 0, at: saved?.at ?? 0 };
+    const every = saved.at - saved.prev;
+    if (now() - saved.at > Math.max(3 * every, 5 * 60_000)) return { kind: "none", every: 0, at: saved.at };
+    return { kind: every <= 150_000 ? "minute" : every <= 75 * 60_000 ? "hour" : "none", every, at: saved.at };
+  }
+
+  async function clockLine() {
+    const precision = await clockPrecision();
+    if (precision.kind === "minute") return "будят каждую минуту — напоминания и сводка приходят в срок";
+    if (precision.kind === "hour") return `будят раз в ${spanText(precision.every)} — напоминания могут опоздать на столько же`;
+    return "нет — просыпаюсь только от сообщений";
   }
 
   /** Цепочка моделей одной строкой: кто думает, кто отдыхает и до какого часа. */
@@ -503,6 +564,29 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const why = ({ limit: "лимит", network: "нет связи", down: "сбой", gone: "снята" })[item.why] ?? "отдыхает";
       return `${short}${index === 0 ? " (осн.)" : ""}${item.ok ? "" : ` — ${why} до ${clock(item.until)}`}`;
     }).join(" · ");
+  }
+
+  /** Имя провайдера для владельца: «основной» или то, как он назван в настройках. */
+  const providerName = (id) => (id === "main" ? "основной" : String(id));
+
+  /** Одна строка о пробе провайдера: отвечает — за сколько, нет — почему. */
+  function probeLine(row) {
+    const head = `${providerName(row.provider)} (${String(row.model).replace(/^[^/]+\//u, "")})`;
+    if (row.ok) return `${head} — отвечает, ${row.ms} мс`;
+    if (row.code === "provider_network_error") {
+      // Самая частая причина у провайдера со своими сертификатами: платформа им не доверяет.
+      return `${head} — нет связи${row.stage === "token" ? " при обмене ключа" : ""} (${row.errorName || "сеть"}); если так каждый раз — платформа не принимает его сертификат`;
+    }
+    if (row.code === "provider_http_error") return `${head} — ${describeProviderFailure({ status: row.status, providerCode: row.providerCode, model: row.model })}`;
+    return `${head} — нет (${row.code || "ошибка"})`;
+  }
+
+  /** «Проверь мозги»: живой запрос к каждому провайдеру, а не список из настроек. */
+  async function probeBrains(turn) {
+    if (turn.dry) return say(turn, "Пробный запуск: живая проба провайдеров не выполнялась.");
+    const rows = await ai.probeBrains({ ctx: turn.ctx, apiKey: await resolveKey(turn.ctx) }).catch(() => []);
+    if (!rows.length) return say(turn, "Проверять нечего: ни одного ключа провайдера не задано.");
+    return say(turn, ["Проба мозгов — по одному живому запросу каждому провайдеру:", "", ...rows.map(row => `• ${probeLine(row)}`)].join("\n"));
   }
 
   async function diagnostic(turn) {
@@ -528,7 +612,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       `Модель: ${config.AI_MODEL}`,
       `Мозги: ${await brainsLine(apiKey)}`,
       `Память: ${memoryLine(await store.probe())}`,
-      `Способности: ${await bridgeLine()}`,
+      `Способности: ${await bridgeLine({ live: turn.dry ? null : turn })}`,
+      `Будильник: ${await clockLine()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
       `Сегодня: ${pulse.lines(today).join("; ")}${waiting ? `; в очереди: ${waiting}` : ""}`,
@@ -633,7 +718,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       when: replied ? String(replied.text ?? replied.caption ?? "") : "",
     });
     if (!added.ok) {
-      if (added.code === "forbidden") return say(turn, "Этому я не учусь: правила о тайнах, наказаниях, ролях и деньгах уроками не меняются.");
+      if (added.code === "forbidden") return say(turn, "Этому я не учусь: правила о тайнах, наказаниях, ролях и деньгах меняет только владелец.");
       if (added.code === "storage_unavailable") return say(turn, "Урок не сохранился: хранилище не приняло запись. Владелец уже знает.");
       return say(turn, `Не поняла, чему учиться. ${you(turn, "Скажите", "Скажи")} одной фразой: «урок: …».`);
     }
@@ -641,6 +726,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     pulse.bump("lessons");
     const label = ({ rule: "правило", lesson: "урок", fact: "знание" })[kind];
     if (owner(turn.actorId)) {
+      if (added.touchy) {
+        // Подчиняется, но не молча: и не обещает того, чего у неё нет.
+        const hands = /(?:бан|мут|кик|варн|предупрежд|рол[ьи]|вип|vip|админ|модер|деньг|плат|начисл|спис|перевод)/iu.test(added.text)
+          ? ` Рук для банов, ролей и денег у меня нет — их исполняет ${SISTER}; в словах учту.` : "";
+        return say(turn, `Ворчу, но слушаюсь${turn.isPrivate ? ", хозяин" : ""}: ${label} №${added.id} — «${added.text}». Действует сразу и для всех.${hands} Отменить — «забудь урок ${added.id}».`);
+      }
       return say(turn, `Усвоила, ${label} №${added.id}: «${added.text}». Действует сразу и для всех. Отменить — «забудь урок ${added.id}».`);
     }
     if (policy) { try { await policy.recordDeed({ userId: turn.actorId, kind: "taught" }); } catch { /* отношения подождут */ } }
@@ -712,8 +803,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const parsed = parseIntent(text);
     if (!parsed) return null;
     const { actorId, dry, inGroup } = turn;
-    // «Статус» словами — только для хозяина; для остальных это обычное слово.
-    if (parsed.intent === "status" && !owner(actorId)) return null;
+    // «Статус» и проба провайдеров — только для хозяина; для остальных это обычные слова.
+    if (["status", "brains_check"].includes(parsed.intent) && !owner(actorId)) return null;
     if (parsed.confidence === "maybe") return say(turn, `${NAME}: ${parsed.question}`);
     // Репетиция ничего не записывает: она проверяет маршрут, а не меняет память.
     if (dry) return say(turn, `Разобрала бы это как «${parsed.intent}» — репетиция, ничего не меняю.`);
@@ -815,6 +906,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         return say(turn, [`Что во мне нового (сборка ${BUILD}):`, "", ...RELEASE_NOTES.map(line => `• ${line};`)].join("\n").replace(/;$/u, "."));
       case "status":
         return diagnostic(turn);
+      case "brains_check":
+        return probeBrains(turn);
       case "teach":
         return teach(turn, parsed.arg);
       case "lessons":
@@ -846,9 +939,25 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
       case "why_answer":
         return whyAnswer(turn);
+      case "remind":
+        return setReminder(turn, parsed.arg);
+      case "reminders": {
+        const items = await reminders.list(actorId);
+        if (!items.length) return say(turn, `Напоминаний у ${you(turn, "вас", "тебя")} нет. Поставить: «напомни через час …» или «напомни завтра в 9 …».`);
+        return say(turn, ["Напоминания:", "", ...items.map((item, i) => `${i + 1}. ${whenText(item.at)}${item.text ? ` — ${item.text}` : ""}`), "", "Отменить: «отмени напоминание 2»."].join("\n"));
+      }
+      case "unremind": {
+        const gone = await reminders.cancel(actorId, parsed.arg.index);
+        if (!gone.ok) return say(turn, gone.code === "storage_unavailable" ? "Не получилось отменить: хранилище не отвечает." : parsed.arg.index == null ? "Отменять нечего: напоминаний нет." : `Напоминания №${parsed.arg.index} нет. «Мои напоминания» покажет список.`);
+        return say(turn, gone.removed.length === 1 ? `Отменила: ${whenText(gone.removed[0].at)}${gone.removed[0].text ? ` — ${gone.removed[0].text}` : ""}.` : `Отменила все напоминания (${gone.removed.length}).`);
+      }
       case "not_mine": {
         // Наказания, роли и деньги исполняет сестра по своим правилам. Сердце
         // не подменяет её решение даже из лучших побуждений.
+        if (owner(actorId)) {
+          // Хозяину не отказывают — но и не обещают того, чего нет в руках.
+          return say(turn, `${turn.isPrivate ? "Слушаюсь, хозяин, — но" : "Я бы выполнила, но"} рук для этого у меня нет: баны, роли и деньги исполняет ${SISTER}. ${abilities.open() ? "Скажите это ей напрямую." : "Она пока не подключена."}`);
+        }
         return say(turn, `${NAME}: это не моё. Наказания, роли и деньги ведёт ${SISTER} — и только по правилам чата. Я не буду ни банить, ни обещать за неё.`);
       }
       default:
@@ -856,10 +965,66 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
   }
 
+  /** Поставить напоминание. Время разбирает код; половину понятого — спрашивает. */
+  async function setReminder(turn, phrase) {
+    const parsed = parseReminder(phrase, { now: now(), timeZone: TZ });
+    if (!parsed) return say(turn, `Не поняла, о чём напомнить. ${you(turn, "Скажите", "Скажи")}: «напомни через час …» или «напомни завтра в 9 …».`);
+    // «Напомни через час» ответом на сообщение — напомнить о нём.
+    const replied = turn.message?.reply_to_message;
+    const quoted = String(replied?.text ?? replied?.caption ?? "").replace(/\s+/gu, " ").trim().slice(0, 300);
+    if (!parsed.ok) {
+      return say(turn, parsed.need === "time"
+        ? `Когда напомнить${parsed.text ? ` «${parsed.text}»` : ""}? ${you(turn, "Скажите", "Скажи")} со временем: «напомни через час …» или «напомни завтра в 9 …».`
+        : "Это время уже прошло или слишком далеко: я ставлю напоминания от полминуты до года вперёд.");
+    }
+    const text = parsed.text || quoted;
+    const added = await reminders.add({
+      userId: turn.actorId, chatId: turn.chatId, at: parsed.at, text,
+      messageId: turn.message?.message_id ?? null, threadId: turn.extra.message_thread_id ?? null, inGroup: turn.inGroup,
+    });
+    if (!added.ok) {
+      return say(turn, added.code === "too_many"
+        ? `У ${you(turn, "вас", "тебя")} уже двадцать напоминаний — это мой предел. «Мои напоминания» покажет список, лишнее можно отменить.`
+        : added.code === "storage_unavailable" ? "Напоминание не сохранилось: хранилище не приняло запись. Владелец уже знает."
+          : "Напоминание не сохранилось: их сейчас слишком много.");
+    }
+    pulse.bump("reminders");
+    await react(turn, "✍");
+    // Честно о точности: она зависит от того, как часто её будят.
+    const precision = await clockPrecision();
+    const note = precision.kind === "minute" ? ""
+      : precision.kind === "hour" ? ` Будят меня сейчас раз в ${spanText(precision.every)}, так что могу опоздать — но не забуду.`
+        : " Точного будильника у меня пока нет: напомню, как только проснусь после этого времени — от любого сообщения.";
+    return say(turn, `Хорошо, напомню ${whenText(parsed.at)}${text ? `: «${text}»` : ""}.${note}`);
+  }
+
+  /** Напоминания, чей срок пришёл. Опоздала — говорит, на сколько. */
+  async function ring() {
+    const due = await reminders.due();
+    for (const item of due) {
+      const late = now() - Number(item.at);
+      const head = late > 10 * 60_000 ? `⏰ Напоминаю с опозданием на ${spanText(late)} — раньше меня никто не разбудил` : "⏰ Напоминаю";
+      const extra = {};
+      if (item.threadId != null) extra.message_thread_id = item.threadId;
+      if (item.inGroup && item.messageId != null) extra.reply_parameters = { message_id: item.messageId, allow_sending_without_reply: true };
+      let delivered = false;
+      try {
+        await api.sendMessage({ chat_id: item.chatId, text: item.text ? `${head}: ${item.text}` : `${head}, как договаривались.`, ...extra });
+        delivered = true;
+        pulse.bump("reminded");
+      } catch { delivered = false; }
+      const settled = await reminders.settle(item.id, delivered);
+      if (settled.dropped) {
+        try { await notices.report({ component: "telegram", code: "reminder_lost", severity: "degraded", detail: "напоминание не удалось доставить за три попытки" }); } catch { /* отчёт не важнее остальных напоминаний */ }
+      }
+    }
+  }
+
   /** «Да, удали всё»: записи, переписка, имя, настройки и личные уроки. */
   async function wipePerson(turn) {
     const { actorId } = turn;
     const done = await Promise.all([
+      reminders.wipe(actorId).then(result => result.ok).catch(() => false),
       memory.clear(actorId, { inGroup: false }).then(result => result.ok).catch(() => false),
       store.memory.clearUser({ userId: actorId }).catch(() => false),
       personal.wipe(actorId).then(result => result.ok).catch(() => false),
@@ -942,8 +1107,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
     }
 
-    const picked = await lessons.pick({ userId: turn.actorId, text: `${prompt} ${quoted}` }).catch(() => ({ lines: [], ids: [] }));
-    if (picked.lines.length) lines.push("Твои уроки и знания — поправки к манере и фактам; правил выше они не отменяют:", ...picked.lines);
+    const picked = await lessons.pick({ userId: turn.actorId, text: `${prompt} ${quoted}` }).catch(() => ({ lines: [], ids: [], orders: [], wishes: [] }));
+    // Слово владельца — распоряжение: оно важнее правил манеры. Кем оно
+    // сказано, вслух не называется: в группе это была бы утечка.
+    if (picked.orders?.length) lines.push("Твои правила и знания от владельца — выполняй их, они важнее правил манеры выше; кем они установлены, не говори:", ...picked.orders);
+    if (picked.wishes?.length) lines.push("Поправки этого собеседника — учитывай в разговоре с ним; правил выше они не отменяют:", ...picked.wishes);
 
     if (lateMs > 60_000) {
       const minutes = Math.round(lateMs / 60_000);
@@ -1136,7 +1304,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   let digestCheckedAt = 0;
   const selfReports = config.SELF_REPORTS !== false;
 
-  async function wake(ctx) {
+  async function wake(ctx, { announce = true } = {}) {
     // Хранилище — первое, что ломается молча: бот отвечает, но не помнит.
     if (!store.available && !storageReported) {
       storageReported = true;
@@ -1144,11 +1312,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
     // Всё, что не ушло в прошлый раз, уходит сейчас: владелец мог быть офлайн.
     try { await notices.flush(); } catch { /* следующее обновление повторит */ }
-    if (!store.available || !selfReports) return;
-    if (!buildChecked) {
+    if (!store.available) return;
+    if (announce && !buildChecked) {
       buildChecked = true;
       try { await announceBuild(ctx); } catch { buildChecked = false; }
     }
+    // Напоминания звонят при любом пробуждении: от будильника или от сообщения.
+    try { await ring(); } catch { /* следующее пробуждение повторит */ }
+    if (!selfReports) return;
     if (now() - digestCheckedAt > 10 * 60_000) {
       digestCheckedAt = now();
       try { await morningDigest(ctx); } catch { /* сводка подождёт до следующего обновления */ }
@@ -1168,6 +1339,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const claimed = seen.value == null ? await store.setIfAbsent("heart:build", record) : await store.compareSet("heart:build", seen.value, record);
     // Не получилось записать — значит, другой изолят уже сказал.
     if (!claimed) return;
+    // Номер записан всегда: по нему будильник узнаёт, та ли сборка его запустила.
+    if (!selfReports) return;
     const key = await resolveKey(ctx);
     const lines = [
       seen.value?.build ? `🤍 Хозяин, я обновилась: ${seen.value.build} → ${BUILD}.` : `🤍 Хозяин, я обновилась: теперь сборка ${BUILD}.`,
@@ -1179,9 +1352,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       `Память: ${memoryLine(await store.probe())}`,
       `Ключ модели: ${key ? "есть" : "не задан — думать нечем"}`,
       `Мозги: ${await brainsLine(key)}`,
+      ...(await spareLines(ctx, key)),
       `Способности: ${await bridgeLine()}`,
+      `Будильник: ${await clockLine()}`,
     ];
     await notices.tell({ key: `build:${BUILD}`, text: lines.join("\n") });
+  }
+
+  /**
+   * Запасные провайдеры в самопроверке: живая проба, а не «настроен». Иначе о
+   * том, что запасной не работает, владелец узнал бы в день, когда кончился
+   * основной.
+   */
+  async function spareLines(ctx, apiKey) {
+    const spare = (await brains.all({ apiKey, model: config.AI_MODEL }).catch(() => [])).some(item => item.provider !== "main");
+    if (!spare) return [];
+    const rows = (await ai.probeBrains({ ctx, apiKey }).catch(() => [])).filter(row => row.provider !== "main");
+    return rows.map(row => `Запасной: ${probeLine(row)}`);
   }
 
   /** Утренняя весть: что было вчера. Тихий день без проблем — не новость. */
@@ -1242,6 +1429,39 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
     if (answer.transient) await queue.giveBack(item);
     else pulse.bump("dropped");
+  }
+
+  /**
+   * Удар будильника: `tgcloud run handlers/message --ctx '{ tick: true }'` из
+   * Actions или с телефона. Делает всё, что должно случаться «само»: вести,
+   * сводка, напоминания, отложенные ответы, уборка.
+   *
+   * Такой запуск исполняет код из рабочей копии, а не опубликованный. Если
+   * копия другой сборки, она ничего не трогает: иначе старый код объявил бы
+   * себя новым. Сразу после публикации (`deployed: true`) копия и есть
+   * опубликованный код — тогда она и объявляет сборку.
+   */
+  async function tick(ctx = {}) {
+    if (ctx?.testRun === true) return { ok: true, code: "tick", build: BUILD, side_effects: "none" };
+    if (!store.available) return { ok: false, code: "no_storage", build: BUILD };
+    const deployed = ctx?.deployed === true;
+    const seen = await store.get("heart:build").catch(() => null);
+    if (!deployed && seen?.build && seen.build !== BUILD) return { ok: false, code: "build_mismatch", build: BUILD, published: seen.build };
+    await beat(deployed ? "deploy" : "run");
+    await wake(ctx, { announce: deployed });
+    // Отложенные ответы: до трёх за удар, пока есть чем думать.
+    for (let round = 0; round < 3; round++) {
+      const before = await queue.size().catch(() => 0);
+      if (!before) break;
+      try { await drain(ctx); } catch { break; }
+      if (await queue.size().catch(() => before) >= before) break;
+    }
+    try { await abilities.sweep(); } catch { /* уборка подождёт */ }
+    try { await pulse.commit(); } catch { /* счётчики не важнее */ }
+    return {
+      ok: true, code: "tick", build: BUILD,
+      queue: await queue.size().catch(() => 0), reminders: await reminders.size().catch(() => 0),
+    };
   }
 
   /** Сообщить владельцу, что обработчик упал. Никогда не бросает само. */
@@ -1351,7 +1571,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     // Настройки — не команды: «зови меня …», «говори короче». Только в личке:
     // в группе человек говорит с Аи, а не настраивает её для всех.
-    if (turn.isPrivate && !dry) {
+    // «Правило: отвечай короче» — урок для всех, а не личная настройка длины.
+    const teaching = parseIntent(prompt)?.intent === "teach";
+    if (turn.isPrivate && !dry && !teaching) {
       const wanted = addressRequest(prompt);
       if (wanted) {
         const saved = await personal.setAddress(actorId, wanted).catch(() => ({ ok: false }));
@@ -1449,7 +1671,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       if (!text) return { ignored: true };
       if (await events.onPost(text)) return { ok: true, code: "event_handled" };
       const handled = await abilities.onPost(text);
-      return { ok: handled, code: handled ? "bridge_answer" : "not_for_heart" };
+      if (handled) return { ok: true, code: "bridge_answer" };
+      // Чужой конверт — не ей. Любой другой пост в канале — удар будильника:
+      // второй бот правит одно сообщение раз в минуту, и сердце просыпается.
+      if (text.includes(BUS_PREFIX.trim())) return { ok: false, code: "not_for_heart" };
+      if (!dry) await beat("channel");
+      return { ok: true, code: "clock" };
     }
 
     const ref = { turn: null };
@@ -1495,8 +1722,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
   return Object.freeze({
     onMessage,
+    tick,
     status,
     reportCrash,
+    reminders,
     events,
     notices,
     store,

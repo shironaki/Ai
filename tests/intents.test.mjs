@@ -52,14 +52,13 @@ test("наказания, роли и деньги сердце не испол�
   }
 });
 
-test("список закрыт: каждое намерение либо действие, либо способность сестры", () => {
+test("список закрыт: каждое намерение либо действие, либо способность сестры", async () => {
   assert.equal(new Set(INTENTS).size, INTENTS.length);
-  const handled = new Set([
-    ...Object.keys(ABILITY_OF),
-    "remember", "memories", "forget", "relationship", "card", "no_flirt", "no_reactions", "no_night", "whyquiet", "not_mine",
-    "help", "whoami", "version", "news", "status",
-    "teach", "lessons", "unlearn", "judge", "learned", "why_answer",
-  ]);
+  // Обработчики читаются из самого сердца: список в тесте, который правят
+  // руками, расходился бы с кодом при каждом новом намерении.
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../tgcloud/lib/heart.js", import.meta.url), "utf8");
+  const handled = new Set([...Object.keys(ABILITY_OF), ...[...source.matchAll(/case "([a-z_]+)":/gu)].map(match => match[1])]);
   for (const tool of Object.values(ABILITY_OF)) assert.equal(typeof tool, "string");
   for (const intent of INTENTS) assert.ok(handled.has(intent), `нет обработчика: ${intent}`);
   assert.equal(SPOKEN_HELP.length >= 5, true);

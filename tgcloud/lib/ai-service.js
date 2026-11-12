@@ -257,6 +257,9 @@ export function createAiService({
   createSignal = createTimeoutSignal,
   // Цепочка моделей. Без неё сервис думает одной моделью, как раньше.
   brains = null,
+  // Где хранить получасовые токены провайдеров с обменом ключа (GigaChat):
+  // `{ get(key), set(key, value) }`. Без него токен живёт в памяти изолята.
+  tokenStore = null,
 } = {}) {
   // Construction must not depend on Node globals: the isolate may expose
   // outbound HTTP only through the platform SDK, which the deployed handler
@@ -289,6 +292,80 @@ export function createAiService({
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * GigaChat не принимает ключ напрямую: ключ авторизации меняется на токен
+   * доступа, который живёт полчаса. Токен хранится в базе — изолят может
+   * смениться, а новый обмен на каждое сообщение был бы лишним запросом.
+   */
+  const tokens = new Map();
+  const uuid = () => {
+    try { if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID(); } catch { /* ниже — запасной */ }
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/gu, (c) => {
+      const r = Math.floor(Math.random() * 16);
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
+  };
+  async function exchangeToken(brain, doFetch, { force = false } = {}) {
+    const slot = `heart:token:${brain.provider}`;
+    const fresh = (item) => item && typeof item.token === "string" && item.token && Number(item.exp) - now() > 60_000;
+    if (!force) {
+      if (fresh(tokens.get(slot))) return { ok: true, token: tokens.get(slot).token };
+      if (tokenStore) {
+        let saved = null;
+        try { saved = await tokenStore.get(slot); } catch { saved = null; }
+        if (fresh(saved)) { tokens.set(slot, saved); return { ok: true, token: saved.token }; }
+      }
+    }
+    if (!brain.authUrl) return { ok: false, code: "provider_http_error", status: 0, keyRejected: true, text: "У провайдера не указан адрес обмена ключа на токен." };
+    let response;
+    try {
+      const options = {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${brain.key}`,
+          RqUID: uuid(),
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: `scope=${encodeURIComponent(brain.scope || "GIGACHAT_API_PERS")}`,
+      };
+      const signal = signalOrUndefined(AI_DIAGNOSTIC_TIMEOUT_MS);
+      if (signal !== undefined) options.signal = signal;
+      response = await doFetch(brain.authUrl, options);
+    } catch (error) {
+      const errorName = errorNameOf(error);
+      return { ok: false, code: "provider_network_error", transient: true, errorName, text: `Нет связи с провайдером при обмене ключа (сетевая ошибка: ${errorName}).` };
+    }
+    const outcome = responseOutcome(response);
+    if (!outcome.succeeded) {
+      const status = outcome.status;
+      return {
+        ok: false, code: "provider_http_error", status, limited: status === 429, transient: status === 429 || status >= 500,
+        // Ключ авторизации не принят: другая модель этого провайдера не поможет.
+        keyRejected: status === 400 || status === 401 || status === 403,
+        text: `AI-провайдер не выдал токен: ${describeHttpStatus(status)}`,
+      };
+    }
+    let data = null;
+    try { data = await response.json(); } catch { data = null; }
+    const token = typeof data?.access_token === "string" ? data.access_token : "";
+    if (!token) return { ok: false, code: "provider_invalid_response", status: outcome.status, text: "AI-провайдер ответил на обмен ключа без токена." };
+    // `expires_at` — миллисекунды; на случай секунд и пустого поля — полчаса минус запас.
+    let exp = Number(data.expires_at);
+    if (Number.isFinite(exp) && exp > 0 && exp < 1e11) exp *= 1000;
+    if (!Number.isFinite(exp) || exp <= now()) exp = now() + 25 * 60_000;
+    const item = { token, exp };
+    tokens.set(slot, item);
+    if (tokenStore) { try { await tokenStore.set(slot, item); } catch { /* останется в памяти изолята */ } }
+    return { ok: true, token };
+  }
+
+  /** Чем подписывать запрос к этой модели: ключом — или токеном, полученным в обмен на ключ. */
+  async function bearerFor(brain, doFetch, options = {}) {
+    if (brain.kind !== "gigachat") return { ok: true, token: brain.key };
+    return exchangeToken(brain, doFetch, options);
   }
 
   return {
@@ -398,6 +475,52 @@ export function createAiService({
       };
     },
 
+    /**
+     * Живая проба каждого провайдера: один короткий запрос первой моделью.
+     * Для «проверь мозги»: настроенный провайдер и отвечающий — разные факты,
+     * а запасной иначе проверяется только в тот день, когда кончился основной.
+     */
+    async probeBrains({ ctx = {}, apiKey: explicitKey = null, model: modelOverride = null } = {}) {
+      const apiKey = String((explicitKey ?? getApiKey(ctx)) ?? "").trim();
+      const doFetch = resolveFetch();
+      if (!doFetch) return [];
+      const wanted = String(modelOverride || getModel(ctx) || DEFAULT_AI_MODEL);
+      const chain = brains
+        ? await brains.all({ apiKey, model: wanted })
+        : (apiKey ? [{ id: `main:${wanted}`, provider: "main", model: wanted, baseUrl, key: apiKey }] : []);
+      const seen = new Set();
+      const report = [];
+      for (const brain of chain) {
+        if (seen.has(brain.provider)) continue;
+        seen.add(brain.provider);
+        const started = now();
+        const row = { provider: brain.provider, model: brain.model, ok: false, code: "", status: null, errorName: "", ms: 0 };
+        const bearer = await bearerFor(brain, doFetch);
+        if (!bearer.ok) {
+          report.push({ ...row, code: bearer.code, status: bearer.status ?? null, errorName: bearer.errorName ?? "", stage: "token", ms: now() - started });
+          continue;
+        }
+        let response;
+        try {
+          response = await doFetch(providerChatUrl(brain.baseUrl), requestOptionsFor(bearer.token, {
+            model: brain.model, messages: [{ role: "user", content: "ping" }], temperature: 0, max_tokens: MAX_PROBE_TOKENS,
+          }, signalOrUndefined(AI_DIAGNOSTIC_TIMEOUT_MS)));
+        } catch (error) {
+          report.push({ ...row, code: "provider_network_error", errorName: errorNameOf(error), stage: "chat", ms: now() - started });
+          continue;
+        }
+        const outcome = responseOutcome(response);
+        if (!outcome.succeeded) {
+          const detail = outcome.recognized ? await readProviderError(response) : { code: "", type: "" };
+          report.push({ ...row, code: "provider_http_error", status: outcome.status, providerCode: detail.code || detail.type, stage: "chat", ms: now() - started });
+          continue;
+        }
+        if (brains) await brains.healthy(brain.id);
+        report.push({ ...row, ok: true, code: "provider_ok", status: outcome.status, ms: now() - started });
+      }
+      return report;
+    },
+
     async generateReply({
       userId, chatId, prompt, role = "Пользователь", verifiedContext = "", ctx = {},
       apiKey: explicitKey = null, model: modelOverride = null,
@@ -503,15 +626,23 @@ export function createAiService({
       }
 
       /** Один запрос к одной модели. Сам запоминает, кому пора отдохнуть. */
-      const ask = async (brain, { timeout, plain = brain.plain, retried = false }) => {
+      const ask = async (brain, { timeout, plain = brain.plain, retried = false, reauth = false }) => {
         const payload = { model: brain.model, messages, temperature, max_tokens: maxTokens };
         // Рассуждающая модель по умолчанию тратит на раздумья сотни токенов до
         // первого слова ответа. Для разговора хватает малого усилия.
         const eased = !plain && REASONING_MODEL.test(brain.model);
         if (eased) payload.reasoning_effort = "low";
+        const bearer = await bearerFor(brain, doFetch, { force: reauth });
+        if (!bearer.ok) {
+          if (brains) {
+            if (bearer.code === "provider_network_error") await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" });
+            else if (bearer.limited) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "limit" });
+          }
+          return { ...bearer, model: brain.model };
+        }
         let response;
         try {
-          response = await doFetch(providerChatUrl(brain.baseUrl), requestOptionsFor(brain.key, payload, signalOrUndefined(timeout)));
+          response = await doFetch(providerChatUrl(brain.baseUrl), requestOptionsFor(bearer.token, payload, signalOrUndefined(timeout)));
         } catch (error) {
           if (brains) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" });
           const errorName = errorNameOf(error);
@@ -535,6 +666,8 @@ export function createAiService({
           const reason = `${detail.code} ${detail.type}`.toLowerCase();
           const limited = status === 429 || status === 413;
           const gone = status === 404 || (status === 400 && /model|decommission|not_found/u.test(reason));
+          // Токен истёк раньше срока: один раз обменять ключ заново.
+          if (status === 401 && brain.kind === "gigachat" && !reauth) return ask(brain, { timeout, plain, retried, reauth: true });
           // Параметр усилия не принят этой моделью: спросить проще и запомнить.
           if (status === 400 && eased && !gone) {
             if (brains) await brains.simplify(brain.id);
@@ -563,7 +696,10 @@ export function createAiService({
         catch {
           return { ok: false, code: "provider_invalid_response", status: outcome.status, model: brain.model, text: `AI-провайдер вернул ответ, который не удалось разобрать как JSON (HTTP ${outcome.status ?? "?"}).` };
         }
-        if (brains) await brains.note(brain.id, limits);
+        if (brains) {
+          await brains.note(brain.id, limits);
+          await brains.healthy(brain.id);
+        }
         return { ok: true, data, limits };
       };
 
@@ -582,6 +718,12 @@ export function createAiService({
           continue;
         }
         const choice = result.data?.choices?.[0];
+        // Провайдер заменил ответ своей отговоркой (фильтр тем): это не её
+        // слова — спросить следующую модель.
+        if (choice?.finish_reason === "blacklist") {
+          last = { ok: false, code: "filtered", model: brain.model, text: "Провайдер отфильтровал ответ." };
+          continue;
+        }
         let answer = clampText(stripThinking(choice?.message?.content), MAX_REPLY_CHARS);
         // Ответ оборван лимитом длины: закончить на целой фразе, а не на полуслове.
         if (choice?.finish_reason === "length") answer = trimToSentence(answer);
