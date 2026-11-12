@@ -16,6 +16,7 @@
  *   null   — это не просьба, а разговор: идёт к модели.
  */
 import { parseGame } from "./games.js";
+import { detectSource } from "./sources.js";
 
 /** Список не открыт для расширений извне: он и есть обещание поведения. */
 export const INTENTS = Object.freeze([
@@ -239,7 +240,8 @@ export function parseIntent(text) {
   // Это не лень и не скромность. Ошибка распознавания здесь = наказан
   // невиновный или списаны деньги, поэтому сердце такие просьбы не исполняет
   // даже при полном понимании.
-  if (NOT_MINE.test(value)) return sure("not_mine", value);
+  // «Переведи 5000 рублей в доллары» — пересчёт по курсу, а не перевод денег.
+  if (NOT_MINE.test(value) && detectSource(value)?.kind !== "convert") return sure("not_mine", value);
 
   return null;
 }

@@ -41,6 +41,7 @@ export function reset() {
   state.sourceReplies.length = 0;
   state.sourceFetches.length = 0;
   delete state.diceValue;
+  for (const name of Object.keys(state.apiReplies)) delete state.apiReplies[name];
   state.kv.clear();
   state.kvAt.clear();
   state.memory.clear();

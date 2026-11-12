@@ -627,7 +627,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       return `${head} — нет связи${row.stage === "token" ? " при обмене ключа" : ""} (${row.errorName || "сеть"}); если так каждый раз — платформа не принимает его сертификат`;
     }
     if (row.code === "provider_http_error") {
-      return `${head} — ${describeProviderFailure({ status: row.status, providerCode: row.providerCode, model: row.model })}${row.gone ? "; сутки не трогаю — имя стоит заменить в настройках" : ""}`;
+      const why = describeProviderFailure({ status: row.status, providerCode: row.providerCode, model: row.model }).replace(/[.\s]+$/u, "");
+      return `${head} — ${why}${row.gone ? ". Сутки её не трогаю; имя стоит заменить в настройках" : ""}`;
     }
     return `${head} — нет (${row.code || "ошибка"})`;
   }
@@ -1272,7 +1273,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
           label = place.name;
         }
         pulse.bump("sourced");
-        return say(turn, `Сейчас ${nowLine(now(), zone)} — ${label}.`);
+        // Часы и день собираются по частям: готовая строка у разных версий платформы выглядит по-разному.
+        return say(turn, `Сейчас ${localClock(now(), zone)}, ${dayLine(now(), zone)} — ${label}.`);
       }
       case "until": {
         const target = parseTarget(asked.target);

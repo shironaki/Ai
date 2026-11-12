@@ -340,13 +340,11 @@ export function createGames({ store = null, sources = null, random = Math.random
 
     bulls: {
       start: ({ formal }) => {
-        const digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
-        let secret = "";
-        while (secret.length < 4) {
-          const index = rnd(digits.length);
-          if (!secret && digits[index] === "0") continue;
-          secret += digits.splice(index, 1)[0];
-        }
+        // Первая цифра — не ноль; остальные — любые из оставшихся.
+        const digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+        let secret = digits.splice(rnd(digits.length), 1)[0];
+        digits.unshift("0");
+        while (secret.length < 4) secret += digits.splice(rnd(digits.length), 1)[0];
         return { state: { kind: "bulls", secret, tries: 0, hints: 0 }, text: `Быки и коровы: я загадала число из четырёх разных цифр. ${f(formal, "Назовите", "Назови")} своё — отвечу: бык — цифра на своём месте, корова — цифра есть, но не там. Попыток — двенадцать.` };
       },
       move: (s, input) => {

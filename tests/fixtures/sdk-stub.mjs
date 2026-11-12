@@ -14,6 +14,7 @@ state.failing ??= {};
 // запросы не должны съедать ответы модели из `fetchQueue`.
 state.sourceReplies ??= [];
 state.sourceFetches ??= [];
+state.apiReplies ??= {};
 
 const SOURCE_HOSTS = /(?:wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best)/u;
 
@@ -47,6 +48,8 @@ export const api = new Proxy(methods, {
     return async (params = {}) => {
       state.calls.push({ method: name, params });
       if (state.failing[name]) throw state.failing[name];
+      // Ответ метода, заданный тестом: значение или функция от параметров.
+      if (name in state.apiReplies) return typeof state.apiReplies[name] === "function" ? state.apiReplies[name](params) : state.apiReplies[name];
       return true;
     };
   },
