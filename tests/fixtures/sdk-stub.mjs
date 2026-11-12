@@ -16,7 +16,7 @@ state.sourceReplies ??= [];
 state.sourceFetches ??= [];
 state.apiReplies ??= {};
 
-const SOURCE_HOSTS = /(?:wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best|wikimedia\.org|openverse\.org|shikimori\.|itunes\.apple\.com|deezer\.com|rutube\.ru|dailymotion\.com)/u;
+const SOURCE_HOSTS = /(?:example\.org|wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best|wikimedia\.org|openverse\.org|shikimori\.|itunes\.apple\.com|deezer\.com|rutube\.ru|dailymotion\.com)/u;
 
 const methods = {
   async sendMessage(params) {
@@ -64,7 +64,7 @@ export async function fetch(url, options = {}) {
     if (!hit) return { ok: false, status: 404, json: async () => ({}) };
     const reply = typeof hit.reply === "function" ? hit.reply(address) : hit.reply;
     if (reply instanceof Error) throw reply;
-    if (reply && typeof reply === "object" && typeof reply.status === "number" && typeof reply.json === "function") return reply;
+    if (reply && typeof reply === "object" && typeof reply.status === "number" && (typeof reply.json === "function" || typeof reply.text === "function")) return reply;
     return { ok: true, status: 200, json: async () => reply };
   }
   state.fetches.push({ url, options });
