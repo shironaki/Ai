@@ -225,6 +225,13 @@ test("короткое «спасибо» и «ок» закрываются р�
   assert.equal(toChat(5).length, 1);
   assert.equal((await h.policy.state(5)).score, 2, "день знакомства и благодарность");
 
+  // «Хорошо» в ответ на её вопрос — это ответ: его получает модель.
+  sdk().fetchQueue.push(says("Рассказать подробнее про море?"), says("Тогда слушайте."));
+  await h.onMessage(message("расскажи про море"), KEY);
+  await h.onMessage(message("хорошо"), KEY);
+  assert.equal(last(), "Тогда слушайте.");
+  assert.equal(reactions().length, 3);
+
   // «Не реагируй» — её собственная настройка: дальше только слова.
   await h.onMessage(message("не реагируй"), KEY);
   assert.match(last(), /реакции ставить не буду/);
@@ -265,6 +272,10 @@ test("«вы» по умолчанию, «ты» — с близостью ил�
   assert.doesNotMatch(system(), /на «ты»/);
   await h.onMessage(message("как ты ко мне относишься", { id: OWNER }), KEY);
   assert.match(last(OWNER), /когда вас долго нет/);
+
+  // Карточка «Вы и Аи» открывается словами, без команды.
+  await h.onMessage(message("мы с тобой"), KEY);
+  assert.match(last(), /Вы и Аи/);
 
   assert.equal(formRequest("Давай на ты!"), "ты");
   assert.equal(formRequest("можно на вы"), "вы");

@@ -83,7 +83,7 @@ export const RELEASE_NOTES = Object.freeze([
   "личное остаётся в личке: сказанное наедине в группе не звучит",
   "отношения двигаются: день знакомства — шаг, поступки — тоже; с вами я всегда на «вы»",
   "упёршись в лимит, думаю запасной моделью; нечем думать — записываю вопрос и отвечаю позже сама",
-  "простая реплика стоит впятеро меньше токенов",
+  "простая реплика стоит вчетверо меньше токенов",
   "учусь: «урок: …», «так не надо: …»; чужие поправки сначала спрашиваю у вас",
   "сама сообщаю о новой сборке, сбоях и итогах дня",
   "сестра молчит — не жду её, отвечаю сама",
@@ -781,6 +781,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
       case "relationship":
         return answerRelationship(turn);
+      case "card":
+        return profileCard(turn);
       case "no_flirt": {
         const saved = await personal.save(actorId, { flirt: false }).catch(() => ({ ok: false }));
         return say(turn, saved?.ok
@@ -978,7 +980,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
     }
     if (ACK_ONLY.test(prompt)) {
-      return await react(turn, LAUGH.test(prompt) ? "😁" : "👌")
+      const laugh = LAUGH.test(prompt);
+      // «Хорошо» в ответ на её вопрос — это ответ, а не «принято»: если её
+      // последняя реплика кончалась вопросом, разговор продолжает модель.
+      if (!laugh) {
+        const history = await store.memory.load({ userId: actorId, chatId: turn.chatId }).catch(() => []);
+        const mine = [...(Array.isArray(history) ? history : [])].reverse().find(item => item?.role === "assistant");
+        if (/\?[\s»")]*$/u.test(String(mine?.content ?? "").trim())) return null;
+      }
+      return await react(turn, laugh ? "😁" : "👌")
         ? { ok: true, action: "reaction" }
         : { ok: true, ignored: true, reason: "acknowledged" };
     }
@@ -986,7 +996,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     else if (APOLOGY.test(prompt)) await deed("apology");
 
     // Поправка считается, только если она к её недавнему ответу.
-    if (CORRECTION.test(prompt) && (turn.isPrivate || turn.replyToMe)) {
+    if (CORRECTION.test(prompt) && !THANKS.test(prompt) && (turn.isPrivate || turn.replyToMe)) {
       const trace = await lastTrace();
       if (trace) {
         pulse.bump("corrected");

@@ -56,7 +56,7 @@ test("список закрыт: каждое намерение либо дей
   assert.equal(new Set(INTENTS).size, INTENTS.length);
   const handled = new Set([
     ...Object.keys(ABILITY_OF),
-    "remember", "memories", "forget", "relationship", "no_flirt", "no_reactions", "no_night", "whyquiet", "not_mine",
+    "remember", "memories", "forget", "relationship", "card", "no_flirt", "no_reactions", "no_night", "whyquiet", "not_mine",
     "help", "whoami", "version", "news", "status",
     "teach", "lessons", "unlearn", "judge", "learned", "why_answer",
   ]);
