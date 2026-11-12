@@ -54,7 +54,12 @@ test("наказания, роли и деньги сердце не испол�
 
 test("список закрыт: каждое намерение либо действие, либо способность сестры", () => {
   assert.equal(new Set(INTENTS).size, INTENTS.length);
-  const handled = new Set([...Object.keys(ABILITY_OF), "remember", "memories", "forget", "relationship", "no_flirt", "no_night", "whyquiet", "not_mine"]);
+  const handled = new Set([
+    ...Object.keys(ABILITY_OF),
+    "remember", "memories", "forget", "relationship", "no_flirt", "no_reactions", "no_night", "whyquiet", "not_mine",
+    "help", "whoami", "version", "news", "status",
+    "teach", "lessons", "unlearn", "judge", "learned", "why_answer",
+  ]);
   for (const tool of Object.values(ABILITY_OF)) assert.equal(typeof tool, "string");
   for (const intent of INTENTS) assert.ok(handled.has(intent), `нет обработчика: ${intent}`);
   assert.equal(SPOKEN_HELP.length >= 5, true);

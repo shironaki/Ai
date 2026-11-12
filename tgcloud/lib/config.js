@@ -17,6 +17,24 @@ export const CONFIG = Object.freeze({
   AI_MODEL: "openai/gpt-oss-20b",
   AI_MIN_INTERVAL_MS: 1500,
 
+  // Запасные модели на том же ключе. Лимиты у провайдера считаются по каждой
+  // модели отдельно: упёршись в одну, сердце думает следующей. Модели, которой
+  // у провайдера уже нет, сердце само пропускает сутки и спрашивает список.
+  AI_MODELS: ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+
+  // Другие провайдеры с OpenAI-совместимым API — ещё один запас на случай,
+  // когда кончились все модели основного. Ключа здесь нет: он приходит из
+  // GitHub-секрета AI_EXTRA_KEYS ({"имя": "ключ"}) только на время публикации.
+  // Пример записи: { id: "cerebras", baseUrl: "https://api.cerebras.ai/v1", models: ["llama-3.3-70b"] }
+  AI_PROVIDERS: [],
+
+  // Своё имя в Telegram без «@». Обычно сердце узнаёт его само (getMe); это
+  // запасной вариант, чтобы «@имя привет» в группе понималось и без него.
+  BOT_USERNAME: "",
+
+  // Час по TIME_ZONE, после которого владелец получает сводку за вчера.
+  DIGEST_HOUR: 9,
+
   // The VIP perk "the heart answers faster" is a fact, not an adjective: the
   // pause shrinks only when the sister confirms the status. Same number as in
   // the abilities deployment, kept here because the heart has no env.

@@ -22,6 +22,8 @@
 export const NOTICES_KEY = "notices:registry:v1";
 export const OUTBOX_KEY = "notices:outbox:v1";
 export const FLUSH_KEY = "notices:flush:v1";
+/** Какие вести уже сказаны: «я обновилась» и сводка дня не повторяются. */
+export const TOLD_KEY = "notices:told:v1";
 /** Сколько сообщений о поломках владелец получает за сутки. */
 export const MAX_PER_DAY = 6;
 /** Через сколько одна и та же поломка снова имеет право на сообщение. */
@@ -36,12 +38,13 @@ const DAY = 86_400_000;
 
 /** Что делать — по компоненту, а не по тексту ошибки. */
 const DEFAULT_HINTS = Object.freeze({
-  provider: "Ключ провайдера: /aikey.",
+  provider: "Проверьте секрет AI_PROVIDER_KEY и опубликуйте сердце заново (Heart → deploy).",
   telegram: "Telegram не принял сообщение: проверьте, что бот не заблокирован.",
   storage: "Хранилище не отвечает — работаю без памяти.",
-  bridge: "Мост к сестре: канал и секрет в настройках.",
-  handler: "Подробности: /aidiag.",
-  health: "Подробности: /aidiag.",
+  bridge: "Мост к сестре: канал, секрет и её бот. Пока она молчит, я отвечаю сама и её не жду.",
+  brains: "Думаю запасными моделями; лимит вернётся сам.",
+  handler: "Подробности — скажите мне «статус».",
+  health: "Подробности — скажите мне «статус».",
 });
 
 /**
@@ -256,6 +259,49 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
     return { ok: failed === 0, sent, failed, pending: keep.length };
   }
 
+  /**
+   * Весть, а не поломка: «я обновилась», сводка дня, вопрос об уроке.
+   *
+   * Поломки считаются и ограничиваются шестью в сутки; вести идут отдельно и
+   * не съедают этот счёт. Ключ делает весть одноразовой: два изолята, которые
+   * одновременно заметили новую сборку, скажут о ней один раз. Не дошло —
+   * текст ждёт в той же очереди, что и отчёты о поломках.
+   */
+  async function tell({ key = "", text = "" } = {}) {
+    const clean = String(text ?? "").trim().slice(0, 3800);
+    if (!clean) return { ok: false, code: "empty", sent: 0 };
+    if (key) {
+      let fresh = false;
+      await update(TOLD_KEY, { version: 1, keys: {} }, told => {
+        fresh = false;
+        const keys = told.keys && typeof told.keys === "object" ? told.keys : {};
+        if (keys[key]) return null;
+        fresh = true;
+        keys[key] = now();
+        told.keys = Object.fromEntries(Object.entries(keys).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 80));
+        return told;
+      });
+      if (!fresh) return { ok: true, duplicate: true, sent: 0 };
+    }
+    const later = async () => {
+      await update(OUTBOX_KEY, { version: 1, items: [] }, box => {
+        const items = Array.isArray(box.items) ? box.items : [];
+        items.push({ id: `tell:${key || now()}`, fingerprint: "tell", text: clean, at: now(), tries: 0 });
+        while (items.length > OUTBOX_LIMIT) items.shift();
+        box.items = items;
+        return box;
+      });
+    };
+    if (!owner || typeof send !== "function") { await later(); return { ok: false, code: owner ? "send_unavailable" : "owner_unknown", queued: true, sent: 0 }; }
+    try {
+      const result = await send(owner, clean);
+      return { ok: true, sent: 1, messageId: result?.message_id ?? null };
+    } catch {
+      await later();
+      return { ok: false, code: "send_failed", queued: true, sent: 0 };
+    }
+  }
+
   /** Что сломалось за последние сутки — для /aidiag. */
   async function list({ limit = 8, withinMs = DAY } = {}) {
     const registry = await read(NOTICES_KEY);
@@ -288,6 +334,7 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
     configured: persistent,
     ownerKnown: owner != null,
     report,
+    tell,
     flush,
     list,
     text,

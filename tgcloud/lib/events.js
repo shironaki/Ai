@@ -26,17 +26,17 @@ export const MAX_PER_DAY = 8;
 /** Deterministic but not identical wording: the id picks the phrase. */
 const TEMPLATES = Object.freeze({
   member_joined: [
-    "{name} появился. Добро пожаловать.",
+    "{name} с нами. Добро пожаловать.",
     "Смотрю, у нас {name}. Здравствуй.",
     "{name} здесь. Устраивайся.",
   ],
   game_finished: [
-    "{name} закончил партию. {detail}",
+    "{name}: партия окончена. {detail}",
     "Партия закрыта: {name}. {detail}",
   ],
   reminder: ["{detail}", "{detail} — напоминаю."],
   level_up: [
-    "{name} поднялся. {detail}",
+    "{name}: новый уровень. {detail}",
     "{name}, с уровнем. {detail}",
   ],
 });

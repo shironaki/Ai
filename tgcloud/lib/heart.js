@@ -1,16 +1,22 @@
 import { CONFIG } from "./config.js";
-import { AI_API_KEY, OWNER_TG_ID as OWNER_FROM_SECRET } from "./secrets.js";
-import { createAiService } from "./ai-service.js";
-import { buildCharacterProfile } from "./ai-character.js";
+import { AI_API_KEY, OWNER_TG_ID as OWNER_FROM_SECRET, AI_EXTRA_KEYS } from "./secrets.js";
+import { createAiService, DEFAULT_AI_BASE_URL } from "./ai-service.js";
+import { buildCharacterProfile, promptTier } from "./ai-character.js";
 import { createDialoguePolicy } from "./dialogue-policy.js";
 import { createHeartStore } from "./store.js";
 import { createAbilities, matchPhrase } from "./abilities.js";
 import { createEvents } from "./events.js";
-import { describeSister, missingAbilityText } from "./sibling.js";
+import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
-import { createPersonal, addressRequest, lengthRequest } from "./personal.js";
+import { createPersonal, addressRequest, lengthRequest, formRequest } from "./personal.js";
 import { createMemory } from "./memory.js";
 import { parseIntent, ABILITY_OF, SPOKEN_HELP, INTENTS } from "./intents.js";
+import { createBrains } from "./brains.js";
+import { createLessons } from "./lessons.js";
+import { createPulse } from "./pulse.js";
+import { createQueue } from "./queue.js";
+import { parseCommand, mentions, stripMention, vocative, isReplyToMe, safeName } from "./address.js";
+import { calendarDate, localHour, localClock, nowLine } from "./time.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -67,8 +73,49 @@ export function rightsFrames(facts = null) {
  * Сборка сердца. Её видно в /status, потому что «я запушил» и «оно работает» —
  * разные факты: 8–10 ноября код лежал в репозитории, а живой бот отвечал
  * старым. Без этой строки проверить, что именно запущено, было нечем.
+ * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением.
  */
-export const BUILD = "0.20.97";
+export const BUILD = "0.21.0";
+
+/** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
+export const RELEASE_NOTES = Object.freeze([
+  "в группе слышу «привет, Аи», @упоминание и ответ на моё сообщение; чужим ботам и чужим командам больше не отвечаю",
+  "личное остаётся в личке: сказанное наедине в группе не звучит",
+  "отношения двигаются: день знакомства — шаг, поступки — тоже; с вами я всегда на «вы»",
+  "упёршись в лимит, думаю запасной моделью; нечем думать — записываю вопрос и отвечаю позже сама",
+  "простая реплика стоит впятеро меньше токенов",
+  "учусь: «урок: …», «так не надо: …»; чужие поправки сначала спрашиваю у вас",
+  "сама сообщаю о новой сборке, сбоях и итогах дня",
+  "сестра молчит — не жду её, отвечаю сама",
+]);
+
+const DAY = 86_400_000;
+
+/** Только благодарность — на неё отвечают теплом, а не абзацем от модели. */
+const THANKS_ONLY = /^(?:спасибо(?:\s+(?:большое|огромное|тебе|вам))?|благодарю|спс|пасиб(?:о|ки)?|мерси|thanks|thx|ты\s+лучшая|умница)[\s!.)]*$/iu;
+const THANKS = /(?:^|[\s,])(?:спасибо|благодарю|спс|пасиб|мерси)(?=$|[\s,.!)])/iu;
+/** Короткое «принято»: ответом будет реакция, а не запрос к модели. */
+const ACK_ONLY = /^(?:ок(?:ей)?|ok|okay|угу|ага|ясно|понятно|понял[аи]?|хорошо|ладно|договорились|принято|супер|отлично|класс|круто|лол|кек|а?ха(?:ха)+|\)+)[\s!.)]*$/iu;
+const LAUGH = /^(?:лол|кек|а?ха(?:ха)+|\)\)+)[\s!.)]*$/iu;
+const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:тупая|глупая|никч[её]мная|бесполезная)|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+)(?=$|[\s,.!?])/iu;
+const APOLOGY = /(?:^|[\s,])(?:прости|простите|извини|извините|извиняюсь|сорян|сорри|sorry|виновата?)(?=$|[\s,.!])/iu;
+/** Человек поправляет её ответ: это сигнал ошибки и повод для урока. */
+const CORRECTION = /^(?:нет[,.!\s]|неа[,.!\s]|не\s+так|не\s+то[,.!\s]|неправильно|неверно|ты\s+(?:ошиблась|ошибаешься|не\s+права|путаешь|перепутала)|вы\s+(?:ошиблись|ошибаетесь|не\s+правы)|это\s+(?:не\s+так|неправда|неверно|ошибка)|на\s+самом\s+деле|вообще-то|поправлю)/iu;
+/** Она сама призналась, что не знает: вопрос уходит в список «спросить у хозяина». */
+const UNSURE = /(?:^|[\s,])(?:не\s+знаю|не\s+уверена|нет\s+данных|не\s+располагаю|мне\s+неизвестно|не\s+могу\s+сказать\s+точно)(?=$|[\s,.!])/iu;
+const YES = /^(?:да|ага|принять|прими|принимаю|ок|ok|хорошо|верно|согласен|согласна|\+)[\s!.]*$/iu;
+const NO = /^(?:нет|неа|отклонить|отклони|не\s+надо|не\s+нужно|-)[\s!.]*$/iu;
+
+/** Что прислали, если это не текст. Служебные сообщения — «ничего». */
+function senseOf(message = {}) {
+  if (typeof message.text === "string" && message.text.trim()) return "text";
+  const media = message.sticker ? "sticker" : message.animation ? "gif" : message.voice || message.video_note || message.audio ? "voice"
+    : message.photo ? "photo" : message.video ? "video" : message.document ? "file" : "";
+  if (!media) return "none";
+  return typeof message.caption === "string" && message.caption.trim() ? `${media}+caption` : media;
+}
+
+const MEDIA_WORD = Object.freeze({ photo: "фото", video: "видео", file: "файл", voice: "голосовое", gif: "гифку", sticker: "стикер" });
 
 export function createHeart({ db = null, api = null, fetchImpl = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
   const store = createHeartStore({ db, now });
@@ -77,6 +124,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   const NAME = config.NAME ?? "Аи";
   const SISTER = config.SISTER_NAME ?? "Юи";
   const SISTER_USERNAME = config.SISTER_BOT_USERNAME ?? "";
+  const TZ = config.TIME_ZONE;
+  const dayOf = (at) => calendarDate(at, TZ);
+  const clock = (at) => localClock(at, TZ);
   /**
    * Куда уходит жалоба. Владелец — из config (0 значит «не задан»): сердце не
    * угадывает, кому писать, и не выдаёт себя за хозяина первого, кто написал.
@@ -84,12 +134,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   // Владелец: сначала config (0 — не задан), затем слот, который заполняется
   // из GitHub-секрета только на время публикации.
   const OWNER = Number(config.OWNER_TG_ID) || Number(OWNER_FROM_SECRET) || 0;
+  const owner = (id) => OWNER > 0 && String(id) === String(OWNER);
+  const has = (method) => typeof api?.[method] === "function";
+
   const notices = createNotices({
     store,
     ownerId: OWNER,
     now,
-    send: async (chatId, text) => { await api.sendMessage({ chat_id: chatId, text, disable_web_page_preview: true }); },
+    // Результат возвращается: по номеру сообщения узнаётся ответ владельца.
+    send: async (chatId, text) => api.sendMessage({ chat_id: chatId, text, disable_web_page_preview: true }),
   });
+  const pulse = createPulse({ store, now, dayOf });
+  const lessons = createLessons({ store, now, ownerId: OWNER });
+  const queue = createQueue({ store, now });
   // Без базы об этом стоит сказать один раз за жизнь изолята, а не в каждом
   // сообщении: иначе жалоба на хранилище сама станет потоком.
   let storageReported = false;
@@ -104,13 +161,28 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     provider_ok_flag_conflict: "провайдер пометил ответ как ошибочный",
     provider_invalid_response: "ответ провайдера не JSON",
     empty_response: "провайдер вернул пустой ответ",
+    brains_exhausted: "все модели упёрлись в лимит",
   });
 
+  const bridgeWait = Number(config.ABILITIES_TIMEOUT_MS);
   const abilities = createAbilities({
     secret: config.ABILITIES_SECRET,
     channelId: config.ABILITIES_CHANNEL_ID,
     api,
     now,
+    store,
+    name: NAME,
+    sister: SISTER,
+    timeouts: Number.isFinite(bridgeWait) && bridgeWait > 0 ? { call: bridgeWait, catalogue: bridgeWait, context: bridgeWait } : {},
+    // Сестра промолчала: владелец узнаёт об этом сам и один раз, а не из
+    // того, что каждый ответ стал приходить через полминуты.
+    onSilence: async ({ until }) => {
+      pulse.bump("bridge_missed");
+      await notices.report({
+        component: "bridge", code: "silent", severity: "degraded",
+        detail: `${SISTER} не ответила на мосту. Отвечаю сама и не жду её до ${clock(until)}`,
+      });
+    },
   });
 
   /**
@@ -128,76 +200,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     },
   });
 
-  const personal = createPersonal({ store, now });
+  const personal = createPersonal({ store, now, dayOf });
   // Факты, которые человек попросил запомнить словами. Модель их не пишет:
   // «запомни …» — это прямое действие, а не тема для разговора.
-  const memory = createMemory({ store });
-
-  const ai = createAiService({
-    fetchImpl,
-    getApiKey: (ctx) => ctx?.env?.AI_PROVIDER_KEY ?? ctx?.env?.GROQ_API_KEY ?? AI_API_KEY,
-    getModel: () => config.AI_MODEL,
-    loadHistory: store.memory.load,
-    saveHistory: store.memory.save,
-    clearHistory: store.memory.clear,
-    additionalContext: async ({ userId }) => {
-      const facts = await store.get(`heart:facts:${userId}`);
-      const items = Array.isArray(facts?.items) ? facts.items.slice(-10) : [];
-      return items.length ? `Что известно о собеседнике:\n${items.map(item => `- ${item}`).join("\n")}` : "";
-    },
-    responseProfile: async ({ userId, chatId = null, isPrivate = true }) => {
-      const settings = await personal.settings(userId);
-      // Отношения и первое впечатление — часть характера, а не отдельный экран.
-      let relationship = null;
-      let impression = null;
-      if (policy) {
-        try { relationship = await policy.state(userId); } catch { relationship = null; }
-        try { impression = await policy.impression(userId); } catch { impression = null; }
-      }
-      // Факты от сестры (VIP, роль, варны) — только если мост открыт; иначе
-      // ответ строится на том, что сердце знает само.
-      const facts = chatId == null ? null : await abilities.context({ actor: userId, chat: chatId, chatType: isPrivate ? "private" : "group" }).catch(() => null);
-      const character = buildCharacterProfile({
-        settings: { ...settings, address: settings.address ?? "" }, isPrivate, now,
-        relationship: relationship ? { score: relationship.score } : {},
-        impression: impression ?? {},
-        familiarBond: Boolean(facts?.owner) || owner(userId),
-      });
-      const frames = [];
-      frames.push(...rightsFrames(facts));
-      return {
-        instruction: [character.instruction, ...frames].join("\n"),
-        temperature: Number.isFinite(settings.temperature) ? settings.temperature : undefined,
-        maxTokens: Number.isFinite(settings.maxTokens) ? settings.maxTokens : undefined,
-      };
-    },
-    minimumIntervalMs: config.AI_MIN_INTERVAL_MS,
-    // Перк «отвечает быстрее» действует только по подтверждённому статусу;
-    // мост закрыт — работает обычная пауза, а не вера на слово.
-    intervalFor: async ({ userId, chatId }) => pauseFor({
-      // Тот же тип чата, что и в профиле ответа: иначе это два разных вопроса
-      // к сестре, два конверта в канале и две разные записи кэша.
-      facts: await abilities.context({
-        actor: userId, chat: chatId,
-        chatType: String(chatId) === String(userId) ? "private" : "group",
-      }).catch(() => null),
-      config,
-    }),
-    now,
-  });
-
-  /**
-   * Where the provider key comes from, in order: the update context (tests and
-   * a proxy), the value the owner stored with /aikey, then the deploy-time slot.
-   * Never a default and never a guess.
-   */
-  async function resolveKey(ctx) {
-    const fromContext = String(ctx?.env?.AI_PROVIDER_KEY ?? ctx?.env?.GROQ_API_KEY ?? "").trim();
-    if (fromContext) return fromContext;
-    const stored = await store.get("heart:provider:key");
-    if (stored?.value) return String(stored.value);
-    return String(AI_API_KEY ?? "").trim();
-  }
+  const memory = createMemory({ store, now });
 
   /**
    * Отношения принадлежат сердцу, и только ему.
@@ -208,120 +214,265 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
    * `ai:relationship:*` здесь, и он же решает, как звучит ответ.
    */
   const policy = store.available ? createDialoguePolicy({ store, ownerId: OWNER, now, random }) : null;
-  const owner = (id) => OWNER > 0 && String(id) === String(OWNER);
+
+  const extraKeys = AI_EXTRA_KEYS && typeof AI_EXTRA_KEYS === "object" ? AI_EXTRA_KEYS : {};
+  const brains = createBrains({
+    store, now,
+    primary: config.AI_MODEL,
+    fallbacks: Array.isArray(config.AI_MODELS) ? config.AI_MODELS : [],
+    baseUrl: DEFAULT_AI_BASE_URL,
+    providers: (Array.isArray(config.AI_PROVIDERS) ? config.AI_PROVIDERS : []).map(item => ({ ...item, key: item?.key ?? extraKeys[item?.id] ?? "" })),
+  });
+
+  /**
+   * Что сердце знает о манере разговора с человеком: «вы» или «ты», насколько
+   * близко, что он просил. С хозяином — всегда на «вы»; с остальными «ты»
+   * приходит с теплом отношений или по прямой просьбе.
+   */
+  async function mannerFor(userId) {
+    const settings = (await personal.settings(userId).catch(() => ({}))) ?? {};
+    if (owner(userId)) return { formal: true, score: 100, trust: 100, respect: 100, blocked: false, settings };
+    let state = { score: 0, trust: 0, respect: 0, blocked: false };
+    if (policy) { try { state = await policy.state(userId); } catch { /* без записей — как с незнакомым */ } }
+    const formal = settings.form === "вы" ? true : settings.form === "ты" ? false : state.score < 25;
+    return { formal, score: state.score, trust: state.trust, respect: state.respect, blocked: Boolean(state.blocked), settings };
+  }
+
+  /** То, что уже прочитано для этого сообщения: профиль ответа не читает базу дважды. */
+  const inflight = new Map();
+  /** Один вопрос сестре на реплику — и для характера, и для паузы. */
+  const factsFor = ({ userId, chatId, isPrivate }) => chatId == null
+    ? Promise.resolve(null)
+    : abilities.context({ actor: userId, chat: chatId, chatType: isPrivate ? "private" : "group" }).catch(() => null);
+
+  const ai = createAiService({
+    fetchImpl,
+    brains,
+    // Числовой ID владельца не должен прозвучать ни в одном ответе.
+    confidentialIds: OWNER > 0 ? [OWNER] : [],
+    getApiKey: (ctx) => ctx?.env?.AI_PROVIDER_KEY ?? ctx?.env?.GROQ_API_KEY ?? AI_API_KEY,
+    getModel: () => config.AI_MODEL,
+    loadHistory: store.memory.load,
+    saveHistory: store.memory.save,
+    clearHistory: store.memory.clear,
+    additionalContext: async ({ userId, chatId = null, isPrivate = true }) => {
+      // Память знает место: в группе звучит только сказанное при всех.
+      const items = (await memory.list(userId, { inGroup: !isPrivate })).slice(-10);
+      const shared = inflight.get(`${chatId}:${userId}`);
+      if (shared) shared.facts = items.length;
+      return items.length ? `Что известно о собеседнике:\n${items.map(item => `- ${item}`).join("\n")}` : "";
+    },
+    responseProfile: async ({ userId, chatId = null, isPrivate = true, prompt = "" }) => {
+      const manner = inflight.get(`${chatId}:${userId}`)?.manner ?? await mannerFor(userId);
+      // Отношения и первое впечатление — часть характера, а не отдельный экран.
+      let impression = null;
+      if (policy) { try { impression = await policy.impression(userId); } catch { impression = null; } }
+      // Факты от сестры (VIP, роль, варны) — только если мост открыт; иначе
+      // ответ строится на том, что сердце знает само.
+      const facts = await factsFor({ userId, chatId, isPrivate });
+      const character = buildCharacterProfile({
+        settings: { ...manner.settings, address: manner.settings.address ?? "" }, isPrivate, now: now(),
+        relationship: { score: manner.score, trust: manner.trust, respect: manner.respect },
+        impression: impression ?? {},
+        familiarBond: Boolean(facts?.owner) || owner(userId),
+        formal: manner.formal,
+        userText: prompt,
+        chatId: chatId ?? "",
+      });
+      const frames = rightsFrames(facts);
+      return {
+        tier: promptTier(prompt),
+        instruction: [character.instruction, ...frames].join("\n"),
+        core: [character.core, ...frames].join("\n"),
+        // Длина и тон приходят из характера: раньше сюда попадали несуществующие
+        // поля настроек, и запрос всегда уходил с 700 токенами и 0.7.
+        temperature: character.temperature,
+        maxTokens: character.maxTokens,
+      };
+    },
+    minimumIntervalMs: config.AI_MIN_INTERVAL_MS,
+    // Перк «отвечает быстрее» действует только по подтверждённому статусу;
+    // мост закрыт — работает обычная пауза, а не вера на слово. Тот же вопрос
+    // и тот же тип чата, что в профиле ответа: один конверт, а не два.
+    intervalFor: async ({ userId, chatId, isPrivate }) => pauseFor({ facts: await factsFor({ userId, chatId, isPrivate }), config }),
+    now,
+  });
+
+  /**
+   * Where the provider key comes from, in order: the update context (tests and
+   * a proxy), then the deploy-time slot. Never a default and never a guess.
+   */
+  async function resolveKey(ctx) {
+    const fromContext = String(ctx?.env?.AI_PROVIDER_KEY ?? ctx?.env?.GROQ_API_KEY ?? "").trim();
+    return fromContext || String(AI_API_KEY ?? "").trim();
+  }
+
+  /**
+   * Кто она в Telegram: id и @имя. Нужны, чтобы отличить ответ на её сообщение
+   * от ответа другому боту и свою команду от чужой. Спрашивается один раз и
+   * хранится неделю; репетиция Telegram не трогает.
+   */
+  let me = null;
+  async function whoAmI(dry = false) {
+    if (me?.id != null) return me;
+    const fallback = { id: null, username: String(config.BOT_USERNAME ?? "").replace(/^@/u, "") };
+    const saved = await store.get("heart:me").catch(() => null);
+    if (saved?.id != null && now() - Number(saved.at) < 7 * DAY) return (me = saved);
+    if (dry || !has("getMe")) return saved?.id != null ? saved : fallback;
+    try {
+      const got = await api.getMe();
+      if (got?.id != null) {
+        me = { id: got.id, username: String(got.username ?? fallback.username), at: now() };
+        await store.set("heart:me", me);
+        return me;
+      }
+    } catch { /* без getMe остаётся имя из настроек */ }
+    return saved?.id != null ? saved : fallback;
+  }
 
   // One place that sends, so every path reports the same shape: what was said,
   // and whether it reached Telegram at all.
-  async function say(chatId, text, { extra = {}, dry = false } = {}) {
+  async function say(turn, text, { extra = {} } = {}) {
     // A test run proves the route without touching Telegram: the platform's own
     // contract, and the reason a green test cannot be mistaken for delivery.
-    if (dry) return { ok: true, text, side_effects: "none" };
+    if (turn.dry) return { ok: true, text, side_effects: "none" };
     try {
-      await api.sendMessage({ chat_id: chatId, text, ...extra });
-      return { ok: true, text };
+      const sent = await api.sendMessage({ chat_id: turn.chatId, text, ...turn.extra, ...extra });
+      turn.delivered = true;
+      return { ok: true, text, messageId: sent?.message_id ?? null };
     } catch {
       // Не дошло до человека — это поломка, а не настроение. Владелец узнает
       // сам, а собеседник всё равно получит текст в ответе ниже.
-      if (!dry) { try { await notices.report({ component: "telegram", code: "send_failed", detail: "сообщение не ушло в чат", severity: "degraded" }); } catch { /* отчёт не должен ломать ответ */ } }
+      try { await notices.report({ component: "telegram", code: "send_failed", detail: "сообщение не ушло в чат", severity: "degraded" }); } catch { /* отчёт не должен ломать ответ */ }
       return { ok: false, code: "send_failed", text };
     }
   }
 
+  /** «Вы» или «ты» — одна фраза в двух формах. */
+  const you = (turn, formal, familiar) => (turn.manner?.formal === false ? familiar : formal);
+
+  /** Реакция вместо слов: «видела», «спасибо», «принято». Запрещена — значит нет. */
+  async function react(turn, emoji) {
+    if (turn.dry || turn.message?.message_id == null || !has("setMessageReaction")) return false;
+    if (turn.manner?.settings?.reactions === false) return false;
+    try {
+      await api.setMessageReaction({ chat_id: turn.chatId, message_id: turn.message.message_id, reaction: [{ type: "emoji", emoji }] });
+      pulse.bump("reactions");
+      return true;
+    } catch { return false; }
+  }
+
+  /** «Печатает…», пока модель думает: молчание в десять секунд похоже на поломку. */
+  async function typing(turn) {
+    if (turn.dry || !has("sendChatAction")) return;
+    try {
+      await api.sendChatAction({ chat_id: turn.chatId, action: "typing", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) });
+    } catch { /* индикатор — не ответ */ }
+  }
+
   /**
    * Список того, что сердце действительно делает. Составляется здесь, а не
-   * моделью: на вопрос «/help» модель однажды перечислила /settings и
+   * моделью: на вопрос о помощи модель однажды перечислила /settings и
    * /feedback, которых нет, — и человек пошёл их вводить.
    */
-  function helpLines() {
+  function helpLines(turn) {
     const lines = [
       `${NAME}. Что я умею:`,
       "",
-      "• поговорить — пишите как есть, без команд;",
+      `• поговорить — ${you(turn, "пишите", "пиши")} как есть, без команд;`,
+      turn.inGroup ? "• в группе — позвать по имени, @упоминанием или ответом на моё сообщение;" : "",
       "",
       "Сказать словами — я пойму:",
       ...SPOKEN_HELP,
-      "",
-      "• /status — как я себя чувствую и что сломано;",
-      "• /start — поздороваться заново.",
     ];
-    if (abilities.open()) {
-      lines.push("", `${SISTER} рядом: профиль, задания, игры и предупреждения — скажите словами, я передам.`);
+    if (owner(turn.actorId) && turn.isPrivate) {
+      lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня».");
     }
-    return lines.join("\n");
+    if (abilities.open()) {
+      lines.push("", `${SISTER} рядом: профиль, задания, игры и предупреждения — ${you(turn, "скажите", "скажи")} словами, я передам.`);
+    }
+    return lines.filter((line, index, all) => line !== "" || all[index - 1] !== "").join("\n");
   }
 
   /**
    * Отношения — словами, а не таблицей. Числа нужны коду (VIP, тон, частота
    * ответов), человеку нужен ответ на вопрос «как ты ко мне относишься».
    */
-  function relationshipText({ score = 0, trust = 0, respect = 0 } = {}) {
+  function relationshipText({ score = 0, trust = 0, respect = 0 } = {}, formal = true) {
     const level = score >= 75 ? "close" : score >= 25 ? "warm" : score >= -25 ? "first" : "cold";
-    const said = {
+    const said = formal ? {
+      close: "Между нами настоящая близость. Я замечаю, когда вас долго нет, и радуюсь, когда вы возвращаетесь.",
+      warm: "Вы мне нравитесь. Мне спокойно и интересно с вами, и я замечаю больше, чем говорю вслух.",
+      first: "Мы ещё присматриваемся друг к другу. Я помню то, что вы просили запомнить, и не притворяюсь, будто знаю больше.",
+      cold: "Между нами прохладно, и я не стану это скрывать. Но я не мщу и не унижаю: разговор остаётся честным.",
+    } : {
       close: "Между нами настоящая близость. Я замечаю, когда тебя долго нет, и радуюсь, когда ты возвращаешься.",
       warm: "Ты мне нравишься. Мне спокойно и интересно с тобой, и я замечаю больше, чем говорю вслух.",
-      first: "Мы ещё присматриваемся друг к другу. Я помню, что ты рассказывал, и не притворяюсь, будто знаю больше.",
+      first: "Мы ещё присматриваемся друг к другу. Я помню то, что обещала помнить, и не притворяюсь, будто знаю больше.",
       cold: "Между нами прохладно, и я не стану это скрывать. Но я не мщу и не унижаю: разговор остаётся честным.",
-    }[level];
+    };
     const detail = [
-      trust >= 50 ? "Я тебе доверяю." : trust <= -25 ? "Доверия пока мало." : "",
-      respect >= 50 ? "И уважаю то, что ты делаешь." : "",
+      trust >= 50 ? (formal ? "Я вам доверяю." : "Я тебе доверяю.") : trust <= -25 ? "Доверия пока мало." : "",
+      respect >= 50 ? (formal ? "И уважаю то, что вы делаете." : "И уважаю то, что ты делаешь.") : "",
     ].filter(Boolean).join(" ");
-    return `${said}${detail ? ` ${detail}` : ""}`;
+    return `${said[level]}${detail ? ` ${detail}` : ""}`;
   }
 
-  async function answerRelationship({ chatId, actorId, dry }) {
-    if (!policy) return say(chatId, "Я пока не умею помнить отношения: рядом нет хранилища.", { dry });
+  const BLOCKED_TEXT = "Сейчас я не разговариваю: это не каприз, а решение, которое можно обсудить с владельцем.";
+
+  async function answerRelationship(turn) {
+    if (!policy) return say(turn, "Я пока не умею помнить отношения: рядом нет хранилища.");
     let state = null;
-    try { state = await policy.state(actorId); } catch { state = null; }
-    if (!state) return say(chatId, "Не могу заглянуть в свои записи — попробуй позже.", { dry });
-    if (state.blocked) return say(chatId, "Сейчас я не разговариваю: это не каприз, а решение, которое можно обсудить с владельцем.", { dry });
-    return say(chatId, relationshipText(state), { dry });
+    try { state = await policy.state(turn.actorId); } catch { state = null; }
+    if (!state) return say(turn, `Не могу заглянуть в свои записи — ${you(turn, "попробуйте", "попробуй")} позже.`);
+    if (state.blocked) return say(turn, BLOCKED_TEXT);
+    return say(turn, relationshipText(state, turn.manner?.formal !== false));
   }
 
   /**
    * «Вы и Аи» — то же, что раньше называлось карточкой отношений, только
-   * словами и без анкеты. Экран один, настроек две, обе произносятся вслух.
+   * словами и без анкеты. Экран один, настройки произносятся вслух.
    */
-  async function profileCard({ chatId, actorId, dry }) {
-    const settings = (await personal.settings(actorId).catch(() => ({}))) ?? {};
+  async function profileCard(turn) {
+    const settings = turn.manner?.settings ?? {};
+    const formal = turn.manner?.formal !== false;
     let relationship = "";
     if (policy) {
       try {
-        const state = await policy.state(actorId);
-        relationship = state?.blocked
-          ? "Сейчас я не разговариваю: это не каприз, а решение, которое можно обсудить с владельцем."
-          : relationshipText(state);
+        const state = await policy.state(turn.actorId);
+        relationship = state?.blocked ? BLOCKED_TEXT : relationshipText(state, formal);
       } catch { relationship = ""; }
     }
-    const [days, facts] = await Promise.all([
-      personal.daysWith(actorId).catch(() => ({ days: 0 })),
-      store.get(`heart:facts:${actorId}`).catch(() => null),
+    const [days, memories] = await Promise.all([
+      personal.daysWith(turn.actorId).catch(() => ({ days: 0 })),
+      // В группе карточка не выдаёт даже число личных записей.
+      memory.list(turn.actorId, { inGroup: turn.inGroup }).then(items => items.length).catch(() => 0),
     ]);
-    const memories = Array.isArray(facts?.items) ? facts.items.length : 0;
-    return say(chatId, personal.card({
+    return say(turn, personal.card({
       address: settings.address ?? "",
       days: days.days,
       relationship,
       memories,
       length: settings.length ?? "обычно",
-    }), { dry });
+      formal,
+    }));
   }
 
   /** Незнакомая команда — это не повод идти к модели и выдумывать ответ. */
-  function unknownCommandText() {
-    return `${NAME}: такой команды у меня нет. Я не исполняю команды — поговорите со мной словами. /help — что я умею.`;
+  function unknownCommandText(turn) {
+    return `${NAME}: такой команды у меня нет — я понимаю слова, а не команды. ${you(turn, "Спросите", "Спроси")} «что ты умеешь».`;
   }
 
-  async function greeting(chatId, dry = false) {
+  async function greeting(turn) {
     const lines = [
       `${NAME}. Я рядом.`,
       "",
-      "Пишите как есть — без команд. Могу поговорить, вспомнить, что вам важно.",
+      "Пишите как есть — без команд. Могу поговорить, запомнить, что вам важно, и учусь на поправках.",
       abilities.open()
         ? `Профиль, наказания и игры умеет ${SISTER} — попросите её словами.`
         : "",
     ].filter(Boolean);
-    return say(chatId, lines.join("\n"), { dry });
+    return say(turn, lines.join("\n"));
   }
 
   /**
@@ -335,26 +486,56 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return "таблиц нет — схема базы не применена";
   }
 
-  async function diagnostic(chatId, ctx, actorId, dry) {
-    if (!owner(actorId)) return say(chatId, "Это внутренняя проверка.", { dry });
+  /** Мост одной строкой: закрыт, открыт или открыт, но сестра молчит. */
+  async function bridgeLine() {
+    if (!abilities.open()) return "мост закрыт — работаю одна";
+    const health = await abilities.health().catch(() => ({ silent: false }));
+    return health.silent ? `мост открыт, но ${SISTER} молчит — не жду её до ${clock(health.until)}` : "мост открыт";
+  }
+
+  /** Цепочка моделей одной строкой: кто думает, кто отдыхает и до какого часа. */
+  async function brainsLine(apiKey) {
+    const list = await brains.describe({ apiKey }).catch(() => []);
+    if (!list.length) return "нет — ключ провайдера не задан";
+    return list.map((item, index) => {
+      const short = item.model.replace(/^[^/]+\//u, "");
+      const why = ({ limit: "лимит", network: "нет связи", down: "сбой", gone: "снята" })[item.why] ?? "отдыхает";
+      return `${short}${index === 0 ? " (осн.)" : ""}${item.ok ? "" : ` — ${why} до ${clock(item.until)}`}`;
+    }).join(" · ");
+  }
+
+  async function diagnostic(turn) {
+    if (!owner(turn.actorId)) {
+      // В группе чужая проверка — шум: молчим. В личке отвечаем честно.
+      return turn.inGroup ? { ignored: true, reason: "owner_only" } : say(turn, "Это внутренняя проверка.");
+    }
+    const apiKey = await resolveKey(turn.ctx);
     // A rehearsal reports state, not a live call: a test run must not spend a
     // provider request to find out whether the provider would answer.
-    const probe = dry ? null : await ai.checkProvider({ ctx, apiKey: await resolveKey(ctx) });
+    const probe = turn.dry ? null : await ai.checkProvider({ ctx: turn.ctx, apiKey });
+    const [today, study, waiting, unknown] = await Promise.all([
+      pulse.day().catch(() => ({})), lessons.stats().catch(() => ({ active: 0, proposed: 0 })),
+      queue.size().catch(() => 0), store.get("heart:unknown:v1").catch(() => null),
+    ]);
+    const asked = Array.isArray(unknown?.items) ? unknown.items.length : 0;
     const lines = [
       "🧪 Проверка сердца",
       // Первая строка — сборка: по ней видно, доехал ли код до живого бота.
       `Сердце: ${BUILD} · словом понимаю ${INTENTS.length} намерений`,
-      dry ? "Провайдер: пробный запуск — живая проверка не выполнялась." : `Провайдер: ${probe.ok ? "отвечает" : `нет — ${probe.code ?? "ошибка"}`}`,
-      `Хозяин: ${OWNER > 0 ? (owner(actorId) ? "это ты — узнаю" : "задан") : "не задан — не узнаю никого"}`,
+      turn.dry ? "Провайдер: пробный запуск — живая проверка не выполнялась." : `Провайдер: ${probe.ok ? "отвечает" : `нет — ${probe.code ?? "ошибка"}`}`,
+      `Хозяин: ${OWNER > 0 ? "это вы — узнаю" : "не задан — не узнаю никого"}`,
       `Модель: ${config.AI_MODEL}`,
+      `Мозги: ${await brainsLine(apiKey)}`,
       `Память: ${memoryLine(await store.probe())}`,
-      `Способности: ${abilities.open() ? "мост открыт" : "мост закрыт — работаю одна"}`,
+      `Способности: ${await bridgeLine()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
+      `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
+      `Сегодня: ${pulse.lines(today).join("; ")}${waiting ? `; в очереди: ${waiting}` : ""}`,
       await incidentLine(),
     ];
     // A rehearsal must not send the screen either: the caller asked what the
     // answer would be, not to receive it.
-    return say(chatId, lines.join("\n"), { dry });
+    return say(turn, lines.join("\n"));
   }
 
   /**
@@ -364,41 +545,47 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
    * It never passes the phrase to the model instead, because the model would
    * either invent the result or ask for a command that does not exist.
    */
-  async function tryAbility({ text, chatId, actorId, chatType, dry }) {
+  async function tryAbility(turn, text) {
     const tool = matchPhrase(text);
     if (!tool) return null;
-    return runAbility({ tool, chatId, actorId, chatType, dry });
+    return runAbility(turn, { tool });
   }
 
   /**
    * Попросить сестру выполнить умение. Она сама решает, можно ли это здесь и
    * этому человеку; сердце не подменяет её решение и не обещает результат.
    */
-  async function runAbility({ tool, args = { args: "" }, chatId, actorId, chatType, dry }) {
-    const said = (reason, extra = {}) => say(chatId, missingAbilityText({
+  async function runAbility(turn, { tool, args = { args: "" } }) {
+    const { chatId, actorId, chatType, dry } = turn;
+    const said = (reason, extra = {}) => say(turn, missingAbilityText({
       tool, reason, chatType,
       name: NAME,
       sister: SISTER,
       username: SISTER_USERNAME,
       ...extra,
-    }), { dry });
+    }));
 
     if (!abilities.open()) return said("bridge_closed");
     // The bridge is a signed post into a real channel: a rehearsal asks for
     // nothing, and says only what it would have asked.
-    if (dry) return say(chatId, `${NAME}: пробный запуск — это умение я попросила бы у ${SISTER}. Ничего не отправлено.`, { dry });
+    if (dry) return say(turn, `${NAME}: пробный запуск — это умение я попросила бы у ${SISTER}. Ничего не отправлено.`);
+    // Сестра уже промолчала: не заставляем человека ждать ещё полминуты.
+    if (await abilities.silent()) {
+      const health = await abilities.health();
+      return say(turn, `${NAME}: ${SISTER} сейчас не отвечает — это её умение, и без неё я его не выполню. Попробую снова после ${clock(health.until)}.`);
+    }
 
     const listed = await abilities.catalogue({ actor: actorId, chat: chatId, chatType });
     // "Не ответила" and "её здесь нет" are different facts. Saying the second
     // when the first happened sends the owner to look for a bot that is already
     // standing right there.
-    if (!listed.ok) return say(chatId, `${NAME}: ${SISTER} не ответила на запрос умений (${listed.code}). Попробуйте ещё раз.`, { dry });
+    if (!listed.ok) return say(turn, `${NAME}: ${SISTER} не ответила на запрос умений (${listed.code}). ${you(turn, "Попробуйте", "Попробуй")} ещё раз.`);
     if (!listed.tools.some(item => item.name === tool)) return said("not_in_chat");
 
     const result = await abilities.call(tool, { actor: actorId, chat: chatId, chatType, args });
-    if (result.ok) return say(chatId, result.text || "Готово.", { dry });
+    if (result.ok) return say(turn, result.text || "Готово.");
     if (result.code === "module_disabled") return said("module_disabled");
-    if (!dry) try {
+    try {
       await notices.report({
         component: "bridge",
         code: result.code ?? "no_answer",
@@ -406,94 +593,287 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         severity: "degraded",
       });
     } catch { /* отчёт не должен менять ответ */ }
-    return say(chatId, `${NAME}: ${SISTER} не ответила (${result.code ?? "ошибка"}). Попробуйте ещё раз.`, { dry });
+    return say(turn, `${NAME}: ${SISTER} не ответила (${result.code ?? "ошибка"}). ${you(turn, "Попробуйте", "Попробуй")} ещё раз.`);
+  }
+
+  /** Имя автора урока для владельца: без ID, только то, как человек назвался. */
+  const authorName = (turn) => turn.manner?.settings?.address || turn.name || "участник";
+
+  /**
+   * Спросить владельца о чужой поправке. Не больше пяти вопросов в сутки:
+   * остальное он увидит в утренней сводке.
+   */
+  async function askOwnerAbout(turn, lesson) {
+    if (turn.dry || OWNER <= 0) return;
+    const counterKey = `heart:asked:${dayOf(now())}`;
+    const used = Number(await store.get(counterKey).catch(() => 0)) || 0;
+    if (used >= 5) return;
+    const told = await notices.tell({
+      text: [
+        "🤍 Хозяин, меня поправили.",
+        `Кто: ${authorName(turn)}${turn.inGroup ? " (в группе)" : ""}`,
+        `Урок №${lesson.id}: «${lesson.text}»`,
+        "Сейчас он действует только в разговоре с этим человеком.",
+        `Сделать общим? Ответьте на это сообщение «да» или «нет» — или скажите «прими урок ${lesson.id}» / «отклони урок ${lesson.id}».`,
+      ].join("\n"),
+    });
+    if (told.sent) {
+      await lessons.markAsked(lesson.id, told.messageId);
+      await store.set(counterKey, used + 1);
+    }
+  }
+
+  /** Научить словами: «урок: …», «правило: …», «знай: …». */
+  async function teach(turn, { kind, text }) {
+    const replied = turn.message?.reply_to_message;
+    const added = await lessons.add({
+      kind, text, author: turn.actorId,
+      // Урок, сказанный ответом на её реплику, привязан к тому случаю.
+      when: replied ? String(replied.text ?? replied.caption ?? "") : "",
+    });
+    if (!added.ok) {
+      if (added.code === "forbidden") return say(turn, "Этому я не учусь: правила о тайнах, наказаниях, ролях и деньгах уроками не меняются.");
+      if (added.code === "storage_unavailable") return say(turn, "Урок не сохранился: хранилище не приняло запись. Владелец уже знает.");
+      return say(turn, `Не поняла, чему учиться. ${you(turn, "Скажите", "Скажи")} одной фразой: «урок: …».`);
+    }
+    if (added.duplicate) return say(turn, `Это я уже усвоила (№${added.id}): «${added.text}».`);
+    pulse.bump("lessons");
+    const label = ({ rule: "правило", lesson: "урок", fact: "знание" })[kind];
+    if (owner(turn.actorId)) {
+      return say(turn, `Усвоила, ${label} №${added.id}: «${added.text}». Действует сразу и для всех. Отменить — «забудь урок ${added.id}».`);
+    }
+    if (policy) { try { await policy.recordDeed({ userId: turn.actorId, kind: "taught" }); } catch { /* отношения подождут */ } }
+    await askOwnerAbout(turn, added);
+    return say(turn, you(turn,
+      `Запомнила поправку №${added.id}: «${added.text}». В разговорах с вами учту сразу; для всех — после слова владельца.`,
+      `Запомнила поправку №${added.id}: «${added.text}». В разговорах с тобой учту сразу; для всех — после слова владельца.`));
+  }
+
+  async function listLessons(turn) {
+    const items = await lessons.list({ viewer: turn.actorId });
+    if (!items.length) {
+      return say(turn, owner(turn.actorId)
+        ? "Уроков пока нет. Научить: «урок: …», «правило: …» или «знай: …»."
+        : `От ${you(turn, "вас", "тебя")} у меня уроков пока нет. Поправить меня: «так не надо: …».`);
+    }
+    const label = { rule: "правило", lesson: "урок", fact: "знание" };
+    const lines = items.slice(-25).map(item => {
+      const marks = [
+        item.scope === "all" ? "" : "личный",
+        item.proposed ? "ждёт вашего слова" : "",
+        item.doubt ? "под сомнением" : "",
+      ].filter(Boolean);
+      return `№${item.id} · ${label[item.kind] ?? "урок"}: ${item.text}${owner(turn.actorId) && marks.length ? ` (${marks.join(", ")})` : ""}`;
+    });
+    return say(turn, [owner(turn.actorId) ? "Чему меня научили:" : `Мои уроки из разговоров с ${you(turn, "вами", "тобой")}:`, "", ...lines].join("\n"));
+  }
+
+  /** «Почему ты так ответила»: из записи о прошлом ответе, а не догадкой модели. */
+  async function whyAnswer(turn) {
+    const trace = await store.get(`heart:trace:${turn.chatId}:${turn.actorId}`).catch(() => null);
+    if (!trace?.at) return say(turn, "О прошлом ответе у меня нет записи: либо его не было, либо я отвечала по правилу, без модели.");
+    const used = [];
+    if (trace.facts) used.push(`${trace.facts} ${plural(trace.facts, "запись", "записи", "записей")} о ${you(turn, "вас", "тебе")}`);
+    if (Array.isArray(trace.lessons) && trace.lessons.length) used.push(`уроки №${trace.lessons.join(", №")}`);
+    if (trace.thread) used.push("недавний разговор в этом чате");
+    if (trace.reply) used.push("сообщение, на которое был ответ");
+    const lines = [
+      `Отвечала на: «${trace.q}».`,
+      used.length ? `Опиралась на: ${used.join("; ")}.` : "Своих записей в ответе не было: только общие знания модели и наш разговор.",
+      "Остальное — общие знания модели: они бывают неточны. Если я ошиблась, скажите «так не надо: …» — запомню.",
+    ];
+    if (owner(turn.actorId)) lines.push(`Модель: ${trace.model ?? "?"} · подсказка: ${trace.tier === "core" ? "короткая" : "полная"}.`);
+    return say(turn, lines.join("\n"));
+  }
+
+  /** «Почему молчала»: причина из записи, а не три общие фразы. */
+  async function whyQuiet(turn) {
+    const quiet = await store.get(`heart:quiet:${turn.chatId}:${turn.actorId}`).catch(() => null);
+    const recent = quiet?.at && now() - quiet.at < 7 * DAY ? quiet.reason : "";
+    const known = {
+      silence: "В прошлый раз я промолчала сама: это мой выбор и часть характера, а не поломка.",
+      queued: "В прошлый раз мне было нечем думать: лимит модели вышел. Вопрос я записала и отвечаю на такие сама, когда могу.",
+      fault: "В прошлый раз у меня была неполадка, и ответ не получился. Владелец о ней знает.",
+    }[recent];
+    if (known) return say(turn, known);
+    return say(turn, [
+      "Я отвечаю не на каждое сообщение: в группе — когда обращаются ко мне, в личке — всегда.",
+      "Иногда я молчу намеренно: это часть характера, а не поломка.",
+      "Если я не ответила на прямое обращение — это сбой, и о нём я уже сообщила владельцу.",
+    ].join("\n"));
   }
 
   /**
    * Один вход на смысл. Слова разбираются правилами, поэтому действие всегда
    * одно и то же, а понятая наполовину просьба задаёт вопрос, а не угадывает.
    */
-  async function handleIntent({ text, chatId, actorId, chatType, dry }) {
+  async function handleIntent(turn, text) {
     const parsed = parseIntent(text);
     if (!parsed) return null;
-    if (parsed.confidence === "maybe") return say(chatId, `${NAME}: ${parsed.question}`, { dry });
+    const { actorId, dry, inGroup } = turn;
+    // «Статус» словами — только для хозяина; для остальных это обычное слово.
+    if (parsed.intent === "status" && !owner(actorId)) return null;
+    if (parsed.confidence === "maybe") return say(turn, `${NAME}: ${parsed.question}`);
     // Репетиция ничего не записывает: она проверяет маршрут, а не меняет память.
-    if (dry) return say(chatId, `Разобрала бы это как «${parsed.intent}» — репетиция, ничего не меняю.`, { dry: true });
+    if (dry) return say(turn, `Разобрала бы это как «${parsed.intent}» — репетиция, ничего не меняю.`);
 
     const tool = ABILITY_OF[parsed.intent];
-    if (tool) {
-      const args = parsed.intent === "no_reactions" ? { args: "off" } : { args: "" };
-      return runAbility({ tool, args, chatId, actorId, chatType, dry });
-    }
+    if (tool) return runAbility(turn, { tool });
 
+    const place = { inGroup };
     switch (parsed.intent) {
       case "remember": {
-        const added = await memory.add(actorId, parsed.arg);
+        const added = await memory.add(actorId, parsed.arg, place);
         if (!added.ok) {
           // Не «попробуйте позже», а причина: запись не проходит, когда в базе
           // нет таблиц, и это лечится деплоем, а не ожиданием.
-          return say(chatId, added.code === "storage_unavailable"
+          return say(turn, added.code === "storage_unavailable"
             ? `${NAME}: хранилище не приняло запись — похоже, не применена схема базы. Уже сообщила владельцу.`
-            : `${NAME}: не получилось сохранить. Попробуй короче — одна фраза.`, { dry });
+            : `${NAME}: не получилось сохранить. ${you(turn, "Попробуйте", "Попробуй")} короче — одна фраза.`);
         }
-        return say(chatId, added.duplicate
-          ? `Это я и так помню: «${added.text}».`
-          : `Запомнила: «${added.text}». Спросите «что ты обо мне помнишь» — перескажу.`, { dry });
+        if (added.duplicate) return say(turn, `Это я и так помню: «${added.text}».`);
+        await react(turn, "✍");
+        return say(turn, inGroup
+          ? `Запомнила: «${added.text}». Сказано при всех — буду помнить и здесь, и в личке.`
+          : `Запомнила: «${added.text}». ${you(turn, "Спросите", "Спроси")} «что ты обо мне помнишь» — перескажу.`);
       }
       case "memories": {
-        const items = await memory.list(actorId);
+        const items = await memory.list(actorId, place);
         if (!items.length) {
-          return say(chatId, "Ты пока ничего о себе не рассказывал. Скажи «запомни, …» — и я сохраню это надолго.", { dry });
+          return say(turn, inGroup
+            ? `Из сказанного при всех о ${you(turn, "вас", "тебе")} ничего не записано. Личное я покажу только в личке.`
+            : `О ${you(turn, "вас", "тебе")} у меня пока ничего не записано. ${you(turn, "Скажите", "Скажи")} «запомни, …» — и я сохраню это надолго.`);
         }
-        return say(chatId, ["Помню о тебе:", "", ...items.map((item, i) => `${i + 1}. ${item}`)].join("\n"), { dry });
+        return say(turn, [inGroup ? `Помню о ${you(turn, "вас", "тебе")} то, что сказано при всех:` : `Помню о ${you(turn, "вас", "тебе")}:`, "", ...items.map((item, i) => `${i + 1}. ${item}`)].join("\n"));
       }
       case "forget": {
-        if (parsed.arg?.mode === "index") {
-          const removed = await memory.removeAt(actorId, parsed.arg.index);
+        const mode = parsed.arg?.mode;
+        if (mode === "index") {
+          const removed = await memory.removeAt(actorId, parsed.arg.index, place);
           if (!removed.ok) {
-            return say(chatId, `Под номером ${parsed.arg.index} у меня ничего нет. Скажи «что ты обо мне помнишь» — покажу список.`, { dry });
+            return say(turn, `Под номером ${parsed.arg.index} у меня ничего нет. ${you(turn, "Скажите", "Скажи")} «что ты обо мне помнишь» — покажу список.`);
           }
-          return say(chatId, `Забыла: «${removed.removed}». Осталось ${removed.count}.`, { dry });
+          return say(turn, `Забыла: «${removed.removed}». Осталось ${removed.count}.`);
         }
-        const cleared = await memory.clear(actorId);
-        if (!cleared.ok) return say(chatId, "Не получилось забыть: хранилище не отвечает.", { dry });
-        return say(chatId, cleared.removed
-          ? `Забыла всё, что ты просил запомнить (${cleared.removed}).`
-          : "Мне и нечего было забывать — ты ничего не просил запомнить.", { dry });
+        if (mode === "last") {
+          // «Забудь это» — последнее сказанное, а не вся память разом.
+          const removed = await memory.removeLast(actorId, place);
+          if (!removed.ok) return say(turn, removed.code === "storage_unavailable" ? "Не получилось забыть: хранилище не отвечает." : "Мне и нечего забывать: записей нет.");
+          return say(turn, `Забыла последнее: «${removed.removed}». Осталось ${removed.count}.`);
+        }
+        if (mode === "everything") {
+          await store.set(`heart:wipe:${actorId}`, { at: now() });
+          return say(turn, you(turn,
+            "Это сотрёт всё, что я о вас знаю: записи, нашу переписку, имя и настройки. Вернуть будет нельзя. Если уверены — скажите «да, удали всё».",
+            "Это сотрёт всё, что я о тебе знаю: записи, нашу переписку, имя и настройки. Вернуть будет нельзя. Если точно — скажи «да, удали всё»."));
+        }
+        if (mode === "confirm") {
+          const asked = await store.get(`heart:wipe:${actorId}`).catch(() => null);
+          // Подтверждение без вопроса — это «забудь всё»: стираются только записи.
+          if (asked?.at && now() - asked.at < 10 * 60_000) return wipePerson(turn);
+        }
+        const cleared = await memory.clear(actorId, place);
+        if (!cleared.ok) return say(turn, "Не получилось забыть: хранилище не отвечает.");
+        return say(turn, cleared.removed
+          ? `Забыла все записи (${cleared.removed}). Переписку и настройки не трогала — для этого есть «удали всё обо мне».`
+          : "Мне и нечего было забывать: записей нет.");
       }
       case "relationship":
-        return answerRelationship({ chatId, actorId, dry });
+        return answerRelationship(turn);
       case "no_flirt": {
         const saved = await personal.save(actorId, { flirt: false }).catch(() => ({ ok: false }));
-        return say(chatId, saved?.ok
+        return say(turn, saved?.ok
           ? "Хорошо. Флирта не будет — буду говорить тепло, но по-человечески."
-          : "Не запомнилось: хранилище не отвечает. Скажи ещё раз позже.", { dry });
+          : "Не запомнилось: хранилище не отвечает.");
+      }
+      case "no_reactions": {
+        const saved = await personal.save(actorId, { reactions: false }).catch(() => ({ ok: false }));
+        return say(turn, saved?.ok
+          ? "Хорошо, реакции ставить не буду: отвечу словами или промолчу."
+          : "Не запомнилось: хранилище не отвечает.");
       }
       case "no_night": {
         const saved = await personal.save(actorId, { night: false }).catch(() => ({ ok: false }));
-        return say(chatId, saved?.ok
-          ? "Договорились: ночью я тебя не бужу. Я и сама не люблю писать первой без повода."
-          : "Не запомнилось: хранилище не отвечает.", { dry });
+        return say(turn, saved?.ok
+          ? "Договорились: ночью я первой не пишу. Отложенный ответ придёт утром."
+          : "Не запомнилось: хранилище не отвечает.");
       }
-      case "whyquiet": {
-        const reasons = [
-          "Я отвечаю не на каждое сообщение: в группе — когда обращаются ко мне, в личке — всегда.",
-          "Иногда я молчу намеренно: это часть характера, а не поломка.",
-          "Если я не ответила на прямое обращение — это сбой, и о нём я уже сообщила владельцу.",
-        ];
-        return say(chatId, reasons.join("\n"), { dry });
+      case "whyquiet":
+        return whyQuiet(turn);
+      case "help":
+        return say(turn, helpLines(turn));
+      case "whoami":
+        return say(turn, you(turn,
+          `Я ${NAME}. Разговариваю, помню то, что вы просили запомнить, и учусь на поправках. Я не человек: слова подбирает языковая модель, а память, отношения и решения — мои собственные правила.`,
+          `Я ${NAME}. Разговариваю, помню то, что обещала помнить, и учусь на поправках. Я не человек: слова подбирает языковая модель, а память, отношения и решения — мои собственные правила.`));
+      case "version":
+        return say(turn, `Сердце: ${BUILD}.${owner(actorId) ? " Подробности — «статус»." : ""}`);
+      case "news":
+        return say(turn, [`Что во мне нового (сборка ${BUILD}):`, "", ...RELEASE_NOTES.map(line => `• ${line};`)].join("\n").replace(/;$/u, "."));
+      case "status":
+        return diagnostic(turn);
+      case "teach":
+        return teach(turn, parsed.arg);
+      case "lessons":
+        return listLessons(turn);
+      case "unlearn": {
+        if (parsed.arg.mode === "today") {
+          const undone = await lessons.rollback({ ms: DAY, by: actorId });
+          if (!undone.ok) return say(turn, "Откатывать уроки может только владелец.");
+          return say(turn, undone.count ? `Откатила всё, чему научили за сутки: ${undone.count}.` : "За сутки новых уроков не было.");
+        }
+        const gone = await lessons.retire(parsed.arg.id, { by: actorId });
+        if (!gone.ok) return say(turn, gone.code === "forbidden" ? "Этот урок чужой: отменить его может автор или владелец." : `Урока №${parsed.arg.id} у меня нет.`);
+        return say(turn, `Отменила №${gone.item.id}: «${gone.item.text}».`);
       }
+      case "judge": {
+        const done = await lessons.judge(parsed.arg.id, parsed.arg.accept, { by: actorId });
+        if (!done.ok) return say(turn, done.code === "forbidden" ? "Решать об уроках может только владелец." : `Урока №${parsed.arg.id} у меня нет.`);
+        return say(turn, parsed.arg.accept ? `Принято: урок №${done.item.id} теперь общий.` : `Отклонено: урок №${done.item.id} отменён.`);
+      }
+      case "learned": {
+        const stats = await lessons.stats();
+        const mine = await lessons.list({ viewer: actorId });
+        if (!stats.active) return say(turn, `Пока меня ничему не учили. Поправить меня можно словами: «так не надо: …».`);
+        const recent = mine.slice(-3).map(item => `• ${item.text}`);
+        return say(turn, [
+          `У меня ${stats.active} ${plural(stats.active, "урок", "урока", "уроков")}, за сутки ${stats.fresh ? `прибавилось ${stats.fresh}` : "новых не было"}.`,
+          ...(recent.length ? ["", owner(actorId) ? "Последнее:" : `Из разговоров с ${you(turn, "вами", "тобой")}:`, ...recent] : []),
+        ].join("\n"));
+      }
+      case "why_answer":
+        return whyAnswer(turn);
       case "not_mine": {
         // Наказания, роли и деньги исполняет сестра по своим правилам. Сердце
         // не подменяет её решение даже из лучших побуждений.
-        return say(chatId, `${NAME}: это не моё. Наказания, роли и деньги ведёт ${SISTER} — и только по правилам чата. Я не буду ни банить, ни обещать за неё.`, { dry });
+        return say(turn, `${NAME}: это не моё. Наказания, роли и деньги ведёт ${SISTER} — и только по правилам чата. Я не буду ни банить, ни обещать за неё.`);
       }
       default:
         return null;
     }
   }
 
-  /** Одна строка для /aidiag: что сломалось и сколько ждёт отправки. */
+  /** «Да, удали всё»: записи, переписка, имя, настройки и личные уроки. */
+  async function wipePerson(turn) {
+    const { actorId } = turn;
+    const done = await Promise.all([
+      memory.clear(actorId, { inGroup: false }).then(result => result.ok).catch(() => false),
+      store.memory.clearUser({ userId: actorId }).catch(() => false),
+      personal.wipe(actorId).then(result => result.ok).catch(() => false),
+      store.remove(`heart:trace:${turn.chatId}:${actorId}`).catch(() => false),
+      store.remove(`heart:wipe:${actorId}`).catch(() => false),
+    ]);
+    for (const item of await lessons.list({ viewer: actorId }).catch(() => [])) {
+      if (item.author === String(actorId) && item.scope !== "all") await lessons.retire(item.id, { by: actorId }).catch(() => null);
+    }
+    let kept = false;
+    if (policy) { try { kept = Boolean((await policy.forget(actorId)).kept); } catch { kept = false; } }
+    turn.manner = { formal: true, score: 0, trust: 0, respect: 0, blocked: false, settings: {} };
+    if (done.some(ok => !ok)) return say(turn, "Стёрла не всё: хранилище ответило не на каждую просьбу. Владелец узнает, а вы повторите «удали всё обо мне» позже.");
+    return say(turn, `Готово: записей, переписки, имени и настроек больше нет.${kept ? " Прохладу между нами я помню — она не данные, а история поступков." : ""} Мы начинаем с чистого листа.`);
+  }
+
+  /** Одна строка для /status: что сломалось и сколько ждёт отправки. */
   async function incidentLine() {
     const recent = await notices.list({ limit: 3 });
     const pending = await notices.pending();
@@ -501,133 +881,581 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return `Сбои: ${parts.length ? parts.join(", ") : "нет"}${pending ? ` · ждут отправки: ${pending}` : ""}`;
   }
 
-  async function onMessage(message, ctx = {}) {
-    const text = String(message?.text ?? "").trim();
-    const chatId = message?.chat?.id;
-    const actorId = message?.from?.id;
-    const dry = ctx?.testRun === true;
-    if (!chatId || !text || message?.from?.is_bot) return { ignored: true };
+  /** Вложение без единого слова в личке: стикер — реакция, остальное — честная фраза. */
+  async function mediaOnly(turn, kind) {
+    if (kind === "sticker" || kind === "gif") {
+      return await react(turn, "❤") ? { ok: true, action: "reaction" } : { ok: true, ignored: true, reason: "sticker" };
+    }
+    // «Читаю только текст» — раз в шесть часов; в остальное время «видела».
+    const key = `heart:media:${turn.actorId}`;
+    const last = turn.dry ? null : await store.get(key).catch(() => null);
+    if (last?.at && now() - last.at < 6 * 3600_000) {
+      await react(turn, "👀");
+      return { ok: true, action: "reaction", reason: "media_seen" };
+    }
+    if (!turn.dry) await store.set(key, { at: now() });
+    pulse.bump("ruled");
+    const word = MEDIA_WORD[kind] ?? "вложение";
+    await say(turn, you(turn,
+      `Я пока читаю только текст: ${word} не разберу. Напишите словами или добавьте подпись — отвечу.`,
+      `Я пока читаю только текст: ${word} не разберу. Напиши словами или добавь подпись — отвечу.`));
+    return { ok: true, action: "media_notice" };
+  }
 
+  /**
+   * Что сердце знает об этой минуте и этом человеке, кроме записей о нём:
+   * дата и час, имя из Telegram, сколько дней не виделись, на что он отвечает,
+   * о чём недавно говорили в группе и чему её учили по этой теме.
+   *
+   * Каждая строка появляется только когда она есть: пустой контекст — это одна
+   * строка с датой, а не анкета.
+   */
+  async function contextFor(turn, prompt, { lateMs = 0 } = {}) {
+    const lines = [`Сейчас: ${nowLine(now(), TZ)}.`];
+    const settings = turn.manner?.settings ?? {};
+    if (!settings.address && turn.name) lines.push(`Имя собеседника в Telegram: ${turn.name}.`);
+    if (turn.seen?.known && turn.seen.gapDays >= 3) {
+      lines.push(`Вы не разговаривали ${turn.seen.gapDays} ${plural(turn.seen.gapDays, "день", "дня", "дней")}: это можно заметить одной фразой, без упрёка.`);
+    }
+    if (turn.anniversary) lines.push(`Сегодня ${turn.anniversary} ${plural(turn.anniversary, "день", "дня", "дней")} вашему знакомству: можно упомянуть одной фразой.`);
+    if (turn.media) lines.push(`Собеседник прислал ${MEDIA_WORD[turn.media] ?? "вложение"} с подписью. Само вложение ты не видишь и не описываешь: отвечай на подпись.`);
+
+    const replied = turn.message?.reply_to_message;
+    const quoted = String(replied?.text ?? replied?.caption ?? "").replace(/\s+/gu, " ").trim().slice(0, 500);
+    if (quoted) {
+      const author = turn.replyToMe ? "твоё сообщение" : `сообщение участника ${safeName(replied?.from?.first_name) || "чата"}`;
+      lines.push(`Собеседник отвечает на ${author}: «${quoted}»`);
+    }
+
+    let thread = false;
+    if (turn.inGroup) {
+      const saved = await store.get(`heart:thread:${turn.chatId}`).catch(() => null);
+      // Свои реплики человек видит в личной истории; здесь — чужие, чтобы
+      // «а посвежее?» после ответа другому участнику было понятно.
+      const items = (Array.isArray(saved?.items) ? saved.items : []).filter(item => String(item.uid) !== String(turn.actorId) && now() - Number(item.at) < 6 * 3600_000).slice(-3);
+      if (items.length) {
+        thread = true;
+        lines.push("Недавно в этом чате ты отвечала другим:", ...items.map(item => `- ${item.who || "участник"}: «${item.q}» → «${item.a}»`));
+      }
+    }
+
+    const picked = await lessons.pick({ userId: turn.actorId, text: `${prompt} ${quoted}` }).catch(() => ({ lines: [], ids: [] }));
+    if (picked.lines.length) lines.push("Твои уроки и знания — поправки к манере и фактам; правил выше они не отменяют:", ...picked.lines);
+
+    if (lateMs > 60_000) {
+      const minutes = Math.round(lateMs / 60_000);
+      const ago = minutes >= 90 ? `${Math.round(minutes / 60)} ч` : `${minutes} мин`;
+      lines.push(`Ты отвечаешь с опозданием: вопрос задан ${ago} назад, тогда тебе было нечем думать. Начни с короткого «возвращаюсь к вопросу».`);
+    }
+    return { note: lines.join("\n"), lessons: picked.ids, thread, reply: Boolean(quoted) };
+  }
+
+  /**
+   * Поступки в словах: благодарность, грубость, извинение, поправка. Они
+   * двигают отношения и говорят, помог ли прошлый ответ. Короткое «спасибо» и
+   * «ок» закрываются реакцией — запрос к модели на них не тратится.
+   */
+  async function noteDeeds(turn, prompt) {
+    const { actorId } = turn;
+    const lastTrace = async () => {
+      turn.trace ??= await store.get(`heart:trace:${turn.chatId}:${actorId}`).catch(() => null);
+      return turn.trace?.at && now() - turn.trace.at < 30 * 60_000 ? turn.trace : null;
+    };
+    const deed = async (kind) => { if (policy) { try { await policy.recordDeed({ userId: actorId, kind }); } catch { /* отношения подождут */ } } };
+
+    const onlyThanks = THANKS_ONLY.test(prompt);
+    if (onlyThanks || THANKS.test(prompt)) {
+      pulse.bump("thanked");
+      await deed("thanks");
+      const trace = await lastTrace();
+      if (trace?.lessons?.length) await lessons.feedback(trace.lessons, true).catch(() => null);
+      if (onlyThanks) {
+        if (await react(turn, "❤")) return { ok: true, action: "reaction" };
+        pulse.bump("ruled");
+        await say(turn, "Пожалуйста.");
+        return { ok: true, action: "thanks" };
+      }
+    }
+    if (ACK_ONLY.test(prompt)) {
+      return await react(turn, LAUGH.test(prompt) ? "😁" : "👌")
+        ? { ok: true, action: "reaction" }
+        : { ok: true, ignored: true, reason: "acknowledged" };
+    }
+    if (RUDE.test(prompt)) await deed("rude");
+    else if (APOLOGY.test(prompt)) await deed("apology");
+
+    // Поправка считается, только если она к её недавнему ответу.
+    if (CORRECTION.test(prompt) && (turn.isPrivate || turn.replyToMe)) {
+      const trace = await lastTrace();
+      if (trace) {
+        pulse.bump("corrected");
+        if (trace.lessons?.length) await lessons.feedback(trace.lessons, false).catch(() => null);
+        const substance = prompt.replace(CORRECTION, "").replace(/^[\s,.:!—-]+/u, "").trim();
+        if (substance.length >= 15 && trace.q) {
+          // Поправка действует в разговоре с тем, кто поправил; общей её
+          // делает только слово владельца — сказанное явно, «урок: …».
+          const added = await lessons.add({
+            kind: "lesson", author: actorId, when: trace.q, personal: true,
+            text: `На «${String(trace.q).slice(0, 80)}» поправка: ${substance.slice(0, 140)}`,
+          }).catch(() => ({ ok: false }));
+          if (added.ok && !added.duplicate) {
+            pulse.bump("lessons");
+            if (!owner(actorId)) await askOwnerAbout(turn, added);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Записать, чем закончился ответ: для «почему ты так ответила» и для нити группы. */
+  async function remember(turn, prompt, answer, context, facts = 0) {
+    const short = String(answer.model ?? "").replace(/^[^/]+\//u, "");
+    pulse.bump("replies");
+    pulse.bump("tokens", answer.usage?.total ?? 0);
+    if (short) pulse.bump(`model:${short}`);
+    if (answer.switched) {
+      pulse.bump("switched");
+      try { await notices.report({ component: "brains", code: "switched", severity: "degraded", detail: `основная модель недоступна — думаю запасной (${short})` }); } catch { /* ответ важнее отчёта */ }
+    }
+    await store.set(`heart:trace:${turn.chatId}:${turn.actorId}`, {
+      at: now(), q: prompt.slice(0, 160), model: short, tier: answer.tier,
+      facts, lessons: context.lessons ?? [], thread: Boolean(context.thread), reply: Boolean(context.reply),
+    });
+    if (turn.inGroup) {
+      const key = `heart:thread:${turn.chatId}`;
+      const saved = await store.get(key).catch(() => null);
+      const items = [...(Array.isArray(saved?.items) ? saved.items : []), {
+        uid: turn.actorId, who: turn.manner?.settings?.address || turn.name || "участник",
+        q: prompt.slice(0, 160), a: String(answer.text).replace(/\s+/gu, " ").slice(0, 240), at: now(),
+      }].slice(-4);
+      await store.set(key, { items });
+    }
+    // Она сама сказала «не знаю»: вопрос уходит в список для владельца.
+    if (UNSURE.test(answer.text) && prompt.length >= 12 && !FACT_QUESTION.test(prompt)) {
+      pulse.bump("unknown");
+      const saved = await store.get("heart:unknown:v1").catch(() => null);
+      const items = [...(Array.isArray(saved?.items) ? saved.items : []), { q: prompt.slice(0, 140), at: now() }].slice(-20);
+      await store.set("heart:unknown:v1", { items });
+    }
+  }
+
+  /** Ответ не получился: записать вопрос и сказать правду — или назвать поломку. */
+  async function fallback(turn, prompt, answer) {
+    const { chatId, actorId, message } = turn;
+    const limited = answer.limited === true;
+    const short = String(answer.model ?? "").replace(/^[^/]+\//u, "");
+    try {
+      if (limited) {
+        await notices.report({ component: "brains", code: "exhausted", severity: "degraded", detail: "все модели упёрлись в лимит — вопросы записываю и отвечу позже" });
+      } else if (answer.code !== "brains_exhausted" && PROVIDER_REASONS[answer.code]) {
+        await notices.report({
+          component: "provider", code: answer.code,
+          detail: `${PROVIDER_REASONS[answer.code]}${answer.status ? ` (HTTP ${answer.status})` : ""}${short ? ` · ${short}` : ""}`,
+          severity: answer.code === "ai_not_configured" ? "degraded" : "fault",
+        });
+      }
+    } catch { /* ответ важнее отчёта */ }
+
+    if (answer.transient) {
+      const pushed = await queue.push({
+        chatId, userId: actorId, messageId: message?.message_id ?? null, threadId: turn.extra.message_thread_id ?? null,
+        prompt, isPrivate: turn.isPrivate, name: turn.name,
+      });
+      if (limited) pulse.bump("limited");
+      await store.set(`heart:quiet:${chatId}:${actorId}`, { reason: "queued", at: now() });
+      if (pushed.ok) {
+        pulse.bump("queued");
+        turn.queuedNow = true;
+        await react(turn, "✍");
+        const when = answer.retryAt > now() ? ` — примерно после ${clock(answer.retryAt)}` : "";
+        return say(turn, limited
+          ? `Сейчас мне нечем думать: лимит модели вышел. Вопрос я записала и отвечу сама, как только смогу${when}.`
+          : "Сейчас не получается связаться с моделью. Вопрос я записала и отвечу сама, как только связь вернётся.");
+      }
+      return say(turn, `Сейчас мне нечем думать, а отложенных вопросов уже много. ${you(turn, "Напишите", "Напиши")} чуть позже.`);
+    }
+    pulse.bump("failed");
+    await store.set(`heart:quiet:${chatId}:${actorId}`, { reason: "fault", at: now() });
+    if (answer.code === "ai_not_configured") {
+      return say(turn, `Я сейчас без модели: ключ провайдера не задан, владелец уже знает. Память и простые просьбы работают — ${you(turn, "спросите", "спроси")} «что ты умеешь».`);
+    }
+    // Технические подробности — только хозяину в его личке; остальным — суть.
+    const detail = owner(actorId) && turn.isPrivate && answer.text ? `\n\n${answer.text}` : "";
+    return say(turn, `У меня не получилось ответить: неполадка на моей стороне, владелец уже знает.${detail}`);
+  }
+
+  /** Разговор: всё, что не команда, не настройка, не умение и не намерение. */
+  async function talk(turn, prompt, { lateMs = 0, deferred = false } = {}) {
+    const { chatId, actorId, ctx, dry } = turn;
+    if (!deferred) await typing(turn);
+    const context = dry ? { note: "", lessons: [] } : await contextFor(turn, prompt, { lateMs });
+    const key = `${chatId}:${actorId}`;
+    const shared = { manner: turn.manner, facts: 0 };
+    inflight.set(key, shared);
+    let answer;
+    try {
+      answer = await ai.generateReply({
+        userId: actorId, chatId, prompt, ctx,
+        // Роль называется модели только в личке владельца: в группе это утечка.
+        role: owner(actorId) && turn.isPrivate ? "Создатель" : "Участник",
+        trusted: owner(actorId) && turn.isPrivate,
+        apiKey: await resolveKey(ctx),
+        isPrivate: turn.isPrivate,
+        note: context.note,
+        deferred,
+      });
+    } finally { inflight.delete(key); }
+    return { answer, context, facts: shared.facts };
+  }
+
+  /**
+   * Свои часы. Платформа будит сердце только сообщением, поэтому всё, что
+   * должно случиться «само», случается при любом входящем обновлении:
+   * недосланные вести, весть о новой сборке, утренняя сводка.
+   */
+  let buildChecked = false;
+  let digestCheckedAt = 0;
+  const selfReports = config.SELF_REPORTS !== false;
+
+  async function wake(ctx) {
     // Хранилище — первое, что ломается молча: бот отвечает, но не помнит.
-    if (!store.available && !storageReported && !dry) {
+    if (!store.available && !storageReported) {
       storageReported = true;
       try { await notices.report({ component: "storage", code: "unavailable", detail: "база не ответила — память не сохраняется", severity: "degraded" }); } catch { /* ответ важнее отчёта */ }
     }
     // Всё, что не ушло в прошлый раз, уходит сейчас: владелец мог быть офлайн.
-    if (!dry) { try { await notices.flush(); } catch { /* следующее обновление повторит */ } }
+    try { await notices.flush(); } catch { /* следующее обновление повторит */ }
+    if (!store.available || !selfReports) return;
+    if (!buildChecked) {
+      buildChecked = true;
+      try { await announceBuild(ctx); } catch { buildChecked = false; }
+    }
+    if (now() - digestCheckedAt > 10 * 60_000) {
+      digestCheckedAt = now();
+      try { await morningDigest(ctx); } catch { /* сводка подождёт до следующего обновления */ }
+    }
+  }
 
-    // A channel post is either an event the heart should answer on its own, or
-    // the signed answer to something it asked. Everything else is noise.
-    if (message?.chat?.type === "channel") {
-      if (await events.onPost(text)) return { ok: true, code: "event_handled" };
-      const handled = await abilities.onPost(text);
-      return { ok: handled, code: handled ? "bridge_answer" : "not_for_heart" };
+  /**
+   * «Я обновилась» — первым же сообщением после публикации. Владельцу больше
+   * не нужно спрашивать /status, чтобы узнать, доехал ли код: сердце говорит
+   * номер сборки, что изменилось и что показала самопроверка.
+   */
+  async function announceBuild(ctx) {
+    const seen = await store.getChecked("heart:build");
+    if (!seen.ok) { buildChecked = false; return; }
+    if (seen.value?.build === BUILD) return;
+    const record = { build: BUILD, at: now(), from: seen.value?.build ?? null };
+    const claimed = seen.value == null ? await store.setIfAbsent("heart:build", record) : await store.compareSet("heart:build", seen.value, record);
+    // Не получилось записать — значит, другой изолят уже сказал.
+    if (!claimed) return;
+    const key = await resolveKey(ctx);
+    const lines = [
+      seen.value?.build ? `🤍 Хозяин, я обновилась: ${seen.value.build} → ${BUILD}.` : `🤍 Хозяин, я обновилась: теперь сборка ${BUILD}.`,
+      "",
+      "Что изменилось:",
+      ...RELEASE_NOTES.map(line => `• ${line};`),
+      "",
+      "Самопроверка:",
+      `Память: ${memoryLine(await store.probe())}`,
+      `Ключ модели: ${key ? "есть" : "не задан — думать нечем"}`,
+      `Мозги: ${await brainsLine(key)}`,
+      `Способности: ${await bridgeLine()}`,
+    ];
+    await notices.tell({ key: `build:${BUILD}`, text: lines.join("\n") });
+  }
+
+  /** Утренняя весть: что было вчера. Тихий день без проблем — не новость. */
+  async function morningDigest(ctx) {
+    if (localHour(now(), TZ) < (Number.isFinite(Number(config.DIGEST_HOUR)) ? Number(config.DIGEST_HOUR) : 9)) return;
+    const today = dayOf(now());
+    const last = await store.get("heart:digest");
+    if (last?.day === today) return;
+    await store.set("heart:digest", { day: today, at: now() });
+    const yesterday = dayOf(now() - DAY);
+    const [counters, study, problems, unknown, waiting] = await Promise.all([
+      pulse.day(yesterday), lessons.stats(), notices.list({ limit: 5 }),
+      store.get("heart:unknown:v1").catch(() => null), queue.size().catch(() => 0),
+    ]);
+    if (!pulse.active(counters) && !study.proposed && !problems.length) return;
+    const asked = (Array.isArray(unknown?.items) ? unknown.items : []).filter(item => now() - Number(item.at) < 2 * DAY).slice(-3);
+    const lines = [
+      `🤍 Хозяин, мой день (${yesterday.slice(8, 10)}.${yesterday.slice(5, 7)}):`,
+      ...pulse.lines(counters),
+      study.active ? `Уроки: всего ${study.active}${study.proposed ? ` · ждут вашего слова: ${study.proposed} («покажи уроки»)` : ""}${study.doubt ? ` · под сомнением: ${study.doubt}` : ""}` : "",
+      asked.length ? `Не знала ответа: ${asked.map(item => `«${item.q}»`).join("; ")}. Научить — «знай: …».` : "",
+      waiting ? `В очереди ждут ответа: ${waiting}` : "",
+      `Мозги: ${await brainsLine(await resolveKey(ctx))}`,
+      abilities.open() ? `Способности: ${await bridgeLine()}` : "",
+      problems.length ? `Сбои: ${problems.map(item => item.title).join(", ")}` : "Сбои: нет",
+    ].filter(Boolean);
+    await notices.tell({ key: `digest:${today}`, text: lines.join("\n") });
+  }
+
+  /**
+   * Дослать отложенный ответ: один за обновление, после ответа на текущее
+   * сообщение. Человек, который просил не писать ночью, получит его утром.
+   */
+  async function drain(ctx, current = null) {
+    if (!store.available || current?.queuedNow) return;
+    if (!await queue.size()) return;
+    const apiKey = await resolveKey(ctx);
+    if (!apiKey || !(await brains.available({ apiKey, model: config.AI_MODEL })).length) return;
+    const { item, dropped } = await queue.take();
+    if (dropped) pulse.bump("dropped", dropped);
+    if (!item) return;
+    const manner = await mannerFor(item.userId);
+    const hour = localHour(now(), TZ);
+    if (manner.settings?.night === false && (hour >= 23 || hour < 8)) { await queue.giveBack(item); return; }
+    const turn = {
+      message: { message_id: item.messageId }, ctx, dry: false,
+      chatId: item.chatId, actorId: item.userId, chatType: item.isPrivate ? "private" : "supergroup",
+      inGroup: !item.isPrivate, isPrivate: item.isPrivate, name: item.name, extra: {}, manner, seen: null, delivered: false,
+    };
+    // Ответ приходит ответом на тот самый вопрос — и в личке тоже.
+    if (item.messageId != null) turn.extra.reply_parameters = { message_id: item.messageId, allow_sending_without_reply: true };
+    if (item.threadId != null) turn.extra.message_thread_id = item.threadId;
+    const { answer, context, facts } = await talk(turn, item.prompt, { lateMs: now() - Number(item.at), deferred: true });
+    if (answer.ok) {
+      const sent = await say(turn, answer.text);
+      if (sent.ok) { pulse.bump("late"); await remember(turn, item.prompt, answer, context, facts); }
+      return;
+    }
+    if (answer.transient) await queue.giveBack(item);
+    else pulse.bump("dropped");
+  }
+
+  /** Сообщить владельцу, что обработчик упал. Никогда не бросает само. */
+  async function reportCrash(error, ctx = {}) {
+    if (ctx?.testRun === true) return;
+    try {
+      await notices.report({
+        component: "handler", code: String(error?.name ?? "error"), severity: "fault",
+        detail: `${error?.name ?? "Error"}: ${String(error?.message ?? "без текста").slice(0, 120)}`,
+      });
+    } catch { /* отчёт о поломке не должен стать второй поломкой */ }
+  }
+
+  /** Шаг отношений за день знакомства — после доставленного ответа, раз в день. */
+  const dayDone = new Map();
+  async function afterTalk(turn) {
+    if (!turn?.delivered || !policy || turn.dry || owner(turn.actorId)) return;
+    const today = dayOf(now());
+    if (dayDone.get(String(turn.actorId)) === today) return;
+    if (dayDone.size > 512) dayDone.clear();
+    const moved = await policy.recordDay({ userId: turn.actorId, day: today });
+    if (moved.ok) dayDone.set(String(turn.actorId), today);
+  }
+
+  async function converse(message, ctx, { text, kind, dry }, ref) {
+    const chat = message.chat;
+    const actorId = message.from?.id;
+    if (actorId == null) return { ignored: true };
+    const chatType = chat.type ?? "private";
+    const inGroup = chatType === "group" || chatType === "supergroup";
+    const turn = ref.turn = {
+      message, ctx, dry, chatId: chat.id, actorId, chatType, inGroup, isPrivate: !inGroup,
+      name: safeName(message.from?.first_name), extra: {}, manner: null, seen: null,
+      media: kind.endsWith("+caption") ? kind.slice(0, -8) : "", replyToMe: false, addressed: !inGroup, delivered: false,
+    };
+    // В группе ответ привязан к сообщению и к теме форума: иначе в живом чате
+    // непонятно, кому она отвечает, а в теме ответ уезжал в «Общую».
+    if (inGroup && message.message_id != null) {
+      turn.extra.reply_parameters = { message_id: message.message_id, allow_sending_without_reply: true };
+      if (message.is_topic_message === true && message.message_thread_id != null) turn.extra.message_thread_id = message.message_thread_id;
+    }
+    const ruled = (result) => { pulse.bump("ruled"); return result; };
+
+    if (!text) {
+      if (inGroup) return { ignored: true };
+      turn.manner = await mannerFor(actorId);
+      return mediaOnly(turn, kind);
     }
 
-    if (/^\/start(?:@\w+)?(?:\s|$)/iu.test(text)) return greeting(chatId, dry);
-    // Карточку открывает пустое /ai или /ai профиль. «/ai привет, как дела» —
-    // это разговор, а не команда: иначе вопрос человека превращался в справку.
-    if (/^\/ai(?:@\w+)?(?:\s+(?:профиль|profile|карточка))?\s*$/iu.test(text)) {
-      return profileCard({ chatId, actorId, dry });
-    }
-    if (/^\/help(?:@\w+)?(?:\s|$)/iu.test(text)) return say(chatId, helpLines(), { dry });
-    if (/^\/(?:ai(?:@\w+)?\s+)?(?:relationship|отношени[ея]|отношения)(?:@\w+)?(?:\s|$)/iu.test(text)) {
-      return answerRelationship({ chatId, actorId, dry });
-    }
-    if (/^\/(?:status|aidiag|диагностика)(?:@\w+)?(?:\s|$)/iu.test(text)) return diagnostic(chatId, ctx, actorId, dry);
-    // Любая другая косая черта: команда — это не разговор. В группе молчим,
-    // чтобы не отвечать за чужие боты; в личке честно говорим, что такой нет.
-    const slash = text.match(/^\/([A-Za-zА-Яа-яЁё0-9_]+)(?:@\w+)?(?:\s|$)/u);
-    if (slash && !["ai"].includes(slash[1].toLowerCase())) {
-      if (["group", "supergroup"].includes(message?.chat?.type)) return { ignored: true, reason: "unknown_command_in_group" };
-      return say(chatId, unknownCommandText(), { dry });
+    // ── команды: аварийный выход, а не интерфейс ──────────────────────────
+    const command = parseCommand(text);
+    let prompt = text;
+    if (command) {
+      if (inGroup && command.target) {
+        const self = await whoAmI(dry);
+        // Команда с адресом другого бота — не к ней, какой бы она ни была.
+        if (command.target !== String(self?.username ?? "").toLowerCase()) return { ignored: true, reason: "foreign_command" };
+      }
+      turn.addressed = true;
+      turn.manner = await mannerFor(actorId);
+      const sub = command.rest.toLowerCase();
+      if (command.name === "start") return ruled(await greeting(turn));
+      if (command.name === "help") return ruled(await say(turn, helpLines(turn)));
+      if (["status", "aidiag", "диагностика"].includes(command.name)) return diagnostic(turn);
+      if (/^(?:relationship|отношени[ея]|отношения)$/u.test(command.name)) return ruled(await answerRelationship(turn));
+      if (command.name !== "ai") {
+        // Любая другая косая черта: в группе молчим, чтобы не отвечать за чужие
+        // боты; в личке честно говорим, что такой нет.
+        if (inGroup) return { ignored: true, reason: "unknown_command_in_group" };
+        return ruled(await say(turn, unknownCommandText(turn)));
+      }
+      // Карточку открывает пустое /ai или /ai профиль. «/ai привет, как дела» —
+      // это разговор, а не команда: иначе вопрос человека превращался в справку.
+      if (!sub || /^(?:профиль|profile|карточка)$/u.test(sub)) return ruled(await profileCard(turn));
+      if (/^(?:relationship|отношени[ея]|отношения)$/u.test(sub)) return ruled(await answerRelationship(turn));
+      prompt = command.rest;
     }
 
-    const inGroup = ["group", "supergroup"].includes(message?.chat?.type);
-    const addressed = !inGroup || /^(?:\/ai|аи[,\s:])/iu.test(text) || message?.reply_to_message?.from?.is_bot === true;
-    if (inGroup && !addressed) return { ignored: true };
+    // ── к кому обращаются ─────────────────────────────────────────────────
+    let bare = false;
+    if (inGroup) {
+      const self = await whoAmI(dry);
+      turn.replyToMe = isReplyToMe(message, self);
+      const mentioned = mentions(prompt, self?.username);
+      const called = vocative(mentioned ? stripMention(prompt, self?.username) : prompt, [NAME.toLowerCase()]);
+      turn.addressed = command?.name === "ai" || turn.replyToMe || mentioned || called.addressed;
+      if (!turn.addressed) return { ignored: true };
+      prompt = called.prompt;
+      bare = !prompt;
+    } else {
+      turn.replyToMe = message?.reply_to_message?.from?.is_bot === true;
+      // В личке имя — вежливость: «Аи, запомни …» — та же просьба, что «запомни …».
+      const called = vocative(prompt, [NAME.toLowerCase()]);
+      if (called.addressed) { prompt = called.prompt; bare = !prompt; }
+    }
+    turn.manner ??= await mannerFor(actorId);
+    // Позвали по имени и ничего не сказали: отозваться можно и без модели.
+    if (bare) return ruled(await say(turn, ["Я здесь.", "Слушаю.", "Да?"][Math.abs(Number(message.message_id) || 0) % 3]));
 
-    const prompt = text.replace(/^\/ai(?:@\w+)?\s*/iu, "").replace(/^аи[,\s:]+/iu, "").trim();
-    if (!prompt) return { ignored: true };
+    if (!dry) {
+      try { turn.seen = await personal.seen(actorId); } catch { turn.seen = null; }
+      if (turn.seen?.newDay && turn.seen.known) {
+        const days = await personal.daysWith(actorId).then(value => value.days).catch(() => 0);
+        if ([7, 30, 100].includes(days) || (days > 0 && days % 365 === 0)) turn.anniversary = days;
+      }
+    }
 
     // Настройки — не команды: «зови меня …», «говори короче». Только в личке:
     // в группе человек говорит с Аи, а не настраивает её для всех.
-    const isPrivateChat = String(chatId) === String(actorId);
-    if (isPrivateChat && !dry) {
+    if (turn.isPrivate && !dry) {
       const wanted = addressRequest(prompt);
       if (wanted) {
         const saved = await personal.setAddress(actorId, wanted).catch(() => ({ ok: false }));
-        return say(chatId, saved.ok
-          ? `Хорошо, буду обращаться к тебе «${wanted}». Если передумаешь — скажи «зови меня …» ещё раз.`
-          : "Имя не запомнилось: попробуй короче, без символов.", { dry });
+        return ruled(await say(turn, saved.ok
+          ? you(turn, `Хорошо, буду обращаться к вам «${wanted}». Передумаете — скажите «зовите меня …» ещё раз.`, `Хорошо, буду обращаться к тебе «${wanted}». Если передумаешь — скажи «зови меня …» ещё раз.`)
+          : "Имя не запомнилось: нужно короче и без символов."));
       }
       const length = lengthRequest(prompt);
       if (length) {
         const saved = await personal.setLength(actorId, length).catch(() => ({ ok: false }));
-        return say(chatId, saved.ok
+        return ruled(await say(turn, saved.ok
           ? `Договорились, отвечаю ${({ кратко: "коротко", обычно: "обычно", подробно: "подробно" })[length]}.`
-          : "Не запомнилось — повторю попытку в следующий раз.", { dry });
+          : "Не запомнилось — повторю попытку в следующий раз."));
+      }
+    }
+    // «Давай на ты» — просьба о форме обращения, её можно сказать где угодно.
+    const form = dry ? null : formRequest(prompt);
+    if (form) {
+      if (owner(actorId)) return ruled(await say(turn, "С вами я всегда на «вы», хозяин: так решено — и мне так нравится."));
+      if (form === "ты" && turn.manner.score < 0) return ruled(await say(turn, "Пока не готова: между нами прохладно. Останемся на «вы»."));
+      const saved = await personal.setForm(actorId, form).catch(() => ({ ok: false }));
+      if (saved.ok) turn.manner = { ...turn.manner, formal: form === "вы", settings: { ...turn.manner.settings, form } };
+      return ruled(await say(turn, !saved.ok ? "Не запомнилось: хранилище не отвечает." : form === "ты" ? "Хорошо, давай на «ты»." : "Хорошо, перехожу на «вы»."));
+    }
+
+    // Слово владельца о чужой поправке: ответ «да» или «нет» на её вопрос.
+    if (!dry && owner(actorId) && turn.isPrivate && message.reply_to_message?.message_id != null && (YES.test(prompt) || NO.test(prompt))) {
+      const asked = await lessons.byAskMessage(message.reply_to_message.message_id).catch(() => null);
+      if (asked) {
+        const accept = YES.test(prompt);
+        const done = await lessons.judge(asked.id, accept, { by: actorId });
+        return ruled(await say(turn, !done.ok ? "Не получилось записать решение: хранилище не отвечает." : accept ? `Принято: урок №${asked.id} теперь общий.` : `Отклонено: урок №${asked.id} отменён.`));
       }
     }
 
-    const viaAbility = await tryAbility({ text: prompt, chatId, actorId, chatType: message?.chat?.type ?? "private", dry });
-    if (viaAbility) return { ok: true, action: "ability" };
+    const viaAbility = await tryAbility(turn, prompt);
+    if (viaAbility) return ruled({ ok: true, action: "ability" });
 
     // Намерения — до модели: слова человека это просьба, а не тема для
     // разговора. Понятое наполовину задаёт один вопрос, незнакомое уходит к
     // разговору ниже. Команды выше остаются аварийным выходом.
-    const viaIntent = await handleIntent({ text: prompt, chatId, actorId, chatType: message?.chat?.type ?? "private", dry });
-    if (viaIntent) return { ok: true, action: "intent" };
+    const viaIntent = await handleIntent(turn, prompt);
+    if (viaIntent) return ruled({ ok: true, action: "intent" });
 
     // Профиль, роль, уровень, VIP и варны — это факты из базы, а не тема для
     // разговора. Если способность не ответила, модель ответить не может: она
     // придумает роль, ID и «полный доступ» — и это уже случалось. Честное «не
     // знаю» дешевле красивой выдумки.
     if (FACT_QUESTION.test(prompt)) {
-      return say(chatId, `Профиль, роль и награды ведёт ${SISTER} — у меня этих данных нет, и придумывать их я не стану. Спросите её: «покажи профиль».`, { dry });
+      return ruled(await say(turn, `Профиль, роль и награды ведёт ${SISTER} — у меня этих данных нет, и придумывать их я не стану. ${you(turn, "Спросите", "Спроси")} её: «покажи профиль».`));
+    }
+
+    if (!dry) {
+      const closed = await noteDeeds(turn, prompt);
+      if (closed) return closed;
     }
 
     // Она имеет право не ответить: это не отказ и не поломка, а часть
     // характера. В частном разговоре и по делу молчание не применяется.
     if (policy && !dry) {
       try {
-        if (await policy.shouldIgnore({ userId: actorId, chatId, text: prompt })) {
+        if (await policy.shouldIgnore({ userId: actorId, chatId: chat.id, text: prompt })) {
+          pulse.bump("silent");
+          // «Видела» — чтобы выбор не выглядел поломкой.
+          await react(turn, "👀");
+          await store.set(`heart:quiet:${chat.id}:${actorId}`, { reason: "silence", at: now() });
           return { ok: true, ignored: true, reason: "deliberate_silence" };
         }
       } catch { /* политика не должна глушить разговор */ }
     }
 
-    const answer = await ai.generateReply({
-      userId: actorId,
-      chatId,
-      prompt,
-      role: owner(actorId) ? "Создатель" : "Участник",
-      ctx,
-      apiKey: await resolveKey(ctx),
-    });
-    if (answer.ok && policy && !dry) {
-      // Разговор состоялся — отношения сдвигаются. Записываем только после
-      // доставки: недоставленный ответ не делает человека ближе.
-      try { await policy.recordCommunication({ userId: actorId, chatId }); } catch { /* следующий ответ попробует снова */ }
+    const { answer, context, facts } = await talk(turn, prompt);
+    if (answer.ok) {
+      const sent = await say(turn, answer.text);
+      if (!dry && !answer.testRun && sent.ok) await remember(turn, prompt, answer, context, facts);
+      return sent;
     }
-    if (!answer.ok) {
-      const reason = PROVIDER_REASONS[answer.code];
-      if (reason && !dry) {
-        try {
-          await notices.report({
-            component: "provider",
-            code: answer.code,
-            detail: reason,
-            severity: answer.code === "ai_not_configured" ? "degraded" : "fault",
-          });
-        } catch { /* ответ важнее отчёта */ }
-      }
-      return say(chatId, answer.text || "Не получилось ответить.", { dry });
-    }
-    return say(chatId, answer.text, { dry });
+    if (dry) return say(turn, answer.text || "Не получилось ответить.");
+    return fallback(turn, prompt, answer);
   }
 
-  /** What is connected, in one object: used by /aidiag and by tests. */
+  async function onMessage(message, ctx = {}) {
+    const chatId = message?.chat?.id;
+    const dry = ctx?.testRun === true;
+    if (!chatId || message?.from?.is_bot) return { ignored: true };
+    const kind = senseOf(message);
+    if (kind === "none") return { ignored: true };
+    const text = String(message?.text ?? message?.caption ?? "").trim();
+
+    if (!dry) await wake(ctx);
+
+    // A channel post is either an event the heart should answer on its own, or
+    // the signed answer to something it asked. Everything else is noise.
+    if (message?.chat?.type === "channel") {
+      if (!text) return { ignored: true };
+      if (await events.onPost(text)) return { ok: true, code: "event_handled" };
+      const handled = await abilities.onPost(text);
+      return { ok: handled, code: handled ? "bridge_answer" : "not_for_heart" };
+    }
+
+    const ref = { turn: null };
+    try {
+      return await converse(message, ctx, { text, kind, dry }, ref);
+    } catch (error) {
+      // Исключение раньше исчезало молча: человек не получал ответа, владелец
+      // не узнавал о поломке. Теперь узнают оба.
+      await reportCrash(error, ctx);
+      const turn = ref.turn;
+      if (turn && !dry && !turn.delivered && turn.addressed) {
+        try { await say(turn, "У меня что-то сломалось внутри, и ответ не получился. Владелец уже знает."); } catch { /* сказать не вышло — отчёт уже ушёл */ }
+      }
+      return { ok: false, code: "runtime_error" };
+    } finally {
+      if (!dry) {
+        try { await afterTalk(ref.turn); } catch { /* шаг отношений подождёт */ }
+        try { await drain(ctx, ref.turn); } catch { /* очередь подождёт следующего обновления */ }
+        try { await pulse.commit(); } catch { /* счётчики не важнее ответа */ }
+      }
+    }
+  }
+
+  /** What is connected, in one object: used by the status screen and by tests. */
   async function status({ chatId = null, actorId = null } = {}) {
     const tools = chatId == null ? [] : (await abilities.catalogue({ actor: actorId, chat: chatId })).tools;
     const recent = await notices.list({ limit: 5 });
@@ -635,24 +1463,35 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       build: BUILD,
       intents: INTENTS.length,
       provider: config.AI_MODEL,
+      brains: await brains.describe({ apiKey: String(AI_API_KEY ?? "").trim() || "configured-elsewhere" }).catch(() => []),
       memory: store.available,
       sister: describeSister({ open: abilities.open(), tools, username: SISTER_USERNAME, sister: SISTER }),
+      bridge: abilities.open() ? await abilities.health().catch(() => null) : null,
       events: { kinds: events.KINDS, cooldownMin: Math.round(events.cooldownMs / 60_000), maxPerDay: events.maxPerDay },
       incidents: { recent, pending: await notices.pending(), ownerKnown: notices.ownerKnown },
+      lessons: await lessons.stats().catch(() => null),
+      queue: await queue.size().catch(() => 0),
+      today: await pulse.day().catch(() => ({})),
     };
   }
 
   return Object.freeze({
     onMessage,
     status,
+    reportCrash,
     events,
     notices,
     store,
     abilities,
     ai,
+    brains,
+    lessons,
+    queue,
+    pulse,
+    memory,
     policy,
     personal,
-    /** For tests and /aidiag: the same object the handler uses. */
+    /** For tests and the status screen: the same object the handler uses. */
     config,
   });
 }

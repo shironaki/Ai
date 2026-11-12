@@ -51,8 +51,54 @@ export const TOOL_NOTE = Object.freeze({
   __context: "что известно о человеке",
 });
 
-export function createAbilities({ secret = "", channelId = "", api = null, send = null, now = () => Date.now(), ttl = 60_000 } = {}) {
+/** Где лежит здоровье моста: одно значение на все изоляты. */
+export const BRIDGE_HEALTH_KEY = "heart:bridge:health";
+
+export function createAbilities({ secret = "", channelId = "", api = null, send = null, now = () => Date.now(), ttl = 60_000, store = null, name = "Аи", sister = "Юи", timeouts = {}, onSilence = null } = {}) {
   const bridge = createBridge({ secret, capabilities: { call: async () => ({ ok: false }) }, now });
+  const wait = { call: 20_000, catalogue: 15_000, context: 12_000, ...Object.fromEntries(Object.entries(timeouts ?? {}).filter(([, ms]) => Number.isFinite(ms) && ms > 0)) };
+
+  /**
+   * Предохранитель. Сестра может молчать — её бот выключен, не добавлен в
+   * канал или упал. Раньше каждое сообщение человека ждало её ответа заново:
+   * двенадцать секунд на вопрос о правах и ещё двенадцать на паузу. Теперь
+   * первый пропущенный ответ закрывает мост на две минуты, следующий — на
+   * четыре, и так до получаса; любой пришедший ответ открывает его сразу.
+   * Состояние лежит в базе: изолят может смениться между двумя сообщениями.
+   */
+  let health = null;
+  let healthAt = 0;
+  async function readHealth() {
+    if (health && (health.until > now() || now() - healthAt < 60_000)) return health;
+    let saved = null;
+    try { saved = store && typeof store.get === "function" ? await store.get(BRIDGE_HEALTH_KEY) : null; } catch { saved = null; }
+    health = { until: Number(saved?.until) || 0, failures: Number(saved?.failures) || 0, since: Number(saved?.since) || 0 };
+    healthAt = now();
+    return health;
+  }
+  async function writeHealth() {
+    try { if (store && typeof store.set === "function") await store.set(BRIDGE_HEALTH_KEY, health); } catch { /* останется в памяти изолята */ }
+  }
+  async function missed() {
+    const state = await readHealth();
+    state.failures += 1;
+    if (!state.since) state.since = now();
+    state.until = now() + Math.min(30, 2 ** Math.min(state.failures, 5)) * 60_000;
+    await writeHealth();
+    if (typeof onSilence === "function") {
+      try { await onSilence({ failures: state.failures, since: state.since, until: state.until }); } catch { /* отчёт не должен ломать ответ */ }
+    }
+  }
+  async function answered() {
+    const state = await readHealth();
+    if (!state.failures && !state.until) return;
+    state.failures = 0; state.until = 0; state.since = 0;
+    await writeHealth();
+  }
+  /** Мост настроен, но сестра сейчас не отвечает: спрашивать бессмысленно. */
+  async function silent() {
+    return (await readHealth()).until > now();
+  }
   const open = () => bridge.enabled && String(channelId ?? "") !== "" && String(channelId) !== "0";
   const pending = new Map();
   /** `chatType:actor` → { at, tools }. Bounded below. */
@@ -68,8 +114,9 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   }
 
   /** Seal one call, post it, and wait for the signed answer. */
-  async function call(tool, { actor = null, chat = null, chatType = null, args = {}, timeout = 20_000 } = {}) {
+  async function call(tool, { actor = null, chat = null, chatType = null, args = {}, timeout = wait.call } = {}) {
     if (!open()) return { ok: false, code: "bridge_not_configured", text: "" };
+    if (await silent()) return { ok: false, code: "bridge_silent", text: "" };
     const sealed = await bridge.seal({ tool, args, actor, chat, chatType, ttl });
     if (!sealed.ok) return { ok: false, code: sealed.code, text: "" };
 
@@ -79,12 +126,19 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     });
 
     const label = TOOL_NOTE[tool] ?? String(tool ?? "").slice(0, 32);
-    const note = `🤍 Аи → ${"Юи"} · ${label}${chat != null ? ` · чат ${chat}` : ""}`;
+    const note = `🤍 ${name} → ${sister} · ${label}${chat != null ? ` · чат ${chat}` : ""}`;
     try { await post(encodeEnvelope(sealed.envelope, note)); }
     catch { pending.delete(sealed.envelope.id); return { ok: false, code: "bridge_send_failed", text: "" }; }
 
-    try { return await answer; }
-    catch (error) { return { ok: false, code: error.code ?? "bridge_timeout", text: "" }; }
+    try {
+      const result = await answer;
+      await answered();
+      return result;
+    } catch (error) {
+      // Молчание — это факт о сестре, а не о вопросе: запоминаем его.
+      await missed();
+      return { ok: false, code: error.code ?? "bridge_timeout", text: "" };
+    }
   }
 
   /** Feed a channel post. Returns true when it was the answer we waited for. */
@@ -113,7 +167,7 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     const key = `${chatType ?? "any"}:${actor ?? "any"}`;
     const cached = catalogCache.get(key);
     if (cached && now() - cached.at < ttlMs && cached.tools.length) return { ok: true, code: "ok", tools: cached.tools };
-    const result = await call(CATALOG_TOOL, { actor, chat, chatType, timeout: 15_000 });
+    const result = await call(CATALOG_TOOL, { actor, chat, chatType, timeout: wait.catalogue });
     if (result.ok && Array.isArray(result.data)) {
       const tools = result.data.filter(tool => tool && tool.name);
       catalogCache.set(key, { at: now(), tools });
@@ -145,8 +199,10 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     // Один вопрос — один конверт, даже если его одновременно спросили два
     // места: профиль ответа и пауза между ответами спрашивают об одном и том же.
     if (inflightContext.has(cacheKey)) return inflightContext.get(cacheKey);
+    // Сестра молчит — ответ строится без её фактов, и ждать нечего.
+    if (await silent()) return null;
     const task = (async () => {
-      const result = await call(CONTEXT_TOOL, { actor, chat, chatType: place, timeout: 12_000 });
+      const result = await call(CONTEXT_TOOL, { actor, chat, chatType: place, timeout: wait.context });
       if (!result.ok) return null;
       const value = result.data && typeof result.data === "object" ? result.data : {};
       contextCache.set(cacheKey, { at: now(), value });
@@ -163,7 +219,13 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     catch { return { ok: false, code: "crypto_unavailable" }; }
   }
 
-  return Object.freeze({ open, call, onPost, catalog, catalogue, context, verify, decode: decodeEnvelope, bridge });
+  /** Здоровье моста одной записью: для /status и для отчёта владельцу. */
+  async function healthState() {
+    const state = await readHealth();
+    return { silent: state.until > now(), until: state.until, since: state.since, failures: state.failures };
+  }
+
+  return Object.freeze({ open, call, onPost, catalog, catalogue, context, verify, silent, health: healthState, decode: decodeEnvelope, bridge });
 }
 
 /**

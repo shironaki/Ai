@@ -21,6 +21,9 @@ const CONFIG = {
   NAME: "Аи",
   SISTER_NAME: "Юи",
   SISTER_BOT_USERNAME: "",
+  // Вести владельцу («я обновилась», сводка дня) проверяются отдельно: здесь
+  // они выключены, чтобы каждый тест считал только свои сообщения.
+  SELF_REPORTS: false,
 };
 
 function sdk() { return globalThis.__sdkStub; }
@@ -30,6 +33,9 @@ function reset() {
   sdk().fetchQueue.length = 0;
   sdk().kv.clear();
   sdk().memory.clear();
+  sdk().calls.length = 0;
+  for (const name of Object.keys(sdk().failing)) delete sdk().failing[name];
+  delete sdk().me;
 }
 
 const KEY = { env: { AI_PROVIDER_KEY: "test-provider-key" } };
@@ -127,10 +133,19 @@ test("/help lists only what the heart really does, and never asks the model", as
   const text = sdk().sent[0].text;
   assert.equal(sdk().fetches.length, 0, "no provider call for a command list");
   assert.match(text, /Что я умею/);
-  assert.match(text, /\/status/);
-  // The two commands the model invented on the live bot.
-  assert.doesNotMatch(text, /\/settings/);
-  assert.doesNotMatch(text, /\/feedback/);
+  // Команд в справке нет вовсе: она понимает слова. Тем более нет тех двух,
+  // что модель однажды выдумала на живом боте.
+  assert.doesNotMatch(text, /(?:^|\s)\/[a-z]/iu, "справка не учит командам");
+  assert.match(text, /запомни/);
+  // Те же слова без команды — тот же ответ и тоже без модели.
+  await h.onMessage(message("что ты умеешь?"), KEY);
+  assert.equal(sdk().sent[1].text, text);
+  assert.equal(sdk().fetches.length, 0);
+  // Хозяину справка называет его слова: «статус» и уроки.
+  reset();
+  await h.onMessage(message("помощь", { id: 7, chat: 7 }), KEY);
+  assert.match(sdk().sent[0].text, /статус/);
+  assert.match(sdk().sent[0].text, /покажи уроки/);
 });
 
 test("an unknown slash command is named as unknown, without a provider call", async () => {
@@ -139,7 +154,9 @@ test("an unknown slash command is named as unknown, without a provider call", as
   await h.onMessage(message("/command2"));
   assert.equal(sdk().fetches.length, 0);
   assert.match(sdk().sent[0].text, /такой команды у меня нет/);
-  assert.match(sdk().sent[0].text, /\/help/);
+  // Вместо другой команды — слова, которыми можно спросить.
+  assert.match(sdk().sent[0].text, /что ты умеешь/);
+  assert.doesNotMatch(sdk().sent[0].text, /\/help/);
 });
 
 test("in a group an unknown slash command is not answered at all", async () => {
@@ -303,7 +320,7 @@ test("просьба словами записывается, показывае
   await h.onMessage(message("забудь 1"));
   assert.match(sdk().sent.at(-1).text, /Забыла/);
   await h.onMessage(message("что ты обо мне помнишь"));
-  assert.match(sdk().sent.at(-1).text, /ничего о себе не рассказывал/);
+  assert.match(sdk().sent.at(-1).text, /ничего не записано/);
 });
 
 test("понятое наполовину — один вопрос вместо догадки и вместо модели", async () => {
@@ -315,7 +332,7 @@ test("понятое наполовину — один вопрос вместо
   assert.equal(sdk().fetches.length, 0);
 
   const forget = await h.onMessage(message("забудь"));
-  assert.match(sdk().sent.at(-1).text, /всё или одну запись/);
+  assert.match(sdk().sent.at(-1).text, /одну запись или всё/);
 });
 
 test("наказания и деньги — не её работа: отказ вместо исполнения", async () => {
@@ -335,7 +352,7 @@ test("репетиция не пишет память", async () => {
   await h.onMessage(message("запомни, что я люблю кофе"), { testRun: true });
   assert.equal(sdk().kv.size, 0, "ничего не сохранено");
   await h.onMessage(message("что ты обо мне помнишь"));
-  assert.match(sdk().sent.at(-1).text, /ничего о себе не рассказывал/);
+  assert.match(sdk().sent.at(-1).text, /ничего не записано/);
 });
 
 test("хранилище без таблиц говорит об этом прямо, а не «попробуйте позже»", async () => {
@@ -447,7 +464,9 @@ test("a switched-off module is reported as switched off, not as a failure", asyn
   const { missingAbilityText } = await import("../tgcloud/lib/sibling.js");
   const text = missingAbilityText({ tool: "profile", reason: "module_disabled", chatType: "group" });
   assert.match(text, /выключено/);
-  assert.match(text, /\/packs/);
+  // Чужую команду сердце не называет: оно не знает списка команд сестры.
+  assert.doesNotMatch(text, /\/[a-z]/iu);
+  assert.match(text, /владелец чата/);
 });
 
 test("an event from the sister is answered once, quietly, and only for known kinds", async () => {
@@ -563,11 +582,15 @@ test("VIP answers faster only when the status is confirmed, not because a word s
   // Слово в роли или в переписке статусом не является.
   assert.equal(pauseFor({ facts: { vip: false, role: "VIP" }, config: limits }), 1500);
 
-  // И сердце действительно ждёт: второе сообщение в ту же секунду придержано.
-  const h = heart({ AI_MIN_INTERVAL_MS: 1500 }, { now: () => 1_000_000 });
+  // И сердце действительно ждёт — но не отказывает: второе сообщение в ту же
+  // секунду раньше получало «дай секунду подумать» и пропадало.
+  const h = heart({ AI_MIN_INTERVAL_MS: 150 }, { now: () => 1_000_000 });
   await h.onMessage(message("привет"), KEY);
+  const started = Date.now();
   await h.onMessage(message("и ещё"), KEY);
-  assert.match(sdk().sent.at(-1).text, /секунду/);
+  assert.ok(Date.now() - started >= 120, "пауза выдержана");
+  assert.equal(sdk().sent.at(-1).text, "ответ из стаба", "и ответ всё равно пришёл");
+  assert.equal(sdk().fetches.length, 2);
 });
 
 test("«Вы и Аи» is one card in words, and two settings are said out loud", async () => {
@@ -591,7 +614,7 @@ test("«Вы и Аи» is one card in words, and two settings are said out loud"
   sdk().sent.length = 0; sdk().fetches.length = 0;
   await h.onMessage(message("привет"), KEY);
   const body = JSON.parse(sdk().fetches[0].options.body);
-  assert.match(body.messages[0].content, /Обращайся к собеседнику по имени «Алекс»/);
+  assert.match(body.messages[0].content, /звать его «Алекс»/);
 
   // Длина ответа — тоже пожелание словами, а не меню.
   await h.onMessage(message("говори короче"), KEY);
@@ -600,7 +623,8 @@ test("«Вы и Аи» is one card in words, and two settings are said out loud"
 
   sdk().sent.length = 0;
   await h.onMessage(message("/ai профиль"), KEY);
-  assert.match(sdk().sent[0].text, /Ты для меня — Алекс/);
+  // С незнакомым человеком она на «вы»: «ты» приходит с близостью.
+  assert.match(sdk().sent[0].text, /Для меня вы — Алекс/);
   assert.match(sdk().sent[0].text, /Отвечаю коротко/);
 });
 

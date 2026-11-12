@@ -1,4 +1,5 @@
-import { CHARACTER_PROMPT } from "./ai-character.js";
+import { CHARACTER_PROMPT, CORE_PROMPT } from "./ai-character.js";
+import { readLimits, DEFAULT_REST_MS } from "./brains.js";
 
 /**
  * OpenAI-compatible provider endpoints.
@@ -11,6 +12,22 @@ export const DEFAULT_AI_BASE_URL = "https://api.groq.com/openai/v1";
 export const GROQ_URL = `${DEFAULT_AI_BASE_URL}/chat/completions`;
 export const AI_REQUEST_TIMEOUT_MS = 25000;
 export const AI_DIAGNOSTIC_TIMEOUT_MS = 15000;
+/** Запасная модель получает меньше времени: человек уже ждал первую. */
+export const AI_FALLBACK_TIMEOUT_MS = 15000;
+/** Сколько моделей подряд можно спросить на одно сообщение. */
+const MAX_ATTEMPTS = 3;
+/** Дольше этого паузу между сообщениями не выжидаем — отвечаем сразу. */
+const MAX_WAIT_MS = 3000;
+/** «Повторите через секунду» дешевле смены модели. */
+const SHORT_RETRY_MS = 2500;
+/** Модели, которые рассуждают перед ответом и принимают параметр усилия. */
+const REASONING_MODEL = /gpt-oss/iu;
+
+/** Подождать. В изоляте без таймеров ожидание пропускается, а не падает. */
+export function sleep(ms) {
+  if (typeof setTimeout !== "function" || !(ms > 0)) return Promise.resolve();
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 /**
  * AbortSignal.timeout is a web API, not ECMAScript. The Telegram Serverless
@@ -166,6 +183,60 @@ async function readProviderError(response) {
   }
 }
 
+/**
+ * История для запроса: последние реплики целиком, старые — началом.
+ *
+ * Восемь сообщений по четыре тысячи знаков — это до восьми тысяч токенов на
+ * каждое «привет». Смысл разговора держат последние реплики; от старых
+ * достаточно начала, чтобы нить не терялась.
+ */
+export function compactHistory(history = []) {
+  const items = Array.isArray(history) ? history : [];
+  return items.map((item, index) => {
+    const recent = index >= items.length - 4;
+    const limit = recent ? 700 : 200;
+    const content = String(item.content ?? "");
+    return { role: item.role, content: content.length > limit ? `${truncateSafely(content, limit).trimEnd()}…` : content };
+  });
+}
+
+/** Скрытые рассуждения модели — не часть ответа. */
+export function stripThinking(value) {
+  return String(value ?? "").replace(/<think>[\s\S]*?<\/think>/giu, "").replace(/^[\s\S]*<\/think>/iu, "").trim();
+}
+
+/** Оборванный ответ заканчивается на последней целой фразе. */
+export function trimToSentence(text) {
+  const value = String(text ?? "").trimEnd();
+  const cut = Math.max(value.lastIndexOf(". "), value.lastIndexOf("! "), value.lastIndexOf("? "), value.lastIndexOf("…"), value.lastIndexOf(".\n"), value.lastIndexOf("!\n"), value.lastIndexOf("?\n"));
+  if (/[.!?…»)]$/u.test(value)) return value;
+  // Короткий обрывок честнее оставить с многоточием, чем срезать до нуля.
+  if (cut < value.length * 0.5) return `${value}…`;
+  return value.slice(0, cut + 1).trimEnd();
+}
+
+const BLOCKED_ANSWER = "Внутренние сведения об управлении я не раскрываю. Могу помочь с доступными возможностями и настройками общения.";
+/** Ответ называет, КТО создал или ведёт бота: это и есть утечка. */
+const OWNER_LEAK = [
+  /(?:основател|создател|владел|разработчик|хозя)[а-яё]*\s+(?:этого\s+|данного\s+|нашего\s+)?(?:бота|чат-бота)\s*(?:—|–|-|:|это|является|зовут)/iu,
+  /(?:мо(?:й|его|ему|им|ем|ём)|мо[яею]|мою)\s+(?:создател|основател|владел|разработчик|хозя)[а-яё]*\s*(?:—|–|-|:|это|является|зовут)\s*@?[\p{L}\d]/iu,
+  /меня\s+(?:создал[аи]?|разработал[аи]?|основал[аи]?|сделал[аи]?)\s+@?[\p{Lu}\d]/u,
+  /\bfounder\s+of\s+(?:this|the)\s+bot\b/iu,
+];
+
+/**
+ * Последняя проверка ответа. Раньше любое слово «основатель» заменяло ответ
+ * отказом — и вопрос «кто основал Рим?» получал «внутренние сведения не
+ * раскрываю». Теперь отказ вызывает только фраза о том, кто стоит за ботом,
+ * и числовой ID из закрытого списка. Владельцу в его личке связь признаётся.
+ */
+export function guardAnswer(answer, { confidentialIds = [], trusted = false } = {}) {
+  const text = String(answer ?? "");
+  const leaksId = confidentialIds.some(id => /^[1-9]\d{4,}$/u.test(String(id)) && new RegExp(`(^|[^0-9])${id}([^0-9]|$)`, "u").test(text));
+  const leaksOwner = !trusted && OWNER_LEAK.some(pattern => pattern.test(text));
+  return leaksId || leaksOwner ? { text: BLOCKED_ANSWER, blocked: true } : { text, blocked: false };
+}
+
 export function createAiService({
   confidentialIds = [],
   fetchImpl = null,
@@ -184,6 +255,8 @@ export function createAiService({
   intervalFor = null,
   claimRequest = null,
   createSignal = createTimeoutSignal,
+  // Цепочка моделей. Без неё сервис думает одной моделью, как раньше.
+  brains = null,
 } = {}) {
   // Construction must not depend on Node globals: the isolate may expose
   // outbound HTTP only through the platform SDK, which the deployed handler
@@ -328,6 +401,16 @@ export function createAiService({
     async generateReply({
       userId, chatId, prompt, role = "Пользователь", verifiedContext = "", ctx = {},
       apiKey: explicitKey = null, model: modelOverride = null,
+      // Личка или группа: от этого зависят и характер, и то, какие факты можно
+      // произносить. Раньше сюда ничего не передавалось, и группа получала
+      // подсказку лички — вместе с личными фактами.
+      isPrivate = null,
+      // Собеседник — владелец в собственной личке: связь можно признавать.
+      trusted = false,
+      // Отложенный ответ не ждёт паузы между запросами: человек уже ждал.
+      deferred = false,
+      // Пометки сердца к этой реплике: что прислали, на что отвечают.
+      note = "",
     }) {
       // A rehearsal answers the route, never the network. Without this, a test
       // run still travelled through every hook below — and once the bridge to
@@ -339,146 +422,193 @@ export function createAiService({
       // The caller may resolve the key from a store the service cannot see
       // (the bot database); explicit values win over the ctx-based default.
       const apiKey = String((explicitKey ?? getApiKey(ctx)) ?? "").trim();
-      if (!apiKey) return { ok: false, code: "ai_not_configured", text: "Аи пока не подключена: в TEST-контуре не настроен AI-провайдер." };
+      if (!apiKey) return { ok: false, code: "ai_not_configured", text: "Ключ провайдера не задан: думать пока нечем." };
       if (userId == null || chatId == null || !String(prompt ?? "").trim()) {
         return { ok: false, code: "invalid_request", text: "Не удалось определить пользователя, чат или текст запроса." };
       }
       const doFetch = resolveFetch();
       if (!doFetch) {
-        return { ok: false, code: "provider_unavailable", text: "Аи недоступна: платформенный HTTP-клиент не подключён." };
+        return { ok: false, code: "provider_unavailable", text: "Платформенный HTTP-клиент не подключён." };
       }
+      const privateChat = isPrivate == null ? String(chatId) === String(userId) : Boolean(isPrivate);
 
       const key = `${String(chatId)}:${String(userId)}`;
-      const time = now();
       let pause = minimumIntervalMs;
       if (typeof intervalFor === "function") {
         try {
-          const value = await intervalFor({ userId: String(userId), chatId: String(chatId) });
+          const value = await intervalFor({ userId: String(userId), chatId: String(chatId), isPrivate: privateChat });
           if (Number.isFinite(value) && value >= 0) pause = value;
         } catch {
           // A failed lookup falls back to the standard pause, never to zero.
           pause = minimumIntervalMs;
         }
       }
-      if (time - (lastRequest.get(key) ?? 0) < pause) {
-        return { ok: false, code: "rate_limited", text: "Дай Аи секунду подумать — слишком частые запросы." };
-      }
-      lastRequest.set(key, time);
+      // Два сообщения подряд — не повод отказать. Раньше второе получало «дай
+      // секунду подумать» и пропадало; пауза короткая, её можно просто выждать.
+      const since = now() - (lastRequest.get(key) ?? 0);
+      if (!deferred && since >= 0 && since < pause) await sleep(Math.min(pause - since, MAX_WAIT_MS));
+      lastRequest.set(key, now());
+      if (lastRequest.size > 512) for (const [k, at] of lastRequest) if (now() - at > 60_000) lastRequest.delete(k);
 
       if (claimRequest && !await claimRequest({ userId, chatId })) {
-        return { ok: false, code: "rate_limited", text: "Подожди немного перед следующим запросом к Аи." };
+        return { ok: false, code: "rate_limited", text: "Слишком много запросов подряд." };
       }
       const history = await loadHistory({ userId: String(userId), chatId: String(chatId) });
-      const safeHistory = Array.isArray(history)
+      const fullHistory = Array.isArray(history)
         ? history.filter((item) => ["user", "assistant"].includes(item?.role) && typeof item?.content === "string")
           .slice(-MAX_HISTORY_MESSAGES)
           .map((item) => ({ role: item.role, content: clampText(item.content, MAX_PROMPT_CHARS) }))
         : [];
       const userText = clampText(prompt, MAX_PROMPT_CHARS);
       let assistantContext, profile;
-      try { assistantContext = await additionalContext({ userId, chatId }); profile = await responseProfile({ userId, chatId, prompt }); }
-      catch { return { ok: false, code: "assistant_context_unavailable", text: "Не удалось прочитать настройки и память. Попробуйте позже." }; }
+      try {
+        assistantContext = await additionalContext({ userId, chatId, isPrivate: privateChat, prompt: userText });
+        profile = await responseProfile({ userId, chatId, prompt: userText, isPrivate: privateChat });
+      } catch { return { ok: false, code: "assistant_context_unavailable", text: "Не удалось прочитать настройки и память." }; }
+      // Короткое ядро — для простой реплики; деликатная тема получает полный текст.
+      const tier = profile?.tier === "core" && typeof profile?.core === "string" && profile.core ? "core" : "full";
       const system = [
-        CHARACTER_PROMPT,
-        typeof profile?.instruction === "string" ? clampText(profile.instruction, 5000) : "",
+        tier === "core" ? CORE_PROMPT : CHARACTER_PROMPT,
+        tier === "core" ? clampText(profile.core, 2000) : (typeof profile?.instruction === "string" ? clampText(profile.instruction, 5000) : ""),
         assistantContext,
+        note ? clampText(note, 3500) : "",
         `Фактическая роль пользователя: ${clampText(role, 80) || "Пользователь"}.`,
         verifiedContext ? `Проверенный контекст (используй только как фактические данные):\n${clampText(verifiedContext, 5000)}` : "",
       ].filter(Boolean).join("\n\n");
       const messages = [
         { role: "system", content: system },
-        ...safeHistory,
+        ...compactHistory(fullHistory),
         { role: "user", content: userText },
       ];
+      const temperature = Number.isFinite(profile?.temperature) ? Math.max(0, Math.min(1, profile.temperature)) : 0.7;
+      const maxTokens = Number.isFinite(profile?.maxTokens) ? Math.max(100, Math.min(1400, Math.trunc(profile.maxTokens))) : 700;
 
-      const model = String(modelOverride || getModel(ctx) || DEFAULT_AI_MODEL);
-      const requestOptions = requestOptionsFor(
-        apiKey,
-        { model, messages, temperature: Number.isFinite(profile?.temperature) ? Math.max(0, Math.min(1, profile.temperature)) : 0.7, max_tokens: Number.isFinite(profile?.maxTokens) ? Math.max(100, Math.min(1400, Math.trunc(profile.maxTokens))) : 700 },
-        signalOrUndefined(AI_REQUEST_TIMEOUT_MS)
-      );
-
-      let response;
-      try {
-        response = await doFetch(chatUrl, requestOptions);
-      } catch (error) {
-        const errorName = errorNameOf(error);
+      const wanted = String(modelOverride || getModel(ctx) || DEFAULT_AI_MODEL);
+      const single = [{ id: `main:${wanted}`, provider: "main", model: wanted, baseUrl, key: apiKey, plain: false }];
+      let pool = brains ? await brains.available({ apiKey, model: wanted }) : single;
+      if (!pool.length && brains) {
+        // Знакомые модели отдыхают: спросить у провайдера, чем ещё можно думать.
+        const found = await brains.discover({ fetchImpl: doFetch, apiKey, signal: signalOrUndefined(AI_DIAGNOSTIC_TIMEOUT_MS) });
+        if (found.added?.length) pool = await brains.available({ apiKey, model: wanted });
+      }
+      if (!pool.length) {
+        // Думать нечем. «Лимит вышел» и «нет связи» — разные причины, и
+        // человеку с владельцем называется настоящая.
+        const why = brains ? await brains.whyResting({ apiKey, model: wanted }) : "";
         return {
-          ok: false,
-          code: "provider_network_error",
-          errorName,
-          model,
-          text: `Аи не смогла связаться с AI-провайдером (сетевая ошибка: ${errorName}). Попробуй позже.`,
+          ok: false, code: "brains_exhausted", transient: true, limited: why !== "fault",
+          retryAt: brains ? await brains.nextAt({ apiKey, model: wanted }) : 0, model: wanted,
+          text: why === "fault" ? "Модели недоступны: связь или сбой у провайдера." : "Все модели отдыхают: лимит запросов исчерпан.",
         };
       }
 
-      const outcome = responseOutcome(response);
-      if (!outcome.succeeded) {
-        // An explicit ok:false on a 2xx is a platform inconsistency, not a
-        // provider rejection: name it instead of printing "HTTP 200 error".
-        if (outcome.okFlag === false && outcome.status !== null && outcome.status >= 200 && outcome.status < 300) {
+      /** Один запрос к одной модели. Сам запоминает, кому пора отдохнуть. */
+      const ask = async (brain, { timeout, plain = brain.plain, retried = false }) => {
+        const payload = { model: brain.model, messages, temperature, max_tokens: maxTokens };
+        // Рассуждающая модель по умолчанию тратит на раздумья сотни токенов до
+        // первого слова ответа. Для разговора хватает малого усилия.
+        const eased = !plain && REASONING_MODEL.test(brain.model);
+        if (eased) payload.reasoning_effort = "low";
+        let response;
+        try {
+          response = await doFetch(providerChatUrl(brain.baseUrl), requestOptionsFor(brain.key, payload, signalOrUndefined(timeout)));
+        } catch (error) {
+          if (brains) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" });
+          const errorName = errorNameOf(error);
+          return { ok: false, code: "provider_network_error", transient: true, errorName, model: brain.model, text: `Нет связи с провайдером (сетевая ошибка: ${errorName}).` };
+        }
+        const outcome = responseOutcome(response);
+        const limits = readLimits(response?.headers);
+        if (!outcome.succeeded) {
+          // An explicit ok:false on a 2xx is a platform inconsistency, not a
+          // provider rejection: name it instead of printing "HTTP 200 error".
+          if (outcome.okFlag === false && outcome.status !== null && outcome.status >= 200 && outcome.status < 300) {
+            return { ok: false, code: "provider_ok_flag_conflict", status: outcome.status, model: brain.model, text: `AI-платформа вернула HTTP ${outcome.status}, но пометила ответ как ошибочный (ok: false) — несовместимость SDK.` };
+          }
+          if (!outcome.recognized) {
+            return { ok: false, code: "provider_response_unrecognized", status: null, model: brain.model, text: "AI-платформа вернула ответ без HTTP-статуса и без флага ok — это несовместимость SDK." };
+          }
+          // Do not echo provider bodies or request headers; they can contain
+          // sensitive data. Status and error code are enough to diagnose.
+          const detail = await readProviderError(response);
+          const status = outcome.status;
+          const reason = `${detail.code} ${detail.type}`.toLowerCase();
+          const limited = status === 429 || status === 413;
+          const gone = status === 404 || (status === 400 && /model|decommission|not_found/u.test(reason));
+          // Параметр усилия не принят этой моделью: спросить проще и запомнить.
+          if (status === 400 && eased && !gone) {
+            if (brains) await brains.simplify(brain.id);
+            return ask(brain, { timeout, plain: true, retried });
+          }
+          if (status === 429 && !retried && limits.retryAfterMs != null && limits.retryAfterMs <= SHORT_RETRY_MS) {
+            await sleep(limits.retryAfterMs + 100);
+            return ask(brain, { timeout, plain, retried: true });
+          }
+          if (brains) {
+            if (limited) await brains.rest(brain.id, { ms: limits.retryAfterMs ?? DEFAULT_REST_MS, why: "limit" });
+            else if (gone) await brains.retire(brain.id, { why: "gone" });
+            else if (status >= 500) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "down" });
+          }
           return {
-            ok: false,
-            code: "provider_ok_flag_conflict",
-            status: outcome.status,
-            model,
-            text: `AI-платформа вернула HTTP ${outcome.status}, но пометила ответ как ошибочный (ok: false) — несовместимость SDK. Секретные данные скрыты.`,
+            ok: false, code: "provider_http_error", status, limited, gone,
+            transient: limited || status >= 500,
+            keyRejected: status === 401 || status === 403,
+            providerCode: detail.code, providerType: detail.type, contentType: detail.contentType,
+            model: brain.model,
+            text: `AI-провайдер вернул ошибку: ${describeProviderFailure({ status, providerCode: detail.code || detail.type, model: brain.model })}`,
           };
         }
-        // Do not echo provider bodies or request headers; they can contain
-        // sensitive data. Status and error code are enough to diagnose.
-        const detail = outcome.recognized ? await readProviderError(response) : { code: "", type: "", contentType: "" };
-        if (!outcome.recognized) {
-          return {
-            ok: false,
-            code: "provider_response_unrecognized",
-            status: null,
-            model,
-            text: "AI-платформа вернула ответ без HTTP-статуса и без флага ok — это несовместимость SDK. Секретные данные скрыты.",
-          };
+        let data;
+        try { data = await response.json(); }
+        catch {
+          return { ok: false, code: "provider_invalid_response", status: outcome.status, model: brain.model, text: `AI-провайдер вернул ответ, который не удалось разобрать как JSON (HTTP ${outcome.status ?? "?"}).` };
         }
+        if (brains) await brains.note(brain.id, limits);
+        return { ok: true, data, limits };
+      };
+
+      const tried = [];
+      const rejected = new Set();
+      let last = null;
+      for (const brain of pool) {
+        if (tried.length >= MAX_ATTEMPTS) break;
+        // Ключ отвергнут — другая модель того же провайдера не поможет.
+        if (rejected.has(brain.provider)) continue;
+        const result = await ask(brain, { timeout: tried.length ? AI_FALLBACK_TIMEOUT_MS : AI_REQUEST_TIMEOUT_MS });
+        tried.push(brain.model);
+        if (!result.ok) {
+          last = result;
+          if (result.keyRejected) rejected.add(brain.provider);
+          continue;
+        }
+        const choice = result.data?.choices?.[0];
+        let answer = clampText(stripThinking(choice?.message?.content), MAX_REPLY_CHARS);
+        // Ответ оборван лимитом длины: закончить на целой фразе, а не на полуслове.
+        if (choice?.finish_reason === "length") answer = trimToSentence(answer);
+        answer = guardAnswer(answer, { confidentialIds, trusted }).text;
+        if (!answer) {
+          last = { ok: false, code: "empty_response", model: brain.model, text: "Провайдер вернул пустой ответ." };
+          continue;
+        }
+        const updatedHistory = [...fullHistory, { role: "user", content: userText }, { role: "assistant", content: answer }]
+          .slice(-MAX_HISTORY_MESSAGES);
+        try {
+          await saveHistory({ userId: String(userId), chatId: String(chatId), messages: updatedHistory });
+        } catch {
+          // The answer remains useful if optional history storage is not available.
+        }
+        const usage = result.data?.usage ?? {};
         return {
-          ok: false,
-          code: "provider_http_error",
-          status: outcome.status,
-          providerCode: detail.code,
-          providerType: detail.type,
-          contentType: detail.contentType,
-          model,
-          text: `AI-провайдер вернул ошибку: ${describeProviderFailure({
-            status: outcome.status,
-            providerCode: detail.code || detail.type,
-            model,
-          })} Секретные данные скрыты.`,
+          ok: true, text: answer, model: brain.model, brain: brain.id, tier,
+          // Думала не основной моделью: об этом узнаёт владелец, а не собеседник.
+          switched: tried.length > 1 || brain.id !== pool[0].id || brain.model !== wanted,
+          tried,
+          usage: { prompt: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0, total: Number(usage.total_tokens) || 0 },
+          remainingRequests: result.limits?.remainingRequests ?? null,
+          limitRequests: result.limits?.limitRequests ?? null,
         };
       }
-
-      let data;
-      try {
-        data = await response.json();
-      } catch {
-        return {
-          ok: false,
-          code: "provider_invalid_response",
-          status: outcome.status,
-          model,
-          text: `AI-провайдер вернул ответ, который не удалось разобрать как JSON (HTTP ${outcome.status ?? "?"}).`,
-        };
-      }
-      let answer = clampText(data?.choices?.[0]?.message?.content, MAX_REPLY_CHARS);
-      if (/(?:основател[ьяюе]|\bfounder\b|создател[ьяюем]*\s+бота)/iu.test(answer) || confidentialIds.some(id => /^[1-9]\d*$/u.test(String(id)) && new RegExp(`(^|[^0-9])${id}([^0-9]|$)`, "u").test(answer))) {
-        answer = "Внутренние сведения об управлении я не раскрываю. Могу помочь с доступными возможностями и настройками общения.";
-      }
-      if (!answer) return { ok: false, code: "empty_response", text: "Аи не получила содержательный ответ от AI-провайдера." };
-
-      const updatedHistory = [...safeHistory, { role: "user", content: userText }, { role: "assistant", content: answer }]
-        .slice(-MAX_HISTORY_MESSAGES);
-      try {
-        await saveHistory({ userId: String(userId), chatId: String(chatId), messages: updatedHistory });
-      } catch {
-        // The answer remains useful if optional history storage is not available.
-      }
-      return { ok: true, text: answer, model };
+      return { ...(last ?? { ok: false, code: "empty_response", text: "Провайдер вернул пустой ответ." }), tried, retryAt: brains ? await brains.nextAt({ apiKey, model: wanted }) : 0 };
     },
   };
 }

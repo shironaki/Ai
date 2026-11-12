@@ -20,3 +20,32 @@ export async function personalTimeZone(store, userId) {
   if (!row.ok) throw Error("timezone_storage_unavailable");
   return { timeZone: effectiveTimeZone(row.value?.timezone), explicit: validTimeZone(row.value?.timezone) };
 }
+
+/** Час по местному времени (0–23): по нему решается «утро» и «ночь». */
+export function localHour(at, timeZone) {
+  try {
+    const hour = new Intl.DateTimeFormat("en-GB", { timeZone: effectiveTimeZone(timeZone), hour: "2-digit", hourCycle: "h23" }).format(new Date(at));
+    const value = Number(String(hour).replace(/\D/gu, ""));
+    return Number.isFinite(value) ? value % 24 : new Date(at).getUTCHours();
+  } catch { return new Date(at).getUTCHours(); }
+}
+
+/** «14:05» по местному времени — для фраз «до 14:05». */
+export function localClock(at, timeZone) {
+  try {
+    return new Intl.DateTimeFormat("ru-RU", { timeZone: effectiveTimeZone(timeZone), hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(at));
+  } catch { return new Date(at).toISOString().slice(11, 16); }
+}
+
+/**
+ * «вторник, 11 ноября 2026 г., 14:05» — строка для подсказки модели. Без неё
+ * на вопрос «какой сегодня день» модель называла дату из своих учебных данных.
+ */
+export function nowLine(at, timeZone) {
+  try {
+    return new Intl.DateTimeFormat("ru-RU", {
+      timeZone: effectiveTimeZone(timeZone), weekday: "long", day: "numeric", month: "long", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).format(new Date(at));
+  } catch { return new Date(at).toISOString().slice(0, 16).replace("T", " "); }
+}

@@ -48,6 +48,15 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
     } catch { return false; }
   }
 
+  /** Удалить ключ. «Не было» и «удалён» — один исход: его больше нет. */
+  async function remove(key) {
+    if (!has) return false;
+    try {
+      await db.run("DELETE FROM kv_state WHERE key = :key", { ":key": String(key) });
+      return true;
+    } catch { return false; }
+  }
+
   // Optimistic write: the caller read `before`, and only that exact value is
   // replaced. A lost race returns false instead of overwriting a newer state.
   async function compareSet(key, before, next) {
@@ -97,6 +106,15 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
     } catch { return false; }
   }
 
+  /** Вся переписка человека во всех чатах: для «удали всё обо мне». */
+  async function clearUser({ userId }) {
+    if (!has) return false;
+    try {
+      await db.run("DELETE FROM ai_memory WHERE user_id = :user", { ":user": String(userId) });
+      return true;
+    } catch { return false; }
+  }
+
   /**
    * «Хранилище есть» и «хранилище работает» — разные факты, и разница стоила
    * пользователю двух часов недоумения: /status отвечал «доступно» (объект
@@ -115,7 +133,7 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
   return Object.freeze({
     available: has,
     probe,
-    get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded,
-    memory: Object.freeze({ load, save, clear }),
+    get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded, remove,
+    memory: Object.freeze({ load, save, clear, clearUser }),
   });
 }
