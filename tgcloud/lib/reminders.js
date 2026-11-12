@@ -363,8 +363,21 @@ export function createReminders({ store = null, now = () => Date.now() } = {}) {
     return (await read()).items.length;
   }
 
+  /**
+   * Убрать всё, что подходит под условие: рассылку чата, напоминание
+   * привычки. Возвращает убранное — по нему видно, было ли что убирать.
+   */
+  async function dropWhere(match) {
+    const state = await read();
+    const gone = state.items.filter(item => { try { return Boolean(match(item)); } catch { return false; } });
+    if (!gone.length) return { ok: true, removed: [] };
+    const ids = new Set(gone.map(item => item.id));
+    if (!await write({ ...state, items: state.items.filter(item => !ids.has(item.id)) })) return { ok: false, code: "storage_unavailable", removed: [] };
+    return { ok: true, removed: gone };
+  }
+
   /** «Удали всё обо мне» касается и напоминаний. */
   const wipe = (userId) => cancel(userId, null).then(() => ({ ok: true })).catch(() => ({ ok: false }));
 
-  return Object.freeze({ add, list, cancel, due, settle, size, wipe });
+  return Object.freeze({ add, list, cancel, due, settle, size, wipe, dropWhere });
 }

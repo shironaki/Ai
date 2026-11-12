@@ -28,6 +28,9 @@ import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
 import { parsePoll } from "./polls.js";
 import { parseWhois } from "./whois.js";
 import { createMedia, parseMedia, captions } from "./media.js";
+import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
+import { createHabits, parseHabit, streakOf } from "./habits.js";
+import { detectFact, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
 /**
@@ -170,6 +173,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   const media = createMedia({ sources });
   // Списки, цели и дневник: строки человека, которые возвращаются дословно.
   const notes = createNotes({ store, now, dayOf });
+  // Привычки: счёт дней подряд, без наград и наказаний.
+  const habits = createHabits({ store, now });
   // Слух, зрение и чтение ссылок: отдельные модели того же провайдера.
   const SENSES = config.SENSES !== false;
   const senses = createSenses({
@@ -1094,7 +1099,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       case "reminders": {
         const items = await reminders.list(actorId);
         if (!items.length) return say(turn, `Напоминаний у ${you(turn, "вас", "тебя")} нет. Поставить: «напомни через час …» или «напомни завтра в 9 …».`);
-        return say(turn, ["Напоминания:", "", ...items.map((item, i) => `${i + 1}. ${whenText(item.at, zoneOf(turn))}${item.repeat?.kind ? ` (${REPEAT_LABEL[item.repeat.kind]})` : ""}${item.kind === "morning" ? " — побудка" : item.kind === "capsule" ? " — капсула времени" : ""}${item.text && item.kind !== "capsule" ? ` — ${item.text}` : ""}`), "", "Отменить: «отмени напоминание 2»."].join("\n"));
+        return say(turn, ["Напоминания:", "", ...items.map((item, i) => `${i + 1}. ${whenText(item.at, zoneOf(turn))}${item.repeat?.kind ? ` (${REPEAT_LABEL[item.repeat.kind]})` : ""}${item.kind === "morning" ? " — побудка" : item.kind === "capsule" ? " — капсула времени" : ""}${item.kind === "daily" ? ` — ${DAILY_LABEL[item.text] ?? "рассылка"}${item.inGroup ? " в чате" : ""}` : item.kind === "habit" ? ` — привычка: ${item.text}` : item.kind === "birthday" ? " — день рождения" : item.text && item.kind !== "capsule" ? ` — ${item.text}` : ""}`), "", "Отменить: «отмени напоминание 2»."].join("\n"));
       }
       case "unremind": {
         const gone = await reminders.cancel(actorId, parsed.arg.index);
@@ -1193,8 +1198,163 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       if (item.text) lines.push("", item.text);
       return lines.join("\n");
     }
+    if (item.kind === "daily") {
+      // Утренняя рассылка в полдень ещё к месту, вечером — уже нет.
+      if (late > 6 * 3_600_000) return null;
+      const today = calendarDate(now(), zone);
+      if (item.text === "card") return cardText(cardFor(item.userId, today));
+      return { text: await fun.questionFor(item.chatId, { day: today }), extra: { reply_markup: MORE_QUESTION } };
+    }
+    if (item.kind === "habit") {
+      if (late > 12 * 3_600_000) return null;
+      const habit = await habits.find(item.userId, { name: item.text }).catch(() => null);
+      const today = calendarDate(now(), zone);
+      // Привычку убрали или сегодня уже отметили — напоминать не о чем.
+      if (!habit || habit.days?.includes(today)) return null;
+      const run = streakOf(habit.days, today);
+      return `🔁 Привычка: ${habit.name}.${run ? ` Серия — ${run} ${plural(run, "день", "дня", "дней")}.` : ""} Сделано — «отметь привычку ${habit.name}».`;
+    }
+    if (item.kind === "birthday") {
+      if (late > 18 * 3_600_000) return null;
+      const settings = (await personal.settings(item.userId).catch(() => ({}))) ?? {};
+      return `🎂 С днём рождения${settings.address ? `, ${settings.address}` : ""}! Пусть этот год будет добрым — а я буду рядом.`;
+    }
     const head = `⏰ Напоминаю${lateNote}`;
     return item.text ? `${head}: ${item.text}` : `${head}, как договаривались.`;
+  }
+
+  // ── карта дня, рассылка, привычки ───────────────────────────────────────
+  /** «Карта дня» и «вопрос дня по утрам». `null` — речь не об этом. */
+  async function dailyThings(turn, prompt) {
+    if (parseCard(prompt)) {
+      if (turn.dry) return say(turn, "Вытянула бы карту дня — репетиция.");
+      return say(turn, cardText(cardFor(turn.actorId, calendarDate(now(), zoneOf(turn)))));
+    }
+    const asked = parseDaily(prompt);
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как рассылку по расписанию — репетиция, ничего не ставлю.");
+    const label = DAILY_LABEL[asked.what];
+    const genitive = asked.what === "question" ? "вопроса дня" : "карты дня";
+    if (asked.what === "card" && turn.inGroup) return say(turn, "Карта дня у каждого своя, в общий чат её не пришлёшь. В личке — «карта дня по утрам».");
+    if (turn.inGroup && !(await fun.canManage(turn))) return say(turn, "Рассылку в чате включают и выключают его админы.");
+    const gone = await reminders.dropWhere(item => item.kind === "daily" && String(item.chatId) === String(turn.chatId) && item.text === asked.what);
+    if (!asked.on) {
+      return say(turn, gone.removed.length ? `Хорошо, ${label} сама больше не присылаю. По просьбе — всегда.` : `Рассылки ${genitive} здесь и не было. По просьбе — «${label}».`);
+    }
+    const zone = zoneOf(turn);
+    const clockText = `${String(asked.hour).padStart(2, "0")}:${String(asked.minute).padStart(2, "0")}`;
+    const parsed = parseReminder(`напоминай каждый день в ${clockText} рассылка`, { now: now(), timeZone: zone });
+    if (!parsed?.ok) return say(turn, "Не получилось поставить рассылку на это время.");
+    const added = await reminders.add({
+      userId: turn.actorId, chatId: turn.chatId, at: parsed.at, text: asked.what, threadId: turn.extra.message_thread_id ?? null,
+      inGroup: turn.inGroup, repeat: parsed.repeat, kind: "daily", zone,
+    });
+    if (!added.ok) {
+      return say(turn, added.code === "too_many" ? `У ${you(turn, "вас", "тебя")} уже двадцать напоминаний — это мой предел. Лишнее можно отменить: «мои напоминания».` : "Рассылка не сохранилась: хранилище не приняло запись.");
+    }
+    const precision = await clockPrecision();
+    const note = precision.kind === "minute" ? "" : " Точность зависит от того, как часто меня будят: могу опоздать, но не забуду.";
+    return say(turn, `Хорошо: ${label} — каждый день в ${clockText}${turn.inGroup ? " в этом чате" : ""}. Отменить — «не надо ${genitive}».${note}`);
+  }
+
+  const days = (count) => `${count} ${plural(count, "день", "дня", "дней")}`;
+  const HABIT_CHEER = Object.freeze({ 7: " Неделя подряд — это уже привычка, а не попытка.", 30: " Месяц подряд. Это всерьёз.", 100: " Сто дней подряд. Снимаю шляпу." });
+
+  /** Привычки: завести, отметить, посмотреть, убрать. `null` — речь не о них. */
+  async function habitThings(turn, prompt) {
+    const asked = parseHabit(prompt);
+    if (!asked) return null;
+    // «Сделал уроки» — отметка, только если такая привычка есть: иначе это разговор.
+    if (asked.soft && !(await habits.find(turn.actorId, asked))) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как привычку — репетиция, ничего не пишу.");
+    if (turn.inGroup && asked.op !== "done") return say(turn, "Привычки — дело личное: заведём и посмотрим их в личке.");
+    const zone = zoneOf(turn);
+    const today = calendarDate(now(), zone);
+    if (asked.op === "list") {
+      const items = await habits.list(turn.actorId);
+      if (!items.length) return say(turn, `Привычек у ${you(turn, "вас", "тебя")} пока нет. Завести: «привычка: зарядка каждый день в 8».`);
+      return say(turn, ["Привычки:", "", ...items.map((item, index) => {
+        const run = streakOf(item.days, today);
+        return `${index + 1}. ${item.name} — серия ${days(run)}, всего ${Number(item.total) || 0}${item.when ? ` · напоминаю ${item.when}` : ""}${item.days?.includes(today) ? " · сегодня ✓" : ""}`;
+      }), "", "Отметить — «отметь привычку 1». Убрать — «удали привычку 1»."].join("\n"));
+    }
+    if (asked.op === "add") {
+      let parsed = null;
+      if (asked.schedule) {
+        parsed = parseReminder(`напоминай ${asked.schedule} привычка`, { now: now(), timeZone: zone });
+        if (!parsed?.ok || !parsed.repeat) return say(turn, "Не поняла расписание. Например: «привычка: зарядка каждый день в 8» или «привычка: читать по будням в 21».");
+      }
+      const when = parsed ? `${REPEAT_LABEL[parsed.repeat.kind]} в ${localClock(parsed.at, zone)}` : "";
+      const added = await habits.add(turn.actorId, asked.name, when);
+      if (!added.ok) {
+        return say(turn, added.code === "exists" ? "Такая привычка уже есть. «Мои привычки» покажет список."
+          : added.code === "too_many" ? "Привычек уже десять — это мой предел: больше разом не удержать."
+            : "Привычка не сохранилась: хранилище не отвечает.");
+      }
+      let remind = "";
+      if (parsed) {
+        const set = await reminders.add({ userId: turn.actorId, chatId: turn.chatId, at: parsed.at, text: asked.name, repeat: parsed.repeat, kind: "habit", zone });
+        remind = set.ok ? ` Напоминать буду ${when}.` : " Напоминание поставить не вышло: их уже слишком много.";
+      }
+      await react(turn, "✍");
+      return say(turn, `Завела привычку: ${asked.name}.${remind} Отметить — «отметь привычку ${added.count}»; считаю дни подряд.`);
+    }
+    if (asked.op === "done") {
+      const marked = await habits.mark(turn.actorId, asked, today);
+      if (!marked.ok) return say(turn, marked.code === "no_such_habit" ? "Такой привычки нет. «Мои привычки» покажет список." : "Не отметилось: хранилище не отвечает.");
+      if (marked.already) return say(turn, `Сегодня уже отмечено: ${marked.item.name}. Серия — ${days(marked.streak)}.`);
+      return say(turn, `Отмечено: ${marked.item.name}. Серия — ${days(marked.streak)} подряд, всего — ${marked.item.total}.${HABIT_CHEER[marked.streak] ?? ""}`);
+    }
+    const dropped = await habits.drop(turn.actorId, asked);
+    if (!dropped.ok) return say(turn, dropped.code === "no_such_habit" ? "Такой привычки нет. «Мои привычки» покажет список." : "Не убралось: хранилище не отвечает.");
+    await reminders.dropWhere(item => item.kind === "habit" && String(item.userId) === String(turn.actorId) && item.text === dropped.item.name);
+    return say(turn, `Убрала привычку: ${dropped.item.name}. Отмеченных дней было: ${Number(dropped.item.total) || 0}.`);
+  }
+
+  // ── «запомнить?» ────────────────────────────────────────────────────────
+  /** Что стоит предложить запомнить: сказанное о себе, чего она ещё не знает и о чём не спрашивала. */
+  async function factToOffer(turn, prompt) {
+    const fact = detectFact(prompt);
+    if (!fact) return null;
+    const settings = turn.manner?.settings ?? {};
+    if (fact.kind === "name" && String(settings.address ?? "").toLowerCase() === fact.value.toLowerCase()) return null;
+    if (fact.kind === "city" && settings.city === fact.value) return null;
+    if (fact.kind === "birthday" && settings.birthday === fact.value) return null;
+    const saved = await store.get(OFFER_KEY(turn.actorId)).catch(() => null);
+    return (Array.isArray(saved?.asked) ? saved.asked : []).includes(factTag(fact)) ? null : fact;
+  }
+
+  /** Задать вопрос «запомнить?» и ждать «да» или «нет». Один факт спрашивается один раз. */
+  async function offerFact(turn, fact) {
+    const saved = await store.get(OFFER_KEY(turn.actorId)).catch(() => null);
+    const asked = [...(Array.isArray(saved?.asked) ? saved.asked : []), factTag(fact)].slice(-30);
+    if (!await store.set(OFFER_KEY(turn.actorId), { fact, at: now(), asked })) return;
+    try { await api.sendMessage({ chat_id: turn.chatId, text: offerText(fact, turn.manner?.formal !== false) }); } catch { /* вопрос не важнее ответа */ }
+  }
+
+  /** «Да» или «нет» на её вопрос «запомнить?». `null` — вопроса не было или он устарел. */
+  async function settleOffer(turn, accept) {
+    const saved = await store.get(OFFER_KEY(turn.actorId)).catch(() => null);
+    const fact = saved?.fact;
+    if (!fact || now() - Number(saved.at) > OFFER_TTL_MS) return null;
+    await store.set(OFFER_KEY(turn.actorId), { asked: saved.asked ?? [], at: now() });
+    if (!accept) return say(turn, "Хорошо, не записываю — и больше об этом не спрошу.");
+    if (fact.kind === "name") {
+      const done = await personal.setAddress(turn.actorId, fact.value).catch(() => ({ ok: false }));
+      return say(turn, done.ok ? `Запомнила: ${fact.value}. Передумаете — «зови меня …».` : "Не запомнилось: хранилище не отвечает.");
+    }
+    if (fact.kind === "city") {
+      const place = await sources.findPlace(fact.value, { tries: 1 }).catch(() => null);
+      const done = await personal.save(turn.actorId, { city: place?.ok ? place.name : fact.value, ...(place?.ok && validTimeZone(place.timezone) ? { tz: place.timezone } : {}) }).catch(() => ({ ok: false }));
+      return say(turn, done.ok ? `Запомнила: ${fact.value}. «Погода» и «который час» теперь считаю по нему.` : "Не запомнилось: хранилище не отвечает.");
+    }
+    const zone = zoneOf(turn);
+    const done = await personal.save(turn.actorId, { birthday: fact.value }).catch(() => ({ ok: false }));
+    if (!done.ok) return say(turn, "Не запомнилось: хранилище не отвечает.");
+    await reminders.dropWhere(item => item.kind === "birthday" && String(item.userId) === String(turn.actorId));
+    const parsed = parseReminder(`напоминай каждый год ${fact.value} в 9:00 день рождения`, { now: now(), timeZone: zone });
+    const set = parsed?.ok ? await reminders.add({ userId: turn.actorId, chatId: turn.chatId, at: parsed.at, repeat: parsed.repeat, kind: "birthday", zone }) : { ok: false };
+    return say(turn, `Запомнила: ${fact.value}.${set.ok ? " Поздравлю — в девять утра, каждый год." : ""}`);
   }
 
   /** Напоминания, чей срок пришёл. Опоздала — говорит, на сколько. */
@@ -1207,9 +1367,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       if (item.inGroup && item.messageId != null && !item.repeat) extra.reply_parameters = { message_id: item.messageId, allow_sending_without_reply: true };
       let delivered = false;
       try {
-        const text = await ringText(item);
+        const out = await ringText(item);
+        const text = typeof out === "string" ? out : out?.text;
         if (text) {
-          await api.sendMessage({ chat_id: item.chatId, text, ...extra });
+          await api.sendMessage({ chat_id: item.chatId, text, ...(typeof out === "object" && out?.extra ? out.extra : {}), ...extra });
           pulse.bump("reminded");
         }
         delivered = true;
@@ -1581,6 +1742,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       store.memory.clearUser({ userId: actorId }).catch(() => false),
       personal.wipe(actorId).then(result => result.ok).catch(() => false),
       notes.wipe(actorId).then(result => result.ok).catch(() => false),
+      habits.wipe(actorId).then(result => result.ok).catch(() => false),
+      store.remove(OFFER_KEY(actorId)).catch(() => false),
       store.remove(`heart:trace:${turn.chatId}:${actorId}`).catch(() => false),
       store.remove(`heart:wipe:${actorId}`).catch(() => false),
     ]);
@@ -2189,6 +2352,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       await store.sweep("heart:question:", 3 * DAY);
       await store.sweep("heart:rp:", 2 * DAY);
       await store.sweep("heart:again:", DAY);
+      await store.sweep("heart:offer:", 30 * DAY);
       await store.sweep("heart:heard:", 3 * DAY);
       await store.sweep("heart:stickers:", 30 * DAY);
       await store.sweep("heart:quota:", 3 * DAY);
@@ -2410,11 +2574,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
     }
 
+    // «Да» или «нет» на её вопрос «запомнить?» — в личке и пока вопрос свеж.
+    if (!dry && turn.isPrivate && (YES.test(prompt) || NO.test(prompt))) {
+      const settled = await settleOffer(turn, YES.test(prompt));
+      if (settled) return ruled(settled);
+    }
+
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
     const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
-      || noted || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
+      || noted || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
@@ -2436,7 +2606,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
       if (acted) return ruled(acted);
     }
-    const viaFun = await fun.hush(turn, prompt) ?? await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt)
+    const viaFun = await dailyThings(turn, prompt) ?? await fun.hush(turn, prompt) ?? await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt)
       ?? await fun.whois(turn, prompt, { self }) ?? await party.begin(turn, prompt, { say })
       ?? await fun.question(turn, prompt, { day: dayOf(now()) });
     if (viaFun) return ruled(viaFun);
@@ -2448,6 +2618,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const answer = await notes.handle(actorId, noted, { isPrivate: turn.isPrivate });
       if (answer != null) return ruled(await say(turn, answer));
     }
+
+    const viaHabit = await habitThings(turn, prompt);
+    if (viaHabit) return ruled(viaHabit);
 
     // Ссылка с просьбой «перескажи» — и ссылка без слов в личке.
     const viaLink = await readLink(turn, prompt);
@@ -2546,7 +2719,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
     }
 
-    return answerByModel(turn, prompt);
+    // К слову сказано имя, город или день рождения — после ответа спросит,
+    // записать ли. Только в личке: в группе такой вопрос — шум для остальных.
+    const fact = !dry && turn.isPrivate ? await factToOffer(turn, prompt).catch(() => null) : null;
+    const sent = await answerByModel(turn, prompt);
+    if (fact && sent?.ok) await offerFact(turn, fact);
+    return sent;
   }
 
   async function onMessage(message, ctx = {}) {
