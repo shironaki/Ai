@@ -22,7 +22,8 @@ import { createSources, detectSource, factQuery, parseTarget, knownCity } from "
 import { calculate } from "./calc.js";
 import { createGames } from "./games.js";
 import { parsePicture, moodOf, answerMoods, shelfOf, pickSticker } from "./pictures.js";
-import { createFun, parseChatSetting } from "./fun.js";
+import { createFun, parseChatSetting, parseQuiet, parseQuestion } from "./fun.js";
+import { createNotes, parseNote } from "./notes.js";
 import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
 import { parsePoll } from "./polls.js";
 import { parseWhois } from "./whois.js";
@@ -166,6 +167,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   const games = createGames({ store, sources, random, now });
   // Поиск картинок, аниме, музыки и видео: открытые источники, без модели.
   const media = createMedia({ sources });
+  // Списки, цели и дневник: строки человека, которые возвращаются дословно.
+  const notes = createNotes({ store, now, dayOf });
   // Без базы об этом стоит сказать один раз за жизнь изолята, а не в каждом
   // сообщении: иначе жалоба на хранилище сама станет потоком.
   let storageReported = false;
@@ -1516,7 +1519,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     } catch { return false; }
   }
 
-  /** «Да, удали всё»: записи, переписка, имя, настройки и личные уроки. */
+  /** «Да, удали всё»: записи, переписка, имя, настройки, списки с дневником и личные уроки. */
   async function wipePerson(turn) {
     const { actorId } = turn;
     const done = await Promise.all([
@@ -1524,6 +1527,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       memory.clear(actorId, { inGroup: false }).then(result => result.ok).catch(() => false),
       store.memory.clearUser({ userId: actorId }).catch(() => false),
       personal.wipe(actorId).then(result => result.ok).catch(() => false),
+      notes.wipe(actorId).then(result => result.ok).catch(() => false),
       store.remove(`heart:trace:${turn.chatId}:${actorId}`).catch(() => false),
       store.remove(`heart:wipe:${actorId}`).catch(() => false),
     ]);
@@ -2011,6 +2015,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       await store.sweep("heart:game:", 30 * DAY);
       await store.sweep(PARTY_PREFIX, 2 * DAY);
       await store.sweep("heart:welcome:", 2 * DAY);
+      await store.sweep("heart:question:", 3 * DAY);
       await store.sweep("heart:stickers:", 30 * DAY);
       await store.sweep("heart:quota:", 3 * DAY);
       await store.sweep("heart:mail:", 30 * DAY);
@@ -2113,6 +2118,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
       prompt = called.prompt;
       bare = !prompt;
+      // Её попросили помолчать: до срока она слышит только «можешь говорить».
+      // «🙊» — чтобы молчание не выглядело поломкой.
+      if (!dry && !command && await fun.quiet(chat.id) && !parseQuiet(prompt)?.speak) {
+        await react(turn, "🙊");
+        return { ignored: true, reason: "quiet" };
+      }
     } else {
       turn.replyToMe = message?.reply_to_message?.from?.is_bot === true;
       // В личке имя — вежливость: «Аи, запомни …» — та же просьба, что «запомни …».
@@ -2196,7 +2207,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
-    const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt));
+    const noted = parseNote(prompt);
+    const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+      || noted || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt));
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
     // в другой игре. Мимо — молча, с «🤔», чтобы было видно: услышала.
@@ -2217,9 +2230,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
       if (acted) return ruled(acted);
     }
-    const viaFun = await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt) ?? await fun.whois(turn, prompt, { self })
-      ?? await party.begin(turn, prompt, { say });
+    const viaFun = await fun.hush(turn, prompt) ?? await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt)
+      ?? await fun.whois(turn, prompt, { self }) ?? await party.begin(turn, prompt, { say })
+      ?? await fun.question(turn, prompt, { day: dayOf(now()) });
     if (viaFun) return ruled(viaFun);
+
+    // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
+    // человека: у этих слов есть своё значение, и оно важнее.
+    if (noted && !(noted.op === "show" && noted.kind === "list" && parseIntent(prompt))) {
+      if (dry) return ruled(await say(turn, "Разобрала бы это как запись в список — репетиция, ничего не пишу."));
+      const answer = await notes.handle(actorId, noted, { isPrivate: turn.isPrivate });
+      if (answer != null) return ruled(await say(turn, answer));
+    }
 
     // Идёт игра — фраза может быть ходом. Судит код; не ход — идёт дальше,
     // к просьбам и разговору, а игра ждёт.

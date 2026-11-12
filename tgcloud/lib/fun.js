@@ -12,9 +12,45 @@ import { parseWhois, registeredText } from "./whois.js";
 import { safeName } from "./address.js";
 import { fold } from "./sources.js";
 import { pickSticker } from "./pictures.js";
+import { QUESTIONS } from "./data/party.js";
 
 export const CHAT_KEY = (chatId) => `heart:chat:${chatId}`;
-const DEFAULTS = Object.freeze({ rp: true, gifs: true, welcome: true, welcomeText: "" });
+const DEFAULTS = Object.freeze({ rp: true, gifs: true, welcome: true, welcomeText: "", quietUntil: 0 });
+
+const MINUTE = 60_000;
+const QUIET = /^(?:помолчи|замолчи|молчи|тихо|тише|цыц|не\s+(?:пиши|отвечай|говори|шуми)|отдохни)(?:те)?(?:\s+(?:пожалуйста|тут|здесь|пока|немного|чуть-чуть|в\s+(?:этом\s+)?чате))*(?:\s+(?:на\s+)?(полчаса|сутки|день|(\d{1,3})?\s*(минут[уы]?|мин|час(?:а|ов)?|ч)))?$/u;
+const SPEAK = /^(?:можешь\s+говорить|можно\s+говорить|говори|отомри|вернись|хватит\s+молчать|не\s+молчи|просыпайся)$/u;
+const QUESTION = /^(?:(?:задай|подкинь|дай|предложи)(?:те)?\s+(?:нам\s+|мне\s+|чату\s+)?(?:вопрос(?:\s+дня)?|тему(?:\s+для\s+(?:разговора|обсуждения|беседы))?)|вопрос\s+дня|тема\s+дня|(?:о\s+чем|про\s+что)\s+(?:бы\s+)?(?:нам\s+)?поговорить)$/u;
+const QUESTION_MORE = /^(?:(?:еще|другой|следующий)\s+вопрос|(?:еще|другую|следующую)\s+тему|другой\s+вопрос\s+дня)$/u;
+
+/** «Помолчи час» → на сколько миллисекунд. Не про тишину — null. */
+export function parseQuiet(text) {
+  const value = fold(text).replace(/[.!…]+$/u, "");
+  if (SPEAK.test(value)) return { speak: true };
+  const match = value.match(QUIET);
+  if (!match) return null;
+  const [, span, count, unit] = match;
+  let ms = 60 * MINUTE;
+  if (span === "полчаса") ms = 30 * MINUTE;
+  else if (span === "сутки" || span === "день") ms = 24 * 60 * MINUTE;
+  else if (unit) ms = (Number(count) || 1) * (unit.startsWith("ч") ? 60 : 1) * MINUTE;
+  // Дольше суток молчать не просят — так бота проще убрать из чата.
+  return { ms: Math.min(Math.max(ms, MINUTE), 24 * 60 * MINUTE) };
+}
+
+/** «Вопрос дня» → { more } или null. */
+export function parseQuestion(text) {
+  const value = fold(text).replace(/[?.!…]+$/u, "");
+  if (QUESTION_MORE.test(value)) return { more: true };
+  return QUESTION.test(value) ? { more: false } : null;
+}
+
+const span = (ms) => {
+  const minutes = Math.round(ms / MINUTE);
+  if (minutes % 60 || minutes < 60) return `${minutes} мин`;
+  const hours = minutes / 60;
+  return hours === 24 ? "сутки" : `${hours} ч`;
+};
 const esc = (value) => String(value ?? "").replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
 
 const WELCOMES = Object.freeze([
@@ -106,15 +142,65 @@ export function createFun({
         "Настройки этого чата:",
         `• ролевые действия — ${current.rp ? "включены" : "выключены"};`,
         `• гифки к действиям — ${current.gifs ? "да" : "нет"};`,
+        Number(current.quietUntil) > now() ? `• молчу ещё ${span(Math.ceil((Number(current.quietUntil) - now()) / MINUTE) * MINUTE)};` : "",
         turn.isPrivate ? "" : `• приветствие новичков — ${!current.welcome ? "выключено" : current.welcomeText ? "своё" : "моими словами"}.`,
         "",
         "Менять может админ: «выключи рп», «рп без гифок», «приветствие: …», «выключи приветствие».",
-      ].filter((line, index, all) => line !== "" || all[index - 1] !== "").join("\n"));
+      ].filter((line, index, all) => line !== "" || index === all.length - 2).join("\n"));
     }
     if (!(await canManage(turn))) return say(turn, "Настройки чата меняют его админы.");
     if (turn.isPrivate && ("welcome" in asked.patch)) return say(turn, "Приветствие — для групп. Скажите это в группе, где вы админ.");
     const saved = await saveChat(turn.chatId, asked.patch);
     return say(turn, saved ? asked.done : "Не запомнилось: хранилище не отвечает.");
+  }
+
+  // ── тишина ──────────────────────────────────────────────────────────────
+  /** Молчит ли она сейчас в этом чате. */
+  async function quiet(chatId) {
+    const until = Number((await chatSettings(chatId)).quietUntil) || 0;
+    return until > now() ? until : 0;
+  }
+
+  /**
+   * «Помолчи час» и «можешь говорить». Только для групп: в личке она и так
+   * пишет лишь в ответ. Просит админ; снять тишину может он же.
+   */
+  async function hush(turn, prompt) {
+    const asked = parseQuiet(prompt);
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как просьбу о тишине — репетиция, ничего не меняю.");
+    if (turn.isPrivate) {
+      return asked.speak ? null : say(turn, "В личке я пишу только в ответ — молчать здесь не от чего. Ночные вести отключает «не пиши ночью», в группе тишину просит админ: «Аи, помолчи час».");
+    }
+    const until = await quiet(turn.chatId);
+    if (asked.speak) {
+      if (!until) return null;
+      if (!(await canManage(turn))) return { ignored: true, reason: "quiet" };
+      await saveChat(turn.chatId, { quietUntil: 0 });
+      return say(turn, "Я снова здесь.");
+    }
+    if (!(await canManage(turn))) return say(turn, "Замолчать меня просят админы чата. Но я постараюсь не мешать.");
+    const saved = await saveChat(turn.chatId, { quietUntil: now() + asked.ms });
+    return say(turn, saved ? `Молчу ${span(asked.ms)}. Раньше — «Аи, можешь говорить».` : "Не запомнилось: хранилище не отвечает.");
+  }
+
+  // ── вопрос дня ──────────────────────────────────────────────────────────
+  /** Один вопрос на день и чат; «ещё вопрос» — следующий по кругу. */
+  async function question(turn, prompt, { day = "" } = {}) {
+    const asked = parseQuestion(prompt);
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Задала бы вопрос дня — репетиция.");
+    const key = `heart:question:${turn.chatId}`;
+    const saved = store?.available ? await store.get(key).catch(() => null) : null;
+    const days = Math.floor(Date.parse(`${day || new Date(now()).toISOString().slice(0, 10)}T00:00:00Z`) / 86_400_000) || 0;
+    // Сдвиг по чату: в двух чатах в один день вопросы разные.
+    const base = Math.abs(days + Math.abs(Number(turn.chatId) || 0) % 97) % QUESTIONS.length;
+    const same = saved?.day === days;
+    const step = same ? (Number(saved.step) || 0) + (asked.more ? 1 : 0) : 0;
+    if (store?.available && (!same || asked.more)) await store.set(key, { day: days, step, at: now() }).catch(() => false);
+    const text = QUESTIONS[(base + step) % QUESTIONS.length];
+    pulse?.bump("questions");
+    return say(turn, `💬 ${step ? "Ещё вопрос" : "Вопрос дня"}:\n${text}`);
   }
 
   // ── отправка ────────────────────────────────────────────────────────────
@@ -190,6 +276,8 @@ export function createFun({
     if (!addressed && (parsed.asked || !third)) return null;
     if (turn.dry) return addressed ? say(turn, "Разобрала бы это как действие — репетиция, ничего не отправляю.") : null;
     const chat = await chatSettings(turn.chatId);
+    // Её попросили помолчать — молчит и в чужих действиях.
+    if (!addressed && Number(chat.quietUntil) > now()) return { ignored: true, reason: "quiet" };
     if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
     const actor = esc(turn.name || "Кто-то");
     const { action, tail } = parsed;
@@ -252,6 +340,7 @@ export function createFun({
     if (!people.length) return { ignored: true, reason: "bots_only" };
     const settings = await chatSettings(chat.id);
     if (!settings.welcome) return { ignored: true, reason: "welcome_off" };
+    if (Number(settings.quietUntil) > now()) return { ignored: true, reason: "quiet" };
     if (store?.available) {
       const key = `heart:welcome:${chat.id}`;
       const seen = await store.get(key).catch(() => null);
@@ -369,5 +458,5 @@ export function createFun({
     return say(turn, lines.join("\n"));
   }
 
-  return Object.freeze({ roleplay, welcome, poll, whois, chatSetting, chatSettings });
+  return Object.freeze({ roleplay, welcome, poll, whois, chatSetting, chatSettings, hush, quiet, question });
 }
