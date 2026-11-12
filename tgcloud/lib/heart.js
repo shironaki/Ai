@@ -596,7 +596,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     if (!saved?.at || !saved.prev) return { kind: "none", every: 0, at: saved?.at ?? 0 };
     const every = saved.at - saved.prev;
     if (now() - saved.at > Math.max(3 * every, 5 * 60_000)) return { kind: "none", every: 0, at: saved.at };
-    // Редкий будильник из Actions (раз в три часа) — тоже будильник: с ним
+    // Часовой будильник из Actions — тоже будильник: с ним
     // напоминание опаздывает, но приходит без единого сообщения от людей.
     return { kind: every <= 150_000 ? "minute" : every <= 6.5 * 3_600_000 ? "hour" : "none", every, at: saved.at };
   }
