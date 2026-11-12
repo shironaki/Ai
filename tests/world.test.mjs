@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, copyFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -765,6 +765,7 @@ test("публикация: секреты вписываются одним с�
   // Файл, изменённый руками, не публикуется наугад.
   writeFileSync(file, "export const AI_API_KEY = \"\";\n");
   assert.throws(() => run({ AI_PROVIDER_KEY: "k" }));
+  rmSync(dir, { recursive: true, force: true });
 
   const workflow = readFileSync(new URL("../.github/workflows/heart.yml", import.meta.url), "utf8");
   assert.match(workflow, /github\.event_name == 'push' && vars\.HEART_AUTODEPLOY == 'on'/, "коммит в main публикуется сам, только если владелец включил");
