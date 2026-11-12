@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 /**
- * Вписать секреты в `tgcloud/lib/secrets.js` на время одного запуска Actions.
+ * Вписать секреты в `tgcloud/lib/secrets.js` на время одной публикации.
  *
- * У платформы нет переменных окружения: ключ из GitHub-секрета попадает в
- * сердце только если записан в публикуемый модуль. Этим занимается этот файл —
- * один для публикации и для будильника, чтобы два места не разошлись.
+ * У платформы нет переменных окружения: ключ попадает в сердце, только если
+ * записан в публикуемый модуль. Этим занимается этот файл — один для телефона
+ * (`scripts/phone.sh`) и для кнопки в Actions, чтобы два пути не разошлись.
  *
  * Значения читаются из окружения и никуда не печатаются. После запуска файл
  * возвращается пустым: `git checkout -- tgcloud/lib/secrets.js`.
  *
  *   node scripts/inject-secrets.mjs --require-key     публикация: без ключа — стоп
  *   node scripts/inject-secrets.mjs                   будильник: без ключа — предупреждение
+ *
+ * Запасные ключи — двумя способами, можно вместе:
+ *   AI_EXTRA_KEYS={"gigachat":"…"}     одной строкой JSON, как в GitHub-секрете;
+ *   KEY_GIGACHAT=…                      отдельной строкой: имя после KEY_ — id.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -18,15 +22,20 @@ const args = process.argv.slice(2);
 const file = args.find(item => item.startsWith("--file="))?.slice(7) ?? "tgcloud/lib/secrets.js";
 const strict = args.includes("--require-key");
 
-const key = String(process.env.AI_PROVIDER_KEY ?? "");
+const key = String(process.env.AI_PROVIDER_KEY ?? "").trim();
 const owner = String(process.env.OWNER_TG_ID ?? "").trim();
+// В Actions строка с «::error::» становится заметкой в журнале; на телефоне
+// это просто слово.
+const inActions = process.env.GITHUB_ACTIONS === "true";
+const fail = (text) => console.log(inActions ? `::error::${text}` : `Ошибка: ${text}`);
+const warn = (text) => console.log(inActions ? `::warning::${text}` : `Внимание: ${text}`);
 
 if (!key && strict) {
-  console.log("::error::Add the provider key as secret AI_PROVIDER_KEY.");
+  fail("AI_PROVIDER_KEY is empty: add the provider key.");
   process.exit(1);
 }
-if (!key) console.log("::warning::AI_PROVIDER_KEY is empty in this job: the heart wakes up, but has nothing to think with.");
-if (!owner) console.log("::warning::OWNER_TG_ID is not set: the heart will answer, but fault reports will wait in the queue.");
+if (!key) warn("AI_PROVIDER_KEY is empty: the heart wakes up, but has nothing to think with.");
+if (!owner) warn("OWNER_TG_ID is not set: fine if the owner is in config.js; otherwise fault reports wait in the queue.");
 
 // Запасные провайдеры: JSON-объект строк — или ничего.
 const extra = {};
@@ -36,7 +45,12 @@ try {
     for (const [name, value] of Object.entries(parsed)) if (typeof value === "string" && value) extra[name] = value;
   }
 } catch {
-  console.log("::warning::AI_EXTRA_KEYS is not valid JSON: spare providers stay off.");
+  warn("AI_EXTRA_KEYS is not valid JSON: spare providers from it stay off.");
+}
+// KEY_GIGACHAT=… → { gigachat: "…" }: так ключ удобнее набрать на телефоне.
+for (const [name, value] of Object.entries(process.env)) {
+  const id = name.match(/^KEY_([A-Za-z0-9_]+)$/u)?.[1];
+  if (id && typeof value === "string" && value.trim()) extra[id.toLowerCase()] = value.trim();
 }
 
 let text = readFileSync(file, "utf8");
@@ -47,7 +61,7 @@ const slots = [
 ];
 for (const [pattern, line] of slots) {
   if (!pattern.test(text)) {
-    console.log(`::error::${file}: a secret slot is missing — the file was changed by hand.`);
+    fail(`${file}: a secret slot is missing — the file was changed by hand.`);
     process.exit(1);
   }
   // Функция вместо строки: ключ, в котором случилось «$&», останется собой.

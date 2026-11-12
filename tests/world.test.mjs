@@ -768,10 +768,11 @@ test("публикация: секреты вписываются одним с�
   rmSync(dir, { recursive: true, force: true });
 
   const workflow = readFileSync(new URL("../.github/workflows/heart.yml", import.meta.url), "utf8");
-  assert.match(workflow, /github\.event_name == 'push' && vars\.HEART_AUTODEPLOY != 'off'/, "коммит в main публикуется сам; владелец может вернуть ручной режим");
+  // Владелец решил: без Actions. Файл — запасная кнопка и сам ничего не запускает.
+  assert.match(workflow, /\non:\n  workflow_dispatch:\n/, "только по кнопке");
+  assert.doesNotMatch(workflow, /\n  push:|\n  schedule:|cron:/, "ни на коммит, ни по расписанию минуты Actions не тратятся");
   assert.match(workflow, /needs: tests\n[\s\S]*Rehearse in the cloud before publishing[\s\S]*name: Publish\n/, "публикации предшествуют тесты и репетиция в облаке");
   assert.match(workflow, /--ctx '\{ tick: true, deployed: true \}'/, "после публикации сердце будят");
-  assert.match(workflow, /schedule:\n\s+- cron:/, "есть страховочный будильник");
   assert.equal((workflow.match(/node scripts\/inject-secrets\.mjs/g) ?? []).length, 2, "секреты вписывает один скрипт — и для публикации, и для будильника");
   assert.equal((workflow.match(/git checkout -- tgcloud\/lib\/secrets\.js/g) ?? []).length, 2, "и оба раза слоты возвращаются пустыми");
 });
