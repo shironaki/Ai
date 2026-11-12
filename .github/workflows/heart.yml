@@ -1,18 +1,27 @@
 name: Heart
 
-# One workflow, two jobs: a test that proves the route without touching
-# Telegram, and a publish that only runs when asked for explicitly.
+# Один файл, три дела:
+#   проверка    — тесты на каждый push в main и по кнопке;
+#   публикация  — сама, когда в main пришёл коммит, или по кнопке с любой ветки;
+#   будильник   — раз в три часа будит сердце, чтобы «само» случалось без сообщений.
+#
+# Точный будильник (раз в минуту) — второй телефон, см. docs/ALARM.md. Этот,
+# редкий, нужен как страховка: напоминание опоздает не больше чем на три часа,
+# утренняя сводка придёт, даже если никто не писал. Выключить: переменная
+# репозитория HEART_ALARM = off.
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 */3 * * *"
   workflow_dispatch:
     inputs:
       mode:
-        description: "smoke — проверка без отправки; deploy — публикация"
+        description: "smoke — проверка без отправки; deploy — публикация; tick — разбудить сердце"
         type: choice
         required: true
         default: smoke
-        options: [smoke, deploy]
+        options: [smoke, deploy, tick]
 
 permissions:
   contents: read
@@ -20,6 +29,7 @@ permissions:
 jobs:
   tests:
     name: Local checks
+    if: ${{ github.event_name != 'schedule' && inputs.mode != 'tick' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -31,7 +41,7 @@ jobs:
 
   smoke:
     name: Handler runs without sending
-    if: ${{ github.event_name == 'push' || inputs.mode == 'smoke' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'smoke' }}
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -48,6 +58,11 @@ jobs:
             echo "::error::Add the heart Serverless CLI token as secret TGCLOUD_HEART_TOKEN."; exit 1
           fi
           npx --yes @tgcloud/cli@0.2.0 run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }'
+      - name: Run a channel post in a no-side-effects context
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          npx --yes @tgcloud/cli@0.2.0 run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }'
       - name: Inspect deployed state (read-only)
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
@@ -55,11 +70,16 @@ jobs:
 
   deploy:
     name: Publish the heart
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy' }}
+    # Коммит в main публикуется сам; с любой другой ветки — только по кнопке.
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy') }}
     needs: tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     environment: heart-serverless
+    # Две публикации подряд идут по очереди, а не наперегонки.
+    concurrency:
+      group: heart-publish
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -80,33 +100,15 @@ jobs:
           AI_PROVIDER_KEY: ${{ secrets.AI_PROVIDER_KEY }}
           OWNER_TG_ID: ${{ secrets.OWNER_TG_ID }}
           AI_EXTRA_KEYS: ${{ secrets.AI_EXTRA_KEYS }}
+        run: node scripts/inject-secrets.mjs --require-key
+      # Репетиция в облаке до публикации: если код там не собирается или
+      # обработчик падает, живой бот остаётся на прежней сборке.
+      - name: Rehearse in the cloud before publishing
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
         run: |
-          if [ -z "$AI_PROVIDER_KEY" ]; then
-            echo "::error::Add the provider key as secret AI_PROVIDER_KEY."; exit 1
-          fi
-          if [ -z "$OWNER_TG_ID" ]; then
-            echo "::warning::OWNER_TG_ID is not set: the heart will answer, but fault reports will wait in the queue."
-          fi
-          node -e '
-            const fs = require("node:fs");
-            const file = "tgcloud/lib/secrets.js";
-            const key = JSON.stringify(process.env.AI_PROVIDER_KEY);
-            const owner = JSON.stringify(process.env.OWNER_TG_ID || "");
-            let text = fs.readFileSync(file, "utf8");
-            // A function replacer: a key that happens to contain "$&" stays itself.
-            text = text.replace(/export const AI_API_KEY = .*;/u, () => `export const AI_API_KEY = ${key};`);
-            text = text.replace(/export const OWNER_TG_ID = .*;/u, () => `export const OWNER_TG_ID = ${owner};`);
-            // Spare provider keys: a JSON object of strings, or nothing at all.
-            let extra = {};
-            try {
-              const parsed = JSON.parse(process.env.AI_EXTRA_KEYS || "{}");
-              if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                for (const [name, value] of Object.entries(parsed)) if (typeof value === "string" && value) extra[name] = value;
-              }
-            } catch { console.log("::warning::AI_EXTRA_KEYS is not valid JSON: spare providers stay off."); }
-            text = text.replace(/export const AI_EXTRA_KEYS = .*;/u, () => `export const AI_EXTRA_KEYS = ${JSON.stringify(extra)};`);
-            fs.writeFileSync(file, text);
-          '
+          npx --yes @tgcloud/cli@0.2.0 run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }'
+          npx --yes @tgcloud/cli@0.2.0 run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }'
       - name: Re-check deployed state
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
@@ -123,6 +125,86 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
         run: npx --yes @tgcloud/cli@0.2.0 migrate --yes
+      # Посты канала — отдельный вид обновлений. Платформа сама обновляет
+      # список при публикации; здесь он проверяется и, если разошёлся, чинится.
+      - name: Check the webhook
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          set +e
+          npx --yes @tgcloud/cli@0.2.0 webhook > webhook.txt 2>&1
+          grep -v -i "url" webhook.txt
+          if grep -q "OUT OF SYNC" webhook.txt; then
+            echo "::warning::The webhook did not match the handlers — syncing."
+            npx --yes @tgcloud/cli@0.2.0 webhook sync > webhook.txt 2>&1
+            grep -v -i "url" webhook.txt
+          fi
+          {
+            echo "### Сердце опубликовано"
+            echo ""
+            echo "- коммит: \`${GITHUB_SHA::7}\`"
+            grep -i "allowed updates" webhook.txt | head -1 | sed 's/^ */- /'
+            if grep -q "OUT OF SYNC" webhook.txt; then echo "- вебхук: **не совпал с обработчиками** — посты канала могут не доходить"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f webhook.txt
+          exit 0
+      # Опубликованный код просыпается только от сообщения. Этот шаг будит его
+      # сразу: сердце само пишет владельцу «я обновилась» с самопроверкой — и
+      # не нужно спрашивать /status, чтобы узнать, доехал ли код.
+      - name: Wake the heart on the new build
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          set +e
+          out=$(npx --yes @tgcloud/cli@0.2.0 run handlers/message '{}' --ctx '{ tick: true, deployed: true }' 2>&1)
+          echo "$out"
+          build=$(node -e 'const found = require("node:fs").readFileSync("tgcloud/lib/heart.js", "utf8").match(/export const BUILD = "([^"]+)"/u); console.log(found ? found[1] : "?")')
+          if echo "$out" | grep -Eq "ok: ?true"; then
+            echo "- сборка \`$build\`: сердце проснулось; о новой сборке оно пишет владельцу само" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- сборка \`$build\`: пробуждение не подтвердилось — проверьте \`/status\` в боте" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::The post-publish wake-up did not confirm. The code is published; check /status in the bot."
+          fi
+          exit 0
+      - name: Restore the empty secret slots
+        if: always()
+        run: git checkout -- tgcloud/lib/secrets.js
+
+  alarm:
+    name: Wake the heart
+    if: ${{ (github.event_name == 'schedule' && vars.HEART_ALARM != 'off') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'tick') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Такой запуск исполняет код из этой копии, поэтому ему нужны те же
+      # ключи, что и публикации. Нет ключа — сердце проснётся, напомнит и
+      # досчитает, но отложенные ответы подождут.
+      - name: Fill the secret slots for this run only
+        env:
+          AI_PROVIDER_KEY: ${{ secrets.AI_PROVIDER_KEY }}
+          OWNER_TG_ID: ${{ secrets.OWNER_TG_ID }}
+          AI_EXTRA_KEYS: ${{ secrets.AI_EXTRA_KEYS }}
+        run: node scripts/inject-secrets.mjs
+      - name: Tick
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          if [ -z "$TGCLOUD_TOKEN" ]; then
+            echo "::error::Add the heart Serverless CLI token as secret TGCLOUD_HEART_TOKEN."; exit 1
+          fi
+          set +e
+          out=$(npx --yes @tgcloud/cli@0.2.0 run handlers/message '{}' --ctx '{ tick: true }' 2>&1)
+          code=$?
+          echo "$out"
+          if echo "$out" | grep -q "build_mismatch"; then
+            echo "::warning::This checkout and the published build differ: the tick touched nothing. Publish first (Heart → deploy)."
+            exit 0
+          fi
+          exit $code
       - name: Restore the empty secret slots
         if: always()
         run: git checkout -- tgcloud/lib/secrets.js

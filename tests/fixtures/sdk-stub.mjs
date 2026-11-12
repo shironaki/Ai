@@ -10,12 +10,24 @@ const state = globalThis.__sdkStub = globalThis.__sdkStub ?? {
 state.calls ??= [];
 state.kvAt ??= new Map();
 state.failing ??= {};
+// Источники (вики, погода, курс, картинки) — отдельно от провайдера: их
+// запросы не должны съедать ответы модели из `fetchQueue`.
+state.sourceReplies ??= [];
+state.sourceFetches ??= [];
+
+const SOURCE_HOSTS = /(?:wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best)/u;
 
 const methods = {
   async sendMessage(params) {
     if (state.failing.sendMessage) throw state.failing.sendMessage;
     state.sent.push(params);
     return { message_id: state.sent.length };
+  },
+  // Живой кубик: значение выбирает Telegram, стаб отдаёт заданное тестом.
+  async sendDice(params) {
+    state.calls.push({ method: "sendDice", params });
+    if (state.failing.sendDice) throw state.failing.sendDice;
+    return { message_id: 900, dice: { emoji: params.emoji ?? "🎲", value: state.diceValue ?? 4 } };
   },
   async getMe() {
     state.calls.push({ method: "getMe", params: {} });
@@ -41,6 +53,17 @@ export const api = new Proxy(methods, {
 });
 
 export async function fetch(url, options = {}) {
+  const address = String(url);
+  if (SOURCE_HOSTS.test(address)) {
+    state.sourceFetches.push({ url: address, options });
+    const hit = state.sourceReplies.find(item => (typeof item.match === "string" ? address.includes(item.match) : item.match.test(address)));
+    // Источник, о котором тест ничего не сказал, не отвечает: 404.
+    if (!hit) return { ok: false, status: 404, json: async () => ({}) };
+    const reply = typeof hit.reply === "function" ? hit.reply(address) : hit.reply;
+    if (reply instanceof Error) throw reply;
+    if (reply && typeof reply === "object" && typeof reply.status === "number" && typeof reply.json === "function") return reply;
+    return { ok: true, status: 200, json: async () => reply };
+  }
   state.fetches.push({ url, options });
   const queued = state.fetchQueue.shift();
   if (queued instanceof Error) throw queued;

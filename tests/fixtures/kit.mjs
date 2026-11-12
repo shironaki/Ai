@@ -38,6 +38,9 @@ export function reset() {
   state.fetches.length = 0;
   state.fetchQueue.length = 0;
   state.calls.length = 0;
+  state.sourceReplies.length = 0;
+  state.sourceFetches.length = 0;
+  delete state.diceValue;
   state.kv.clear();
   state.kvAt.clear();
   state.memory.clear();
@@ -81,6 +84,18 @@ export const refuses = (status, { code = "", headers = {} } = {}) => ({
   ok: false, status, headers: headersOf(headers),
   text: async () => JSON.stringify({ error: { code } }),
 });
+
+/**
+ * Ответ источника (вики, погода, курс, картинки): `match` — часть адреса или
+ * регулярное выражение, `reply` — тело JSON, функция от адреса или Error.
+ * Источник без ответа отдаёт 404.
+ */
+export const source = (match, reply) => { sdk().sourceReplies.push({ match, reply }); };
+export const sourced = () => sdk().sourceFetches.map(item => item.url);
+/** Вызовы Telegram, кроме сообщений: фото, гифки, стикеры, кубик. */
+export const calls = (method) => sdk().calls.filter(item => item.method === method).map(item => item.params);
+/** Случайность по списку: значения по кругу. */
+export const dice = (...values) => { let i = 0; return () => values[i++ % values.length]; };
 
 export const toChat = (id) => sdk().sent.filter(item => String(item.chat_id) === String(id));
 export const toOwner = () => toChat(OWNER);

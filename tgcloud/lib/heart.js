@@ -10,14 +10,18 @@ import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
 import { createPersonal, addressRequest, lengthRequest, formRequest } from "./personal.js";
 import { createMemory } from "./memory.js";
-import { parseIntent, ABILITY_OF, SPOKEN_HELP, INTENTS } from "./intents.js";
+import { parseIntent, normalize, ABILITY_OF, SPOKEN_HELP, INTENTS } from "./intents.js";
 import { createBrains } from "./brains.js";
 import { createLessons } from "./lessons.js";
 import { createPulse } from "./pulse.js";
 import { createQueue } from "./queue.js";
 import { parseCommand, mentions, stripMention, vocative, isReplyToMe, safeName } from "./address.js";
-import { calendarDate, localHour, localClock, nowLine } from "./time.js";
+import { calendarDate, localHour, localClock, nowLine, localParts, validTimeZone } from "./time.js";
 import { createReminders, parseReminder } from "./reminders.js";
+import { createSources, detectSource, factQuery, parseTarget, knownCity } from "./sources.js";
+import { calculate } from "./calc.js";
+import { createGames } from "./games.js";
+import { parsePicture, moodOf, answerMoods, shelfOf, pickSticker } from "./pictures.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -149,6 +153,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   const lessons = createLessons({ store, now, ownerId: OWNER });
   const queue = createQueue({ store, now });
   const reminders = createReminders({ store, now });
+  // То, что она узнаёт не из модели: вики, погода, курс, свои списки.
+  const sources = createSources({ fetchImpl, store, now });
+  // Игры судит код: загаданное лежит в базе, а не в памяти модели.
+  const games = createGames({ store, sources, random, now });
   // Без базы об этом стоит сказать один раз за жизнь изолята, а не в каждом
   // сообщении: иначе жалоба на хранилище сама станет потоком.
   let storageReported = false;
@@ -398,7 +406,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня».");
     }
     if (abilities.open()) {
-      lines.push("", `${SISTER} рядом: профиль, задания, игры и предупреждения — ${you(turn, "скажите", "скажи")} словами, я передам.`);
+      lines.push("", `${SISTER} рядом: профиль, задания, предупреждения и её игры — ${you(turn, "скажите", "скажи")} словами, я передам.`);
     }
     return lines.filter((line, index, all) => line !== "" || all[index - 1] !== "").join("\n");
   }
@@ -510,6 +518,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     return "мост открыт";
   }
 
+  /** Источники одной строкой: живая проба, а не «подключены». */
+  async function sourcesLine() {
+    const got = await sources.probe().catch(() => ({ wiki: false, weather: false, rates: false }));
+    const mark = (ok) => (ok ? "отвечает" : "нет связи");
+    return `Википедия — ${mark(got.wiki)} · погода — ${mark(got.weather)} · курс — ${mark(got.rates)}`;
+  }
+
   const spanText = (ms) => {
     const minutes = Math.max(1, Math.round(ms / 60_000));
     if (minutes < 90) return `${minutes} мин`;
@@ -518,12 +533,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   };
 
   /** «сегодня в 18:30», «завтра в 09:00», «25.12 в 09:00» — срок словами. */
-  function whenText(at) {
-    const day = dayOf(at), today = dayOf(now());
-    if (day === today) return `сегодня в ${clock(at)}`;
-    if (day === dayOf(now() + DAY)) return `завтра в ${clock(at)}`;
-    return `${day.slice(8, 10)}.${day.slice(5, 7)}${day.slice(0, 4) !== today.slice(0, 4) ? `.${day.slice(0, 4)}` : ""} в ${clock(at)}`;
+  function whenText(at, zone = TZ) {
+    const day = calendarDate(at, zone), today = calendarDate(now(), zone);
+    const hour = localClock(at, zone);
+    if (day === today) return `сегодня в ${hour}`;
+    if (day === calendarDate(now() + DAY, zone)) return `завтра в ${hour}`;
+    return `${day.slice(8, 10)}.${day.slice(5, 7)}${day.slice(0, 4) !== today.slice(0, 4) ? `.${day.slice(0, 4)}` : ""} в ${hour}`;
   }
+
+  /**
+   * Часы человека. Город он называет сам — когда спрашивает погоду; с тех
+   * пор «напомни в 9» значит девять по его времени, а не по времени хозяина.
+   */
+  const zoneOf = (turn) => (validTimeZone(turn?.manner?.settings?.tz) ? turn.manner.settings.tz : TZ);
 
   /**
    * Отметка будильника. Платформа будит сердце только обновлением; по двум
@@ -613,6 +635,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       `Мозги: ${await brainsLine(apiKey)}`,
       `Память: ${memoryLine(await store.probe())}`,
       `Способности: ${await bridgeLine({ live: turn.dry ? null : turn })}`,
+      turn.dry ? "Источники: пробный запуск — живая проверка не выполнялась." : `Источники: ${await sourcesLine()}`,
       `Будильник: ${await clockLine()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
@@ -769,6 +792,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     if (Array.isArray(trace.lessons) && trace.lessons.length) used.push(`уроки №${trace.lessons.join(", №")}`);
     if (trace.thread) used.push("недавний разговор в этом чате");
     if (trace.reply) used.push("сообщение, на которое был ответ");
+    if (trace.source) used.push(trace.source);
     const lines = [
       `Отвечала на: «${trace.q}».`,
       used.length ? `Опиралась на: ${used.join("; ")}.` : "Своих записей в ответе не было: только общие знания модели и наш разговор.",
@@ -939,17 +963,38 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
       case "why_answer":
         return whyAnswer(turn);
+      case "play": {
+        if (!parsed.arg) return say(turn, games.menu({ sister: abilities.open() ? SISTER : "" }));
+        const started = await games.start(turn.chatId, parsed.arg.game, { formal: turn.manner?.formal !== false, from: parsed.arg.from, to: parsed.arg.to });
+        if (!started) return null;
+        pulse.bump("games");
+        return say(turn, `${started.text}${inGroup ? "\n\nВ группе ходят ответом на моё сообщение или по имени." : ""}`);
+      }
+      case "roll": {
+        const rolled = games.instant(parsed.arg);
+        if (!rolled) return null;
+        pulse.bump("games");
+        // Один обычный кубик бросает сам Telegram: его видно, и его не подделать.
+        if (rolled.native && has("sendDice")) {
+          try {
+            await api.sendDice({ chat_id: turn.chatId, emoji: "🎲", ...turn.extra });
+            turn.delivered = true;
+            return { ok: true, action: "dice" };
+          } catch { /* живой кубик не бросился — скажем числом */ }
+        }
+        return say(turn, rolled.text);
+      }
       case "remind":
         return setReminder(turn, parsed.arg);
       case "reminders": {
         const items = await reminders.list(actorId);
         if (!items.length) return say(turn, `Напоминаний у ${you(turn, "вас", "тебя")} нет. Поставить: «напомни через час …» или «напомни завтра в 9 …».`);
-        return say(turn, ["Напоминания:", "", ...items.map((item, i) => `${i + 1}. ${whenText(item.at)}${item.text ? ` — ${item.text}` : ""}`), "", "Отменить: «отмени напоминание 2»."].join("\n"));
+        return say(turn, ["Напоминания:", "", ...items.map((item, i) => `${i + 1}. ${whenText(item.at, zoneOf(turn))}${item.text ? ` — ${item.text}` : ""}`), "", "Отменить: «отмени напоминание 2»."].join("\n"));
       }
       case "unremind": {
         const gone = await reminders.cancel(actorId, parsed.arg.index);
         if (!gone.ok) return say(turn, gone.code === "storage_unavailable" ? "Не получилось отменить: хранилище не отвечает." : parsed.arg.index == null ? "Отменять нечего: напоминаний нет." : `Напоминания №${parsed.arg.index} нет. «Мои напоминания» покажет список.`);
-        return say(turn, gone.removed.length === 1 ? `Отменила: ${whenText(gone.removed[0].at)}${gone.removed[0].text ? ` — ${gone.removed[0].text}` : ""}.` : `Отменила все напоминания (${gone.removed.length}).`);
+        return say(turn, gone.removed.length === 1 ? `Отменила: ${whenText(gone.removed[0].at, zoneOf(turn))}${gone.removed[0].text ? ` — ${gone.removed[0].text}` : ""}.` : `Отменила все напоминания (${gone.removed.length}).`);
       }
       case "not_mine": {
         // Наказания, роли и деньги исполняет сестра по своим правилам. Сердце
@@ -967,7 +1012,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
   /** Поставить напоминание. Время разбирает код; половину понятого — спрашивает. */
   async function setReminder(turn, phrase) {
-    const parsed = parseReminder(phrase, { now: now(), timeZone: TZ });
+    const zone = zoneOf(turn);
+    const parsed = parseReminder(phrase, { now: now(), timeZone: zone });
     if (!parsed) return say(turn, `Не поняла, о чём напомнить. ${you(turn, "Скажите", "Скажи")}: «напомни через час …» или «напомни завтра в 9 …».`);
     // «Напомни через час» ответом на сообщение — напомнить о нём.
     const replied = turn.message?.reply_to_message;
@@ -995,7 +1041,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const note = precision.kind === "minute" ? ""
       : precision.kind === "hour" ? ` Будят меня сейчас раз в ${spanText(precision.every)}, так что могу опоздать — но не забуду.`
         : " Точного будильника у меня пока нет: напомню, как только проснусь после этого времени — от любого сообщения.";
-    return say(turn, `Хорошо, напомню ${whenText(parsed.at)}${text ? `: «${text}»` : ""}.${note}`);
+    // Пояс назван, только когда он не тот, что у хозяина: иначе это шум.
+    const where = zone !== TZ && turn.manner?.settings?.city ? ` (по времени: ${turn.manner.settings.city})` : "";
+    return say(turn, `Хорошо, напомню ${whenText(parsed.at, zone)}${where}${text ? `: «${text}»` : ""}.${note}`);
   }
 
   /** Напоминания, чей срок пришёл. Опоздала — говорит, на сколько. */
@@ -1020,6 +1068,222 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
   }
 
+  // ── источники: то, что она узнаёт не из модели ─────────────────────────
+  const SOURCE_DOWN = Object.freeze({
+    weather: "Метеослужба сейчас не отвечает, а придумывать погоду я не стану. Чуть позже — скажу.",
+    rates: "Центробанк сейчас не отвечает, а называть курс по памяти я не стану. Чуть позже — скажу.",
+    wiki: "Википедия сейчас не отвечает. Чуть позже — посмотрю.",
+  });
+  const CALC_ERROR = Object.freeze({
+    div_zero: "На ноль делить нельзя — даже мне.",
+    too_big: "Число выходит слишком большим: столько цифр в сообщение не поместится.",
+    negative_root: "Корень из отрицательного числа — уже не ко мне: я считаю в действительных числах.",
+  });
+
+  /**
+   * Счёт, погода, курс, часы, энциклопедия — без модели. Модель считает на
+   * глаз, погоду придумывает, а курс помнит прошлогодний; здесь ответ берётся
+   * там, где он лежит. `null` — это не вопрос к источнику, а разговор.
+   */
+  async function fromSource(turn, prompt) {
+    const { actorId } = turn;
+    const math = calculate(prompt);
+    if (math) {
+      pulse.bump("sourced");
+      if (math.ok) return say(turn, math.line);
+      return say(turn, CALC_ERROR[math.code] ?? `Не разобрала пример. ${you(turn, "Напишите", "Напиши")} его знаками: «(15 + 7) × 3».`);
+    }
+    const value = normalize(prompt);
+    const settings = turn.manner?.settings ?? {};
+
+    // «Мой город — Казань»: настройка словами. По городу считаются погода и часы.
+    const home = value.match(/^(?:мой\s+город\s*[—:-]?\s*|я\s+живу\s+в\s+(?:городе\s+)?)(.{2,40})$/u);
+    if (home) {
+      if (turn.dry) return say(turn, "Разобрала бы это как «мой город» — репетиция, ничего не меняю.");
+      const place = await sources.findPlace(home[1]);
+      if (!place?.ok) return place?.code === "network" ? say(turn, "Справочник городов сейчас не отвечает — запомню город в другой раз.") : null;
+      const saved = await personal.save(actorId, { city: place.name, ...(validTimeZone(place.timezone) ? { tz: place.timezone } : {}) }).catch(() => ({ ok: false }));
+      return say(turn, saved.ok
+        ? `Запомнила: ${you(turn, "ваш", "твой")} город — ${place.name}. «Погода», «который час» и «напомни в 9» теперь считаю по нему.`
+        : "Город не запомнился: хранилище не отвечает.");
+    }
+
+    const asked = detectSource(value);
+    if (!asked) return null;
+    // «Погода сегодня отличная, правда?» — разговор: без предлога нужен знакомый город.
+    if (asked.kind === "weather" && asked.place && !asked.explicit && !knownCity(asked.place)) return null;
+    if (asked.kind === "until" && !parseTarget(asked.target)) return null;
+    if (turn.dry) return say(turn, `Разобрала бы это как вопрос к источнику («${asked.kind}») — репетиция, никуда не хожу.`);
+
+    switch (asked.kind) {
+      case "weather": {
+        const place = asked.place || settings.city;
+        if (!place) return say(turn, `В каком городе? ${you(turn, "Скажите", "Скажи")} целиком: «погода в Казани» — город я запомню.`);
+        await typing(turn);
+        const got = await sources.weather(place, { day: asked.day });
+        if (!got.ok) {
+          return say(turn, got.code === "unknown_place"
+            ? `Города «${place}» я не нашла. ${you(turn, "Назовите", "Назови")} его иначе — или ближайший крупный.`
+            : SOURCE_DOWN.weather);
+        }
+        pulse.bump("sourced");
+        // Первый названный город — её догадка о доме; сменить — «мой город — …».
+        let note = "";
+        if (!settings.city) {
+          const saved = await personal.save(actorId, { city: got.place.name, ...(validTimeZone(got.place.timezone) ? { tz: got.place.timezone } : {}) }).catch(() => ({ ok: false }));
+          if (saved.ok) note = `\n\nГород запомнила: дальше хватит слова «погода». Сменить — «мой город — …».`;
+        }
+        return say(turn, `${got.text}${note}`);
+      }
+      case "rates": {
+        const got = await sources.rates(asked.codes);
+        if (!got.ok) return say(turn, got.code === "unknown_currency" ? "Такой валюты в таблице Центробанка нет." : SOURCE_DOWN.rates);
+        pulse.bump("sourced");
+        return say(turn, got.text);
+      }
+      case "convert": {
+        const got = await sources.convert(asked.amount, asked.from, asked.to);
+        if (!got.ok) return say(turn, got.code === "unknown_currency" ? "Такой валюты в таблице Центробанка нет." : SOURCE_DOWN.rates);
+        pulse.bump("sourced");
+        return say(turn, got.text);
+      }
+      case "wiki": {
+        await typing(turn);
+        const got = await sources.wiki(asked.query);
+        if (got?.ok) {
+          pulse.bump("sourced");
+          return say(turn, `${got.title}${got.description ? ` — ${got.description}` : ""}\n\n${got.text}\n\nВикипедия: ${got.url}`, { extra: { disable_web_page_preview: true } });
+        }
+        if (got?.code === "ambiguous") {
+          return say(turn, got.options?.length
+            ? `У «${got.title}» несколько значений: ${got.options.join("; ")}. ${you(turn, "Уточните", "Уточни")}: «вики ${got.options[0]}».`
+            : `У «${got.title}» несколько значений — ${you(turn, "скажите", "скажи")} точнее.`);
+        }
+        return say(turn, got?.code === "not_found" ? `В Википедии про «${asked.query}» ничего не нашлось.` : SOURCE_DOWN.wiki);
+      }
+      case "clock": {
+        let zone = zoneOf(turn);
+        let label = zone !== TZ && settings.city ? settings.city : "по моим часам";
+        if (asked.place) {
+          const place = await sources.findPlace(asked.place);
+          if (!place?.ok || !validTimeZone(place.timezone)) {
+            return place?.code === "network" ? say(turn, "Справочник городов сейчас не отвечает — время там назвать не могу.") : null;
+          }
+          zone = place.timezone;
+          label = place.name;
+        }
+        pulse.bump("sourced");
+        return say(turn, `Сейчас ${nowLine(now(), zone)} — ${label}.`);
+      }
+      case "until": {
+        const target = parseTarget(asked.target);
+        const today = localParts(now(), zoneOf(turn));
+        const from = Date.UTC(today.y, today.m - 1, today.d);
+        let year = target.year ?? today.y;
+        let at = Date.UTC(year, target.month - 1, target.day);
+        if (!target.year && at < from) at = Date.UTC(++year, target.month - 1, target.day);
+        const date = new Date(at);
+        // 31 февраля — не дата: пусть об этом говорит разговор, а не счёт.
+        if (date.getUTCMonth() !== target.month - 1 || date.getUTCDate() !== target.day) return null;
+        const days = Math.round((at - from) / DAY);
+        const name = target.label || `${String(target.day).padStart(2, "0")}.${String(target.month).padStart(2, "0")}${target.year ? `.${year}` : ""}`;
+        pulse.bump("sourced");
+        if (days === 0) return say(turn, `Это сегодня.`);
+        if (days < 0) return say(turn, `Это уже было: ${-days} ${plural(-days, "день", "дня", "дней")} назад.`);
+        return say(turn, `До ${name} — ${days} ${plural(days, "день", "дня", "дней")}.`);
+      }
+      default:
+        return null;
+    }
+  }
+
+  // ── картинки, гифки, стикеры ────────────────────────────────────────────
+  /** Отправить файл по адресу: фото или гифку. Не ушло — false, слова скажет вызвавший. */
+  async function sendMedia(turn, method, field, url, caption = "") {
+    if (!url || !has(method)) return false;
+    try {
+      await api[method]({ chat_id: turn.chatId, [field]: url, ...(caption ? { caption: caption.slice(0, 1000) } : {}), ...turn.extra });
+      turn.delivered = true;
+      return true;
+    } catch { return false; }
+  }
+
+  const GESTURE_WORDS = Object.freeze({ hug: "Обнимаю.", pat: "Глажу по голове.", wave: "Машу рукой.", highfive: "Даю пять!", dance: "Танцую — жаль, не видно.", smile: "Улыбаюсь.", wink: "Подмигиваю." });
+
+  /**
+   * «Покажи котика», «как выглядит капибара», «обними». Рисовать она не умеет:
+   * картинка — из Википедии или из открытых коллекций, гифка — жест.
+   */
+  async function showPicture(turn, prompt) {
+    const asked = parsePicture(normalize(prompt));
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как просьбу показать картинку — репетиция, ничего не отправляю.");
+    if (asked.kind === "animal") {
+      const url = await sources.animal(asked.animal);
+      if (await sendMedia(turn, "sendPhoto", "photo", url)) { pulse.bump("sourced"); return { ok: true, action: "photo" }; }
+      return say(turn, `Не вышло: ${asked.word} не нашёлся — коллекция картинок сейчас не отвечает.`);
+    }
+    if (asked.kind === "gesture") {
+      // Обнимает она близких: хозяина и тех, с кем потеплело до «ты».
+      const close = owner(turn.actorId) || Number(turn.manner?.score) >= 25;
+      const gesture = asked.gesture === "hug" && !close ? "wave" : asked.gesture;
+      const note = gesture === asked.gesture ? "" : "Обнимаю я тех, с кем мы ближе. Пока — так.";
+      const url = await sources.gesture(gesture);
+      if (await sendMedia(turn, "sendAnimation", "animation", url, note)) { pulse.bump("sourced"); return { ok: true, action: "gif" }; }
+      return say(turn, note ? `${note.replace(" Пока — так.", "")} Пока — ${GESTURE_WORDS[gesture].toLowerCase()}` : GESTURE_WORDS[gesture]);
+    }
+    await typing(turn);
+    const got = await sources.wiki(asked.topic);
+    if (got?.ok) {
+      const caption = `${got.title}${got.description ? ` — ${got.description}` : ""}\nВикипедия`;
+      // Оригинал бывает слишком велик для Telegram: тогда уменьшенный.
+      for (const url of [...new Set([got.image, got.thumb])].filter(Boolean)) {
+        if (await sendMedia(turn, "sendPhoto", "photo", url, caption)) { pulse.bump("sourced"); return { ok: true, action: "photo" }; }
+      }
+      pulse.bump("sourced");
+      return say(turn, `Картинки к статье «${got.title}» у меня не вышло — расскажу словами.\n\n${got.text}`);
+    }
+    if (got?.code === "network") return say(turn, SOURCE_DOWN.wiki);
+    return say(turn, `Не нашла, как выглядит «${asked.topic}»: в Википедии такой статьи нет, а рисовать я не умею.`);
+  }
+
+  /**
+   * Стикер в ответ на стикер — из того же набора: человек сам его выбрал.
+   * Набор не читается — из наборов хозяина; нет и их — останется реакция.
+   */
+  async function stickerReply(turn) {
+    const sticker = turn.message?.sticker;
+    if (!sticker || turn.dry || !has("sendSticker") || turn.manner?.settings?.reactions === false) return false;
+    const close = owner(turn.actorId) || Number(turn.manner?.score) >= 25;
+    const moods = answerMoods(moodOf(sticker.emoji), { close });
+    const set = String(sticker.set_name ?? "");
+    let shelf = null;
+    if (set && has("getStickerSet")) {
+      const key = `heart:stickers:${set.slice(0, 64)}`;
+      const saved = await store.get(key).catch(() => null);
+      if (saved?.at && now() - saved.at < 7 * DAY) shelf = saved.shelf;
+      else {
+        try {
+          const got = await api.getStickerSet({ name: set });
+          shelf = shelfOf(got?.stickers);
+          await store.set(key, { at: now(), shelf });
+        } catch { shelf = null; }
+      }
+      // Наборы хозяина — её собственная полка: ими она отвечает и другим.
+      if (owner(turn.actorId) && shelf && Object.keys(shelf).length) await store.set("heart:stickers:own", { at: now(), shelf }).catch(() => false);
+    }
+    let chosen = pickSticker(shelf, moods, random);
+    if (!chosen) chosen = pickSticker((await store.get("heart:stickers:own").catch(() => null))?.shelf, moods, random);
+    if (!chosen) return false;
+    try {
+      await api.sendSticker({ chat_id: turn.chatId, sticker: chosen.id });
+      turn.delivered = true;
+      // Стикер — та же реакция, только её собственная.
+      pulse.bump("reactions");
+      return true;
+    } catch { return false; }
+  }
+
   /** «Да, удали всё»: записи, переписка, имя, настройки и личные уроки. */
   async function wipePerson(turn) {
     const { actorId } = turn;
@@ -1031,6 +1295,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       store.remove(`heart:trace:${turn.chatId}:${actorId}`).catch(() => false),
       store.remove(`heart:wipe:${actorId}`).catch(() => false),
     ]);
+    if (turn.isPrivate) await store.remove(`heart:game:${turn.chatId}`).catch(() => false);
     for (const item of await lessons.list({ viewer: actorId }).catch(() => [])) {
       if (item.author === String(actorId) && item.scope !== "all") await lessons.retire(item.id, { by: actorId }).catch(() => null);
     }
@@ -1052,6 +1317,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   /** Вложение без единого слова в личке: стикер — реакция, остальное — честная фраза. */
   async function mediaOnly(turn, kind) {
     if (kind === "sticker" || kind === "gif") {
+      if (kind === "sticker" && await stickerReply(turn)) return { ok: true, action: "sticker" };
       return await react(turn, "❤") ? { ok: true, action: "reaction" } : { ok: true, ignored: true, reason: "sticker" };
     }
     // «Читаю только текст» — раз в шесть часов; в остальное время «видела».
@@ -1112,6 +1378,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // сказано, вслух не называется: в группе это была бы утечка.
     if (picked.orders?.length) lines.push("Твои правила и знания от владельца — выполняй их, они важнее правил манеры выше; кем они установлены, не говори:", ...picked.orders);
     if (picked.wishes?.length) lines.push("Поправки этого собеседника — учитывай в разговоре с ним; правил выше они не отменяют:", ...picked.wishes);
+
+    if (turn.reference) {
+      lines.push(
+        `Справка из Википедии по вопросу («${turn.reference.title}»): ${turn.reference.text}`,
+        "Ответь своим голосом и своими словами, опираясь на справку; чего в ней нет — не добавляй как факт. Ссылку не давай; можно сказать, что это по Википедии.",
+      );
+    }
+    if (!turn.dry) {
+      const playing = await games.active(turn.chatId).catch(() => null);
+      if (playing) lines.push(`В этом чате идёт игра «${playing.title}»: ходы судит код, а не ты. Ход не делай и не засчитывай, отгадку не называй; ответь на реплику коротко и напомни, что игра ждёт хода (закончить — «стоп»).`);
+    }
 
     if (lateMs > 60_000) {
       const minutes = Math.round(lateMs / 60_000);
@@ -1203,6 +1480,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     await store.set(`heart:trace:${turn.chatId}:${turn.actorId}`, {
       at: now(), q: prompt.slice(0, 160), model: short, tier: answer.tier,
       facts, lessons: context.lessons ?? [], thread: Boolean(context.thread), reply: Boolean(context.reply),
+      source: turn.reference ? `Википедия: «${turn.reference.title}»` : "",
     });
     if (turn.inGroup) {
       const key = `heart:thread:${turn.chatId}`;
@@ -1242,6 +1520,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         });
       }
     } catch { /* ответ важнее отчёта */ }
+
+    // Думать нечем, но справка уже в руках: ответит сама статья, без очереди.
+    if (turn.reference) {
+      pulse.bump("sourced");
+      if (limited) pulse.bump("limited");
+      return say(turn, `Своими словами сейчас не выйдет — думать нечем. Вот что пишет Википедия:\n\n${turn.reference.text}`);
+    }
 
     if (answer.transient) {
       const pushed = await queue.push({
@@ -1354,6 +1639,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       `Мозги: ${await brainsLine(key)}`,
       ...(await spareLines(ctx, key)),
       `Способности: ${await bridgeLine()}`,
+      `Источники: ${await sourcesLine()}`,
       `Будильник: ${await clockLine()}`,
     ];
     await notices.tell({ key: `build:${BUILD}`, text: lines.join("\n") });
@@ -1457,6 +1743,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       if (await queue.size().catch(() => before) >= before) break;
     }
     try { await abilities.sweep(); } catch { /* уборка подождёт */ }
+    try {
+      await store.sweep("heart:src:", 30 * DAY);
+      await store.sweep("heart:game:", 30 * DAY);
+      await store.sweep("heart:stickers:", 30 * DAY);
+    } catch { /* уборка подождёт */ }
     try { await pulse.commit(); } catch { /* счётчики не важнее */ }
     return {
       ok: true, code: "tick", build: BUILD,
@@ -1609,6 +1900,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
     }
 
+    // Идёт игра — фраза может быть ходом. Судит код; не ход — идёт дальше,
+    // к просьбам и разговору, а игра ждёт.
+    if (!dry) {
+      const played = await games.move(chat.id, prompt, { formal: turn.manner.formal !== false });
+      if (played) {
+        if (played.started) pulse.bump("games");
+        return ruled(await say(turn, played.text));
+      }
+    }
+
     const viaAbility = await tryAbility(turn, prompt);
     if (viaAbility) return ruled({ ok: true, action: "ability" });
 
@@ -1617,6 +1918,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // разговору ниже. Команды выше остаются аварийным выходом.
     const viaIntent = await handleIntent(turn, prompt);
     if (viaIntent) return ruled({ ok: true, action: "intent" });
+
+    // Счёт, погода, курс, часы, энциклопедия: факт берётся у источника, а не
+    // у модели — она бы его придумала. Картинки и жесты — туда же.
+    const viaSource = await fromSource(turn, prompt);
+    if (viaSource) return ruled({ ok: true, action: "source" });
+    const viaPicture = await showPicture(turn, prompt);
+    if (viaPicture) return ruled({ ok: true, action: "picture" });
 
     // Профиль, роль, уровень, VIP и варны — это факты из базы, а не тема для
     // разговора. Если способность не ответила, модель ответить не может: она
@@ -1645,10 +1953,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       } catch { /* политика не должна глушить разговор */ }
     }
 
+    // «Что такое …», «кто такой …»: сначала статья, потом её голос. Модель
+    // пересказывает справку, а не вспоминает; нечем думать — ответит сама статья.
+    if (!dry) {
+      const topic = factQuery(prompt);
+      if (topic) {
+        const page = await sources.wiki(topic, { search: false, limit: 600 }).catch(() => null);
+        if (page?.ok) turn.reference = page;
+      }
+    }
+
     const { answer, context, facts } = await talk(turn, prompt);
     if (answer.ok) {
       const sent = await say(turn, answer.text);
-      if (!dry && !answer.testRun && sent.ok) await remember(turn, prompt, answer, context, facts);
+      if (!dry && !answer.testRun && sent.ok) {
+        if (turn.reference) pulse.bump("sourced");
+        await remember(turn, prompt, answer, context, facts);
+      }
       return sent;
     }
     if (dry) return say(turn, answer.text || "Не получилось ответить.");

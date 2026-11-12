@@ -256,7 +256,10 @@ test("аудит 9: память хранит как сказано; «забу�
 });
 
 test("аудит 10: несуществующих команд в сердце нет, а упавший обработчик не молчит", async () => {
-  const sources = readdirSync(new URL("../tgcloud/lib/", import.meta.url)).map(name => readFileSync(new URL(`../tgcloud/lib/${name}`, import.meta.url), "utf8")).join("\n");
+  // Вместе с вложенными папками: рядом с кодом лежат и её собственные данные.
+  const sources = readdirSync(new URL("../tgcloud/lib/", import.meta.url), { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => readFileSync(`${entry.parentPath ?? entry.path}/${entry.name}`, "utf8")).join("\n");
   for (const dead of ["/aikey", "/play", "/campaign", "/home", "/packs", "TEST-контур"]) {
     assert.ok(!sources.includes(dead), `в исходниках осталось «${dead}»`);
   }
