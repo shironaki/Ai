@@ -58,7 +58,7 @@ if (process.env.FAKE_MEANWHILE && args[0] === "fetch") {
 }
 const fail = String(process.env.FAKE_FAIL || "");
 const name = args[0] === "run" ? "run:" + args[1] : args[0];
-if (fail && (fail === args[0] || fail === name)) { console.log("✗ boom"); process.exit(1); }
+if (fail && (fail === args[0] || fail === name)) { console.log(process.env.FAKE_SAYS || "✗ boom"); process.exit(1); }
 if (args[0] === "webhook") console.log("  url: https://secret.example/hook\\n  allowed updates: message, channel_post");
 if (args[0] === "run") console.log(args.includes("{ tick: true }") && process.env.FAKE_MISMATCH ? "{ ok: false, code: 'build_mismatch' }" : "{ ok: true }");
 `;
@@ -206,7 +206,7 @@ test("репетиция упала — публикации нет; владе�
   const box = sandbox();
   try {
     const first = box.run("once", { FAKE_FAIL: "run:handlers/channel_post" });
-    assert.match(first.out, /публикации нет, бот на прежней сборке/u);
+    assert.match(first.out, /Не прошло: репетиция: пост канала — публикации нет, бот на прежней сборке\. Подробности/u);
     assert.ok(!box.cli().some(item => item.args[0] === "push"), "до публикации дело не дошло");
     assert.equal(box.status(), "", "ключи убраны и после неудачи");
     assert.equal(box.state("published"), "");
@@ -233,6 +233,11 @@ test("репетиция упала — публикации нет; владе�
     assert.equal(box.cli().length, again, "и снова ждёт час");
 
     box.commit("1.0.1");
+    // Связь и токен — частые причины первого запуска: о них сказано словами, без похода в журнал.
+    const offline = box.run("once", { FAKE_FAIL: "run:handlers/message", FAKE_SAYS: "✗ Could not reach the tgcloud server at https://cloud.telegram.org." });
+    assert.match(offline.out, /Не прошло: репетиция: сообщение — публикации нет, бот на прежней сборке\. Причина: нет связи с платформой Telegram\./u);
+    const rejected = box.run("once", { FAKE_FAIL: "run:handlers/message", FAKE_SAYS: "Error: TGCLOUD_TOKEN (app123): token is invalid or expired." });
+    assert.match(rejected.out, /Причина: платформа не приняла токен публикации\./u);
     const fixed = box.run("once");
     assert.match(fixed.out, /Сборка 1\.0\.1 опубликована/u);
   } finally { box.clean(); }

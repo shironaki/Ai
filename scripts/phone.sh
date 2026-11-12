@@ -341,6 +341,12 @@ main() {
     WHY="$title"
     return 1
   }
+  # Почему шаг не вышел, если это видно по журналу: связь, токен — или сам код.
+  hint() {
+    if grep -q "Could not reach" "$DEPLOY_LOG" 2>/dev/null; then echo " Причина: нет связи с платформой Telegram."
+    elif grep -q "TGCLOUD_TOKEN" "$DEPLOY_LOG" 2>/dev/null; then echo " Причина: платформа не приняла токен публикации."
+    fi
+  }
   webhook_check() {
     local out
     out="$(tg webhook 2>&1)"
@@ -392,9 +398,9 @@ main() {
       && step "репетиция: пост канала" tg run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }' \
       && { [ ! -f "$REPO/tgcloud/handlers/callback_query.js" ] || step "репетиция: кнопка" tg run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'; } \
       && step "состояние облака" tg fetch \
-      || { restore; log "✗ Не прошло: $WHY — публикации нет, бот на прежней сборке. Подробности: $DEPLOY_LOG"; return 1; }
+      || { restore; log "✗ Не прошло: $WHY — публикации нет, бот на прежней сборке.$(hint) Подробности: $DEPLOY_LOG"; return 1; }
     if ! step "публикация" tg push handlers lib schema; then
-      restore; log "✗ Публикация не прошла. Подробности: $DEPLOY_LOG"; return 1
+      restore; log "✗ Публикация не прошла.$(hint) Подробности: $DEPLOY_LOG"; return 1
     fi
     # С этой строки новый код уже в боте: дальнейшие неудачи — не «откат».
     local warn=""
