@@ -15,7 +15,7 @@ import { pickSticker } from "./pictures.js";
 import { QUESTIONS } from "./data/party.js";
 
 export const CHAT_KEY = (chatId) => `heart:chat:${chatId}`;
-const DEFAULTS = Object.freeze({ rp: true, gifs: true, welcome: true, welcomeText: "", quietUntil: 0 });
+const DEFAULTS = Object.freeze({ rp: true, gifs: true, welcome: true, welcomeText: "", quietUntil: 0, tone: "" });
 
 const MINUTE = 60_000;
 const QUIET = /^(?:помолчи|замолчи|молчи|тихо|тише|цыц|не\s+(?:пиши|отвечай|говори|шуми)|отдохни)(?:те)?(?:\s+(?:пожалуйста|тут|здесь|пока|немного|чуть-чуть|в\s+(?:этом\s+)?чате))*(?:\s+(?:на\s+)?(полчаса|сутки|день|(\d{1,3})?\s*(минут[уы]?|мин|час(?:а|ов)?|ч)))?$/u;
@@ -72,6 +72,21 @@ const GIF_WORD = "(?:гифки|гифок|гиф|gif|анимации)";
  * Настройка чата словами. Возвращает `{ patch }`, `{ show }` или null.
  * Менять может админ чата или хозяин — это проверяет сердце.
  */
+const WHERE = "(?:\\s+(?:тут|здесь|в\\s+(?:этом\\s+)?чате|в\\s+(?:этой\\s+)?группе))?";
+const TONES = Object.freeze([
+  ["serious", "(?:по)?серьезн(?:ее|ой|о)|(?:по)?строже|строгой|без\\s+шуток"],
+  ["playful", "(?:по)?весел(?:ее|ой)|шутлив(?:ее|ой)|игрив(?:ее|ой)|с\\s+шутками"],
+  ["brief", "(?:по)?короче|кратк(?:ой|о)|лаконичн(?:ее|ой|о)"],
+  ["", "как\\s+обычно|обычной|собой|самой\\s+собой"],
+]);
+export const TONE_LABEL = Object.freeze({ serious: "серьёзной: по делу и без шуток", playful: "повеселее: шутки к месту", brief: "краткой: две-три фразы" });
+/** Что манера чата значит для модели. */
+export const TONE_LINE = Object.freeze({
+  serious: "Админы этого чата просили тебя быть здесь серьёзной: по делу, без шуток и заигрываний.",
+  playful: "Админы этого чата просили тебя быть здесь повеселее: лёгкий тон, шутки к месту.",
+  brief: "Админы этого чата просили тебя отвечать здесь коротко: две-три фразы.",
+});
+
 export function parseChatSetting(text) {
   const raw = String(text ?? "").trim();
   const value = fold(raw).replace(/[.!…]+$/u, "");
@@ -86,6 +101,12 @@ export function parseChatSetting(text) {
   if (new RegExp(`^(?:${RP_WORD}\\s+без\\s+${GIF_WORD}|${OFF}\\s+${GIF_WORD}|без\\s+${GIF_WORD})$`, "u").test(value)) return { patch: { gifs: false }, done: "Хорошо, действия — только словами, без гифок." };
   if (new RegExp(`^(?:${RP_WORD}\\s+с\\s+(?:гифками|гиф|gif)|${ON}\\s+${GIF_WORD}|с\\s+гифками)$`, "u").test(value)) return { patch: { gifs: true }, done: "Гифки к действиям вернула." };
   if (/^(?:(?:покажи|какие)\s+)?настройки\s+(?:чата|группы|беседы)$/u.test(value)) return { show: "all" };
+  // Манера в этом чате: «будь серьёзнее», «будь веселее», «говори короче».
+  for (const [tone, words] of TONES) {
+    if (new RegExp(`^(?:будь|говори|общайся|веди\\s+себя|отвечай)${WHERE}\\s+(?:${words})${WHERE}$`, "u").test(value)) {
+      return { patch: { tone }, tone: true, done: tone ? `Хорошо, в этом чате буду ${TONE_LABEL[tone]}. Вернуть — «будь как обычно».` : "Хорошо, в этом чате снова говорю как обычно." };
+    }
+  }
   return null;
 }
 
@@ -133,6 +154,9 @@ export function createFun({
   async function chatSetting(turn, prompt) {
     const asked = parseChatSetting(prompt);
     if (!asked) return null;
+    // Манеру чата задаёт админ группы; у остальных и в личке это просьба к
+    // разговору — на неё ответит она сама.
+    if (asked.tone && (turn.isPrivate || turn.dry || !(await canManage(turn)))) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как настройку чата — репетиция, ничего не меняю.");
     const current = await chatSettings(turn.chatId);
     if (asked.show === "welcome") {
@@ -145,6 +169,7 @@ export function createFun({
         "Настройки этого чата:",
         `• ролевые действия — ${current.rp ? "включены" : "выключены"};`,
         `• гифки к действиям — ${current.gifs ? "да" : "нет"};`,
+        current.tone && TONE_LABEL[current.tone] ? `• манера — ${TONE_LABEL[current.tone].replace(/:.*$/u, "")};` : "",
         Number(current.quietUntil) > now() ? `• молчу ещё ${span(Math.ceil((Number(current.quietUntil) - now()) / MINUTE) * MINUTE)};` : "",
         turn.isPrivate ? "" : `• приветствие новичков — ${!current.welcome ? "выключено" : current.welcomeText ? "своё" : "моими словами"}.`,
         "",

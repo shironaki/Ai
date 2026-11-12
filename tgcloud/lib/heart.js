@@ -22,7 +22,8 @@ import { createSources, detectSource, factQuery, parseTarget, knownCity } from "
 import { calculate } from "./calc.js";
 import { createGames } from "./games.js";
 import { parsePicture, moodOf, answerMoods, shelfOf, pickSticker } from "./pictures.js";
-import { createFun, parseChatSetting, parseQuiet, parseQuestion, MORE_QUESTION } from "./fun.js";
+import { createFun, parseChatSetting, parseQuiet, parseQuestion, MORE_QUESTION, TONE_LINE } from "./fun.js";
+import { createChatbook, parseScore, parseQuote } from "./chatbook.js";
 import { createNotes, parseNote } from "./notes.js";
 import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
 import { parsePoll } from "./polls.js";
@@ -359,6 +360,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   /**
    * Игры с кнопками: вдвоём и компанией. В игре только тот, кто нажал сам.
    */
+  // Счёт для настольной игры и цитатник: то, что чат попросил записать.
+  const chatbook = createChatbook({ store, now, random, dayOf, say: (turn, text, options) => say(turn, text, options), canManage: (turn) => fun.canManage(turn) });
   const party = createParty({
     api, store, random, now, has, pulse,
     isMinor: async (userId) => (await personal.settings(userId))?.minor === true,
@@ -1821,6 +1824,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     let thread = false;
     if (turn.inGroup) {
+      const tone = TONE_LINE[(await fun.chatSettings(turn.chatId).catch(() => ({}))).tone];
+      if (tone) lines.push(tone);
       const saved = await store.get(`heart:thread:${turn.chatId}`).catch(() => null);
       // Свои реплики человек видит в личной истории; здесь — чужие, чтобы
       // «а посвежее?» после ответа другому участнику было понятно.
@@ -2353,6 +2358,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       await store.sweep("heart:rp:", 2 * DAY);
       await store.sweep("heart:again:", DAY);
       await store.sweep("heart:offer:", 30 * DAY);
+      await store.sweep("heart:score:", 90 * DAY);
       await store.sweep("heart:heard:", 3 * DAY);
       await store.sweep("heart:stickers:", 30 * DAY);
       await store.sweep("heart:quota:", 3 * DAY);
@@ -2584,7 +2590,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
     const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
-      || noted || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
+      || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
@@ -2610,6 +2616,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       ?? await fun.whois(turn, prompt, { self }) ?? await party.begin(turn, prompt, { say })
       ?? await fun.question(turn, prompt, { day: dayOf(now()) });
     if (viaFun) return ruled(viaFun);
+    const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
+    if (viaBook) return ruled(viaBook);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
     // человека: у этих слов есть своё значение, и оно важнее.
