@@ -9,6 +9,9 @@ export const DEEDS = Object.freeze({
   taught: { respect: 2, trust: 1 },
   apology: { sympathy: 1 },
   rude: { sympathy: -3, respect: -2 },
+  // Ролевые действия с ней самой: тепло от близкого и толчок от чужого.
+  caress: { sympathy: 1 },
+  shove: { sympathy: -1 },
 });
 /** Pure projection: no retroactive cooling for legacy rows without an anchor. */
 export function currentSympathy(row = {}, at = Date.now()) {

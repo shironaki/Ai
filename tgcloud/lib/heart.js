@@ -22,6 +22,7 @@ import { createSources, detectSource, factQuery, parseTarget, knownCity } from "
 import { calculate } from "./calc.js";
 import { createGames } from "./games.js";
 import { parsePicture, moodOf, answerMoods, shelfOf, pickSticker } from "./pictures.js";
+import { createFun } from "./fun.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -315,6 +316,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     // и тот же тип чата, что в профиле ответа: один конверт, а не два.
     intervalFor: async ({ userId, chatId, isPrivate }) => pauseFor({ facts: await factsFor({ userId, chatId, isPrivate }), config }),
     now,
+  });
+
+  /**
+   * Забавы: ролевые действия, приветствие новичков, опросы, «мой айди». Всё
+   * это делается словом и ничего не стоит — поэтому живёт у неё, а не у сестры.
+   */
+  const fun = createFun({
+    api, store, sources, policy, personal, pulse, random, now, owner, has, name: NAME,
+    say: (turn, text, options) => say(turn, text, options),
+    react: (turn, emoji) => react(turn, emoji),
+    // «Придумай опрос про …»: одна реплика модели, без записи в переписку.
+    compose: async (turn, text) => {
+      if (await overQuota(turn)) return null;
+      const { answer } = await talk(turn, text);
+      return answer.ok && !answer.testRun ? answer.text : null;
+    },
   });
 
   /**
@@ -1984,7 +2001,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const mentioned = mentions(prompt, self?.username);
       const called = vocative(mentioned ? stripMention(prompt, self?.username) : prompt, [NAME.toLowerCase()]);
       turn.addressed = command?.name === "ai" || turn.replyToMe || mentioned || called.addressed;
-      if (!turn.addressed) return { ignored: true };
+      if (!turn.addressed) {
+        // Не к ней — но «обнять» ответом на чужое сообщение она разыграет.
+        const acted = await fun.roleplay(turn, prompt, { self, addressed: false });
+        return acted ?? { ignored: true };
+      }
       prompt = called.prompt;
       bare = !prompt;
     } else {
@@ -1994,6 +2015,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       if (called.addressed) { prompt = called.prompt; bare = !prompt; }
     }
     turn.manner ??= await mannerFor(actorId, { dry });
+    // «Мне 15 лет» запоминается: романтика с таким собеседником закрыта и в
+    // словах, и в действиях. Проверить возраст нельзя — только поверить.
+    if (!dry && !owner(actorId)) {
+      const age = prompt.match(/(?:^|[\s,.!])мне\s+(\d{1,2})\s*(?:лет|год)/iu);
+      const minor = age ? Number(age[1]) < 18 : null;
+      if (minor != null && Boolean(turn.manner.settings.minor) !== minor) {
+        turn.manner = { ...turn.manner, settings: { ...turn.manner.settings, minor } };
+        await personal.save(actorId, { minor }).catch(() => ({ ok: false }));
+      }
+    }
     // Позвали по имени и ничего не сказали: отозваться можно и без модели.
     if (bare) return ruled(await say(turn, ["Я здесь.", "Слушаю.", "Да?"][Math.abs(Number(message.message_id) || 0) % 3]));
 
@@ -2071,6 +2102,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
     }
 
+    // Забавы — до всего остального: «обнять», настройка чата, опрос, «мой
+    // айди». Просьба с известным смыслом («разбуди меня в 7») сюда не идёт.
+    const self = inGroup || !request ? await whoAmI(dry) : null;
+    if (!request) {
+      const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
+      if (acted) return ruled(acted);
+    }
+    const viaFun = await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt) ?? await fun.whois(turn, prompt, { self });
+    if (viaFun) return ruled(viaFun);
+
     const viaAbility = await tryAbility(turn, prompt);
     if (viaAbility) return ruled({ ok: true, action: "ability" });
 
@@ -2145,6 +2186,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   async function onMessage(message, ctx = {}) {
     const chatId = message?.chat?.id;
     const dry = ctx?.testRun === true;
+    // «В чат вошли»: служебное сообщение без текста — встретить новичка.
+    if (chatId && Array.isArray(message?.new_chat_members) && message.new_chat_members.length) {
+      try {
+        if (!dry) await wake(ctx);
+        return await fun.welcome(message, { self: await whoAmI(dry), dry });
+      } catch (error) {
+        await reportCrash(error, ctx);
+        return { ok: false, code: "runtime_error" };
+      } finally {
+        if (!dry) { try { await pulse.commit(); } catch { /* счётчики не важнее приветствия */ } }
+      }
+    }
     if (!chatId || message?.from?.is_bot) return { ignored: true };
     const kind = senseOf(message);
     if (kind === "none") return { ignored: true };

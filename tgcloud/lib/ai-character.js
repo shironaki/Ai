@@ -88,7 +88,8 @@ export function buildCharacterProfile({ settings = {}, character = {}, relations
     warm: "Отношение хорошее: больше доброты, терпения и спокойствия; шутки мягче.",
     first: "Устойчивой близости пока нет. Держи своё первое впечатление, не подстраивай характер целиком под пожелания участника.",
   };
-  const saysMinor = /(?:мне\s+|возраст\s*[:—-]?\s*)(?:1[0-7]|[1-9])\s*(?:лет|год)/iu.test(userText);
+  // Сказанное однажды «мне 15» запомнено настройкой: флирт закрыт и потом.
+  const saysMinor = settings.minor === true || /(?:мне\s+|возраст\s*[:—-]?\s*)(?:1[0-7]|[1-9])\s*(?:лет|год)/iu.test(userText);
   // Просьба «без флирта» действует и сейчас, и потом: она сохранена настройкой.
   const asksStop = settings.flirt === false || /(?:без\s+флирта|не\s+флиртуй|хватит\s+флиртовать)/iu.test(userText);
   const birthAge = ageFromBirthday(birthday, now, settings.timezone);
