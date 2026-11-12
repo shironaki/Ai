@@ -14,7 +14,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const skip = process.platform === "win32" ? "bash-скрипт проверяется на Linux и в Termux" : false;
+// В Termux нет /usr/bin/env, на который опираются подставные программы теста:
+// сам скрипт там работает, а его песочница — нет. Публикацию это не держит.
+const skip = process.platform === "win32" || process.platform === "android" ? "песочница скрипта собирается только на обычном Linux и macOS" : false;
 const GIT_ENV = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
 const TOKEN = "app123:SECRET-PLATFORM-TOKEN";
 const KEYS = { model: "gsk-SECRET-MODEL-KEY", giga: "GIGA-SECRET-KEY", voice: "777:VOICE-SECRET" };

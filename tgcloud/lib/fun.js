@@ -281,15 +281,24 @@ export function createFun({
     if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
     const actor = esc(turn.name || "Кто-то");
     const { action, tail } = parsed;
-    pulse?.bump("rp");
 
-    // 1. Человек — человеку.
+    // 1. Человек — человеку. От потока защищает счёт: не больше восьми строк
+    // в минуту на чат — иначе одним словом её можно заставить засыпать беседу.
     if (!addressed) {
+      if (store?.available) {
+        const key = `heart:rp:${turn.chatId}`;
+        const seen = await store.get(key).catch(() => null);
+        const fresh = seen && now() - Number(seen.from) < MINUTE;
+        if (fresh && Number(seen.count) >= 8) return { ignored: true, reason: "rp_flood" };
+        await store.set(key, { from: fresh ? seen.from : now(), count: fresh ? Number(seen.count) + 1 : 1 }).catch(() => false);
+      }
+      pulse?.bump("rp");
       const html = String(third.id) === String(turn.actorId) ? selfLine(action, actor) : lineFor(action, actor, label(third), { tail: esc(tail), bName: esc(third.name) });
       const sent = await show(turn, action.gif, html, { gifs: chat.gifs });
       return sent ? { ok: true, action: "rp", kind: action.key, via: sent } : { ok: false, code: "send_failed" };
     }
 
+    pulse?.bump("rp");
     const manner = turn.manner ?? {};
     const mine = owner(turn.actorId);
     const formal = manner.formal !== false;

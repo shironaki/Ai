@@ -24,7 +24,8 @@ export const CONFIG = Object.freeze({
 
   // Другие провайдеры с OpenAI-совместимым API — ещё один запас на случай,
   // когда кончились все модели основного. Ключа здесь нет: он приходит из
-  // GitHub-секрета AI_EXTRA_KEYS ({"имя": "ключ"}) только на время публикации.
+  // строки KEY_<ИМЯ> в ~/.heart.env на телефоне (или из GitHub-секрета
+  // AI_EXTRA_KEYS, {"имя": "ключ"}) только на время публикации.
   // Пример записи: { id: "cerebras", baseUrl: "https://api.cerebras.ai/v1", models: ["llama-3.3-70b"] }
   AI_PROVIDERS: [
     // Experiential Labs: шлюз с OpenAI-совместимым API. В бесплатном плане две

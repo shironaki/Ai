@@ -96,6 +96,19 @@ test("в группе: без адресата и повелительное —
   assert.equal(toChat(-10).at(-1).text, '🙌 Вася и <a href="tg://user?id=23">Петя</a> дают друг другу пять');
 });
 
+test("поток действий: больше восьми строк в минуту на чат она не пишет", async () => {
+  reset();
+  let at = 1_800_000_000_000;
+  const h = heart({}, { now: () => at });
+  for (let i = 0; i < 8; i++) await h.onMessage(group("обнять", { id: 21, name: "Вася", reply: masha() }), KEY);
+  assert.equal(toChat(-10).length, 8);
+  assert.equal((await h.onMessage(group("обнять", { id: 21, name: "Вася", reply: masha() }), KEY)).reason, "rp_flood");
+  assert.equal(toChat(-10).length, 8);
+  at += 61_000;
+  await h.onMessage(group("обнять", { id: 21, name: "Вася", reply: masha() }), KEY);
+  assert.equal(toChat(-10).length, 9, "минута прошла — снова отвечает");
+});
+
 test("действие с ней самой: реакция на сообщение, слова по близости, шаг отношений раз в день", async () => {
   reset();
   let at = 1_800_000_000_000;
