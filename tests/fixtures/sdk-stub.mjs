@@ -74,7 +74,17 @@ export async function fetch(url, options = {}) {
   return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "ответ из стаба" } }] }) };
 }
 
+/** Файл для отправки: стаб хранит байты, имя и тип — тест может их прочесть. */
+export class InputFile {
+  constructor(bytes, name, options = {}) { this.bytes = bytes; this.name = name; this.type = options.type ?? ""; }
+}
+
 export const db = {
+  async all(query, params = {}) {
+    if (!query.includes("FROM kv_state WHERE key LIKE")) return [];
+    const prefix = String(params[":prefix"]).replace(/%$/u, "");
+    return [...state.kv.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, value]) => ({ key, value }));
+  },
   async get(query, params = {}) {
     if (query.includes("FROM kv_state")) {
       const value = state.kv.get(params[":key"]);

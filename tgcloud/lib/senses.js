@@ -24,7 +24,20 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const PAGE_LIMIT = 5000;
 
-const encoder = new TextEncoder();
+/** Строка → байты UTF-8. `TextEncoder` в изоляте не обещан — есть запасной путь. */
+export function utf8Bytes(text) {
+  const value = String(text ?? "");
+  try { if (typeof TextEncoder === "function") return new TextEncoder().encode(value); } catch { /* ниже — вручную */ }
+  const out = [];
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    if (code < 0x80) out.push(code);
+    else if (code < 0x800) out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+    else if (code < 0x10000) out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+    else out.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+  }
+  return Uint8Array.from(out);
+}
 const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /** Байты → base64. Своя, потому что `Buffer` и `btoa` в изоляте не обещаны. */
@@ -50,14 +63,14 @@ export function multipart(parts, boundary = `----heart${Math.random().toString(1
   const plain = (value) => String(value ?? "").replace(/[\r\n"]/gu, " ");
   for (const part of parts) {
     const file = part.bytes != null;
-    chunks.push(encoder.encode(
+    chunks.push(utf8Bytes(
       `--${boundary}\r\nContent-Disposition: form-data; name="${plain(part.name)}"${file ? `; filename="${plain(part.filename || "file")}"` : ""}\r\n`
       + (file ? `Content-Type: ${plain(part.type || "application/octet-stream")}\r\n` : "") + "\r\n",
     ));
-    chunks.push(file ? (part.bytes instanceof Uint8Array ? part.bytes : new Uint8Array(part.bytes)) : encoder.encode(String(part.value ?? "")));
-    chunks.push(encoder.encode("\r\n"));
+    chunks.push(file ? (part.bytes instanceof Uint8Array ? part.bytes : new Uint8Array(part.bytes)) : utf8Bytes(String(part.value ?? "")));
+    chunks.push(utf8Bytes("\r\n"));
   }
-  chunks.push(encoder.encode(`--${boundary}--\r\n`));
+  chunks.push(utf8Bytes(`--${boundary}--\r\n`));
   const body = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
   let at = 0;
   for (const chunk of chunks) { body.set(chunk, at); at += chunk.length; }
@@ -310,6 +323,6 @@ const TRANSCRIBE = /^(?:(?:а\s+)?(?:расшифруй|распознай|пе�
 /** «Расшифруй» ответом на голосовое. */
 export const asksTranscript = (text) => TRANSCRIBE.test(String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/[,;:!?.…—–]+/gu, " ").replace(/\s+/gu, " ").trim());
 
-const ABOUT_PICTURE = /фото|фотк|картинк|изображени|скрин|снимк|мем|рисун|арт|(?:^|\s)(?:тут|здесь|там|это|этот|эта|эту|этом|этой|него|нем|ней)(?=$|[\s,.!?])|написан|видишь|посмотри|глянь|зацени|оцени|что\s+за|кто\s+(?:тут|здесь)|где\s+(?:это|снято)|опиши|прочитай|переведи|реши/u;
+const ABOUT_PICTURE = /фото|фотк|картинк|изображени|скрин|снимк|рисун|(?:^|\s)(?:мем(?:ы|а|чик)?|арт|реши(?:те)?|тут|здесь|там|это|этот|эта|эту|этом|этой|него|нем|ней)(?=$|[\s,.!?])|написан|видишь|посмотри|глянь|зацени|оцени|что\s+за|кто\s+(?:тут|здесь)|где\s+(?:это|снято)|опиши|прочитай|переведи/u;
 /** Говорит ли человек о картинке, на которую отвечает: по чужому старому фото разговор «как дела» не заводят. */
 export const aboutPicture = (text) => ABOUT_PICTURE.test(String(text ?? "").toLowerCase().replace(/ё/gu, "е"));

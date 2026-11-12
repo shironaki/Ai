@@ -24,6 +24,7 @@ import { createGames } from "./games.js";
 import { parsePicture, moodOf, answerMoods, shelfOf, pickSticker } from "./pictures.js";
 import { createFun, parseChatSetting, parseQuiet, parseQuestion, MORE_QUESTION, TONE_LINE } from "./fun.js";
 import { createChatbook, parseScore, parseQuote } from "./chatbook.js";
+import { createSoul, parseSoul } from "./soul.js";
 import { createNotes, parseNote } from "./notes.js";
 import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
 import { parsePoll } from "./polls.js";
@@ -92,19 +93,19 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.23.0";
+export const BUILD = "0.24.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "ролевые действия: «обнять», «пнуть», «поцеловать» ответом на сообщение — строка с гифкой; на действие со мной отвечаю по близости, а «поцелуй меня» выполню не каждому",
-  "игры с кнопками, вдвоём и компанией: крестики-нолики, «кнб вдвоём», крокодил, правда или действие, бутылочка; в игре только тот, кто сам нажал кнопку",
-  "в группе: встречаю новичков сама, делаю опросы («опрос: вопрос? вариант, вариант»), задаю «вопрос дня», по слову админа молчу («помолчи час»)",
-  "ищу без модели: «покажи Байкал», «найди картинку …», «покажи тянку», «найди аниме …», «посоветуй аниме», «найди песню …» (отрывок и ссылка), «найди видео …»",
-  "«мой айди» и «айди» ответом на человека: номер и примерный возраст аккаунта — оценка, точной даты Telegram не даёт",
-  "списки, цели и дневник: «список покупок: молоко, хлеб», «цель: …», «дневник: …» — записываю дословно, дневник показываю только в личке",
-  "публикует меня телефон хозяина, без GitHub Actions: следит за веткой, проверяет, выкладывает и будит по минутам",
-  "прежнее на месте: слушаюсь хозяина, напоминаю, узнаю погоду, курс и время сама, сужу игры кодом, думаю запасными мозгами («проверь мозги»)",
-  "рисовать не умею и говорю об этом прямо: на «нарисуй …» предложу найти готовую картинку",
+  "слышу: голосовое и «кружок» в личке расшифровываю и отвечаю как на обычное сообщение (в группе — ответом на моё); «расшифруй» ответом на чужое голосовое — текстом для всех",
+  "вижу и читаю: фото рассматриваю перед ответом, ссылку открываю по просьбе («перескажи» и адрес; в личке хватит самой ссылки)",
+  "игры с кнопками, можно и в одиночку: «квиз» без наград, «угадай животное» — угадываю я, «загадай животное» — угадываете вы, «приключение» с развилками",
+  "«карта дня» — одна на день; «вопрос дня по утрам» в чате (включает админ) и «карта дня по утрам» в личке присылаю сама, в назначенный час",
+  "привычки: «привычка: зарядка каждый день в 8», «отметь зарядку», «мои привычки» — считаю дни подряд и напоминаю",
+  "к слову сказанное имя, город или день рождения замечаю и спрашиваю, запомнить ли; сама не записываю",
+  "тетрадь чата: «счёт: Петя 0, Маша 0» и «Пете +2» для настольных игр, цитатник («в цитатник» ответом на сообщение, «цитата»), манера чата по слову админа («будь серьёзнее»)",
+  "кнопка «Ещё» под вопросом дня и под котиком; хозяину — «резервная копия»: файл со всем, что я помню, вернуть его — подпись «восстанови душу»",
+  "прежнее на месте: действия и игры компанией, поиск картинок, музыки и аниме, списки, напоминания, запасные мозги; рисовать по-прежнему не умею",
 ]);
 
 const DAY = 86_400_000;
@@ -135,7 +136,7 @@ function senseOf(message = {}) {
 
 const MEDIA_WORD = Object.freeze({ photo: "фото", video: "видео", file: "файл", voice: "голосовое", gif: "гифку", sticker: "стикер" });
 
-export function createHeart({ db = null, api = null, fetchImpl = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
+export function createHeart({ db = null, api = null, fetchImpl = null, InputFile = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
   const store = createHeartStore({ db, now });
   // A deployment that predates these keys still gets sensible names, never
   // "undefined" in a sentence addressed to a person.
@@ -174,6 +175,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   const media = createMedia({ sources });
   // Списки, цели и дневник: строки человека, которые возвращаются дословно.
   const notes = createNotes({ store, now, dayOf });
+  // Резервная копия нажитого: уроки, отношения, память, списки — файлом хозяину.
+  const soul = createSoul({ store, api, InputFile, now, build: BUILD, dayOf });
   // Привычки: счёт дней подряд, без наград и наказаний.
   const habits = createHabits({ store, now });
   // Слух, зрение и чтение ссылок: отдельные модели того же провайдера.
@@ -488,7 +491,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       ...SPOKEN_HELP,
     ];
     if (owner(turn.actorId) && turn.isPrivate) {
-      lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня».");
+      lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня», «резервная копия».");
     }
     if (abilities.open()) {
       lines.push("", `${SISTER} рядом: профиль, задания, предупреждения и её игры — ${you(turn, "скажите", "скажи")} словами, я передам.`);
@@ -727,6 +730,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       `Память: ${memoryLine(await store.probe())}`,
       `Способности: ${await bridgeLine({ live: turn.dry ? null : turn })}`,
       turn.dry ? "Источники: пробный запуск — живая проверка не выполнялась." : `Источники: ${await sourcesLine()}`,
+      `Чувства: ${SENSES ? `слух — ${senses.models.hearing}, зрение — ${senses.models.vision}, ссылки читаю` : "выключены настройкой"}`,
       `Будильник: ${await clockLine()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
@@ -2578,6 +2582,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         const done = await lessons.judge(asked.id, accept, { by: actorId });
         return ruled(await say(turn, !done.ok ? "Не получилось записать решение: хранилище не отвечает." : accept ? `Принято: урок №${asked.id} теперь общий.` : `Отклонено: урок №${asked.id} отменён.`));
       }
+    }
+
+    // Резервная копия души — только хозяину и только в личке: в ней чужие записи.
+    const soulAsk = owner(actorId) && turn.isPrivate ? parseSoul(prompt) : null;
+    if (soulAsk) {
+      if (dry) return ruled(await say(turn, "Разобрала бы это как резервную копию — репетиция, ничего не делаю."));
+      if (soulAsk === "save") {
+        const done = await soul.save(chat.id);
+        if (done.ok) { turn.delivered = true; return ruled({ ok: true, action: "soul_saved", count: done.count }); }
+        return ruled(await say(turn, done.code === "no_files" ? "Копию собрать могу, а отправить файлом — нет: платформа не дала мне такой возможности."
+          : done.code === "send_failed" ? "Копия собрана, но файл не ушёл. Попробуйте ещё раз."
+            : "Копия не собралась: хранилище не отвечает."));
+      }
+      const fileId = message.document?.file_id ?? message.reply_to_message?.document?.file_id;
+      if (!fileId) return ruled(await say(turn, "Из чего восстановить? Пришлите файл копии с подписью «восстанови душу» — или ответьте этими словами на сообщение с файлом."));
+      const done = await soul.load(fileId);
+      if (done.code === "not_soul") return ruled(await say(turn, "Это не копия души: файл не разобрать или он не мой."));
+      if (done.code === "download_failed" || done.code === "no_files") return ruled(await say(turn, "Не смогла скачать файл. Пришлите его ещё раз."));
+      if (done.code === "storage_unavailable") return ruled(await say(turn, "Восстановить некуда: хранилище не отвечает."));
+      const from = done.at ? ` от ${dayOf(done.at).split("-").reverse().join(".")}` : "";
+      return ruled(await say(turn, `${done.ok ? "Восстановила" : "Восстановила не всё"}: записей — ${done.written}${done.failed ? `, не записалось — ${done.failed}` : ""}${done.skipped ? `, пропущено как не относящееся к душе — ${done.skipped}` : ""}. Копия${from}${done.build ? `, сборка ${done.build}` : ""}.`));
     }
 
     // «Да» или «нет» на её вопрос «запомнить?» — в личке и пока вопрос свеж.

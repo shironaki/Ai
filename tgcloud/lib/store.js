@@ -72,6 +72,18 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
     } catch { return false; }
   }
 
+  /** Все записи с общим началом ключа — для резервной копии. `null` — база не ответила. */
+  async function dump(prefix, limit = 5000) {
+    if (!has || typeof db.all !== "function") return null;
+    try {
+      const rows = await db.all(
+        `SELECT key, value FROM kv_state WHERE key LIKE :prefix ORDER BY key LIMIT ${Math.max(1, Math.min(20_000, Math.round(Number(limit) || 5000)))}`,
+        { ":prefix": `${String(prefix)}%` },
+      );
+      return (Array.isArray(rows) ? rows : []).filter(row => row?.key != null && row.value != null).map(row => ({ key: String(row.key), value: String(row.value) }));
+    } catch { return null; }
+  }
+
   // Optimistic write: the caller read `before`, and only that exact value is
   // replaced. A lost race returns false instead of overwriting a newer state.
   async function compareSet(key, before, next) {
@@ -147,6 +159,7 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
 
   return Object.freeze({
     available: has,
+    dump,
     probe,
     get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded, remove, sweep,
     memory: Object.freeze({ load, save, clear, clearUser }),

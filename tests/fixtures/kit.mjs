@@ -3,7 +3,7 @@
  * записывающем стабе платформы. Сети нет, Telegram нет, базы нет.
  */
 import { register } from "node:module";
-import { api as sdkApi, db as sdkDb, fetch as sdkFetch } from "./sdk-stub.mjs";
+import { api as sdkApi, db as sdkDb, fetch as sdkFetch, InputFile } from "./sdk-stub.mjs";
 
 register(new URL("./sdk-loader.mjs", import.meta.url));
 
@@ -66,7 +66,7 @@ export const group = (text, options = {}) => message(text, { chat: -10, type: "s
 export const hers = (text = "ответ", id = 50) => ({ message_id: id, from: { id: 999, is_bot: true, username: "ai_heart_bot" }, text });
 
 export function heart(overrides = {}, options = {}) {
-  return createHeart({ db: sdkDb, api: sdkApi, fetchImpl: sdkFetch, config: { ...BASE, ...overrides }, ...options });
+  return createHeart({ db: sdkDb, api: sdkApi, fetchImpl: sdkFetch, InputFile, config: { ...BASE, ...overrides }, ...options });
 }
 
 /** Тело запроса к провайдеру и системная подсказка в нём. */

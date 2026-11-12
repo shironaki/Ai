@@ -10,7 +10,7 @@ import {
 } from "./fixtures/kit.mjs";
 
 const {
-  toBase64, multipart, imageType, safeUrl, findUrl, parseLink, pageText, pictureIn, clipIn, asksTranscript, aboutPicture,
+  toBase64, utf8Bytes, multipart, imageType, safeUrl, findUrl, parseLink, pageText, pictureIn, clipIn, asksTranscript, aboutPicture,
   HEARING_MODEL, VISION_MODEL,
 } = await import("../tgcloud/lib/senses.js");
 
@@ -52,6 +52,11 @@ test("кирпичи: base64, составное тело запроса и ти
   ].join("\r\n"));
   // Имя файла не может вставить в запрос свою строку.
   assert.doesNotMatch(Buffer.from(multipart([{ name: "file", filename: 'a"\r\nX-Evil: 1', bytes: OGG }], "B").body).toString("latin1"), /\r\nX-Evil/u);
+  // Без TextEncoder байты те же.
+  const sample = "Аи: чай 🍵, «ёлка», naïve — 100 ₽";
+  const Encoder = globalThis.TextEncoder;
+  try { globalThis.TextEncoder = undefined; assert.deepEqual([...utf8Bytes(sample)], [...Buffer.from(sample, "utf8")]); } finally { globalThis.TextEncoder = Encoder; }
+  assert.deepEqual([...utf8Bytes(sample)], [...Buffer.from(sample, "utf8")]);
   assert.equal(imageType(JPEG), "image/jpeg");
   assert.equal(imageType(new Uint8Array([0x89, 0x50, 0x4e, 0x47])), "image/png");
   assert.equal(imageType(OGG), "");
@@ -101,7 +106,7 @@ test("вложение: берётся самый крупный снимок в
   for (const yes of ["расшифруй", "Расшифруй, пожалуйста", "что тут сказано?", "о чём голосовое", "в текст", "что он говорит"]) assert.equal(asksTranscript(yes), true, yes);
   for (const no of ["расшифруй код 1234", "что скажешь", "привет"]) assert.equal(asksTranscript(no), false, no);
   for (const yes of ["что тут написано?", "оцени мем", "кто это", "переведи это"]) assert.equal(aboutPicture(yes), true, yes);
-  for (const no of ["как дела?", "привет", "сколько времени"]) assert.equal(aboutPicture(no), false, no);
+  for (const no of ["как дела?", "привет", "сколько времени", "сыграем партию?", "тем временем я решила уйти"]) assert.equal(aboutPicture(no), false, no);
 });
 
 test("голосовое в личке — обычная реплика: расшифровка показана, просьба выполнена без модели", async () => {

@@ -1,4 +1,7 @@
 import { api, db, fetch as sdkFetch } from "sdk";
+// Остальное из SDK — целиком: если в нём не окажется `InputFile`, сердце всё
+// равно соберётся и просто не будет слать файлы.
+import * as SDK from "sdk";
 import { createHeart } from "./heart.js";
 
 /**
@@ -9,4 +12,4 @@ import { createHeart } from "./heart.js";
  * даёт каждому обработчику свой изолят, общая память — это база: сердце
  * рассчитано и на это.
  */
-export const heart = createHeart({ db, api, fetchImpl: sdkFetch });
+export const heart = createHeart({ db, api, fetchImpl: sdkFetch, InputFile: SDK.InputFile });
