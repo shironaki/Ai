@@ -361,3 +361,97 @@ test("gigachat: «проверь мозги» — живая проба; нет 
   }
   assert.deepEqual(rests, [60_000, 240_000, 960_000]);
 });
+
+// ── запасные мозги: шлюз с «почти совместимым» API ───────────────────────
+
+const XPL = {
+  AI_PROVIDERS: [{
+    id: "explabs", name: "Experiential Labs", key: "xpl_test",
+    baseUrl: "https://api.experientiallabs.ai/v1",
+    models: ["deepseek-v4.1-flash:free", "gpt-6-luna:free"], effort: "low",
+  }],
+};
+const body = (index) => JSON.parse(chats()[index].options.body);
+
+test("запасной провайдер: поле, которое модель не берёт, убирается само и больше не шлётся", async () => {
+  reset();
+  const h = heart(XPL);
+  sdk().fetchQueue.push(limited(), refuses(400, { code: "unsupported_parameter", param: "temperature" }), says("Думаю третьей дорогой."));
+  await h.onMessage(message("расскажи о погоде на Марсе"), KEY);
+  assert.equal(last(), "Думаю третьей дорогой.");
+  assert.equal(chats()[1].url, "https://api.experientiallabs.ai/v1/chat/completions");
+  assert.equal(chats()[1].options.headers.Authorization, "Bearer xpl_test");
+  assert.equal(body(1).model, "deepseek-v4.1-flash:free", "только бесплатный объём: суффикс остаётся в имени");
+  assert.equal(body(1).reasoning_effort, "low", "усилие задано провайдеру в настройках");
+  assert.equal(typeof body(1).temperature, "number");
+  assert.equal(body(2).temperature, undefined, "повтор — без отвергнутого поля");
+  assert.equal(body(2).reasoning_effort, "low");
+
+  // Второй вопрос: урок усвоен — лишнего запроса нет.
+  sdk().fetchQueue.push(says("И снова."));
+  await h.onMessage(message("а на Венере?"), KEY);
+  assert.equal(chats().length, 4);
+  assert.equal(body(3).temperature, undefined);
+
+  // `max_tokens` не исчезает, а меняет имя; усилие без названного поля — убирается.
+  reset();
+  const renamed = heart(XPL);
+  sdk().fetchQueue.push(limited(), refuses(400, { code: "unsupported_parameter", param: "max_tokens" }), refuses(400, { code: "unsupported_capability" }), says("Готово."));
+  await renamed.onMessage(message("расскажи о погоде на Марсе"), KEY);
+  assert.equal(last(), "Готово.");
+  assert.equal(body(3).max_tokens, undefined);
+  assert.equal(typeof body(3).max_completion_tokens, "number");
+  assert.equal(body(3).reasoning_effort, undefined);
+});
+
+test("запасной провайдер: 402 и исчерпанный дневной объём — отдых модели, а не поломка", async () => {
+  reset();
+  const at = NOON;                       // 13:00 UTC: до полуночи одиннадцать часов
+  const h = heart(XPL, { now: () => at });
+  sdk().fetchQueue.push(limited(), refuses(402, { code: "card_required" }), refuses(429, { code: "insufficient_quota" }));
+  await h.onMessage(message("расскажи о погоде на Марсе"), KEY);
+  assert.match(last(), /^Сейчас мне нечем думать: лимит модели вышел\. Вопрос я записала/);
+  assert.equal(await h.queue.size(), 1);
+  const state = await h.brains.describe({ apiKey: "k" });
+  const paid = state.find(item => item.model === "deepseek-v4.1-flash:free");
+  const daily = state.find(item => item.model === "gpt-6-luna:free");
+  assert.equal(paid.why, "payment");
+  assert.equal(paid.until - at, DAY, "ждёт шага человека — сутки не трогается");
+  assert.equal(daily.why, "limit");
+  assert.equal(daily.until - at, 11 * 3_600_000, "дневной объём — до полуночи по UTC");
+  // Следующий вопрос не тратит ни одного запроса на отдыхающих.
+  const before = chats().length;
+  await h.onMessage(message("а на Венере?"), KEY);
+  assert.equal(chats().length, before);
+
+  // 403 о модели — не «ключ отозван»: вторая модель того же ключа отвечает.
+  reset();
+  const granted = heart(XPL);
+  sdk().fetchQueue.push(limited(), refuses(403, { code: "model_not_granted" }), says("Отвечаю второй."));
+  await granted.onMessage(message("расскажи о погоде на Марсе"), KEY);
+  assert.equal(last(), "Отвечаю второй.");
+  assert.equal(body(2).model, "gpt-6-luna:free");
+});
+
+test("проверь мозги: каждая модель каждого провайдера; без связи провайдер пробуется один раз", async () => {
+  reset();
+  const h = heart({ AI_PROVIDERS: [...XPL.AI_PROVIDERS, { ...GIGA.AI_PROVIDERS[0], name: "GigaChat", models: ["GigaChat-3-Ultra", "GigaChat-2-Max", "GigaChat-2"] }] });
+  sdk().fetchQueue.push(
+    says("pong"),                                                               // основной
+    says("pong"),                                                               // deepseek
+    refuses(400, { code: "unsupported_parameter", param: "reasoning_effort" }), // luna: усилие не берёт…
+    refuses(402, { code: "free_tier_requires_payment" }),                       // …а без него просит карту
+    new TypeError("fetch failed"),                                              // GigaChat: обмен ключа не прошёл
+  );
+  await h.onMessage(message("проверь мозги", { id: OWNER }), KEY);
+  const lines = last(OWNER).split("\n").filter(line => line.startsWith("• "));
+  assert.equal(lines.length, 4, "три модели GigaChat — одна строка: связи нет у провайдера, а не у модели");
+  assert.match(lines[0], /^• основной \(gpt-oss-20b\) — отвечает/);
+  assert.match(lines[1], /^• Experiential Labs \(deepseek-v4\.1-flash:free\) — отвечает/);
+  assert.match(lines[2], /^• Experiential Labs \(gpt-6-luna:free\) — HTTP 402 \(free_tier_requires_payment\) — нужен шаг в кабинете провайдера.*Сутки её не трогаю$/);
+  assert.match(lines[3], /^• GigaChat \(GigaChat-3-Ultra\) — нет связи при обмене ключа/);
+  // Проба не шлёт температуру вовсе: ей нужен ответ «жива», а не текст.
+  assert.equal(body(1).temperature, undefined);
+  assert.equal(body(1).reasoning_effort, "low");
+  assert.equal(body(3).reasoning_effort, undefined);
+});

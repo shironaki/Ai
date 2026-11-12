@@ -2,19 +2,21 @@ name: Heart
 
 # Один файл, три дела:
 #   проверка    — тесты на каждый push в main и по кнопке;
-#   публикация  — по кнопке с любой ветки; сама при коммите в main — только
-#                 если владелец включил: переменная репозитория HEART_AUTODEPLOY = on;
-#   будильник   — раз в три часа будит сердце, чтобы «само» случалось без сообщений.
+#   публикация  — сама, когда в main пришёл коммит (слияние PR), и по кнопке с
+#                 любой ветки. Так решил владелец 12.11.2026. Вернуть ручной
+#                 режим: переменная репозитория HEART_AUTODEPLOY = off;
+#   будильник   — раз в час будит сердце, чтобы «само» случалось без сообщений.
 #
 # Точный будильник (раз в минуту) — второй телефон, см. docs/ALARM.md. Этот,
-# редкий, нужен как страховка: напоминание опоздает не больше чем на три часа,
+# часовой, работает без телефона: напоминание опоздает не больше чем на час,
 # утренняя сводка придёт, даже если никто не писал. Выключить: переменная
-# репозитория HEART_ALARM = off.
+# репозитория HEART_ALARM = off. Стоит около 720 минут Actions в месяц из
+# двух тысяч бесплатных.
 on:
   push:
     branches: [main]
   schedule:
-    - cron: "17 */3 * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -42,9 +44,9 @@ jobs:
 
   smoke:
     name: Handler runs without sending
-    # Как и раньше — на каждый коммит в main; при автопубликации ту же
-    # репетицию делает сама публикация.
-    if: ${{ (github.event_name == 'push' && vars.HEART_AUTODEPLOY != 'on') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'smoke') }}
+    # По кнопке. На коммит в main ту же репетицию делает сама публикация;
+    # если автопубликация выключена — коммит проверяется здесь, как раньше.
+    if: ${{ (github.event_name == 'push' && vars.HEART_AUTODEPLOY == 'off') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'smoke') }}
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -73,9 +75,10 @@ jobs:
 
   deploy:
     name: Publish the heart
-    # По кнопке — с любой ветки. Сам, при коммите в main, — только когда
-    # владелец это включил (HEART_AUTODEPLOY = on): публикация меняет живого бота.
-    if: ${{ (github.event_name == 'push' && vars.HEART_AUTODEPLOY == 'on') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy') }}
+    # Коммит в main публикуется сам: сначала тесты, затем репетиция в облаке —
+    # если что-то из этого падает, живой бот остаётся на прежней сборке.
+    # По кнопке — с любой ветки. HEART_AUTODEPLOY = off возвращает ручной режим.
+    if: ${{ (github.event_name == 'push' && vars.HEART_AUTODEPLOY != 'off') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy') }}
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 8

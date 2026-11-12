@@ -768,7 +768,8 @@ test("публикация: секреты вписываются одним с�
   rmSync(dir, { recursive: true, force: true });
 
   const workflow = readFileSync(new URL("../.github/workflows/heart.yml", import.meta.url), "utf8");
-  assert.match(workflow, /github\.event_name == 'push' && vars\.HEART_AUTODEPLOY == 'on'/, "коммит в main публикуется сам, только если владелец включил");
+  assert.match(workflow, /github\.event_name == 'push' && vars\.HEART_AUTODEPLOY != 'off'/, "коммит в main публикуется сам; владелец может вернуть ручной режим");
+  assert.match(workflow, /needs: tests\n[\s\S]*Rehearse in the cloud before publishing[\s\S]*name: Publish\n/, "публикации предшествуют тесты и репетиция в облаке");
   assert.match(workflow, /--ctx '\{ tick: true, deployed: true \}'/, "после публикации сердце будят");
   assert.match(workflow, /schedule:\n\s+- cron:/, "есть страховочный будильник");
   assert.equal((workflow.match(/node scripts\/inject-secrets\.mjs/g) ?? []).length, 2, "секреты вписывает один скрипт — и для публикации, и для будильника");
