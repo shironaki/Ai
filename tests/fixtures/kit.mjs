@@ -98,6 +98,27 @@ export const calls = (method) => sdk().calls.filter(item => item.method === meth
 /** Случайность по списку: значения по кругу. */
 export const dice = (...values) => { let i = 0; return () => values[i++ % values.length]; };
 
+/**
+ * Дождаться, пока `probe` вернёт что-то непустое. Вместо «подождать 20 мс»:
+ * подпись конверта — настоящая криптография, и на телефоне, где тесты идут
+ * рядом с десятком других процессов, она в такой срок не укладывается.
+ */
+export async function until(probe, { ms = 15_000, step = 5 } = {}) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const value = await probe();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`условие не выполнилось за ${ms} мс`);
+    await new Promise(resolve => setTimeout(resolve, step));
+  }
+}
+
+/** Конверт, который сердце отправило сестре о человеке `actor`: свой, а не оставшийся от соседнего теста. */
+export const asked = (actor) => sdk().sent
+  .filter(item => String(item.chat_id) === CHANNEL)
+  .map(item => decodeEnvelope(item.text))
+  .find(envelope => envelope && String(envelope.actor) === String(actor));
+
 export const toChat = (id) => sdk().sent.filter(item => String(item.chat_id) === String(id));
 export const toOwner = () => toChat(OWNER);
 export const last = (id = 5) => toChat(id).at(-1)?.text ?? "";
@@ -129,6 +150,9 @@ export function withSister({ alive = true, facts = { role: "Игрок", level: 
       };
     },
   });
-  h = heart({ ABILITIES_CHANNEL_ID: CHANNEL, ABILITIES_SECRET: SECRET, ABILITIES_TIMEOUT_MS: 80, ...overrides }, { api, ...options });
+  // Срок — сколько сердце ждёт сестру. Она отвечает настоящей подписью, так
+  // что срок с запасом: живая сестра укладывается и на медленном телефоне, а
+  // молчащая стоит тесту полсекунды.
+  h = heart({ ABILITIES_CHANNEL_ID: CHANNEL, ABILITIES_SECRET: SECRET, ABILITIES_TIMEOUT_MS: 500, ...overrides }, { api, ...options });
   return { h, posts, state };
 }

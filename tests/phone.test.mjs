@@ -63,11 +63,83 @@ if (args[0] === "webhook") console.log("  url: https://secret.example/hook\\n  a
 if (args[0] === "run") console.log(args.includes("{ tick: true }") && process.env.FAKE_MISMATCH ? "{ ok: false, code: 'build_mismatch' }" : "{ ok: true }");
 `;
 
+/** Журналы упавших тестов — как их пишут node 24 и node 22 (сокращённо). */
+const TEST_LOGS = {
+  spec: `✖ канал: ответ сестры доходит (0.744664ms)
+✖ канал: опоздавший ответ (1.013209ms)
+✔ всё хорошо (0.190554ms)
+ℹ tests 3
+ℹ pass 1
+ℹ fail 2
+
+✖ failing tests:
+
+test at a.test.mjs:3:1
+✖ канал: ответ сестры доходит (0.744664ms)
+  TypeError [Error]: Cannot read properties of undefined (reading 'text')
+      at TestContext.<anonymous> (file:///tmp/rep/a.test.mjs:3:75)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+
+test at a.test.mjs:4:1
+✖ канал: опоздавший ответ (1.013209ms)
+  AssertionError [ERR_ASSERTION]: ответ снимает молчание
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///tmp/rep/a.test.mjs:4:48) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+  }
+`,
+  tap: `TAP version 13
+# Subtest: канал: ответ сестры доходит
+not ok 1 - канал: ответ сестры доходит
+  ---
+  duration_ms: 0.755088
+  type: 'test'
+  location: '/tmp/rep/a.test.mjs:3:1'
+  failureType: 'testCodeFailure'
+  error: "Cannot read properties of undefined (reading 'text')"
+  code: 'ERR_TEST_FAILURE'
+  name: 'TypeError'
+  stack: |-
+    TestContext.<anonymous> (file:///tmp/rep/a.test.mjs:3:75)
+  ...
+# Subtest: канал: опоздавший ответ
+not ok 2 - канал: опоздавший ответ
+  ---
+  duration_ms: 0.980851
+  type: 'test'
+  location: '/tmp/rep/a.test.mjs:4:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    ответ снимает молчание
+    
+    true !== false
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  stack: |-
+    TestContext.<anonymous> (file:///tmp/rep/a.test.mjs:4:48)
+  ...
+# Subtest: всё хорошо
+ok 3 - всё хорошо
+  ---
+  duration_ms: 0.165848
+  type: 'test'
+  ...
+1..3
+# tests 3
+# pass 1
+# fail 2
+`,
+};
+
 const FAKE_CURL = `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$FAKE_CURL_LOG"
 case "$*" in
   *getMe*) echo '{"ok":true,"result":{"id":777,"username":"voice_bot"}}' ;;
-  *getChat*) echo '{"ok":true,"result":{"id":-100,"title":"Мост"}}' ;;
+  *getChat*) echo '{"ok":true,"result":{"id":-100,"title":"\\u041c\\u043e\\u0441\\u0442 \\"\\u0434\\u043e\\u043c\\""}}' ;;
   *) echo '{"ok":true,"result":{"message_id":77}}' ;;
 esac
 `;
@@ -88,7 +160,7 @@ function sandbox({ lines = null } = {}) {
   copyFileSync(join(ROOT, "tgcloud/lib/secrets.js"), join(seed, "tgcloud/lib/secrets.js"));
   writeFileSync(join(seed, "tgcloud/lib/heart.js"), 'export const BUILD = "1.0.0";\n');
   writeFileSync(join(seed, "tgcloud/handlers/message.js"), "export default async function () {}\n");
-  writeFileSync(join(seed, "package.json"), JSON.stringify({ name: "x", private: true, type: "module", scripts: { ci: "env > \"$FAKE_LOG.ci\"; exit ${FAKE_CI:-0}" } }));
+  writeFileSync(join(seed, "package.json"), JSON.stringify({ name: "x", private: true, type: "module", scripts: { ci: "env > \"$FAKE_LOG.ci\"; [ -z \"$FAKE_CI_OUT\" ] || cat \"$FAKE_CI_OUT\"; exit ${FAKE_CI:-0}" } }));
   sh(dir, "git init -q --bare remote.git");
   sh(seed, `git init -q && git checkout -q -b work && git add -A && git commit -q -m one && git remote add origin "${join(dir, "remote.git")}" && git push -q origin work`);
   sh(dir, `git clone -q --branch work "${join(dir, "remote.git")}" phone`);
@@ -256,6 +328,28 @@ test("тесты не прошли — в облако ничего не ухо�
     assert.match(seen, /^FAKE_CI=1$/mu, "остальное окружение — как было");
     assert.match(seen, /^PATH=/mu);
 
+    // Что именно не прошло и почему — на экране, каждая неудача один раз. node
+    // пишет журнал в двух видах: 24-й — «✖» с итоговым разделом, 22-й — TAP.
+    for (const [kind, text] of Object.entries(TEST_LOGS)) {
+      const file = join(box.dir, `${kind}.log`);
+      writeFileSync(file, text);
+      const out = box.run("once", { HEART_TESTS: "on", FAKE_CI: "1", FAKE_CI_OUT: file }).out;
+      const lines = out.split("\n").map(line => line.replace(/^\d\d\.\d\d \d\d:\d\d /u, ""));
+      const from = lines.findIndex(line => line.startsWith("✗ Тесты не прошли"));
+      const named = kind === "spec";
+      assert.deepEqual(lines.slice(from + 1, from + 5), [
+        "   ✖ канал: ответ сестры доходит",
+        `       ${named ? "TypeError [Error]: " : ""}Cannot read properties of undefined (reading 'text')`,
+        "   ✖ канал: опоздавший ответ",
+        `       ${named ? "AssertionError [ERR_ASSERTION]: " : ""}ответ снимает молчание`,
+      ], kind);
+      assert.match(lines[from + 5], /Если дело в самом телефоне/u, kind);
+      assert.doesNotMatch(out, /failing tests|not ok|\(\d[\d.]*ms\)/u, kind);
+    }
+
+    // Три неудачи подряд уже были: следующая попытка — через час или после перезапуска.
+    assert.equal(box.run("once", { HEART_TESTS: "on" }).out, "");
+    rmSync(join(box.home, ".heart/failed"));
     const passed = box.run("once", { HEART_TESTS: "on" });
     assert.match(passed.out, /Проверяю сборку тестами/u);
     assert.match(passed.out, /Сборка 1\.0\.0 опубликована/u);
@@ -295,7 +389,7 @@ test("несохранённые правки в папке не стирают�
     const check = box.run("check");
     assert.match(check.out, /токен публикации: вид правильный/u);
     assert.match(check.out, /запасные мозги: gigachat/u);
-    assert.match(check.out, /от имени @voice_bot, канал «Мост»/u);
+    assert.match(check.out, /от имени @voice_bot, канал «Мост "дом"»/u, "название канала — словом, а не \\u041c…, и с кавычками внутри");
     for (const secret of [TOKEN, ...Object.values(KEYS)]) assert.ok(!check.out.includes(secret), "ключи не печатаются");
     assert.ok(!box.cli().slice(-1)[0].args.includes("push"), "проверка ничего не публикует");
   } finally { box.clean(); }
@@ -545,5 +639,25 @@ test("вечный цикл: публикует сразу, прошлые не�
     assert.ok(!existsSync(join(box.home, ".heart/lock")), "замок снят");
     assert.equal(box.status(), "");
     assert.equal(box.run("once").code, 0, "следующему запуску ничто не мешает");
+  } finally { box.clean(); }
+});
+
+test("будильник голосом самой Аи: себя она не услышит — сказано прямо, удар идёт через платформу", { skip }, () => {
+  // Номер бота в токене будильника тот же, что в токене публикации (app123): это один бот.
+  const box = sandbox({ lines: [`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`, "HEART_BRANCH=work", "ALARM_BOT_TOKEN=123:OWN-BOT-SECRET", "ALARM_CHAT_ID=-100"] });
+  try {
+    const check = box.run("check");
+    assert.equal(check.code, 1);
+    assert.match(check.out, /✗ будильник: @voice_bot — это сама Аи \(тот же бот, что публикуется\): себя она не услышит/u);
+    assert.doesNotMatch(check.out, /✓ будильник/u);
+    const done = box.run("once");
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+    assert.equal(names(box.cli()).at(-1), "run:handlers/message:tick", "будит платформа, а не канал");
+    assert.ok(!box.curl().some(line => /sendMessage|editMessageText/u.test(line) && line.includes("chat_id=-100")), "в канал от её же имени никто не пишет");
+    // Другой бот — другое дело: минутный будильник через канал.
+    box.keys([`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`, "HEART_BRANCH=work", `ALARM_BOT_TOKEN=${KEYS.voice}`, "ALARM_CHAT_ID=-100"]);
+    assert.match(box.run("check").out, /✓ будильник: раз в 60 с от имени @voice_bot/u);
+    box.run("once");
+    assert.ok(box.curl().some(line => line.includes("sendMessage") && line.includes("chat_id=-100")));
   } finally { box.clean(); }
 });

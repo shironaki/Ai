@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   heart, message, group, hers, says, refuses, reset, sdk, system, request, chats, last, toOwner, toChat,
-  withSister, KEY, OWNER, CHANNEL, SECRET, DAY, BUILD,
+  withSister, until, asked, KEY, OWNER, CHANNEL, SECRET, DAY, BUILD,
 } from "./fixtures/kit.mjs";
 
 const { createBridge } = await import("../tgcloud/lib/bridge.js");
@@ -108,15 +108,15 @@ test("канал: обработчики постов существуют и о
 test("канал: ответ сестры, пришедший другому изоляту, доходит через базу", async () => {
   reset();
   const sister = createBridge({ secret: SECRET, capabilities: { call: async () => ({}) } });
-  const config = { ABILITIES_CHANNEL_ID: CHANNEL, ABILITIES_SECRET: SECRET, ABILITIES_TIMEOUT_MS: 4000 };
+  // Срок с запасом: тест кончается, как только ответ найден в базе, а не по сроку.
+  const config = { ABILITIES_CHANNEL_ID: CHANNEL, ABILITIES_SECRET: SECRET, ABILITIES_TIMEOUT_MS: 30_000 };
   // Два сердца — два изолята: общая у них только база.
   const asking = heart(config);
   const listening = heart(config);
-  const before = sdk().sent.length;
-  const answer = asking.abilities.context({ actor: 5, chat: 5, chatType: "private" });
-  await sleep(20);
-  const asked = decodeEnvelope(sdk().sent.slice(before).find(item => String(item.chat_id) === CHANNEL).text);
-  const sealed = await sister.sealResult({ id: asked.id, tool: asked.tool, result: { ok: true, code: "ok", data: { role: "Игрок", level: 12 } } });
+  const answer = asking.abilities.context({ actor: 51, chat: 51, chatType: "private" });
+  // Конверт уходит после подписи — ждём его самого, а не «двадцать миллисекунд».
+  const question = await until(() => asked(51));
+  const sealed = await sister.sealResult({ id: question.id, tool: question.tool, result: { ok: true, code: "ok", data: { role: "Игрок", level: 12 } } });
   const got = await listening.onMessage({ message_id: 9, chat: { id: Number(CHANNEL), type: "channel" }, text: encodeEnvelope(sealed.envelope) });
   assert.equal(got.code, "bridge_answer");
   assert.deepEqual(await answer, { role: "Игрок", level: 12 });
@@ -126,16 +126,20 @@ test("канал: ответ сестры, пришедший другому и�
 test("канал: опоздавший ответ обновляет запас, и следующий вопрос не ждёт", async () => {
   reset();
   const sister = createBridge({ secret: SECRET, capabilities: { call: async () => ({}) } });
+  // Срок короткий нарочно: здесь сестра и должна не успеть. Отсчёт идёт от
+  // отправки конверта, так что скорость устройства на исход не влияет.
   const h = heart({ ABILITIES_CHANNEL_ID: CHANNEL, ABILITIES_SECRET: SECRET, ABILITIES_TIMEOUT_MS: 60 });
-  const before = sdk().sent.length;
-  assert.equal(await h.abilities.context({ actor: 5, chat: 5, chatType: "private" }), null, "сестра не успела");
-  const asked = decodeEnvelope(sdk().sent.slice(before).find(item => String(item.chat_id) === CHANNEL).text);
-  const sealed = await sister.sealResult({ id: asked.id, tool: asked.tool, result: { ok: true, code: "ok", data: { role: "Модератор", level: 20 } } });
+  assert.equal(await h.abilities.context({ actor: 52, chat: 52, chatType: "private" }), null, "сестра не успела");
+  // Свой конверт — по человеку, о котором спрашивали: чужой, оставшийся от
+  // соседнего теста, сюда не подойдёт.
+  const question = asked(52);
+  assert.ok(question, "вопрос ушёл в канал");
+  const sealed = await sister.sealResult({ id: question.id, tool: question.tool, result: { ok: true, code: "ok", data: { role: "Модератор", level: 20 } } });
   const got = await h.onMessage({ message_id: 9, chat: { id: Number(CHANNEL), type: "channel" }, text: encodeEnvelope(sealed.envelope) });
   assert.equal(got.code, "bridge_answer");
   assert.equal((await h.abilities.health()).silent, false, "ответ, пусть и поздний, снимает молчание");
   const posts = sdk().sent.length;
-  assert.deepEqual(await h.abilities.context({ actor: 5, chat: 5, chatType: "private" }), { role: "Модератор", level: 20 });
+  assert.deepEqual(await h.abilities.context({ actor: 52, chat: 52, chatType: "private" }), { role: "Модератор", level: 20 });
   assert.equal(sdk().sent.length, posts, "факты взяты из запаса, новый конверт не понадобился");
 });
 

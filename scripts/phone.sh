@@ -141,6 +141,15 @@ main() {
   local VOICE_BAD=0 ROOM_BAD=0
   if [ -n "$VOICE" ] && ! printf '%s' "$VOICE" | LC_ALL=C grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then VOICE_BAD=1; VOICE=""; fi
   if [ -n "$ROOM" ] && ! printf '%s' "$ROOM" | LC_ALL=C grep -Eq '^(-?[0-9]+|@[A-Za-z0-9_]+)$'; then ROOM_BAD=1; ROOM=""; fi
+  # О своих сообщениях бот обновлений не получает: будильник голосом самой Аи
+  # её не разбудит. Число перед двоеточием в токене бота — его номер; если оно
+  # то же, что после «app» в токене публикации, это один и тот же бот, и
+  # будильник идёт через платформу. (Что номера совпадают именно у одного
+  # бота — предположение о платформе: не совпали — остаётся подсказка в check.)
+  local VOICE_SELF=0
+  if [ -n "$VOICE" ] && [ -n "$TOKEN" ] && [ "${VOICE%%:*}" = "$(printf '%s' "${TOKEN%%:*}" | sed 's/^app//')" ]; then VOICE_SELF=1; fi
+  local CHANNEL_ALARM=0
+  if [ -n "$VOICE" ] && [ -n "$ROOM" ] && [ "$VOICE_SELF" = 0 ]; then CHANNEL_ALARM=1; fi
   local TG_API="https://api.telegram.org/bot${VOICE}"
 
   # Пароль в терминале git не спрашивает никогда: вопрос посреди цикла — это
@@ -218,6 +227,46 @@ main() {
       done
       npm run ci
     ) > "$TEST_LOG" 2>&1 < /dev/null
+  }
+
+  # Какие тесты не прошли и почему. node пишет журнал в одном из двух видов
+  # (TAP — «not ok», или «✖ …» с итоговым разделом); в обоих каждая неудача
+  # показывается один раз, со строкой причины.
+  why_tests() {
+    [ -f "$TEST_LOG" ] || return 0
+    # Краски терминала, если они попали в журнал, разбору не мешают.
+    sed $'s/\033\\[[0-9;]*m//g' "$TEST_LOG" 2>/dev/null | awk -v max=6 '
+      function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+      function emit(name, why) {
+        if (name == "" || (name in seen)) return
+        seen[name] = 1; count++
+        if (count > max) return
+        print "✖ " name
+        if (why != "") print "    " why
+      }
+      /failing tests:/ { summary = 1; next }
+      summary && /^[ \t]*✖ / {
+        if (pending != "") emit(pending, "")
+        pending = trim($0); sub(/^✖ /, "", pending); sub(/ \([0-9.]+ms\)$/, "", pending); next
+      }
+      summary && pending != "" && NF { emit(pending, trim($0)); pending = ""; next }
+      !summary && /^[ \t]*not ok [0-9]+ - / {
+        if (tapname != "") emit(tapname, "")
+        tapname = $0; sub(/^[ \t]*not ok [0-9]+ - /, "", tapname); next
+      }
+      tapname != "" && /^[ \t]*error: / {
+        why = $0; sub(/^[ \t]*error: /, "", why)
+        if (why == "|-" || why == "|") { if ((getline why) > 0) why = trim(why); else why = "" }
+        else { gsub(/^[\047"]|[\047"]$/, "", why) }
+        emit(tapname, why); tapname = ""; next
+      }
+      tapname != "" && /^[ \t]*\.\.\.[ \t]*$/ { emit(tapname, ""); tapname = "" }
+      END {
+        if (pending != "") emit(pending, "")
+        if (tapname != "") emit(tapname, "")
+        if (count > max) print "… и ещё " (count - max)
+      }
+    ' 2>/dev/null
   }
 
   # ── слепок опубликованного ───────────────────────────────────────────────
@@ -396,8 +445,12 @@ main() {
       if ! run_tests; then
         WHY="тесты"
         log "✗ Тесты не прошли — публикации нет, бот на прежней сборке. Журнал: $TEST_LOG"
-        # Какие именно — сразу на экран: по этим строкам видно, код это или телефон.
-        grep -E '^[[:space:]]*(not ok|✖)' "$TEST_LOG" 2>/dev/null | head -n 5 | while IFS= read -r line; do log "   $line"; done
+        # Какие именно и почему — сразу на экран: по этим строкам видно, код
+        # это или телефон. Не тесты, а что-то раньше них — хвост журнала.
+        local reasons
+        reasons="$(why_tests)"
+        [ -n "$reasons" ] || reasons="$(grep -v '^[[:space:]]*$' "$TEST_LOG" 2>/dev/null | tail -n 5)"
+        printf '%s\n' "$reasons" | while IFS= read -r line; do log "   $line"; done
         log "   Если дело в самом телефоне, а не в коде: строка HEART_TESTS=off в $ENV_FILE."
         return 1
       fi
@@ -467,6 +520,11 @@ main() {
   # ── будильник ────────────────────────────────────────────────────────────
   local ALARM_STATE="$HOME_DIR/alarm.msg" ALARM_FAILS=0 LAST_RUN_TICK=0
   [ -f "$ALARM_STATE" ] || { [ -f "$HOME/.heart-alarm.msg" ] && cp "$HOME/.heart-alarm.msg" "$ALARM_STATE" 2>/dev/null; }
+  # Поле ответа Telegram. JSON разбирает node: название канала приходит как
+  # «\u041c\u043e…», и на экран должно выйти словом.
+  field() {
+    node -e 'let s = ""; process.stdin.on("data", (c) => { s += c; }).on("end", () => { try { const v = JSON.parse(s).result?.[process.argv[1]]; if (v != null) process.stdout.write(String(v)); } catch {} });' "$1" 2>/dev/null
+  }
   id_of() { sed -n 's/.*"message_id":\([0-9][0-9]*\).*/\1/p' | head -n 1; }
 
   # Лёгкий удар: бот правит одно сообщение в канале, Telegram сообщает Аи.
@@ -518,7 +576,7 @@ main() {
 
   alarm() {
     local now
-    if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then tick_channel; return 0; fi
+    if [ "$CHANNEL_ALARM" = 1 ]; then tick_channel; return 0; fi
     now="$(date +%s)"
     if [ $((now - LAST_RUN_TICK)) -ge "$RUN_EVERY" ]; then
       LAST_RUN_TICK="$now"
@@ -624,13 +682,17 @@ EOF
     [ "$VOICE_BAD" = 1 ] && { echo "✗ ALARM_BOT_TOKEN не похож на токен бота (цифры, двоеточие, буквы) — впишите токен или уберите строку"; bad=1; }
     [ "$ROOM_BAD" = 1 ] && { echo "✗ ALARM_CHAT_ID не похож на ID канала (число вида -100…) — впишите число или уберите строку"; bad=1; }
     if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then
-      who="$(voice getMe | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')"
+      who="$(voice getMe | field username)"
       if [ -z "$who" ]; then echo "✗ будильник: Telegram не принял ALARM_BOT_TOKEN"; bad=1
       else
-        title="$(voice getChat -d "chat_id=$ROOM" | sed -n 's/.*"title":"\([^"]*\)".*/\1/p')"
-        echo "✓ будильник: раз в ${EVERY} с от имени @${who}$([ -n "$title" ] && echo ", канал «$title»" || echo " — но канал ему не виден: добавьте его админом")"
-        echo "  Если @${who} — это сама Аи, она себя не услышит: нужен токен другого бота."
-        [ -n "$title" ] || bad=1
+        title="$(voice getChat -d "chat_id=$ROOM" | field title)"
+        if [ "$VOICE_SELF" = 1 ]; then
+          echo "✗ будильник: @${who} — это сама Аи (тот же бот, что публикуется): себя она не услышит. В ALARM_BOT_TOKEN нужен токен другого бота; пока его нет — раз в $((RUN_EVERY / 60)) мин через платформу"; bad=1
+        else
+          echo "✓ будильник: раз в ${EVERY} с от имени @${who}$([ -n "$title" ] && echo ", канал «$title»" || echo " — но канал ему не виден: добавьте его админом")"
+          echo "  Если @${who} — это сама Аи, она себя не услышит: нужен токен другого бота."
+          [ -n "$title" ] || bad=1
+        fi
       fi
     elif [ "$VOICE_BAD$ROOM_BAD" != "00" ]; then
       echo "• будильник: пока строки ALARM_* не поправлены — раз в $((RUN_EVERY / 60)) мин через платформу"
@@ -643,7 +705,11 @@ EOF
     if [ "$TESTS" = "on" ] && [ "${2:-}" = "tests" ]; then
       echo "Гоняю тесты — это минута-другая…"
       if run_tests; then echo "✓ тесты на этом устройстве проходят"
-      else echo "✗ тесты на этом устройстве не проходят (журнал: $TEST_LOG). Если дело в устройстве — HEART_TESTS=off."; bad=1; fi
+      else
+        echo "✗ тесты на этом устройстве не проходят (журнал: $TEST_LOG):"; bad=1
+        why_tests | sed 's/^/   /'
+        echo "   Если дело в устройстве, а не в коде — строка HEART_TESTS=off."
+      fi
     fi
     if [ "$bad" = 0 ]; then echo "Готово к работе: bash scripts/phone.sh"
     elif [ "$made" = 1 ] || [ "$HAVE_ENV" = 0 ]; then echo "Дальше: $(edit_hint) — вписать значения после «=», затем снова: bash scripts/phone.sh check"
@@ -655,7 +721,7 @@ EOF
   case "$MODE" in
     check) check "$@"; return $? ;;
     tick)
-      if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then tick_channel && echo "Удар ушёл в канал." || { echo "Удар не ушёл."; return 1; }
+      if [ "$CHANNEL_ALARM" = 1 ]; then tick_channel && echo "Удар ушёл в канал." || { echo "Удар не ушёл."; return 1; }
       else
         # Удар через платформу на время вписывает ключи в слепок: вдвоём с
         # работающим домом этого делать нельзя.
@@ -678,7 +744,7 @@ EOF
     *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once." >&2; return 1 ;;
   esac
 
-  if [ -z "$TOKEN" ] && { [ -z "$VOICE" ] || [ -z "$ROOM" ]; }; then
+  if [ -z "$TOKEN" ] && [ "$CHANNEL_ALARM" = 0 ]; then
     echo "В $ENV_FILE нет ни токена публикации, ни будильника — делать нечего. Начните с проверки: bash scripts/phone.sh check" >&2
     return 1
   fi
@@ -697,7 +763,8 @@ EOF
   log "Дом запущен: ветка «$BRANCH», сборка в папке $(build_of). Остановить — Ctrl+C."
   [ -z "$UNREAD" ] || log "В файле ключей не читаются строки:$UNREAD — подробнее: bash scripts/phone.sh check"
   [ "$VOICE_BAD$ROOM_BAD" = "00" ] || log "В строках ALARM_* образец вместо значения — будильник через канал выключен."
-  if [ -n "$VOICE" ] && [ -n "$ROOM" ]; then log "Будильник: раз в ${EVERY} с через канал."
+  [ "$VOICE_SELF" = 0 ] || log "ALARM_BOT_TOKEN — токен самой Аи: себя она не услышит, поэтому будильник идёт через платформу. Для минутного нужен токен другого бота."
+  if [ "$CHANNEL_ALARM" = 1 ]; then log "Будильник: раз в ${EVERY} с через канал."
   else log "Будильник: раз в $((RUN_EVERY / 60)) мин через платформу (второго бота нет)."; fi
   [ -n "$TOKEN" ] || log "Токена публикации нет: только будильник."
 
