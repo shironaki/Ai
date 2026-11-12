@@ -61,6 +61,11 @@ jobs:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
         run: |
           npx --yes @tgcloud/cli@0.2.0 run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }'
+      - name: Run a button press in a no-side-effects context
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          npx --yes @tgcloud/cli@0.2.0 run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'
       - name: Inspect deployed state (read-only)
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
@@ -109,6 +114,7 @@ jobs:
         run: |
           npx --yes @tgcloud/cli@0.2.0 run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }'
           npx --yes @tgcloud/cli@0.2.0 run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }'
+          npx --yes @tgcloud/cli@0.2.0 run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'
       - name: Re-check deployed state
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}

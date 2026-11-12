@@ -22,7 +22,10 @@ import { createSources, detectSource, factQuery, parseTarget, knownCity } from "
 import { calculate } from "./calc.js";
 import { createGames } from "./games.js";
 import { parsePicture, moodOf, answerMoods, shelfOf, pickSticker } from "./pictures.js";
-import { createFun } from "./fun.js";
+import { createFun, parseChatSetting } from "./fun.js";
+import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
+import { parsePoll } from "./polls.js";
+import { parseWhois } from "./whois.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -332,6 +335,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       const { answer } = await talk(turn, text);
       return answer.ok && !answer.testRun ? answer.text : null;
     },
+  });
+
+  /**
+   * Игры с кнопками: вдвоём и компанией. В игре только тот, кто нажал сам.
+   */
+  const party = createParty({
+    api, store, random, now, has, pulse,
+    isMinor: async (userId) => (await personal.settings(userId))?.minor === true,
   });
 
   /**
@@ -1038,7 +1049,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         return say(turn, "Передала — слово в слово. Если хозяин ответит, принесу ответ в личку.");
       }
       case "play": {
-        if (!parsed.arg) return say(turn, games.menu({ sister: abilities.open() ? SISTER : "" }));
+        if (!parsed.arg) return say(turn, games.menu({ sister: abilities.open() ? SISTER : "", party: party.menu({ inGroup }), inGroup }));
         const started = await games.start(turn.chatId, parsed.arg.game, { formal: turn.manner?.formal !== false, from: parsed.arg.from, to: parsed.arg.to });
         if (!started) return null;
         pulse.bump("games");
@@ -1906,6 +1917,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     try {
       await store.sweep("heart:src:", 30 * DAY);
       await store.sweep("heart:game:", 30 * DAY);
+      await store.sweep(PARTY_PREFIX, 2 * DAY);
+      await store.sweep("heart:welcome:", 2 * DAY);
       await store.sweep("heart:stickers:", 30 * DAY);
       await store.sweep("heart:quota:", 3 * DAY);
       await store.sweep("heart:mail:", 30 * DAY);
@@ -2089,11 +2102,35 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       }
     }
 
-    // Идёт игра — фраза может быть ходом. Судит код; не ход — идёт дальше,
-    // к просьбам и разговору, а игра ждёт.
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered));
+
+    // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
+    // в другой игре. Мимо — молча, с «🤔», чтобы было видно: услышала.
+    if (!dry && inGroup && turn.replyToMe && message.reply_to_message?.message_id != null) {
+      const guessed = await party.guess(turn, prompt, message.reply_to_message.message_id);
+      if (guessed) {
+        if (guessed.miss) await react(turn, "🤔");
+        if (guessed.won) pulse.bump("games");
+        return ruled(guessed);
+      }
+    }
+
+    // Забавы — до хода в игре и до всего остального: «обнять», настройка
+    // чата, опрос, «мой айди», игра с кнопками. Просьба с известным смыслом
+    // («разбуди меня в 7») действием не считается.
+    const self = inGroup || !request ? await whoAmI(dry) : null;
+    if (!request) {
+      const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
+      if (acted) return ruled(acted);
+    }
+    const viaFun = await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt) ?? await fun.whois(turn, prompt, { self })
+      ?? await party.begin(turn, prompt, { say });
+    if (viaFun) return ruled(viaFun);
+
+    // Идёт игра — фраза может быть ходом. Судит код; не ход — идёт дальше,
+    // к просьбам и разговору, а игра ждёт.
     if (!dry && !request) {
       const played = await games.move(chat.id, prompt, { formal: turn.manner.formal !== false });
       if (played) {
@@ -2101,16 +2138,6 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         return ruled(await say(turn, played.text));
       }
     }
-
-    // Забавы — до всего остального: «обнять», настройка чата, опрос, «мой
-    // айди». Просьба с известным смыслом («разбуди меня в 7») сюда не идёт.
-    const self = inGroup || !request ? await whoAmI(dry) : null;
-    if (!request) {
-      const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
-      if (acted) return ruled(acted);
-    }
-    const viaFun = await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt) ?? await fun.whois(turn, prompt, { self });
-    if (viaFun) return ruled(viaFun);
 
     const viaAbility = await tryAbility(turn, prompt);
     if (viaAbility) return ruled({ ok: true, action: "ability" });
@@ -2240,6 +2267,30 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     }
   }
 
+  /**
+   * Нажатие кнопки под её сообщением. Кнопки сейчас есть только у игр; на
+   * любое нажатие нужно ответить, иначе у человека так и крутятся «часики».
+   * Репетиция Telegram не трогает и в базу не ходит.
+   */
+  async function onCallback(query, ctx = {}) {
+    const data = String(query?.data ?? "");
+    const route = data.startsWith("p:") ? "party" : "none";
+    if (ctx?.testRun === true) return { ok: true, route, side_effects: "none" };
+    try {
+      await wake(ctx);
+      if (route === "party") return await party.press(query);
+      if (query?.id != null && has("answerCallbackQuery")) {
+        try { await api.answerCallbackQuery({ callback_query_id: query.id }); } catch { /* устаревшее нажатие — не поломка */ }
+      }
+      return { ignored: true };
+    } catch (error) {
+      await reportCrash(error, ctx);
+      return { ok: false, code: "runtime_error" };
+    } finally {
+      try { await pulse.commit(); } catch { /* счётчики не важнее игры */ }
+    }
+  }
+
   /** What is connected, in one object: used by the status screen and by tests. */
   async function status({ chatId = null, actorId = null } = {}) {
     const tools = chatId == null ? [] : (await abilities.catalogue({ actor: actorId, chat: chatId })).tools;
@@ -2262,6 +2313,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
   return Object.freeze({
     onMessage,
+    onCallback,
     tick,
     status,
     reportCrash,
