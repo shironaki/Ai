@@ -26,6 +26,7 @@ import { createFun, parseChatSetting } from "./fun.js";
 import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
 import { parsePoll } from "./polls.js";
 import { parseWhois } from "./whois.js";
+import { createMedia, parseMedia, captions } from "./media.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -163,6 +164,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
   const sources = createSources({ fetchImpl, store, now });
   // Игры судит код: загаданное лежит в базе, а не в памяти модели.
   const games = createGames({ store, sources, random, now });
+  // Поиск картинок, аниме, музыки и видео: открытые источники, без модели.
+  const media = createMedia({ sources });
   // Без базы об этом стоит сказать один раз за жизнь изолята, а не в каждом
   // сообщении: иначе жалоба на хранилище сама станет потоком.
   let storageReported = false;
@@ -1339,10 +1342,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
   // ── картинки, гифки, стикеры ────────────────────────────────────────────
   /** Отправить файл по адресу: фото или гифку. Не ушло — false, слова скажет вызвавший. */
-  async function sendMedia(turn, method, field, url, caption = "") {
+  async function sendMedia(turn, method, field, url, caption = "", more = {}) {
     if (!url || !has(method)) return false;
     try {
-      await api[method]({ chat_id: turn.chatId, [field]: url, ...(caption ? { caption: caption.slice(0, 1000) } : {}), ...turn.extra });
+      await api[method]({ chat_id: turn.chatId, [field]: url, ...(caption ? { caption: caption.slice(0, 1000) } : {}), ...more, ...turn.extra });
       turn.delivered = true;
       return true;
     } catch { return false; }
@@ -1373,18 +1376,107 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
       return say(turn, note ? `${note.replace(" Пока — так.", "")} Пока — ${GESTURE_WORDS[gesture].toLowerCase()}` : GESTURE_WORDS[gesture]);
     }
     await typing(turn);
-    const got = await sources.wiki(asked.topic);
-    if (got?.ok) {
-      const caption = `${got.title}${got.description ? ` — ${got.description}` : ""}\nВикипедия`;
+    return pictureOf(turn, asked.topic);
+  }
+
+  const HTML = Object.freeze({ parse_mode: "HTML" });
+  const web = (value) => String(value ?? "").replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
+
+  /**
+   * Картинка по словам. У предмета с именем лучший снимок — в статье
+   * энциклопедии; у описания («закат над морем») — в общем хранилище
+   * снимков. Пробуются оба, порядок зависит от длины запроса.
+   * `loose` — человек сказал просто «покажи …»: не нашлось — это разговор.
+   */
+  async function pictureOf(turn, topic, { loose = false } = {}) {
+    let article = null, silent = 0;
+    const fromWiki = async () => {
+      article = await sources.wiki(topic);
+      if (article?.code === "network") silent += 1;
+      if (!article?.ok) return false;
+      const caption = `${article.title}${article.description ? ` — ${article.description}` : ""}\nВикипедия`;
       // Оригинал бывает слишком велик для Telegram: тогда уменьшенный.
-      for (const url of [...new Set([got.image, got.thumb])].filter(Boolean)) {
-        if (await sendMedia(turn, "sendPhoto", "photo", url, caption)) { pulse.bump("sourced"); return { ok: true, action: "photo" }; }
+      for (const url of [...new Set([article.image, article.thumb])].filter(Boolean)) {
+        if (await sendMedia(turn, "sendPhoto", "photo", url, caption)) return true;
       }
-      pulse.bump("sourced");
-      return say(turn, `Картинки к статье «${got.title}» у меня не вышло — расскажу словами.\n\n${got.text}`);
+      return false;
+    };
+    const fromShelf = async () => {
+      const found = await media.images(topic);
+      if (found.code === "network") silent += 1;
+      for (const item of found.items ?? []) {
+        if (await sendMedia(turn, "sendPhoto", "photo", item.url, captions.image(item, topic), HTML)) return true;
+      }
+      return false;
+    };
+    for (const attempt of topic.split(" ").length <= 2 ? [fromWiki, fromShelf] : [fromShelf, fromWiki]) {
+      if (await attempt()) { pulse.bump("sourced"); return { ok: true, action: "photo" }; }
     }
-    if (got?.code === "network") return say(turn, SOURCE_DOWN.wiki);
-    return say(turn, `Не нашла, как выглядит «${asked.topic}»: в Википедии такой статьи нет, а рисовать я не умею.`);
+    if (loose) return null;
+    if (article?.ok) {
+      pulse.bump("sourced");
+      return say(turn, `Картинки к статье «${article.title}» у меня не вышло — расскажу словами.\n\n${article.text}`);
+    }
+    if (silent >= 2) return say(turn, "Источники картинок сейчас не отвечают. Попробуйте чуть позже.");
+    return say(turn, `Не нашла, как выглядит «${topic}»: ни в Википедии, ни среди открытых снимков. Попробуйте сказать короче или иначе.`);
+  }
+
+  /**
+   * Поиск: аниме-арт, аниме, музыка, видео, картинка по словам. Найденное
+   * подписано источником; модель здесь ничего не сочиняет.
+   */
+  async function findMedia(turn, prompt) {
+    const asked = parseMedia(prompt);
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как поиск — репетиция, ничего не ищу.");
+    if (asked.kind === "draw") {
+      return say(turn, `Рисовать я не умею: художника у меня нет, и выдавать чужое за своё не стану. Могу найти готовую картинку — «найди картинку ${asked.query}».`);
+    }
+    await typing(turn);
+    const page = { extra: { ...HTML, disable_web_page_preview: true } };
+    const quiet = (got, what) => (got.code === "network" ? `${what} сейчас не отвечает. Попробуйте чуть позже.` : "");
+    if (asked.kind === "image") return pictureOf(turn, asked.query, { loose: asked.loose === true });
+    if (asked.kind === "art") {
+      const got = await media.art(asked.category);
+      if (got.ok && await sendMedia(turn, "sendPhoto", "photo", got.items[0].url, captions.art(got.items[0]), HTML)) { pulse.bump("sourced"); return { ok: true, action: "photo", kind: "art" }; }
+      return say(turn, got.ok ? "Рисунок нашёлся, но Telegram его не принял. Попросите ещё раз — выпадет другой." : "Коллекция рисунков сейчас не отвечает. Попробуйте чуть позже.");
+    }
+    if (asked.kind === "anime") {
+      const got = await media.anime(asked);
+      if (!got.ok) return say(turn, quiet(got, "Каталог аниме") || (asked.random ? "Каталог аниме ничего не выдал. Попробуйте ещё раз." : `Не нашла аниме «${asked.query}». Проверьте название — можно по-японски латиницей.`));
+      const item = got.items[0];
+      const caption = `${asked.random ? "Вот что выпало — оценка у зрителей высокая:\n" : ""}${captions.anime(item)}`;
+      pulse.bump("sourced");
+      if (await sendMedia(turn, "sendPhoto", "photo", item.url, caption, HTML)) return { ok: true, action: "photo", kind: "anime" };
+      return say(turn, caption, page);
+    }
+    if (asked.kind === "music") {
+      const got = await media.music(asked.query);
+      if (!got.ok) return say(turn, quiet(got, "Музыкальный каталог") || `Не нашла «${asked.query}». Попробуйте так: «найди песню исполнитель — название».`);
+      const [first, ...rest] = got.items;
+      const listen = (item) => (/^https?:\/\//u.test(item.page) ? `<a href="${web(item.page)}">${web(item.source)}</a>` : web(item.source));
+      const more = rest.length ? `\n\nЕщё нашлось:\n${rest.map(item => `• ${captions.song(item)} — ${listen(item)}`).join("\n")}` : "";
+      pulse.bump("sourced");
+      if (first.preview && has("sendAudio")) {
+        try {
+          await api.sendAudio({
+            chat_id: turn.chatId, audio: first.preview, performer: first.artist.slice(0, 64), title: first.title.slice(0, 64),
+            caption: `${captions.song(first)}\nЭто отрывок, 30 секунд. Целиком — ${listen(first)}.${more}`.slice(0, 1000), ...HTML, ...turn.extra,
+          });
+          turn.delivered = true;
+          return { ok: true, action: "audio", kind: "music" };
+        } catch { /* отрывок не ушёл — останется ссылка */ }
+      }
+      return say(turn, `🎵 ${captions.song(first)}\nСлушать — ${listen(first)}.${more}`, page);
+    }
+    if (asked.kind === "video") {
+      const got = await media.video(asked.query);
+      if (!got.ok) return say(turn, quiet(got, "Поиск видео") || `Не нашла видео по словам «${asked.query}».`);
+      pulse.bump("sourced");
+      // Первая ссылка раскрывается предпросмотром: смотреть можно прямо в чате.
+      return say(turn, `🎬 «${web(asked.query)}» — нашла на ${got.items[0].source}:\n\n${got.items.map((item, index) => `${index + 1}. ${captions.video(item)}`).join("\n\n")}`, { extra: HTML });
+    }
+    return null;
   }
 
   /**
@@ -2104,7 +2196,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
-    const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered));
+    const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt));
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
     // в другой игре. Мимо — молча, с «🤔», чтобы было видно: услышала.
@@ -2154,6 +2246,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     if (viaSource) return ruled({ ok: true, action: "source" });
     const viaPicture = await showPicture(turn, prompt);
     if (viaPicture) return ruled({ ok: true, action: "picture" });
+    // Профиль и роль — не предмет для поиска картинки: о них ниже.
+    const viaMedia = FACT_QUESTION.test(prompt) ? null : await findMedia(turn, prompt);
+    if (viaMedia) return ruled(viaMedia);
 
     // Профиль, роль, уровень, VIP и варны — это факты из базы, а не тема для
     // разговора. Если способность не ответила, модель ответить не может: она

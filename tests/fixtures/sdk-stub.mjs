@@ -16,7 +16,7 @@ state.sourceReplies ??= [];
 state.sourceFetches ??= [];
 state.apiReplies ??= {};
 
-const SOURCE_HOSTS = /(?:wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best)/u;
+const SOURCE_HOSTS = /(?:wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best|wikimedia\.org|openverse\.org|shikimori\.|itunes\.apple\.com|deezer\.com|rutube\.ru|dailymotion\.com)/u;
 
 const methods = {
   async sendMessage(params) {

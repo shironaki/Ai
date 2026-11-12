@@ -265,7 +265,7 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     if (typeof doFetch !== "function") return { ok: false, code: "unavailable" };
     const host = hostOf(url);
     if (soft && Number(down.get(host)) > now()) return { ok: false, code: "network" };
-    const options = { method: "GET", headers: { Accept: "application/json", "Api-User-Agent": AGENT } };
+    const options = { method: "GET", headers: { Accept: "application/json", "Api-User-Agent": AGENT, "User-Agent": AGENT } };
     try { if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") options.signal = AbortSignal.timeout(timeout); } catch { /* без таймера — как есть */ }
     let response;
     try { response = await doFetch(url, options); } catch { down.set(host, now() + 5 * 60_000); return { ok: false, code: "network" }; }
@@ -273,7 +273,8 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     const status = Number(response?.status) || 0;
     const good = response?.ok === true || (typeof response?.ok !== "boolean" && status >= 200 && status < 300);
     if (!good) return { ok: false, code: status === 404 ? "not_found" : "http", status };
-    try { return { ok: true, status, data: await response.json() }; } catch { return { ok: false, code: "invalid" }; }
+    // Адрес ответа нужен там, где источник переехал: ссылки строятся от него.
+    try { return { ok: true, status, data: await response.json(), url: String(response?.url || url) }; } catch { return { ok: false, code: "invalid" }; }
   }
 
   /** Запас в базе: источник может молчать, а вчерашний ответ ещё годится. */
@@ -528,5 +529,5 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok };
   }
 
-  return Object.freeze({ available, wiki, wordExists, findPlace, cityExists, weather, rates, convert, animal, gesture, probe });
+  return Object.freeze({ available, wiki, wordExists, findPlace, cityExists, weather, rates, convert, animal, gesture, probe, fetchJson: getJson });
 }
