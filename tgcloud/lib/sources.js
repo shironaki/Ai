@@ -250,14 +250,26 @@ export function parseTarget(text) {
 export function createSources({ fetchImpl = null, store = null, now = () => Date.now(), timeoutMs = 4500 } = {}) {
   const available = () => typeof (fetchImpl ?? globalThis.fetch) === "function";
 
+  /**
+   * Источник не ответил — пять минут к нему не ходят попутно. «Попутно»
+   * (`soft`) — это справка для модели и проверка слова в игре: человек о них
+   * не просил, и ждать ради них молчащий сервер незачем. Прямую просьбу
+   * («погода в Казани») предохранитель не касается.
+   */
+  const down = new Map();
+  const hostOf = (url) => String(url).replace(/^https?:\/\//u, "").split("/")[0];
+
   /** Один GET. Никогда не бросает: нет сети, не тот статус, не JSON — это ответ, а не падение. */
-  async function getJson(url, { timeout = timeoutMs } = {}) {
+  async function getJson(url, { timeout = timeoutMs, soft = false } = {}) {
     const doFetch = fetchImpl ?? globalThis.fetch;
     if (typeof doFetch !== "function") return { ok: false, code: "unavailable" };
+    const host = hostOf(url);
+    if (soft && Number(down.get(host)) > now()) return { ok: false, code: "network" };
     const options = { method: "GET", headers: { Accept: "application/json", "Api-User-Agent": AGENT } };
     try { if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") options.signal = AbortSignal.timeout(timeout); } catch { /* без таймера — как есть */ }
     let response;
-    try { response = await doFetch(url, options); } catch { return { ok: false, code: "network" }; }
+    try { response = await doFetch(url, options); } catch { down.set(host, now() + 5 * 60_000); return { ok: false, code: "network" }; }
+    down.delete(host);
     const status = Number(response?.status) || 0;
     const good = response?.ok === true || (typeof response?.ok !== "boolean" && status >= 200 && status < 300);
     if (!good) return { ok: false, code: status === 404 ? "not_found" : "http", status };
@@ -287,8 +299,8 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return stop > limit * 0.5 ? slice.slice(0, stop + 1) : `${slice.slice(0, slice.lastIndexOf(" "))}…`;
   };
 
-  async function summary(title) {
-    const got = await getJson(`${WIKI}/api/rest_v1/page/summary/${encodeURIComponent(String(title).trim().replace(/\s+/gu, "_"))}?redirect=true`);
+  async function summary(title, soft = false) {
+    const got = await getJson(`${WIKI}/api/rest_v1/page/summary/${encodeURIComponent(String(title).trim().replace(/\s+/gu, "_"))}?redirect=true`, { soft, timeout: soft ? 3000 : timeoutMs });
     if (!got.ok) return { ok: false, code: got.code === "not_found" ? "not_found" : "network" };
     const data = got.data ?? {};
     if (data.type === "disambiguation") return { ok: false, code: "ambiguous", title: String(data.title ?? title) };
@@ -322,7 +334,8 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     const found = await cached(`heart:src:wiki:${fold(topic).slice(0, 80)}:${search ? 1 : 0}`, 7 * 86_400_000, async () => {
       // В запасе лежит начало статьи, а не вся: полторы тысячи знаков хватает на любой ответ.
       const keep = (page) => ({ ...page, extract: page.extract.slice(0, 1500) });
-      let page = await summary(topic);
+      // Без поиска — значит попутно, для справки модели: ждём недолго.
+      let page = await summary(topic, !search);
       if (page.ok) return keep(page);
       if (page.code === "network") return page;
       if (!search) return page;
@@ -346,7 +359,7 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
   async function wordExists(word) {
     const value = fold(word);
     if (!/^[а-я-]{2,30}$/u.test(value)) return false;
-    const got = await getJson(`${WIKTIONARY}/w/api.php?action=query&titles=${encodeURIComponent(value)}&format=json&utf8=1`, { timeout: 3500 });
+    const got = await getJson(`${WIKTIONARY}/w/api.php?action=query&titles=${encodeURIComponent(value)}&format=json&utf8=1`, { timeout: 3000, soft: true });
     if (!got.ok) return null;
     const pages = got.data?.query?.pages;
     if (!pages || typeof pages !== "object") return null;
@@ -365,12 +378,14 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
    * («Москве» → «Москверо»), поэтому принимается только точное совпадение
    * названия с одной из начальных форм.
    */
-  async function findPlace(text) {
+  async function findPlace(text, { tries = 3 } = {}) {
     const phrase = fold(text);
     if (!phrase || phrase.length > 60) return { ok: false, code: "unknown_place" };
     return cached(`heart:src:geo:${cityKey(phrase).slice(0, 60)}`, 30 * 86_400_000, async () => {
       const own = knownCity(phrase);
-      const candidates = own ? [own] : [...new Set([phrase, ...phrases(phrase, 12).map(combo => combo.join(" "))])].slice(0, 5);
+      // Незнакомое название пробуется в нескольких начальных формах — но не бесконечно:
+      // каждая проба — запрос, а человек ждёт.
+      const candidates = own ? [own] : [...new Set([phrase, ...phrases(phrase, 12).map(combo => combo.join(" "))])].slice(0, Math.max(1, tries));
       let failed = 0;
       for (const candidate of candidates) {
         const results = await geocode(candidate);
@@ -392,7 +407,8 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
   async function cityExists(name) {
     const own = CITY_INDEX.get(cityKey(name));
     if (own) return { ok: true, name: own, own: true };
-    const place = await findPlace(name);
+    // В игре название говорят в начальной форме: одной пробы достаточно.
+    const place = await findPlace(name, { tries: 1 });
     if (place?.ok) return { ok: true, name: place.name, own: false };
     return place?.code === "network" ? null : { ok: false };
   }

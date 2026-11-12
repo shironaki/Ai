@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { BUILD, DAY, KEY, OWNER, chats, group, heart, hers, last, message, reactions, request, reset, says, sdk, system, toChat, toOwner, withSister } from "./fixtures/kit.mjs";
+import { BUILD, RELEASE_NOTES, DAY, KEY, OWNER, chats, group, heart, hers, last, message, reactions, request, reset, says, sdk, system, toChat, toOwner, withSister } from "./fixtures/kit.mjs";
 
 const { parseIntent } = await import("../tgcloud/lib/intents.js");
 const { bridgePayload, hmac } = await import("../tgcloud/lib/bridge.js");
@@ -285,7 +285,8 @@ test("аудит 11: о своей сборке и о новом она отве
   assert.equal(last(), `Сердце: ${BUILD}.`);
   await h.onMessage(message("что нового"), KEY);
   assert.match(last(), new RegExp(`сборка ${BUILD.replaceAll(".", "\\.")}`));
-  assert.match(last(), /запасной моделью/);
+  // Новости — это заметки текущей сборки, слово в слово: модель их не сочиняет.
+  for (const note of RELEASE_NOTES) assert.ok(last().includes(note), note);
   await h.onMessage(message("кто ты"), KEY);
   assert.match(last(), /Я Аи/);
   assert.equal(chats().length, 0);

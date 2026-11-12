@@ -78,20 +78,22 @@ export function rightsFrames(facts = null) {
  * Сборка сердца. Её видно в /status, потому что «я запушил» и «оно работает» —
  * разные факты: 8–10 ноября код лежал в репозитории, а живой бот отвечал
  * старым. Без этой строки проверить, что именно запущено, было нечем.
- * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением.
+ * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
+ * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.21.0";
+export const BUILD = "0.22.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "в группе слышу «привет, Аи», @упоминание и ответ на моё сообщение; чужим ботам и чужим командам больше не отвечаю",
-  "личное остаётся в личке: сказанное наедине в группе не звучит",
-  "отношения двигаются: день знакомства — шаг, поступки — тоже; с вами я всегда на «вы»",
-  "упёршись в лимит, думаю запасной моделью; нечем думать — записываю вопрос и отвечаю позже сама",
-  "простая реплика стоит вчетверо меньше токенов",
-  "учусь: «урок: …», «так не надо: …»; чужие поправки сначала спрашиваю у вас",
-  "сама сообщаю о новой сборке, сбоях и итогах дня",
-  "сестра молчит — не жду её, отвечаю сама",
+  "слушаюсь вас: ваши правила принимаю без оговорок, даже о прежних границах; чужие — по-прежнему спрашиваю у вас",
+  "напоминаю: «напомни через час …», «напоминай по будням в 8 …», «буди меня в 7» (утро с погодой и делами), «капсула времени на год: …»",
+  "узнаю сама, без модели: погода, курс ЦБ, пересчёт валют, точный счёт, время и дни до даты, «вики …»; на «что такое …» отвечаю по справке из Википедии",
+  "играю, и судья — код: города, слова, угадай число, быки и коровы, виселица, «5 букв», загадки, анаграммы, фильм по эмодзи, камень-ножницы-бумага, кубик, монетка, «выбери за меня»",
+  "показываю: «покажи котика», «как выглядит …», жесты гифкой; на стикер отвечаю стикером из того же набора",
+  "слышу канал моста и просыпаюсь без сообщений — от будильника; после публикации сама пишу, что обновилась",
+  "запасные мозги: проверяю каждую модель по слову «проверь мозги»; GigaChat подключается ключом; о лимите на исходе говорю заранее",
+  "чужое письмо вам — только по просьбе: «передай хозяину: …»; ваш ответ на него отношу автору",
+  "длинный ответ шлю частями; у каждого собеседника дневной предел разговора, чтобы мыслей хватало всем",
 ]);
 
 const DAY = 86_400_000;
@@ -1200,7 +1202,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
     const home = value.match(/^(?:мой\s+город\s*[—:-]?\s*|я\s+живу\s+в\s+(?:городе\s+)?)(.{2,40})$/u);
     if (home) {
       if (turn.dry) return say(turn, "Разобрала бы это как «мой город» — репетиция, ничего не меняю.");
-      const place = await sources.findPlace(home[1]);
+      const place = await sources.findPlace(home[1], { tries: 2 });
       if (!place?.ok) return place?.code === "network" ? say(turn, "Справочник городов сейчас не отвечает — запомню город в другой раз.") : null;
       const saved = await personal.save(actorId, { city: place.name, ...(validTimeZone(place.timezone) ? { tz: place.timezone } : {}) }).catch(() => ({ ok: false }));
       return say(turn, saved.ok
@@ -1210,8 +1212,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     const asked = detectSource(value);
     if (!asked) return null;
-    // «Погода сегодня отличная, правда?» — разговор: без предлога нужен знакомый город.
-    if (asked.kind === "weather" && asked.place && !asked.explicit && !knownCity(asked.place)) return null;
+    // «Погода сегодня отличная, правда?» и «погода в Москве нынче радует» —
+    // разговор, а не просьба: без предлога нужен знакомый город, а после
+    // города не должно идти других слов.
+    if (asked.kind === "weather" && asked.place && !knownCity(asked.place)) {
+      const words = asked.place.split(" ");
+      const story = words.length > 1 && Boolean(knownCity(words[0]) || (words.length > 2 && knownCity(words.slice(0, 2).join(" "))));
+      if (!asked.explicit || story || words.length > 2) return null;
+    }
     if (asked.kind === "until" && !parseTarget(asked.target)) return null;
     if (turn.dry) return say(turn, `Разобрала бы это как вопрос к источнику («${asked.kind}») — репетиция, никуда не хожу.`);
 
@@ -1265,7 +1273,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
         let zone = zoneOf(turn);
         let label = zone !== TZ && settings.city ? settings.city : "по моим часам";
         if (asked.place) {
-          const place = await sources.findPlace(asked.place);
+          const place = await sources.findPlace(asked.place, { tries: 2 });
           if (!place?.ok || !validTimeZone(place.timezone)) {
             return place?.code === "network" ? say(turn, "Справочник городов сейчас не отвечает — время там назвать не могу.") : null;
           }
@@ -2049,7 +2057,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, now = () 
 
     // Идёт игра — фраза может быть ходом. Судит код; не ход — идёт дальше,
     // к просьбам и разговору, а игра ждёт.
-    if (!dry) {
+    // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
+    const lowered = normalize(prompt);
+    const request = Boolean(matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered));
+    if (!dry && !request) {
       const played = await games.move(chat.id, prompt, { formal: turn.manner.formal !== false });
       if (played) {
         if (played.started) pulse.bump("games");

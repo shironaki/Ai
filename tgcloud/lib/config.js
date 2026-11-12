@@ -47,6 +47,12 @@ export const CONFIG = Object.freeze({
   // Час по TIME_ZONE, после которого владелец получает сводку за вчера.
   DIGEST_HOUR: 9,
 
+  // Сколько ответов моделью в день получает один собеседник. Лимит модели
+  // общий: предел не даёт одному человеку оставить без ответа остальных.
+  // Хозяина не касается; игры, память, источники и напоминания модель не
+  // тратят и под предел не попадают. 0 — без предела.
+  AI_DAILY_PER_PERSON: 200,
+
   // The VIP perk "the heart answers faster" is a fact, not an adjective: the
   // pause shrinks only when the sister confirms the status. Same number as in
   // the abilities deployment, kept here because the heart has no env.

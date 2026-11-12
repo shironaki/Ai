@@ -2,7 +2,8 @@ name: Heart
 
 # Один файл, три дела:
 #   проверка    — тесты на каждый push в main и по кнопке;
-#   публикация  — сама, когда в main пришёл коммит, или по кнопке с любой ветки;
+#   публикация  — по кнопке с любой ветки; сама при коммите в main — только
+#                 если владелец включил: переменная репозитория HEART_AUTODEPLOY = on;
 #   будильник   — раз в три часа будит сердце, чтобы «само» случалось без сообщений.
 #
 # Точный будильник (раз в минуту) — второй телефон, см. docs/ALARM.md. Этот,
@@ -70,8 +71,9 @@ jobs:
 
   deploy:
     name: Publish the heart
-    # Коммит в main публикуется сам; с любой другой ветки — только по кнопке.
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy') }}
+    # По кнопке — с любой ветки. Сам, при коммите в main, — только когда
+    # владелец это включил (HEART_AUTODEPLOY = on): публикация меняет живого бота.
+    if: ${{ (github.event_name == 'push' && vars.HEART_AUTODEPLOY == 'on') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'deploy') }}
     needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -175,6 +177,9 @@ jobs:
     if: ${{ (github.event_name == 'schedule' && vars.HEART_ALARM != 'off') || (github.event_name == 'workflow_dispatch' && inputs.mode == 'tick') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # То же окружение, что у публикации: ключи могут лежать в нём, а без них
+    # разбуженное сердце решило бы, что думать нечем.
+    environment: heart-serverless
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

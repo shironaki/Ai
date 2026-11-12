@@ -104,6 +104,11 @@ test("погода: город в любом падеже, прогноз у м�
   assert.equal(last(), "И правда хорошая.");
   assert.equal(chats().length, 1);
 
+  // Рассказ о погоде — тоже разговор: после города идут ещё слова.
+  sdk().fetchQueue.push(says("Рада за Москву."));
+  await h.onMessage(message("погода в Москве нынче радует"), KEY);
+  assert.equal(last(), "Рада за Москву.");
+
   // Города нет ни в её списке, ни в справочнике — так и говорит.
   await h.onMessage(message("погода в Зажопинске"), KEY);
   assert.match(last(), /Города «зажопинске» я не нашла/);
@@ -208,6 +213,19 @@ test("вики: «что такое …» — модель отвечает св
   await h.onMessage(message("на что ты опиралась"), KEY);
   assert.match(last(), /Википедия: «Фотосинтез»/);
 
+  // Википедия молчит: справки нет, ответ есть — и второй раз её не ждут.
+  reset();
+  source("page/summary/", new Error("ETIMEDOUT"));
+  const alone = heart();
+  sdk().fetchQueue.push(says("Отвечу как помню."), says("И ещё раз."));
+  await alone.onMessage(message("что такое квазар"), KEY);
+  await alone.onMessage(message("что такое пульсар"), KEY);
+  assert.equal(last(), "И ещё раз.");
+  assert.equal(sourced().length, 1, "после отказа пять минут к источнику попутно не ходит");
+  assert.doesNotMatch(JSON.stringify(request().messages), /Справка из Википедии/);
+
+  reset();
+  source("page/summary/", page("Фотосинтез", "Фотосинтез — сложный химический процесс преобразования энергии света в энергию химических связей органических веществ."));
   // Лимит вышел: вопрос не уходит в очередь — отвечает сама статья.
   sdk().fetchQueue.push(refuses(429, { code: "rate_limit_exceeded", headers: { "retry-after": "900" } }));
   await h.onMessage(message("что такое фотосинтез"), KEY);
@@ -442,6 +460,13 @@ test("игры: идёт игра — просьбы и источники ра�
   // А число — всё ещё ход.
   await h.onMessage(message("42"), KEY);
   assert.match(last(), /^Да, это 42!/);
+
+  // Просьба важнее хода: слово-просьба посреди виселицы — не попытка угадать.
+  await h.onMessage(message("виселица"), KEY);
+  await h.onMessage(message("версия"), KEY);
+  assert.match(last(), /^Сердце: \d+\.\d+\.\d+\.$/);
+  await h.onMessage(message("во что играем"), KEY);
+  assert.match(last(), /^Виселица\.\n\n.*\nОшибок: 0 из 7\.$/su);
 });
 
 // ── картинки, жесты, стикеры ─────────────────────────────────────────────
@@ -724,7 +749,7 @@ test("публикация: секреты вписываются одним с�
   assert.throws(() => run({ AI_PROVIDER_KEY: "k" }));
 
   const workflow = readFileSync(new URL("../.github/workflows/heart.yml", import.meta.url), "utf8");
-  assert.match(workflow, /push:\n\s+branches: \[main\]/, "коммит в main публикуется сам");
+  assert.match(workflow, /github\.event_name == 'push' && vars\.HEART_AUTODEPLOY == 'on'/, "коммит в main публикуется сам, только если владелец включил");
   assert.match(workflow, /--ctx '\{ tick: true, deployed: true \}'/, "после публикации сердце будят");
   assert.match(workflow, /schedule:\n\s+- cron:/, "есть страховочный будильник");
   assert.equal((workflow.match(/node scripts\/inject-secrets\.mjs/g) ?? []).length, 2, "секреты вписывает один скрипт — и для публикации, и для будильника");
