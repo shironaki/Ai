@@ -17,6 +17,9 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 // В Termux нет /usr/bin/env, на который опираются подставные программы теста:
 // сам скрипт там работает, а его песочница — нет. Публикацию это не держит.
 const skip = process.platform === "win32" || process.platform === "android" ? "песочница скрипта собирается только на обычном Linux и macOS" : false;
+// Песочница не наследует настройки настоящего дома: эти тесты гоняет и сам
+// скрипт перед публикацией, и разработчик, у которого ключи лежат в окружении.
+const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:HEART_|ALARM_|TGCLOUD_|KEY_|FAKE_)|^(?:AI_PROVIDER_KEY|AI_EXTRA_KEYS|OWNER_TG_ID)$/u.test(name)));
 const GIT_ENV = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
 const TOKEN = "app123:SECRET-PLATFORM-TOKEN";
 const KEYS = { model: "gsk-SECRET-MODEL-KEY", giga: "GIGA-SECRET-KEY", voice: "777:VOICE-SECRET" };
@@ -70,7 +73,7 @@ esac
 `;
 
 function sh(cwd, command, env = {}) {
-  const done = spawnSync("bash", ["-c", command], { cwd, env: { ...process.env, ...GIT_ENV, ...env }, encoding: "utf8" });
+  const done = spawnSync("bash", ["-c", command], { cwd, env: { ...CLEAN_ENV, ...GIT_ENV, ...env }, encoding: "utf8" });
   if (done.status !== 0) throw new Error(`${command}\n${done.stdout}\n${done.stderr}`);
   return done.stdout.trim();
 }
@@ -85,7 +88,7 @@ function sandbox({ lines = null } = {}) {
   copyFileSync(join(ROOT, "tgcloud/lib/secrets.js"), join(seed, "tgcloud/lib/secrets.js"));
   writeFileSync(join(seed, "tgcloud/lib/heart.js"), 'export const BUILD = "1.0.0";\n');
   writeFileSync(join(seed, "tgcloud/handlers/message.js"), "export default async function () {}\n");
-  writeFileSync(join(seed, "package.json"), JSON.stringify({ name: "x", private: true, type: "module", scripts: { ci: "node -e \"process.exit(Number(process.env.FAKE_CI || 0))\"" } }));
+  writeFileSync(join(seed, "package.json"), JSON.stringify({ name: "x", private: true, type: "module", scripts: { ci: "env > \"$FAKE_LOG.ci\"; exit ${FAKE_CI:-0}" } }));
   sh(dir, "git init -q --bare remote.git");
   sh(seed, `git init -q && git checkout -q -b work && git add -A && git commit -q -m one && git remote add origin "${join(dir, "remote.git")}" && git push -q origin work`);
   sh(dir, `git clone -q --branch work "${join(dir, "remote.git")}" phone`);
@@ -107,14 +110,14 @@ function sandbox({ lines = null } = {}) {
   return {
     dir, phone, home, seed,
     run(mode = "once", extra = {}) {
-      const done = spawnSync("bash", ["scripts/phone.sh", ...String(mode).split(" ")], { cwd: phone, env: { ...process.env, ...GIT_ENV, ...env, ...extra }, encoding: "utf8", timeout: 60_000 });
+      const done = spawnSync("bash", ["scripts/phone.sh", ...String(mode).split(" ")], { cwd: phone, env: { ...CLEAN_ENV, ...GIT_ENV, ...env, ...extra }, encoding: "utf8", timeout: 60_000 });
       return { code: done.status, out: sane(`${done.stdout}${done.stderr}`) };
     },
     /** Вечный цикл: работает, пока не выполнится условие, затем его останавливают, как Ctrl+C. */
     loop(until, extra = {}) {
       return new Promise((resolveLoop) => {
         // Своя группа процессов: Ctrl+C в терминале получают все, кто в ней, — и bash, и его sleep.
-        const child = spawn("bash", ["scripts/phone.sh"], { cwd: phone, env: { ...process.env, ...GIT_ENV, ...env, ...extra }, detached: true });
+        const child = spawn("bash", ["scripts/phone.sh"], { cwd: phone, env: { ...CLEAN_ENV, ...GIT_ENV, ...env, ...extra }, detached: true });
         let out = "", asked = false;
         child.stdout.on("data", chunk => { out += chunk; });
         child.stderr.on("data", chunk => { out += chunk; });
@@ -128,6 +131,8 @@ function sandbox({ lines = null } = {}) {
       });
     },
     meanwhile: () => read(`${env.FAKE_LOG}.meanwhile`),
+    /** Окружение, в котором скрипт запустил тесты. */
+    ci: () => read(`${env.FAKE_LOG}.ci`),
     keys: (lines) => writeFileSync(join(home, ".heart.env"), lines.join("\n") + "\n"),
     cli: () => read(env.FAKE_LOG).split("\n").filter(Boolean).map(line => JSON.parse(line)),
     curl: () => read(env.FAKE_CURL_LOG).split("\n").filter(Boolean),
@@ -233,12 +238,23 @@ test("репетиция упала — публикации нет; владе�
   } finally { box.clean(); }
 });
 
-test("тесты не прошли — в облако ничего не уходит", { skip }, () => {
+test("тесты не прошли — в облако ничего не уходит; ключи и настройки дома до тестов не доходят", { skip }, () => {
   const box = sandbox();
   try {
     const done = box.run("once", { HEART_TESTS: "on", FAKE_CI: "1" });
     assert.match(done.out, /Тесты не прошли/u);
     assert.equal(box.cli().length, 0);
+    // Тестам не нужны ни ключи, ни «за какой веткой следить»: с ними они и текут, и ведут себя иначе.
+    const seen = box.ci();
+    for (const secret of [TOKEN, ...Object.values(KEYS)]) assert.ok(!seen.includes(secret), "ключи до тестов не доходят");
+    assert.doesNotMatch(seen, /^(?:HEART_|ALARM_|TGCLOUD_|KEY_|AI_PROVIDER_KEY=|AI_EXTRA_KEYS=|OWNER_TG_ID=)/mu);
+    assert.match(seen, /^FAKE_CI=1$/mu, "остальное окружение — как было");
+    assert.match(seen, /^PATH=/mu);
+
+    const passed = box.run("once", { HEART_TESTS: "on" });
+    assert.match(passed.out, /Проверяю сборку тестами/u);
+    assert.match(passed.out, /Сборка 1\.0\.0 опубликована/u);
+    assert.ok(box.cli().every(item => item.key && item.token), "а публикации ключи достались");
   } finally { box.clean(); }
 });
 
@@ -318,7 +334,7 @@ test("строка-образец вместо ключа в живого бот
     assert.equal(pushed.key, true);
     assert.equal(pushed.giga, false);
     // Что именно вписалось: запасных провайдеров ноль, владельца нет.
-    const filled = spawnSync("node", ["scripts/inject-secrets.mjs"], { cwd: mixed.phone, encoding: "utf8", env: { ...process.env, AI_PROVIDER_KEY: KEYS.model, OWNER_TG_ID: "ваш числовой ID", KEY_GIGACHAT: "Authorization Key из Сбера", AI_EXTRA_KEYS: '{"explabs":"ключ из кабинета"}' } });
+    const filled = spawnSync("node", ["scripts/inject-secrets.mjs"], { cwd: mixed.phone, encoding: "utf8", env: { ...CLEAN_ENV, AI_PROVIDER_KEY: KEYS.model, OWNER_TG_ID: "ваш числовой ID", KEY_GIGACHAT: "Authorization Key из Сбера", AI_EXTRA_KEYS: '{"explabs":"ключ из кабинета"}' } });
     assert.match(filled.stdout, /provider key yes, owner no, spare providers 0/u);
     assert.match(filled.stdout, /KEY_GIGACHAT does not look like a key/u);
     assert.ok(!filled.stdout.includes("Authorization Key"), "само значение не печатается");
@@ -326,7 +342,7 @@ test("строка-образец вместо ключа в живого бот
     assert.ok(!/Сбера|числовой|кабинета/u.test(secrets));
     // Строгий режим с образцом вместо ключа — стоп, файл не тронут.
     sh(mixed.phone, "git checkout -q -- tgcloud/lib/secrets.js");
-    const strict = spawnSync("node", ["scripts/inject-secrets.mjs", "--require-key"], { cwd: mixed.phone, encoding: "utf8", env: { ...process.env, AI_PROVIDER_KEY: "ключ модели" } });
+    const strict = spawnSync("node", ["scripts/inject-secrets.mjs", "--require-key"], { cwd: mixed.phone, encoding: "utf8", env: { ...CLEAN_ENV, AI_PROVIDER_KEY: "ключ модели" } });
     assert.equal(strict.status, 1);
     assert.equal(mixed.status(), "");
   } finally { mixed.clean(); }

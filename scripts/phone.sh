@@ -195,6 +195,21 @@ main() {
     [ -f "$CLI" ] || { log "Инструмент публикации не поставился: нет связи с npm? Подробности: $DEPLOY_LOG"; return 1; }
   }
 
+  # Тестам ключи и настройки дома не нужны, а мешать могут: до них не доходит
+  # ничего из того, что скрипт прочёл в файле ключей или получил в окружении.
+  run_tests() {
+    (
+      cd "$REPO" || exit 1
+      local name
+      for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
+        case "$name" in
+          HEART_*|ALARM_*|TGCLOUD_*|KEY_*|AI_PROVIDER_KEY|AI_EXTRA_KEYS|OWNER_TG_ID) unset "$name" ;;
+        esac
+      done
+      npm run ci
+    ) > "$TEST_LOG" 2>&1 < /dev/null
+  }
+
   # ── слепок опубликованного ───────────────────────────────────────────────
   # Удар через платформу исполняет код с телефона, а в папке к тому времени
   # может лежать следующий, ещё не опубликованный коммит. В живую базу ходит
@@ -362,7 +377,7 @@ main() {
     log "Публикую сборку $build ($(short "$head"))…"
     if [ "$TESTS" = "on" ]; then
       log "Проверяю сборку тестами — на телефоне это несколько минут."
-      if ! ( cd "$REPO" && npm run ci ) > "$TEST_LOG" 2>&1 < /dev/null; then
+      if ! run_tests; then
         WHY="тесты"
         log "✗ Тесты не прошли — публикации нет, бот на прежней сборке. Журнал: $TEST_LOG"
         # Какие именно — сразу на экран: по этим строкам видно, код это или телефон.
@@ -575,7 +590,10 @@ EOF
       echo "✗ $(why_fetch)"; bad=1
     fi
     if tokenlike "$TOKEN" && ensure_cli; then
-      if tg fetch > "$DEPLOY_LOG" 2>&1; then echo "✓ платформа: токен принят"; else echo "✗ платформа не приняла токен или нет связи (подробности: $DEPLOY_LOG)"; bad=1; fi
+      if tg fetch > "$DEPLOY_LOG" 2>&1; then echo "✓ платформа: токен принят"
+      elif grep -q "Could not reach" "$DEPLOY_LOG" 2>/dev/null; then echo "✗ нет связи с платформой Telegram (cloud.telegram.org) — проверьте сеть и повторите проверку"; bad=1
+      elif grep -q "TGCLOUD_TOKEN" "$DEPLOY_LOG" 2>/dev/null; then echo "✗ платформа не приняла токен публикации — нужен действующий: @BotFather → бот Аи → Serverless → CLI Access"; bad=1
+      else echo "✗ платформа ответила не так, как ждали (подробности: $DEPLOY_LOG)"; bad=1; fi
     fi
     [ "$VOICE_BAD" = 1 ] && { echo "✗ ALARM_BOT_TOKEN не похож на токен бота (цифры, двоеточие, буквы) — впишите токен или уберите строку"; bad=1; }
     [ "$ROOM_BAD" = 1 ] && { echo "✗ ALARM_CHAT_ID не похож на ID канала (число вида -100…) — впишите число или уберите строку"; bad=1; }
@@ -598,7 +616,7 @@ EOF
     echo "Сборка в папке: $(build_of) · опубликовано отсюда: $(published_build || true)$([ -f "$PUBLISHED" ] || echo 'ещё ничего')"
     if [ "$TESTS" = "on" ] && [ "${2:-}" = "tests" ]; then
       echo "Гоняю тесты — это минута-другая…"
-      if ( cd "$REPO" && npm run ci ) > "$TEST_LOG" 2>&1 < /dev/null; then echo "✓ тесты на этом устройстве проходят"
+      if run_tests; then echo "✓ тесты на этом устройстве проходят"
       else echo "✗ тесты на этом устройстве не проходят (журнал: $TEST_LOG). Если дело в устройстве — HEART_TESTS=off."; bad=1; fi
     fi
     if [ "$bad" = 0 ]; then echo "Готово к работе: bash scripts/phone.sh"
