@@ -36,12 +36,15 @@ test("разбор поиска: что ищут и какими словами;
   }
 });
 
-test("аниме-арт: рисунок с автором и источником; коллекция молчит — честно", async () => {
+test("аниме-арт: рисунок без подписи, автор — по вопросу «откуда это?»; коллекция молчит — честно", async () => {
   reset();
   const h = heart();
   source("nekos.best/api/v2/waifu", { results: [{ url: "https://nekos.example/waifu/1.png", artist_name: "Иной <художник>", source_url: "https://art.example/1?a=1&b=2" }] });
   await h.onMessage(message("покажи тянку"), KEY);
-  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://nekos.example/waifu/1.png", caption: 'Автор: Иной &lt;художник&gt; · <a href="https://art.example/1?a=1&amp;b=2">nekos.best</a>', parse_mode: "HTML" });
+  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://nekos.example/waifu/1.png", parse_mode: "HTML" });
+  // Подпись молчит об источнике, но автор не потерян: по прямому вопросу она его называет.
+  await h.onMessage(message("откуда это?"), KEY);
+  assert.equal(sent().text, 'Это не моя работа: «рисунок», автор — Иной &lt;художник&gt;. Лежит здесь: <a href="https://art.example/1?a=1&amp;b=2">nekos.best</a>.');
   await h.onMessage(message("скинь неко"), KEY);
   assert.equal(last(), "Коллекция рисунков сейчас не отвечает. Попробуйте чуть позже.");
   assert.equal(chats().length, 0);
@@ -52,13 +55,15 @@ test("картинка по словам: описание — из хранил
   const h = heart();
   source("commons.wikimedia.org", (url) => (decodeURIComponent(url).includes("закат над морем") ? commons(["Схема", "image/svg+xml"], ["Sunset"]) : { batchcomplete: "" }));
   await h.onMessage(message("Найди картинку закат над морем"), KEY);
-  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://upload.example/1/1280.jpg", caption: 'закат над морем\n<a href="https://commons.example/wiki/File:1">Викисклад</a>', parse_mode: "HTML" });
+  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://upload.example/1/1280.jpg", caption: "Закат над морем", parse_mode: "HTML" });
   assert.match(sourced().find(url => url.includes("commons")), /gsrsearch=.*filetype%3Abitmap/u, "ищет снимки, а не схемы и звук");
 
   // В хранилище пусто — открытый каталог; подпись называет автора и лицензию.
   source("api.openverse.org", { results: [{ url: "https://img.example/cat.jpg", title: "Ginger", creator: "Ann", license: "by-sa", foreign_landing_url: "https://flickr.example/1" }, { url: "https://img.example/x.jpg", mature: true }] });
   await h.onMessage(message("картинка: рыжий кот на заборе"), KEY);
-  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://img.example/cat.jpg", caption: 'рыжий кот на заборе\n<a href="https://flickr.example/1">Openverse</a> · Ann, CC BY-SA', parse_mode: "HTML" });
+  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://img.example/cat.jpg", caption: "Рыжий кот на заборе", parse_mode: "HTML" });
+  await h.onMessage(message("кто автор?"), KEY);
+  assert.match(sent().text, /^Это не моя работа: «рыжий кот на заборе», автор — Ann, CC BY-SA\. Лежит здесь: <a href="https:\/\/flickr\.example\/1">Openverse<\/a>\.$/u);
   assert.match(sourced().find(url => url.includes("openverse")), /mature=false/u);
 
   // «Как выглядит …» без статьи в энциклопедии — тоже находит.
@@ -78,19 +83,19 @@ test("«покажи …»: предмет находится — картинк
   source("api.openverse.org", { results: [] });
   source("page/summary/", (url) => (decodeURIComponent(url).includes("Байкал") ? { type: "standard", title: "Байкал", description: "озеро в Сибири", extract: "Байкал — озеро.", originalimage: { source: "https://upload.example/baikal.jpg" } } : { status: 404, ok: false, json: async () => ({}) }));
   await h.onMessage(message("Покажи Байкал"), KEY);
-  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://upload.example/baikal.jpg", caption: "Байкал — озеро в Сибири\nВикипедия" });
+  assert.deepEqual(photos().at(-1), { chat_id: 5, photo: "https://upload.example/baikal.jpg", caption: "Байкал — озеро в Сибири" });
   assert.equal(chats().length, 0);
   sdk().fetchQueue.push(says("Что именно показать?"));
   await h.onMessage(message("покажи фокус-покус"), KEY);
   assert.equal(last(), "Что именно показать?", "не нашлось — отвечает как на обычную фразу");
   // Явная просьба о картинке без результата — честный отказ, не разговор.
   await h.onMessage(message("найди картинку абракадабра швабра"), KEY);
-  assert.match(last(), /Не нашла, как выглядит «абракадабра швабра»: ни в Википедии, ни среди открытых снимков/u);
+  assert.match(last(), /^Не нашла, как выглядит «абракадабра швабра»\. Попробуйте сказать короче или иначе\.$/u);
   assert.equal(chats().length, 1);
   // Все источники молчат — так и говорит.
   sdk().sourceReplies.length = 0;
   await h.onMessage(message("найди картинку тихий океан ночью"), KEY);
-  assert.match(last(), /Источники картинок сейчас не отвечают/u);
+  assert.match(last(), /Картинки сейчас не достать: связь подводит/u);
 });
 
 test("аниме: карточка с постером по названию, случайное с высокой оценкой, честное «не нашла»", async () => {
@@ -101,13 +106,13 @@ test("аниме: карточка с постером по названию, с
   await h.onMessage(message("найди аниме Наруто"), KEY);
   assert.deepEqual(photos().at(-1), {
     chat_id: 5, photo: "https://shikimori.one/system/animes/original/20.jpg", parse_mode: "HTML",
-    caption: '<b>Наруто</b>\nNaruto\nсериал · 2002 · 220 серий · оценка 8,01\n<a href="https://shikimori.one/animes/20-naruto">Shikimori</a>',
+    caption: '<b>Наруто</b>\nNaruto\nсериал · 2002 · 220 серий · оценка 8,01',
   });
   assert.match(sourced().at(-1), /censored=true/u);
 
   source("shikimori.one/api/animes?order=random", [{ name: "Mushishi", russian: "", image: { original: "/assets/globals/missing_original.jpg" }, url: "/animes/457", kind: "tv", score: "8.65", status: "ongoing", episodes: 0, aired_on: "2005-10-23" }]);
   await h.onMessage(message("посоветуй аниме"), KEY);
-  assert.equal(sent().text, 'Вот что выпало — оценка у зрителей высокая:\n<b>Mushishi</b>\nсериал · 2005 · выходит · оценка 8,65\n<a href="https://shikimori.one/animes/457">Shikimori</a>');
+  assert.equal(sent().text, 'Вот что выпало — оценка у зрителей высокая:\n<b>Mushishi</b>\nсериал · 2005 · выходит · оценка 8,65');
   assert.equal(sent().parse_mode, "HTML");
   assert.match(sourced().at(-1), /order=random&score=8&kind=tv/u);
 
@@ -116,7 +121,7 @@ test("аниме: карточка с постером по названию, с
   assert.equal(chats().length, 0, "название и оценку модель не сочиняет");
 });
 
-test("музыка: отрывок с подписью и ссылкой; второй каталог — запасной; отрывок не ушёл — ссылка", async () => {
+test("музыка: отрывок с подписью без ссылок; второй каталог — запасной; отрывок не ушёл — название", async () => {
   reset();
   const h = heart();
   source("itunes.apple.com/search", (url) => (decodeURIComponent(url).includes("Кино") ? { results: [
@@ -126,14 +131,14 @@ test("музыка: отрывок с подписью и ссылкой; вто
   await h.onMessage(message("найди песню Кино — Группа крови"), KEY);
   assert.deepEqual(calls("sendAudio").at(-1), {
     chat_id: 5, audio: "https://audio.example/1.m4a", performer: "Кино", title: "Группа крови", parse_mode: "HTML",
-    caption: 'Кино — Группа крови (Группа крови) · 4:45\nЭто отрывок, 30 секунд. Целиком — <a href="https://music.example/t/1">Apple Music</a>.\n\nЕщё нашлось:\n• Кино — Звезда по имени Солнце · 3:45 — <a href="https://music.example/t/2">Apple Music</a>',
+    caption: 'Кино — Группа крови (Группа крови) · 4:45\nЭто отрывок, 30 секунд.\n\nЕщё есть:\n• Кино — Звезда по имени Солнце · 3:45',
   });
   assert.match(sourced().at(-1), /media=music&entity=song&limit=3&country=RU/u);
 
   source("api.deezer.com/search", { data: [{ title: "Sonne", artist: { name: "Rammstein" }, album: { title: "Mutter" }, link: "https://deezer.example/3", preview: "https://audio.example/3.mp3", duration: 272 }] });
   sdk().failing.sendAudio = new Error("failed to get HTTP URL content");
   await h.onMessage(message("песня: Rammstein Sonne"), KEY);
-  assert.equal(sent().text, '🎵 Rammstein — Sonne (Mutter) · 4:32\nСлушать — <a href="https://deezer.example/3">Deezer</a>.');
+  assert.equal(sent().text, '🎵 Rammstein — Sonne (Mutter) · 4:32\nОтрывка к ней у меня нет.');
   assert.deepEqual({ mode: sent().parse_mode, preview: sent().disable_web_page_preview }, { mode: "HTML", preview: true });
 
   source("api.deezer.com/search", { data: [] });
@@ -143,7 +148,7 @@ test("музыка: отрывок с подписью и ссылкой; вто
   assert.equal(chats().length, 0);
 });
 
-test("видео: ссылки с автором и длиной, взрослое отсеяно; запасной источник; «нарисуй» — честное «не умею»", async () => {
+test("видео: адрес спрятан под названием, взрослое отсеяно; запасной источник; «нарисуй» — честное «не умею»", async () => {
   reset();
   const h = heart();
   source("rutube.ru/api/search/video", (url) => (decodeURIComponent(url).includes("борщ") ? { results: [
@@ -153,12 +158,12 @@ test("видео: ссылки с автором и длиной, взросло
     { title: "Борщ <по-домашнему>", video_url: "https://rutube.example/video/4/", author: { name: "" }, duration: 0 },
   ] } : { results: [] }));
   await h.onMessage(message("найди видео как варить борщ"), KEY);
-  assert.equal(sent().text, "🎬 «как варить борщ» — нашла на Rutube:\n\n1. Борщ за час — Кухня, 1:02:05\nhttps://rutube.example/video/1/\n\n2. Борщ &lt;по-домашнему&gt;\nhttps://rutube.example/video/4/");
+  assert.equal(sent().text, '🎬 «как варить борщ»:\n\n1. <a href="https://rutube.example/video/1/">Борщ за час</a> — Кухня, 1:02:05\n2. <a href="https://rutube.example/video/4/">Борщ &lt;по-домашнему&gt;</a>');
   assert.match(sourced().at(-1), /client=wdp/u, "без этого параметра поиск источника пуст");
 
   source("api.dailymotion.com/videos", { list: [{ title: "Cats", url: "https://dm.example/v/1", duration: 95, "owner.screenname": "Zoo" }] });
   await h.onMessage(message("видео: котики"), KEY);
-  assert.equal(sent().text, "🎬 «котики» — нашла на Dailymotion:\n\n1. Cats — Zoo, 1:35\nhttps://dm.example/v/1");
+  assert.equal(sent().text, '🎬 «котики»:\n\n1. <a href="https://dm.example/v/1">Cats</a> — Zoo, 1:35');
   assert.match(sourced().at(-1), /family_filter=true/u);
 
   await h.onMessage(message("нарисуй котика в шляпе"), KEY);
@@ -167,5 +172,6 @@ test("видео: ссылки с автором и длиной, взросло
   // Идёт игра — просьба о поиске ходом не считается.
   await h.onMessage(message("виселица"), KEY);
   await h.onMessage(message("видео: котики"), KEY);
-  assert.match(sent().text, /нашла на Dailymotion/u);
+  assert.match(sent().text, /^🎬 «[^»]+»:\n\n1\. <a href=/u);
+  assert.doesNotMatch(sent().text, /Dailymotion|Rutube|нашла на/u, "источник не называется");
 });

@@ -124,7 +124,7 @@ test("погода: служба молчит — честно говорит, �
   assert.equal(chats().length, 0);
 });
 
-test("курс: таблица Центробанка, пересчёт и слова о валютах", async () => {
+test("курс: таблица, пересчёт, слова о валютах; главный источник молчит — отвечает запасной", async () => {
   assert.equal(currencyCode("долларов"), "USD");
   assert.equal(currencyCode("рублях"), "RUB");
   assert.equal(currencyCode("сумка"), null);
@@ -137,13 +137,13 @@ test("курс: таблица Центробанка, пересчёт и сл�
   source("cbr-xml-daily.ru", bank);
   const h = heart();
   await h.onMessage(message("курс доллара"), KEY);
-  assert.equal(last(), "Курс ЦБ на 12.11:\nдоллар — 81,25 ₽ (за день +0,50)");
+  assert.equal(last(), "Курс на 12.11:\nдоллар — 81,25 ₽ (за день +0,50)");
   await h.onMessage(message("курс"), KEY);
   assert.match(last(), /доллар — 81,25 ₽ \(за день \+0,50\)\nевро — 94,50 ₽\nюань — 11,42 ₽ \(за день \+0,02\)/);
   await h.onMessage(message("100 евро в рублях"), KEY);
-  assert.equal(last(), "100 евро — это 9\u202f450,00 ₽ по курсу ЦБ на 12.11.");
+  assert.equal(last(), "100 евро — это 9\u202f450,00 ₽ по курсу на 12.11.");
   await h.onMessage(message("переведи 5000 рублей в доллары"), KEY);
-  assert.equal(last(), "5\u202f000 рублей — это 61,54 $ по курсу ЦБ на 12.11.");
+  assert.equal(last(), "5\u202f000 рублей — это 61,54 $ по курсу на 12.11.");
   await h.onMessage(message("сколько стоит тенге"), KEY);
   assert.match(last(), /100 тенге — 15,60 ₽/);
   assert.equal(sourced().filter(url => url.includes("cbr")).length, 1, "таблица берётся один раз и лежит в запасе");
@@ -152,7 +152,25 @@ test("курс: таблица Центробанка, пересчёт и сл�
   reset();
   const down = heart();
   await down.onMessage(message("курс доллара"), KEY);
-  assert.match(last(), /Центробанк сейчас не отвечает, а называть курс по памяти я не стану/);
+  assert.match(last(), /Курс сейчас узнать не у кого, а называть его по памяти я не стану/);
+
+  // Главный источник молчит — отвечает запасной: рыночный курс, без «за день».
+  reset();
+  const spare = heart();
+  source("cdn.jsdelivr.net/npm/@fawazahmed0/currency-api", { date: "2026-11-12", rub: { usd: 0.0125, eur: 0.01, btc: 1e-7, rub: 1 } });
+  await spare.onMessage(message("курс доллара"), KEY);
+  assert.equal(last(), "Курс на 12.11:\nдоллар — 80,00 ₽");
+  await spare.onMessage(message("сколько будет 10 евро в рублях"), KEY);
+  assert.equal(last(), "10 евро — это 1\u202f000,00 ₽ по курсу на 12.11.");
+
+  // Молчат оба — третий: таблица к доллару.
+  reset();
+  const third = heart();
+  source("open.er-api.com/v6/latest/USD", { time_last_update_unix: 1794528151, rates: { USD: 1, RUB: 80, EUR: 0.8 } });
+  await third.onMessage(message("курс евро"), KEY);
+  assert.equal(last(), "Курс на 13.11:\nевро — 100,00 ₽");
+  const probe = await third.status({ chatId: 5, actorId: 77 }).catch(() => null);
+  assert.ok(probe);
 });
 
 test("часы и календарь: время по своим часам и по городу человека, дни до даты", async () => {
@@ -180,18 +198,18 @@ test("часы и календарь: время по своим часам и �
 
 // ── энциклопедия ─────────────────────────────────────────────────────────
 
-test("вики: прямой вопрос — статья с источником; несколько значений — уточняет", async () => {
+test("вики: прямой вопрос — статья своими словами, без ссылки; несколько значений — уточняет", async () => {
   reset();
   source("page/summary/%D0%B1%D0%B0%D0%B9%D0%BA%D0%B0%D0%BB", page("Байкал", "Байкал — озеро тектонического происхождения в южной части Восточной Сибири, самое глубокое озеро на планете.", { description: "озеро в России" }));
   source("page/summary/%D0%BA%D0%BB%D1%8E%D1%87", { type: "disambiguation", title: "Ключ" });
   source("list=search", { query: { search: [{ title: "Ключ" }, { title: "Ключ (инструмент)" }, { title: "Родник" }] } });
   const h = heart();
   await h.onMessage(message("вики Байкал"), KEY);
-  assert.equal(last(), "Байкал — озеро в России\n\nБайкал — озеро тектонического происхождения в южной части Восточной Сибири, самое глубокое озеро на планете.\n\nВикипедия: https://ru.wikipedia.org/wiki/Байкал");
+  assert.equal(last(), "Байкал — озеро в России\n\nБайкал — озеро тектонического происхождения в южной части Восточной Сибири, самое глубокое озеро на планете.");
   await h.onMessage(message("что пишет википедия про ключ"), KEY);
   assert.match(last(), /У «Ключ» несколько значений: Ключ \(инструмент\); Родник\. Уточните: «вики Ключ \(инструмент\)»/);
   await h.onMessage(message("вики Ыыыы"), KEY);
-  assert.match(last(), /В Википедии про «ыыыы» ничего не нашлось/);
+  assert.match(last(), /^Про «ыыыы» я ничего не знаю\.$/);
   assert.equal(chats().length, 0);
 });
 
@@ -229,7 +247,7 @@ test("вики: «что такое …» — модель отвечает св
   // Лимит вышел: вопрос не уходит в очередь — отвечает сама статья.
   sdk().fetchQueue.push(refuses(429, { code: "rate_limit_exceeded", headers: { "retry-after": "900" } }));
   await h.onMessage(message("что такое фотосинтез"), KEY);
-  assert.match(last(), /^Своими словами сейчас не выйдет — думать нечем\. Вот что пишет Википедия:\n\nФотосинтез — сложный/);
+  assert.match(last(), /^Своими словами сейчас не выйдет — думать нечем\. Коротко по сути:\n\nФотосинтез — сложный/);
   assert.equal(await h.queue.size(), 0);
 });
 
@@ -259,7 +277,8 @@ test("игры: просьба об игре понимается словами
   assert.deepEqual(game("загадай число от 1 до 1000").arg, { game: "number", from: 1, to: 1000 });
   assert.deepEqual(game("2d6").arg, { kind: "dice", count: 2, sides: 6 });
   assert.deepEqual(game("выбери за меня: Пицца, Суши или Бургер").arg, { kind: "choose", options: ["Пицца", "Суши", "Бургер"] });
-  assert.equal(game("викторина").intent, "sister_play");
+  assert.equal(game("дуэль").intent, "sister_play");
+  assert.equal(game("викторина"), null, "викторина — её собственный квиз, а не игра сестры");
   for (const talk of ["слова", "расскажи про города россии", "мне нравится играть", "камень упал", "выбери мне подарок", "шар земной круглый"]) assert.equal(game(talk), null, talk);
 });
 
@@ -395,7 +414,7 @@ test("игры: загадка, фильм по эмодзи, анаграмма
   assert.equal(chats().length, 0);
 });
 
-test("игры: кубик бросает Telegram, остальное — код; список игр — её, викторина — сестры", async () => {
+test("игры: кубик бросает Telegram, остальное — код; список игр — её, викторина — тоже, дуэль — сестры", async () => {
   reset();
   const h = heart({}, { random: dice(0.5, 0.9) });
   await h.onMessage(message("кинь кубик"), KEY);
@@ -419,8 +438,12 @@ test("игры: кубик бросает Telegram, остальное — ко�
   assert.match(last(), /• города — «сыграем в города»;/);
   assert.doesNotMatch(last(), /Юи/, "мост закрыт — сестру не обещает");
   // Игры сестры остаются её: без моста — честно говорит, что их ведёт она.
-  await h.onMessage(message("викторина"), KEY);
+  await h.onMessage(message("дуэль"), KEY);
   assert.match(last(), /Юи/);
+  // «Викторина» — её квиз по своей таблице: ни сестры, ни модели.
+  await h.onMessage(message("викторина"), KEY);
+  assert.match(last(), /Квиз<\/b> · вопрос 1 из 7/u);
+  assert.doesNotMatch(last(), /Юи/u);
   assert.equal(chats().length, 0);
 
   // Живой кубик не бросился — число называет сама.
@@ -484,7 +507,7 @@ test("картинки: котик из коллекции, вид предме�
   await h.onMessage(message("покажи котика"), KEY);
   assert.deepEqual(calls("sendPhoto").at(-1), { chat_id: 5, photo: "https://cdn.example/cat.jpg", reply_markup: { inline_keyboard: [[{ text: "Ещё", callback_data: "a:an:cat" }]] } });
   await h.onMessage(message("Как выглядит капибара?"), KEY);
-  assert.deepEqual(calls("sendPhoto").at(-1), { chat_id: 5, photo: "https://upload.example/capybara.jpg", caption: "Капибара — вид грызунов\nВикипедия" });
+  assert.deepEqual(calls("sendPhoto").at(-1), { chat_id: 5, photo: "https://upload.example/capybara.jpg", caption: "Капибара — вид грызунов" });
   // Оригинал слишком велик — уходит уменьшенный.
   sdk().apiReplies.sendPhoto = (params) => { if (params.photo.endsWith("capybara.jpg")) throw new Error("too big"); return true; };
   await h.onMessage(message("покажи фото капибара"), KEY);

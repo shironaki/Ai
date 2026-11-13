@@ -195,14 +195,27 @@ export function createMedia({ sources = null } = {}) {
 const esc = (value) => String(value ?? "").replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
 const link = (url, label) => (/^https?:\/\//u.test(String(url)) ? `<a href="${esc(url)}">${esc(label)}</a>` : esc(label));
 
-/** Подписи: одна строка о том, что это, и откуда. Разметка — HTML. */
+/** С прописной: подпись — её слова, а не строка поиска. */
+const capital = (text) => { const value = String(text ?? "").trim(); return value ? value[0].toUpperCase() + value.slice(1) : ""; };
+
+/**
+ * Подписи: одна строка о том, что это. Откуда — не пишется: ответ выглядит её
+ * работой, а не выдачей поиска. Автор и страница не пропадают: их хранит
+ * сердце и называет по вопросу «откуда это?». Разметка — HTML.
+ */
 export const captions = Object.freeze({
-  image: (item, query) => `${esc(query)}\n${link(item.page, item.source)}${item.credit ? ` · ${esc(item.credit)}` : ""}`,
-  art: (item) => `${item.credit ? `Автор: ${esc(item.credit)} · ` : ""}${link(item.page, item.source)}`,
+  image: (item, query) => esc(capital(query)),
+  art: () => "",
   anime(item) {
     const facts = [item.kind, item.year, item.episodes ? `${item.episodes} ${episodesWord(item.episodes)}` : item.ongoing ? "выходит" : "", item.score ? `оценка ${String(item.score).replace(".", ",")}` : ""].filter(Boolean).join(" · ");
-    return `<b>${esc(item.title)}</b>${item.original && item.original !== item.title ? `\n${esc(item.original)}` : ""}${facts ? `\n${esc(facts)}` : ""}\n${link(item.page, item.source)}`;
+    return `<b>${esc(item.title)}</b>${item.original && item.original !== item.title ? `\n${esc(item.original)}` : ""}${facts ? `\n${esc(facts)}` : ""}`;
   },
   song: (item) => `${esc(item.artist)} — ${esc(item.title)}${item.album ? ` (${esc(item.album)})` : ""}${item.seconds ? ` · ${clock(item.seconds)}` : ""}`,
-  video: (item) => `${esc(item.title)}${[item.author, clock(item.seconds)].filter(Boolean).length ? ` — ${esc([item.author, clock(item.seconds)].filter(Boolean).join(", "))}` : ""}\n${esc(item.url)}`,
+  // Видео — это всегда адрес: он спрятан под названием, иначе его не открыть.
+  video: (item) => `${link(item.url, item.title)}${[item.author, clock(item.seconds)].filter(Boolean).length ? ` — ${esc([item.author, clock(item.seconds)].filter(Boolean).join(", "))}` : ""}`,
+});
+
+/** Откуда вещь на самом деле: для вопроса «откуда это?». */
+export const creditOf = (item, title = "") => ({
+  title: String(title || item?.title || "").slice(0, 120), source: String(item?.source ?? ""), page: String(item?.page || item?.url || ""), author: String(item?.credit ?? item?.author ?? ""),
 });

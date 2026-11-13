@@ -17,6 +17,8 @@ const WIKTIONARY = "https://ru.wiktionary.org";
 const GEO = "https://geocoding-api.open-meteo.com/v1/search";
 const METEO = "https://api.open-meteo.com/v1/forecast";
 const CBR = "https://www.cbr-xml-daily.ru/daily_json.js";
+const RATES_SPARE = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/rub.min.json";
+const RATES_LAST = "https://open.er-api.com/v6/latest/USD";
 const AGENT = "AiHeart/1.0 (Telegram companion bot; no tracking)";
 
 /** К виду для сравнения: регистр, «ё», лишние пробелы. */
@@ -453,20 +455,47 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
   }
 
   // ── курсы ───────────────────────────────────────────────────────────────
-  async function table() {
-    return cached("heart:src:rates", 3 * 3_600_000, async () => {
-      const got = await getJson(CBR);
-      const list = got.ok ? got.data?.Valute : null;
-      if (!list || typeof list !== "object") return { ok: false, code: "network" };
-      const rates = {};
+  /**
+   * Курсы: главный источник — официальный, с «вчера»; два запасных — рыночные,
+   * без «вчера». Один замолчал — отвечает следующий: из облака платформы
+   * главный бывает недоступен.
+   */
+  async function loadRates(timeout = 5000) {
+    const rates = {};
+    const main = await getJson(CBR, { timeout });
+    const list = main.ok ? main.data?.Valute : null;
+    if (list && typeof list === "object") {
       for (const [code, row] of Object.entries(list)) {
         const nominal = Number(row?.Nominal) || 1;
         const value = Number(row?.Value);
         if (Number.isFinite(value) && value > 0) rates[code] = { value: value / nominal, previous: Number(row?.Previous) / nominal || null };
       }
-      return { ok: true, date: String(got.data?.Date ?? "").slice(0, 10), rates };
-    }, { staleMs: 4 * 86_400_000 });
+      if (Object.keys(rates).length) return { ok: true, date: String(main.data?.Date ?? "").slice(0, 10), rates, via: "main" };
+    }
+    // Запасной: сколько единиц валюты дают за рубль → рублей за единицу.
+    const spare = await getJson(RATES_SPARE, { timeout });
+    const perRub = spare.ok ? spare.data?.rub : null;
+    if (perRub && typeof perRub === "object") {
+      for (const [code, amount] of Object.entries(perRub)) {
+        const value = 1 / Number(amount);
+        if (/^[a-z]{3}$/u.test(code) && Number.isFinite(value) && value > 0) rates[code.toUpperCase()] = { value, previous: null };
+      }
+      if (rates.USD) return { ok: true, date: String(spare.data?.date ?? "").slice(0, 10), rates, via: "spare" };
+    }
+    const last = await getJson(RATES_LAST, { timeout });
+    const perUsd = last.ok ? last.data?.rates : null;
+    const rub = Number(perUsd?.RUB);
+    if (perUsd && Number.isFinite(rub) && rub > 0) {
+      for (const [code, amount] of Object.entries(perUsd)) {
+        const value = rub / Number(amount);
+        if (/^[A-Z]{3}$/u.test(code) && Number.isFinite(value) && value > 0) rates[code] = { value, previous: null };
+      }
+      const stamp = Number(last.data?.time_last_update_unix) * 1000;
+      return { ok: true, date: Number.isFinite(stamp) && stamp > 0 ? new Date(stamp).toISOString().slice(0, 10) : "", rates, via: "spare" };
+    }
+    return { ok: false, code: "network" };
   }
+  const table = () => cached("heart:src:rates", 3 * 3_600_000, () => loadRates(), { staleMs: 4 * 86_400_000 });
   const dateLabel = (iso) => (/^\d{4}-\d{2}-\d{2}$/u.test(iso) ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}` : "");
 
   async function rates(codes = ["USD", "EUR", "CNY"]) {
@@ -483,7 +512,7 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
       lines.push(`${per === 1 ? names[0] : `${per} ${names[2]}`} — ${money(row.value * per)} ₽${Math.abs(diff * per) >= 0.005 ? ` (за день ${diff > 0 ? "+" : "−"}${money(Math.abs(diff * per))})` : ""}`);
     }
     if (!lines.length) return { ok: false, code: "unknown_currency" };
-    return { ok: true, text: `Курс ЦБ${dateLabel(got.date) ? ` на ${dateLabel(got.date)}` : ""}:\n${lines.join("\n")}`, date: got.date, source: "ЦБ РФ" };
+    return { ok: true, text: `Курс${dateLabel(got.date) ? ` на ${dateLabel(got.date)}` : ""}:\n${lines.join("\n")}`, date: got.date, source: got.via === "spare" ? "запасной" : "ЦБ РФ" };
   }
 
   async function convert(amount, from, to) {
@@ -497,7 +526,7 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     const sign = (code) => (code === "RUB" ? "₽" : code === "USD" ? "$" : code === "EUR" ? "€" : "");
     const left = `${money(amount, Number.isInteger(amount) ? 0 : 2)} ${pluralOf(amount, names(from))}`;
     const right = `${money(result)} ${sign(to) || pluralOf(Math.round(result), names(to))}`;
-    return { ok: true, text: `${left} — это ${right} по курсу ЦБ${dateLabel(got.date) ? ` на ${dateLabel(got.date)}` : ""}.`, value: result, source: "ЦБ РФ" };
+    return { ok: true, text: `${left} — это ${right} по курсу${dateLabel(got.date) ? ` на ${dateLabel(got.date)}` : ""}.`, value: result, source: got.via === "spare" ? "запасной" : "ЦБ РФ" };
   }
 
   // ── картинки и гифки ────────────────────────────────────────────────────
@@ -524,9 +553,9 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     const [encyclopedia, meteo, bank] = await Promise.all([
       getJson(`${WIKI}/api/rest_v1/page/summary/${encodeURIComponent("Москва")}`, { timeout: 3500 }),
       getJson(`${GEO}?name=${encodeURIComponent("Москва")}&count=1&language=ru&format=json`, { timeout: 3500 }),
-      getJson(CBR, { timeout: 3500 }),
+      loadRates(3500),
     ]);
-    return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok };
+    return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok === true, spare: bank.via === "spare" };
   }
 
   return Object.freeze({ available, wiki, wordExists, findPlace, cityExists, weather, rates, convert, animal, gesture, probe, fetchJson: getJson });
