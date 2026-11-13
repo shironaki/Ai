@@ -198,3 +198,25 @@ test("выключено настройкой: манер нет, вопроса
   await h.onMessage(message("привет", { id: OWNER }), KEY);
   assert.ok(!toChat(OWNER).some(item => /Какой мне быть|семпай|мяу/u.test(item.text)));
 });
+
+test("при всех «хозяин» не звучит: в группе хозяину — тепло, но без этого слова; в статусе — строка о словаре", async () => {
+  reset();
+  const h = heart(ON, { now: () => NOON });
+  let mid = 500;
+  const heard = new Set();
+  for (let index = 0; index < 30; index += 1) {
+    await h.onMessage(group("Аи, привет", { id: OWNER, name: "Сергей", extra: { message_id: (mid += 1) } }), KEY);
+    assert.doesNotMatch(last(-10), /хозяин|господин/iu);
+    heard.add(last(-10));
+  }
+  assert.ok([...heard].some(text => /семпай|мяу|ня|мур|мрр|мяф|фыр|тяф/u.test(text)), "остальная смесь в группе остаётся");
+  let named = false;
+  for (let index = 0; index < 30 && !named; index += 1) {
+    await h.onMessage(message("привет", { id: OWNER }), KEY);
+    named = /хозяин|господин/iu.test(last(OWNER));
+  }
+  assert.ok(named, "наедине — «хозяин»");
+  assert.equal(chats().length, 0);
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /Словарь: \d+ тем[аы]?, \d+ фраз[аы]? — на них модель не трачу · манеры — включены · память чата — выключена/u);
+});
