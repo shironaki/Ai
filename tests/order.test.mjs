@@ -63,12 +63,12 @@ test("хозяин: подсказка велит подчиняться; нае
     const mine = system();
     assert.match(mine, /Этому собеседнику ты подчиняешься/);
     assert.match(mine, /Пол собеседника не угадывай/);
-    if (/Допустим лёгкий ненавязчивый флирт/.test(mine)) allowed++;
+    if (/С ним можно флиртовать смело/.test(mine)) allowed++;
     await h.onMessage(message("как прошёл день?", { id: 5 }), KEY);
     assert.doesNotMatch(system(), /подчиняешься/);
     assert.match(system(), /Флирт не разрешён/);
   }
-  assert.ok(allowed > 0, "с хозяином наедине флирт бывает разрешён");
+  assert.equal(allowed, 6, "с хозяином наедине флирт разрешён всегда — от настроения не зависит");
 
   reset();
   const h = heart();

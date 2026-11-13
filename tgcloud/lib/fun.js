@@ -6,7 +6,7 @@
  * в Telegram. Сердце зовёт эти функции из своего порядка разбора и получает
  * либо результат, либо null — «это не моё, иди дальше».
  */
-import { parseAction, lineFor, selfLine, reactionFor, willingness, levelOf, listText } from "./rp.js";
+import { parseAction, lineFor, selfLine, reactionFor, willingness, levelOf, listText, parseEmote, emoteLine, KIND_NAME } from "./rp.js";
 import { parsePoll, pollFromModel } from "./polls.js";
 import { parseWhois, registeredText } from "./whois.js";
 import { safeName } from "./address.js";
@@ -116,6 +116,7 @@ export function createFun({
   api = null, store = null, sources = null, policy = null, personal = null, pulse = null,
   random = Math.random, now = () => Date.now(), owner = () => false, has = () => false,
   name = "Аи", say = async () => ({ ok: false }), react = async () => false, compose = async () => null,
+  book = null, bond = null, voice = (turn, text) => text, likes = async () => true, bookCtx = () => ({}),
 } = {}) {
   const pick = (list) => list[Math.min(list.length - 1, Math.floor(random() * list.length))];
   const thread = (turn) => (turn.extra?.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {});
@@ -297,6 +298,17 @@ export function createFun({
    * Ролевое действие. `addressed` — фраза обращена к Аи (личка, имя, ответ
    * ей); иначе это действие между людьми в группе, и нужен явный адресат.
    */
+  /** Не больше восьми строк действий в минуту на чат. */
+  async function underFlood(turn) {
+    if (!store?.available) return true;
+    const key = `heart:rp:${turn.chatId}`;
+    const seen = await store.get(key).catch(() => null);
+    const fresh = seen && now() - Number(seen.from) < MINUTE;
+    if (fresh && Number(seen.count) >= 8) return false;
+    await store.set(key, { from: fresh ? seen.from : now(), count: fresh ? Number(seen.count) + 1 : 1 }).catch(() => false);
+    return true;
+  }
+
   async function roleplay(turn, prompt, { self = null, addressed = false } = {}) {
     if (addressed && RP_LIST.test(fold(prompt).replace(/[?!.…]+$/u, ""))) return say(turn, listText());
     // Упоминание человека без @имени Telegram присылает отдельно: само имя
@@ -304,6 +316,17 @@ export function createFun({
     const named = (turn.message?.entities ?? []).find(item => item?.type === "text_mention" && item.user?.id != null);
     const span = named && typeof turn.message?.text === "string" ? turn.message.text.slice(named.offset, named.offset + named.length) : "";
     const parsed = parseAction(span ? String(prompt).replace(span, " ") : prompt);
+    // Эмоция без адресата: «танцевать», «*зеваю*». Только в группе и не в ответ кому-то.
+    const emote = !parsed || (!parsed.asked && !parsed.mention && !named && !turn.message?.reply_to_message) ? parseEmote(prompt) : null;
+    if (emote && turn.inGroup && !turn.dry) {
+      const chat = await chatSettings(turn.chatId);
+      if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
+      if (!addressed && Number(chat.quietUntil) > now()) return { ignored: true, reason: "quiet" };
+      if (!(await underFlood(turn))) return { ignored: true, reason: "rp_flood" };
+      pulse?.bump("rp");
+      const sent = await show(turn, emote.gif, emoteLine(emote, esc(turn.name || "Кто-то")), { gifs: chat.gifs && await likes(turn) });
+      return sent ? { ok: true, action: "rp", kind: emote.key, emote: true, via: sent } : { ok: false, code: "send_failed" };
+    }
     if (!parsed) return null;
     const target = targetOf(turn, parsed, self);
     const third = target && !target.self ? target : null;
@@ -320,20 +343,15 @@ export function createFun({
     // 1. Человек — человеку. От потока защищает счёт: не больше восьми строк
     // в минуту на чат — иначе одним словом её можно заставить засыпать беседу.
     if (!addressed) {
-      if (store?.available) {
-        const key = `heart:rp:${turn.chatId}`;
-        const seen = await store.get(key).catch(() => null);
-        const fresh = seen && now() - Number(seen.from) < MINUTE;
-        if (fresh && Number(seen.count) >= 8) return { ignored: true, reason: "rp_flood" };
-        await store.set(key, { from: fresh ? seen.from : now(), count: fresh ? Number(seen.count) + 1 : 1 }).catch(() => false);
-      }
+      if (!(await underFlood(turn))) return { ignored: true, reason: "rp_flood" };
       pulse?.bump("rp");
       const html = String(third.id) === String(turn.actorId) ? selfLine(action, actor) : lineFor(action, actor, label(third), { tail: esc(tail), bName: esc(third.name) });
-      const sent = await show(turn, action.gif, html, { gifs: chat.gifs });
+      const sent = await show(turn, action.gif, html, { gifs: chat.gifs && await likes(turn) });
       return sent ? { ok: true, action: "rp", kind: action.key, via: sent } : { ok: false, code: "send_failed" };
     }
 
     pulse?.bump("rp");
+    const gifs = chat.gifs && await likes(turn);
     const manner = turn.manner ?? {};
     const mine = owner(turn.actorId);
     const formal = manner.formal !== false;
@@ -346,19 +364,32 @@ export function createFun({
       const level = third ? await levelWith(third.id) : askerLevel;
       const will = willingness(action, { level, asker: askerLevel, order: mine, adult, flirt, third: Boolean(third), formal });
       if (!will.ok) {
-        const sent = await show(turn, will.gif, esc(will.text), { reply: true, gifs: chat.gifs });
+        const sent = await show(turn, will.gif, esc(voice(turn, will.text)), { reply: true, gifs });
         return { ok: Boolean(sent), action: "rp", kind: action.key, refused: true };
       }
       const object = third ?? { id: turn.actorId, name: turn.name };
       const html = `${lineFor(action, esc(name), label(object), { tail: esc(tail), bName: esc(object.name) })}${will.note ? `\n${esc(will.note)}` : ""}`;
-      const sent = await show(turn, action.gif, html, { reply: !third, gifs: chat.gifs });
+      const sent = await show(turn, action.gif, html, { reply: !third, gifs });
       return sent ? { ok: true, action: "rp", kind: action.key, via: sent, by: "self" } : { ok: false, code: "send_failed" };
     }
 
     // 3. Действие обращено к ней: реакция по близости.
-    const reaction = reactionFor(action, { score: manner.score, owner: mine, formal, adult: flirt ? adult : false, random });
+    // Слова — из словаря: запас самого действия («+реакция:обнять»), потом запас вида.
+    const phrase = book ? (item) => {
+      const ctx = bookCtx(turn);
+      const own = book.pick(`+реакция:${item.title}`, ctx);
+      return own && random() < 0.6 ? own : book.pick(`+реакция:${KIND_NAME[item.kind]}`, ctx) ?? own;
+    } : null;
+    const reaction = reactionFor(action, { score: manner.score, owner: mine, formal, adult: flirt ? adult : false, random, phrase });
     await react(turn, reaction.emoji);
-    const sent = await show(turn, reaction.gif, esc(reaction.text), { reply: true, gifs: chat.gifs });
+    // Круглое число — повод сказать: «это уже десятый раз».
+    let text = voice(turn, reaction.text);
+    if (bond && reaction.level !== "cold") {
+      const tally = await bond.count(turn.actorId, action.key).catch(() => ({ milestone: false }));
+      const remark = tally.milestone && book ? book.pick("+веха:действие", bookCtx(turn, { "сколько": tally.n })) : null;
+      if (remark) text = `${text}\n${remark}`;
+    }
+    const sent = await show(turn, reaction.gif, esc(text), { reply: true, gifs });
     if (sent === "text") await ownSticker(turn, reaction.mood);
     if (reaction.deed && policy) { try { await policy.recordDeed({ userId: turn.actorId, kind: reaction.deed }); } catch { /* шаг отношений подождёт */ } }
     return sent ? { ok: true, action: "rp", kind: action.key, via: sent, level: reaction.level } : { ok: false, code: "send_failed" };

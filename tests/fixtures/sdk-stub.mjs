@@ -83,7 +83,9 @@ export const db = {
   async all(query, params = {}) {
     if (!query.includes("FROM kv_state WHERE key LIKE")) return [];
     const prefix = String(params[":prefix"]).replace(/%$/u, "");
-    return [...state.kv.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, value]) => ({ key, value }));
+    const rows = [...state.kv.entries()].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : 1)).map(([key, value]) => ({ key, value }));
+    const limit = Number(query.match(/LIMIT (\d+)/u)?.[1]) || rows.length;
+    return (query.includes("ORDER BY key DESC") ? rows.reverse() : rows).slice(0, limit);
   },
   async get(query, params = {}) {
     if (query.includes("FROM kv_state")) {
