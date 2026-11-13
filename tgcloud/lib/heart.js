@@ -1802,7 +1802,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как выбор манеры — репетиция, ничего не меняю.");
     const mine = owner(turn.actorId);
-    if (asked.show) return askManner(turn);
+    if (asked.show) {
+      // Выбор показан по просьбе — сама она с тем же вопросом уже не придёт.
+      if (!turn.manner?.settings?.accentAsked) await personal.save(turn.actorId, { accentAsked: true }).catch(() => ({ ok: false }));
+      return askManner(turn);
+    }
     if (asked.anime != null) {
       const saved = await personal.save(turn.actorId, { anime: asked.anime }).catch(() => ({ ok: false }));
       if (!saved?.ok) return say(turn, "Не запомнилось: хранилище не отвечает.");
@@ -1842,7 +1846,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
   /** Один раз, в личке, знакомому человеку: «какой мне быть с вами?» */
   async function offerManner(turn) {
-    if (!MANNERS || turn.dry || !turn.isPrivate || !turn.seen?.known) return false;
+    // Не при знакомстве и не посреди разговора: в первый разговор нового дня.
+    if (!MANNERS || turn.dry || !turn.isPrivate || !turn.seen?.known || !turn.seen?.newDay) return false;
     const settings = turn.manner?.settings ?? {};
     if (settings.accent || settings.accentAsked) return false;
     const saved = await personal.save(turn.actorId, { accentAsked: true }).catch(() => ({ ok: false }));
@@ -2794,7 +2799,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!dry && !owner(actorId)) {
       const age = prompt.match(/(?:^|[\s,.!])мне\s+(\d{1,2})\s*(?:лет|год)/iu);
       const minor = age ? Number(age[1]) < 18 : null;
-      if (minor != null && Boolean(turn.manner.settings.minor) !== minor) {
+      // «Мне 15» запоминается накрепко: позже названный взрослый возраст его не отменяет.
+      // «Мне 25» запоминается, если о возрасте ещё ничего не известно.
+      if (minor === true ? turn.manner.settings.minor !== true : minor === false && turn.manner.settings.minor == null) {
         turn.manner = { ...turn.manner, settings: { ...turn.manner.settings, minor } };
         await personal.save(actorId, { minor }).catch(() => ({ ok: false }));
       }

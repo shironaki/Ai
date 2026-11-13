@@ -62,7 +62,8 @@ export function createChatLog({ store, now = () => Date.now() } = {}) {
 
   async function forget(chatId) {
     if (!store?.available || typeof store.sweep !== "function") return false;
-    return store.sweep(PREFIX(chatId), -1).catch(() => false);
+    // «Старше, чем из будущего» — то есть всё, включая записанное в эту же секунду.
+    return store.sweep(PREFIX(chatId), -LOG_TTL_MS).catch(() => false);
   }
 
   return Object.freeze({ note, recent, missedBy, forget });

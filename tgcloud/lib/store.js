@@ -66,7 +66,8 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
     try {
       await db.run(
         "DELETE FROM kv_state WHERE key LIKE :prefix AND updated_at < :before",
-        { ":prefix": `${String(prefix)}%`, ":before": now() - Math.max(0, Number(olderThanMs) || 0) },
+        // Отрицательный срок — «всё, что есть»: граница уходит в будущее.
+        { ":prefix": `${String(prefix)}%`, ":before": now() - (Number(olderThanMs) || 0) },
       );
       return true;
     } catch { return false; }

@@ -47,6 +47,9 @@ export function fill(text, { formal = true, name = "", vars = {} } = {}) {
   return missing ? null : value.replace(/[ \t]{2,}/gu, " ").trim();
 }
 
+/** Чем точнее пометка, тем охотнее берётся строка: хозяину — его строки, близким — близкие. */
+const WEIGHT = Object.freeze({ "хозяин": 30, "близко": 6, "флирт": 5, "не хозяин": 1 });
+
 /** Время суток по часу: для пометок «утро», «день», «вечер», «ночь». */
 export const partOfDay = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
 
@@ -111,7 +114,7 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
       if (!tags.every(tag => fits(tag, ctx))) continue;
       const text = fill(body, ctx);
       if (text == null || !text) continue;
-      pool.push({ text, weight: 1 + 3 * tags.length, exclusive: tags.includes(EXCLUSIVE) });
+      pool.push({ text, weight: 1 + tags.reduce((sum, tag) => sum + (WEIGHT[tag] ?? 3), 0), exclusive: tags.includes(EXCLUSIVE) });
     }
     if (pool.some(item => item.exclusive)) pool = pool.filter(item => item.exclusive);
     if (pool.length > 1 && avoid) pool = pool.filter(item => item.text !== avoid).length ? pool.filter(item => item.text !== avoid) : pool;

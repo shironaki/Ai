@@ -317,7 +317,9 @@ export function createFun({
     const span = named && typeof turn.message?.text === "string" ? turn.message.text.slice(named.offset, named.offset + named.length) : "";
     const parsed = parseAction(span ? String(prompt).replace(span, " ") : prompt);
     // Эмоция без адресата: «танцевать», «*зеваю*». Только в группе и не в ответ кому-то.
-    const emote = !parsed || (!parsed.asked && !parsed.mention && !named && !turn.message?.reply_to_message) ? parseEmote(prompt) : null;
+    // В ответ на чьё-то сообщение слово без звёздочек — это слова человеку, а не эмоция.
+    const starred = /^\s*[*_][^*_]+[*_]\s*$/u.test(String(prompt));
+    const emote = !named && (!parsed || (!parsed.asked && !parsed.mention)) && (starred || !turn.message?.reply_to_message) ? parseEmote(prompt) : null;
     if (emote && turn.inGroup && !turn.dry) {
       const chat = await chatSettings(turn.chatId);
       if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };

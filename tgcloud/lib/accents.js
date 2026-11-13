@@ -101,13 +101,18 @@ const EMOJI = /[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F3FB}-\u{1F3FF}]+/g
 const prose = (line) => line.trim().length > 0 && !/^\s*(?:[•\-–—*]|\d+[.)])\s/u.test(line) && !/[:;]$/u.test(line.trim()) && !/https?:\/\/|<[a-z/]/iu.test(line) && !/^[🎤🔮🎲🪙🎱🎵🎬]/u.test(line.trim());
 const pickOf = (list, random) => (list.length ? list[Math.min(list.length - 1, Math.floor(random() * list.length))] : "");
 
-/** «Привет.» + «мяу» → «Привет, мяу.» Знак в конце остаётся знаком. */
+const LETTER = /[a-zа-яё0-9]/iu;
+/** «Привет.» + «мяу» → «Привет, мяу.» Знак в конце остаётся знаком, смайлик — смайликом. */
 function withTail(sentence, word) {
-  const body = sentence.replace(END, "");
-  const punct = sentence.slice(body.length);
-  if (!body.trim() || /[,:;—–(«"]$/u.test(body.trim()) || /[)»"*~♪]$/u.test(body.trim())) return sentence;
-  return `${body}, ${word}${punct || "."}`;
+  const punct = (sentence.match(END) ?? [""])[0];
+  let body = sentence.slice(0, sentence.length - punct.length);
+  const decor = (body.match(/(\s*[\p{Extended_Pictographic}\u{FE0F}\u{200D}]+)$/u) ?? [""])[0];
+  body = body.slice(0, body.length - decor.length);
+  if (!LETTER.test(body) || /[,:;—–(«"]$/u.test(body.trim()) || /[)»"*~♪]$/u.test(body.trim())) return sentence;
+  return `${body}, ${word}${punct || (decor ? "" : ".")}${decor}`;
 }
+/** Номер последнего предложения со словами: смайлик отдельным «предложением» не считается. */
+const lastSpoken = (parts) => { for (let at = parts.length - 1; at >= 0; at -= 1) if (LETTER.test(parts[at])) return at; return parts.length - 1; };
 
 /**
  * Наложить манеру на готовый ответ.
@@ -146,7 +151,7 @@ export function garnish(text, { accent = "plain", owner = false, pool = () => []
     if (word && !pool(address).some(item => lower.includes(item.toLowerCase())) && !(owner && lower.includes("хозяин"))) {
       const first = spoken[0];
       const parts = sentencesOf(lines[first]);
-      const at = parts[0].length <= 80 ? 0 : parts.length - 1;
+      const at = parts[0].length <= 80 && LETTER.test(parts[0]) ? 0 : lastSpoken(parts);
       parts[at] = withTail(parts[at], word);
       edit(first, () => parts.join(" "));
     }
@@ -158,8 +163,9 @@ export function garnish(text, { accent = "plain", owner = false, pool = () => []
       let extra = 0;
       for (const index of spoken) {
         const parts = sentencesOf(lines[index]);
+        const end = lastSpoken(parts);
         for (let at = 0; at < parts.length; at += 1) {
-          const final = index === last && at === parts.length - 1;
+          const final = index === last && at === end;
           if (final || (extra < 2 && random() < 0.3)) { parts[at] = withTail(parts[at], pickOf(words, random)); if (!final) extra += 1; }
         }
         edit(index, () => parts.join(" "));
