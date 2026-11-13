@@ -8,7 +8,7 @@ import { heart, message, group, reset, last, chats, says, sdk, request, system, 
 
 const { createPhrasebook, parseCatalogue, expandTrigger, fill, partOfDay, TAGS } = await import("../tgcloud/lib/phrasebook.js");
 const { SECTIONS } = await import("../tgcloud/lib/data/phrases.js");
-const { build, SOURCE, TARGET } = await import("../scripts/phrases.mjs");
+const { build, sameText, SOURCE, TARGET } = await import("../scripts/phrases.mjs");
 
 const ON = { PHRASES: true };
 const NOON = Date.parse("2026-11-18T09:00:00Z"); // среда, 12:00 по Москве
@@ -16,7 +16,8 @@ const book = createPhrasebook({ random: () => 0 });
 const VARS = { "настроение": "бодрое", "причина": "утро", "час": "12:00", "сборка": "1.0", "дней": "3 дня", "сколько": 10, "шутка": "ёжик" };
 
 test("документ: собранный словарь свежий, тем и фраз много, ошибок нет", () => {
-  assert.equal(build(readFileSync(SOURCE, "utf8")), readFileSync(TARGET, "utf8"), "PHRASES.txt изменён — запустите «npm run phrases»");
+  assert.ok(sameText(build(readFileSync(SOURCE, "utf8")), readFileSync(TARGET, "utf8")), "PHRASES.txt изменён — запустите «npm run phrases»");
+  assert.ok(sameText("а\r\nб", "а\nб"), "перевод строки Windows — не расхождение");
   const stats = book.stats();
   assert.ok(stats.sections >= 130, `тем: ${stats.sections}`);
   assert.ok(stats.lines >= 850, `фраз: ${stats.lines}`);

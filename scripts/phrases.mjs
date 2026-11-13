@@ -25,15 +25,18 @@ export function build(text) {
   return `/**\n * Словарный запас Аи. Собрано из PHRASES.txt командой «npm run phrases».\n * Руками не править: правится документ, этот файл пересобирается.\n */\nexport const SECTIONS = Object.freeze([\n${rows}\n]);\n`;
 }
 
+/** Одно и то же с точностью до перевода строки: на Windows Git может отдать файл с CRLF. */
+export const sameText = (a, b) => String(a).replace(/\r\n/gu, "\n") === String(b).replace(/\r\n/gu, "\n");
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const made = build(readFileSync(SOURCE, "utf8"));
     const old = existsSync(TARGET) ? readFileSync(TARGET, "utf8") : "";
     if (process.argv.includes("--check")) {
-      if (made !== old) { console.error("Словарь устарел: PHRASES.txt изменён, а data/phrases.js не пересобран. Запустите: npm run phrases"); process.exit(1); }
+      if (!sameText(made, old)) { console.error("Словарь устарел: PHRASES.txt изменён, а data/phrases.js не пересобран. Запустите: npm run phrases"); process.exit(1); }
       console.log("Словарь свежий.");
     } else {
-      if (made !== old) writeFileSync(TARGET, made);
+      if (!sameText(made, old)) writeFileSync(TARGET, made);
       const { sections } = parseCatalogue(readFileSync(SOURCE, "utf8"));
       const lines = sections.reduce((sum, section) => sum + section.l.length, 0);
       console.log(`Словарь собран: тем — ${sections.filter(item => !item.n.startsWith("+")).length}, запасов — ${sections.filter(item => item.n.startsWith("+")).length}, фраз — ${lines}.`);
