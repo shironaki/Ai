@@ -37,6 +37,7 @@ import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.j
 import { fajrOn, parseFajr, FAJR_ANGLE, FAJR_METHODS } from "./fajr.js";
 import {
   parseSecretary, canReply, langOf, noticeEnglish, noticeRussian, stateOf as secretaryStateOf, notePerson, toldKey,
+  isUrgent, isRelay, quoteOf, ackRussian, ackEnglish, urgentKey, ACKS_MAX, URGENT_EXCERPT,
   SECRETARY_KEY, TOLD_PREFIX, ALIEN_PREFIX, AWAY_DEFAULT_MS, AWAY_MAX_MS, NOTICES_PER_HOUR, OWNER_BUSY_MS, STALE_MS, SERVICE_CHATS, PEOPLE_MAX,
 } from "./secretary.js";
 import { createBond, parseJoke } from "./bond.js";
@@ -109,16 +110,15 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.28.0";
+export const BUILD = "0.29.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.28.0 — секретарь: если хозяин подключит меня к своему аккаунту (Secretary Mode в @BotFather, затем «Автоматизация чатов» в настройках Telegram), я смогу отвечать тем, кто пишет ему в личку. Как подключить — скажите мне «секретарь»",
-  "пока хозяин не сказал «отвечай за меня», в его чатах я молчу и ничего не записываю. Сказал — каждому, кто напишет, один раз отвечу от его аккаунта, что он не на связи, и первой строкой назову себя: «это Аи, помощница»",
-  "срок и слова — по желанию: «отвечай за меня до 18:00», «…на 2 часа», «отвечай за меня: я на встрече, перезвоню вечером». Без срока — двенадцать часов. Хозяин видит ровно тот текст, который получат люди; пишущим не по-русски — то же по-английски",
-  "«кто мне писал?» — список: кто, сколько раз, когда и первые слова последнего письма. «Я тут» — перестаю отвечать, отдаю список и стираю его. Срок вышел — перестаю сама и пишу хозяину",
-  "там, где хозяин пишет сам, не вмешиваюсь; модели чужие письма не показываю; команды, игры и рисунки в его чатах не работают; секретарём работаю только у хозяина — чужое подключение не слушаю",
-  "исправлено: мои слова в ответ на своё действие чата брались не из словаря, а всегда одни и те же — запас с буквой «ё» в названии не находился",
+  "0.29.0 — секретарь: срочное письмо («срочно», «это важно», «urgent») приходит хозяину сразу, отдельным сообщением с текстом письма; от одного человека — не чаще раза в две минуты",
+  "если человек после моего ответа просит что-то передать, отвечаю, что обязательно передам, — и в списке «кто мне писал?» это стоит отдельной строкой; таких вторых ответов — не больше трёх человеку",
+  "канал моста: за собой убираю — свой вопрос после ответа и прочитанные ответы и события сестры. Чтобы убирать чужое, мне нужно в канале право «Удаление сообщений»; не будет — скажу. Оставить всё как есть — BRIDGE_TIDY: false",
+  "мост больше не рвётся из-за часов: вопрос годен десять минут вместо одной, и с тем же допуском читаются ответы и события сестры. 15.11 часы моего запуска спешили на три минуты — сестра отвечала «expired», а статус говорил «не ответила»",
+  "строка «Сбои» в статусе называет, что упало, где и когда, а не одно слово «handler»",
 ]);
 
 const DAY = 86_400_000;
@@ -239,6 +239,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         detail: `${SISTER} не ответила на мосту. Отвечаю сама и не жду её до ${clock(until)}`,
       });
     },
+    // Часы двух ботов разошлись больше допуска: владелец узнаёт причину словами.
+    onClock: async ({ seconds, who }) => {
+      await notices.report({
+        component: "bridge", code: "clock", title: "Мост", severity: "degraded",
+        detail: who === "sister"
+          ? `${SISTER} отклонила мой вопрос как просроченный: наши часы расходятся примерно на ${seconds} с — больше допуска в 10 минут`
+          : `ответ ${SISTER} не принят: время в нём расходится с моими часами на ${seconds} с — больше допуска в 10 минут`,
+        hint: "Часы даёт платформа; обычно это проходит само. Повторяется — пришлите эту строку в чат разработки.",
+      });
+    },
+    // Убирать за собой в канале моста: `BRIDGE_TIDY: false` оставляет всё как есть — для отладки.
+    tidy: config.BRIDGE_TIDY !== false,
   });
 
   /**
@@ -685,7 +697,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (health.silent) return `мост открыт, но ${SISTER} молчит — не жду её до ${clock(health.until)}`;
     if (live) {
       const probe = await abilities.ping({ actor: live.actorId, chat: live.chatId, chatType: "private" }).catch(() => ({ ok: false, code: "error", ms: 0 }));
-      return probe.ok ? `мост открыт, ${SISTER} ответила за ${probe.ms} мс` : `мост открыт, но ${SISTER} не ответила на пробу`;
+      if (probe.ok) return `мост открыт, ${SISTER} ответила за ${probe.ms} мс`;
+      // Ответила, но отказом «срок вышел»: это не молчание, а разошедшиеся часы.
+      if (probe.code === "expired") return `мост открыт, но ${SISTER} отклонила пробу: наши часы расходятся больше чем на 10 минут`;
+      return `мост открыт, но ${SISTER} не ответила на пробу`;
     }
     return "мост открыт";
   }
@@ -2696,8 +2711,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   async function incidentLine() {
     const recent = await notices.list({ limit: 3 });
     const pending = await notices.pending();
-    const parts = recent.map(item => item.title);
-    return `Сбои: ${parts.length ? parts.join(", ") : "нет"}${pending ? ` · ждут отправки: ${pending}` : ""}`;
+    // Что именно и когда: одно имя компонента («handler») владельцу ничего не говорило.
+    const parts = recent.map(item => `${item.title}${item.detail ? ` — ${String(item.detail).slice(0, 140)}` : ""} (${clock(item.lastAt)}${Number(item.count) > 1 ? `, ${item.count} раз` : ""})`);
+    return `Сбои: ${parts.length ? parts.join("; ") : "нет"}${pending ? ` · ждут отправки: ${pending}` : ""}`;
   }
 
   /** Вложение без единого слова в личке: стикер — реакция, остальное — честная фраза. */
@@ -3240,6 +3256,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return next ? { ...next, at: now() } : null;
   });
   const ownerZone = async () => zoneOf({ manner: await mannerFor(OWNER, { dry: true }).catch(() => null) });
+  /** Второй ответ человеку: «передам», «уже сообщила, что срочно» или оба сразу. */
+  const ackWords = (kind, english) => {
+    if (english) return ackEnglish(kind);
+    const pool = kind === "both" ? "+секретарь:срочно и передам" : kind === "urgent" ? "+секретарь:срочно" : "+секретарь:передам";
+    return (PHRASES ? book.pick(pool, { formal: true }) : null) ?? ackRussian(kind);
+  };
   /** «в 16:10» сегодня, «14.11 в 16:10» — в другой день. */
   const whenShort = (at, zone) => {
     const [a, b] = [localParts(at, zone), localParts(now(), zone)];
@@ -3277,7 +3299,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const since = state.away.since ? ` (с ${whenShort(state.away.since, zone)})` : "";
     if (!people.length) return `Пока вас не было${since}, в личку никто не писал.`;
     // Показываются все, кого она помнит: список после этого стирается, и «…и ещё двадцать» пропали бы.
-    const rows = people.map(item => `• ${item.name}${item.user ? ` (@${item.user})` : ""} — ${item.n} ${plural(item.n, "сообщение", "сообщения", "сообщений")}, ${item.n > 1 ? "последнее — " : ""}${whenShort(item.at, zone)}: ${item.text}`);
+    const rows = people.flatMap(item => [`${item.urgent ? "❗" : "•"} ${item.name}${item.user ? ` (@${item.user})` : ""} — ${item.n} ${plural(item.n, "сообщение", "сообщения", "сообщений")}, ${item.n > 1 ? "последнее — " : ""}${whenShort(item.at, zone)}: ${item.text}${item.urgent ? " · срочное" : ""}`, ...(Array.isArray(item.asks) ? item.asks : []).map(ask => `   просьба передать: «${ask}»`)]);
     const more = Number(state.more) || 0, total = people.length + more;
     const told = people.filter(item => item.told).length, failed = people.filter(item => item.failed && !item.told).length;
     const tail = !state.conn?.reply ? "Отвечать за вас мне не разрешено — я только записывала."
@@ -3389,7 +3411,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         await tellOwnerNow([
           "Вижу подключение к вашему аккаунту: теперь мне приходят письма из тех ваших личных чатов, куда вы меня пустили.",
           "Пока я в них молчу и ничего не записываю. Скажете «отвечай за меня» — каждому, кто вам напишет, один раз отвечу, что вы не на связи, и запомню, кто писал. «Я тут» — перестану и расскажу.",
-          "Что я при этом храню: имя человека, время и первые слова его последнего письма — только пока отвечаю за вас; вернётесь — расскажу и сотру. Модели эти письма не показываю и никуда не передаю.",
+          "Что я при этом храню: имя человека, время, первые слова его последнего письма и то, что он просил передать, — только пока отвечаю за вас; вернётесь — расскажу и сотру. Модели эти письма не показываю и никуда не передаю.",
           conn.reply ? "" : "Права отвечать вы мне не дали: смогу только записывать, кто писал. Дать его можно в настройках подключения в Telegram.",
         ].filter(Boolean).join("\n\n"), `secretary:on:${conn.id}:${conn.reply}`);
       }
@@ -3467,6 +3489,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (!going(cur) || !cur.conn) return null;
         seen = { known: cur.people.find(same) ?? null, own: Number(cur.own?.[chatId]) || 0, sent: cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0, conn: cur.conn, away: cur.away };
         const people = notePerson(cur.people, message, at);
+        seen.name = people.at(-1).name;
         // Список — на сорок человек: кого он вытеснил, того она уже не помнит, но счёт им ведёт.
         const pushed = cur.people.length + (seen.known ? 0 : 1) - people.length;
         return { ...cur, people, more: cur.more + Math.max(0, pushed) };
@@ -3476,6 +3499,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       pulse.bump("secretary_seen");
       const fresh = !(Number(message.date) > 0) || at - Number(message.date) * 1000 < STALE_MS;
       const busy = at - seen.own < OWNER_BUSY_MS;
+      const urgent = isUrgent(message), relay = isRelay(message), english = langOf(message) === "en";
+      // Что она ответила на это письмо — для вести хозяину о срочном.
+      let replied = "";
       const may = seen.conn.reply && fresh && !busy && seen.known?.told !== true && seen.known?.failed !== true;
       let action = "secretary_noted";
       if (may && seen.sent >= NOTICES_PER_HOUR) {
@@ -3484,11 +3510,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       } else if (may && await store.setIfAbsent(toldKey(since, chatId), stamp(message.message_id))) {
         // Отметка её: этому человеку отвечает именно этот запуск. У кого отметка не легла —
         // тому человеку уже отвечает (ответил или не смог) другой запуск: повторять незачем.
-        const text = (langOf(message) === "en" ? seen.away.en : seen.away.ru) || noticeRussian({ name: seen.conn.name });
+        const base = (english ? seen.away.en : seen.away.ru) || noticeRussian({ name: seen.conn.name });
+        // Первое же письмо срочное — человек сразу узнаёт, что хозяину сообщили.
+        const text = urgent ? `${base} ${ackWords("urgent", english)}` : base;
         let told = false;
         try {
           await api.sendMessage({ business_connection_id: String(connId), chat_id: chatId, text });
           told = true;
+          replied = urgent ? "first_urgent" : "first";
           pulse.bump("secretary");
           action = "secretary_notice";
         } catch (error) {
@@ -3501,6 +3530,40 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           const base = cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0;
           return { ...cur, people: cur.people.map(item => (same(item) ? { ...item, told, failed: !told } : item)), sent: { from: hour, n: base + 1 } };
         });
+      }
+
+      // Срочное — хозяину сразу: и когда письмо опоздало, и когда отвечать ей нельзя. Там, где
+      // он пишет сам, звать его незачем — он это письмо видит. От одного человека — не чаще
+      // раза в две минуты: «срочно», «ну где ты», «срочно!!» приходят очередью.
+      const ping = urgent && !busy && await store.setIfAbsent(urgentKey(since, chatId, at), stamp(message.message_id));
+      // После её первого ответа: просят передать — «обязательно передам»; срочное — «уже сообщила».
+      // Не больше трёх таких ответов человеку за отлучку и в общий счёт ответов за час.
+      if (seen.known?.told === true && (relay || ping) && seen.conn.reply && fresh && !busy && seen.sent < NOTICES_PER_HOUR) {
+        const reserved = await mutateSecretary(cur => {
+          const person = cur.people.find(same);
+          if (!going(cur) || !person || (Number(person.acks) || 0) >= ACKS_MAX) return null;
+          const base = cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0;
+          return { ...cur, people: cur.people.map(item => (same(item) ? { ...item, acks: (Number(item.acks) || 0) + 1 } : item)), sent: { from: hour, n: base + 1 } };
+        });
+        if (reserved) {
+          try {
+            await api.sendMessage({ business_connection_id: String(connId), chat_id: chatId, text: ackWords(relay && ping ? "both" : ping ? "urgent" : "relay", english) });
+            replied = ping ? "ack_urgent" : "ack";
+            pulse.bump("secretary");
+            if (action === "secretary_noted") action = "secretary_ack";
+          } catch { /* второй ответ не ушёл — письмо всё равно в списке, а срочное хозяин получит */ }
+        }
+      }
+      if (ping) {
+        pulse.bump("secretary_urgent");
+        const zone = await ownerZone();
+        const who = `${seen.name}${message.from?.username ? ` (@${String(message.from.username).slice(0, 32)})` : ""}`;
+        const when = fresh ? "" : ` — письмо от ${whenShort(Number(message.date) * 1000, zone)}, дошло с опозданием`;
+        const done = replied === "first_urgent" ? "Я ответила, что вы не на связи и что сообщила вам сразу."
+          : replied === "ack_urgent" ? "Я ответила, что уже сообщила вам."
+            : "Сама я на это письмо не отвечала.";
+        await tellOwnerNow(`❗ Срочное. ${who} пишет вам${when}:\n«${quoteOf(message, URGENT_EXCERPT)}»\n${done}`, `secretary:urgent:${since}:${chatId}:${message.message_id}`);
+        if (action === "secretary_noted" || action === "secretary_ack") action = "secretary_urgent";
       }
       return { ok: true, action };
     } catch (error) {
@@ -3591,6 +3654,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Хорошо, хозяин: ${untilText(until)} отвечаю за вас. Каждому, кто напишет вам в личку, один раз скажу:`,
       `«${ru}»`,
       "Тем, кто пишет не по-русски, — то же по-английски. Там, где вы пишете сами, не вмешиваюсь. Вернётесь раньше — «я тут».",
+      "Напишут «срочно» — сразу сообщу вам сюда. Попросят что-то передать — отвечу, что передам, и покажу это в списке.",
     ].join("\n"));
   }
 
@@ -3778,9 +3842,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   async function reportCrash(error, ctx = {}) {
     if (ctx?.testRun === true) return;
     try {
+      // Где упало: первая строка стека из её собственного кода — без неё по одному
+      // «TypeError: …» место не найти.
+      const frame = String(error?.stack ?? "").split("\n").map(line => line.trim()).find(line => /^at /u.test(line) && /\.m?js:\d+/u.test(line)) ?? "";
+      const where = frame.match(/^at (?:async )?(?:([\w$.<>]+) \()?.*?([\w.-]+\.m?js:\d+)/u);
+      const place = where ? ` · ${[where[1], where[2]].filter(Boolean).join(", ")}` : "";
       await notices.report({
-        component: "handler", code: String(error?.name ?? "error"), severity: "fault",
-        detail: `${error?.name ?? "Error"}: ${String(error?.message ?? "без текста").slice(0, 120)}`,
+        component: "handler", code: String(error?.name ?? "error"), title: "Обработчик", severity: "fault",
+        detail: `${error?.name ?? "Error"}: ${String(error?.message ?? "без текста").slice(0, 110)}${place}`.slice(0, 158),
       });
     } catch { /* отчёт о поломке не должен стать второй поломкой */ }
   }
@@ -4227,9 +4296,24 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // the signed answer to something it asked. Everything else is noise.
     if (message?.chat?.type === "channel") {
       if (!text) return { ignored: true };
-      if (await events.onPost(text)) return { ok: true, code: "event_handled" };
+      // Прочитанный конверт сестры (событие или ответ) из канала убирается: канал — провод,
+      // а не журнал. Удалять чужие посты можно только с правом на это; нет права — весть владельцу.
+      const tidyUp = async () => {
+        if (dry || config.BRIDGE_TIDY === false || message.message_id == null || message.edit_date) return;
+        // Убирается только в самом канале моста: номер сообщения из другого канала там значил бы чужой пост.
+        if (String(message.chat?.id) !== String(config.ABILITIES_CHANNEL_ID)) return;
+        if (await abilities.clean(message.message_id)) return;
+        try {
+          await notices.report({
+            component: "bridge", code: "cannot_clean", title: "Канал моста", severity: "degraded",
+            detail: `не могу убирать прочитанные сообщения ${SISTER} из канала моста — они будут копиться`,
+            hint: "Дайте мне в этом канале право «Удаление сообщений». Свои вопросы я убираю и без него.",
+          });
+        } catch { /* отчёт не важнее ответа */ }
+      };
+      if (await events.onPost(text)) { await tidyUp(); return { ok: true, code: "event_handled" }; }
       const handled = await abilities.onPost(text);
-      if (handled) return { ok: true, code: "bridge_answer" };
+      if (handled) { await tidyUp(); return { ok: true, code: "bridge_answer" }; }
       // Чужой конверт — не ей. Любой другой пост в канале — удар будильника:
       // второй бот правит одно сообщение раз в минуту, и сердце просыпается.
       if (text.includes(BUS_PREFIX.trim())) return { ok: false, code: "not_for_heart" };

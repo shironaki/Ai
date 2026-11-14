@@ -18,6 +18,14 @@ export const SECRETARY_KEY = "heart:secretary:v1";
 /** «Этому человеку в эту отлучку уже сказано» — отдельным ключом: два письма подряд не дадут двух ответов. */
 export const TOLD_PREFIX = "heart:secretary:told:";
 export const toldKey = (since, chatId) => `${TOLD_PREFIX}${since}:${chatId}`;
+/** Срочное от одного человека зовёт хозяина не чаще раза в две минуты: письма идут очередями. */
+export const URGENT_EVERY_MS = 2 * 60_000;
+export const urgentKey = (since, chatId, at) => `${TOLD_PREFIX}${since}:${chatId}:u:${Math.floor(Number(at) / URGENT_EVERY_MS)}`;
+/** Сколько раз за отлучку она отвечает человеку после первого уведомления («передам», «сообщила»). */
+export const ACKS_MAX = 3;
+/** Сколько срочного письма уходит хозяину сразу и сколько хранится из просьбы «передай». */
+export const URGENT_EXCERPT = 300;
+export const ASK_MAX = 200;
 /** Чужое подключение (не хозяина): запоминается, чтобы не спрашивать Telegram о нём на каждое письмо. */
 export const ALIEN_PREFIX = "heart:secretary:alien:";
 
@@ -137,6 +145,37 @@ export function excerptOf(message = {}) {
       : message.location ? "место на карте" : message.contact ? "контакт" : message.poll ? "опрос" : "сообщение";
 }
 
+// Границы слова — явные: `\b` рядом с кириллицей не работает.
+const EDGE = "(?:^|[^а-яёa-z0-9])";
+const END = "(?=$|[^а-яёa-z0-9])";
+const NOT_URGENT = new RegExp(`${EDGE}(?:не\\s*(?:очень\\s+|так\\s+|особо\\s+|слишком\\s+)?(?:срочн|важно)|несрочн|неважно|ничего\\s+срочного|не\\s+горит|не\\s+спеш|не\\s+беда|not\\s+(?:that\\s+|so\\s+|very\\s+)?(?:urgent|important)|no\\s+(?:rush|hurry))`, "iu");
+const URGENT = new RegExp(`${EDGE}(?:срочн(?:о|ое|ая|ый|ые|ого|ую|ым|ых|ейше|як)|немедленно|безотлагательн[а-яё]*|неотложн[а-яё]*|экстренн[а-яё]*|как\\s+можно\\s+(?:скорее|быстрее)|(?:очень|крайне|это)\\s+важно|чп|беда|sos|urgent(?:ly)?|asap|emergency|(?:very|really|it'?s)\\s+important)${END}`, "iu");
+const RELAY = new RegExp(`${EDGE}(?:переда(?:й|йте|шь|дите)|(?:скажи|сообщи|напомни|напиши|перешли)(?:те)?\\s+(?:ему|ей)|попроси(?:те)?\\s+(?:его|е[её])|пусть\\s+(?:он\\s+|она\\s+)?(?:мне\\s+)?(?:срочно\\s+)?(?:перезвонит|позвонит|наберёт|наберет|напишет|ответит|свяжется)|tell\\s+(?:him|her|them)|let\\s+(?:him|her|them)\\s+know|pass\\s+(?:it|this|that|the\\s+message)\\s+(?:on|along)|ask\\s+(?:him|her|them)\\s+to|give\\s+(?:him|her|them)\\s+(?:a|the|my)\\s+message|please\\s+relay)${END}`, "iu");
+const wordsOf = (message = {}) => String(message.text ?? message.caption ?? "").toLowerCase().replace(/\s+/gu, " ").trim();
+
+/** «Срочно», «это важно», «urgent» — и не «не срочно». Только слова письма: модель его не видит. */
+export function isUrgent(message = {}) {
+  const text = wordsOf(message);
+  return Boolean(text) && URGENT.test(text) && !NOT_URGENT.test(text);
+}
+/** Человек просит что-то передать хозяину: «передай…», «скажи ему…», «пусть перезвонит», «tell him…». */
+export function isRelay(message = {}) {
+  const text = wordsOf(message);
+  return Boolean(text) && RELAY.test(text);
+}
+/** Письмо выдержкой заданной длины — для вести хозяину и для просьбы «передай». */
+export function quoteOf(message = {}, limit = ASK_MAX) {
+  const text = String(message.text ?? message.caption ?? "").replace(/\s+/gu, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
+}
+/** Её второй ответ человеку — запасные слова, если словаря нет, и английские. */
+export function ackRussian(kind) {
+  return kind === "both" ? "Передам — и уже сообщила, что это срочно." : kind === "urgent" ? "Вижу, что это срочно: уже сообщила." : "Обязательно передам.";
+}
+export function ackEnglish(kind) {
+  return kind === "both" ? "I'll pass it on — and I've already let them know it's urgent." : kind === "urgent" ? "I see it's urgent: I've let them know right away." : "I'll be sure to pass it on.";
+}
+
 /** Уведомление по-английски: словарь у неё русский, а пишут хозяину не только по-русски. */
 export function noticeEnglish({ name = "", until = "", words = "" } = {}) {
   const who = name || "The owner of this account";
@@ -177,5 +216,12 @@ export function notePerson(people, message, at) {
   const name = String([from.first_name, from.last_name].filter(Boolean).join(" ") || message.chat?.first_name || "Без имени").replace(/\s+/gu, " ").trim().slice(0, 48);
   const before = people.find(item => String(item.id) === String(id));
   const next = { id, name, user: String(from.username ?? message.chat?.username ?? "").slice(0, 32), n: (Number(before?.n) || 0) + 1, at, text: excerptOf(message), told: before?.told === true, failed: before?.failed === true };
+  // Срочное и просьбы «передай» копятся за отлучку: хозяин увидит их в списке, даже если после было ещё десять писем.
+  const urgent = (Number(before?.urgent) || 0) + (isUrgent(message) ? 1 : 0);
+  const asks = [...(Array.isArray(before?.asks) ? before.asks : []), ...(isRelay(message) ? [quoteOf(message, ASK_MAX)] : [])].slice(-3);
+  const acks = Number(before?.acks) || 0;
+  if (urgent) next.urgent = urgent;
+  if (asks.length) next.asks = asks;
+  if (acks) next.acks = acks;
   return [...people.filter(item => String(item.id) !== String(id)), next].slice(-PEOPLE_MAX);
 }

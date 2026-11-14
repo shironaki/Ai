@@ -66,9 +66,19 @@ export const ASKED_PREFIX = "heart:bridge:q:";
 export const FACTS_PREFIX = "heart:bridge:facts:";
 /** Сколько вчерашний ответ годится как запас. */
 export const STALE_OK_MS = 24 * 3600_000;
+/**
+ * Допуск на часы. Конверт годен, пока время в нём и часы получателя расходятся
+ * не больше срока. Срок был минутой — и 15.11.2026 этого не хватило: часы
+ * запуска Аи спешили на три минуты (в конверте 23:07:33, Telegram поставил на
+ * сообщение 23:04), сестра ответила «expired», а мост закрылся как «молчащий».
+ * Часы платформы у разных запусков разные, поэтому срок вопроса — десять минут
+ * (больше конверт не позволяет), и с тем же допуском читаются ответы и события.
+ * От повтора защищает не срок, а одноразовый `id`: его помнят сутки.
+ */
+export const CLOCK_SLACK_MS = 600_000;
 
-export function createAbilities({ secret = "", channelId = "", api = null, send = null, now = () => Date.now(), ttl = 60_000, store = null, name = "Аи", sister = "Юи", timeouts = {}, onSilence = null } = {}) {
-  const bridge = createBridge({ secret, capabilities: { call: async () => ({ ok: false }) }, now });
+export function createAbilities({ secret = "", channelId = "", api = null, send = null, now = () => Date.now(), ttl = CLOCK_SLACK_MS, store = null, name = "Аи", sister = "Юи", timeouts = {}, onSilence = null, onClock = null, tidy = true } = {}) {
+  const bridge = createBridge({ secret, capabilities: { call: async () => ({ ok: false }) }, now, slack: CLOCK_SLACK_MS });
   const canStore = Boolean(store) && store.available !== false && typeof store.get === "function" && typeof store.set === "function";
   // `quick` — сколько ждать сестру, когда вчерашний ответ уже есть в запасе.
   const wait = { call: 20_000, catalogue: 15_000, context: 12_000, quick: 2_500, ...Object.fromEntries(Object.entries(timeouts ?? {}).filter(([, ms]) => Number.isFinite(ms) && ms > 0)) };
@@ -131,6 +141,23 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     return api.sendMessage({ chat_id: channelId, text: line, disable_web_page_preview: true });
   }
 
+  /**
+   * Убрать за собой. Канал моста — провод, а не журнал: вопрос, на который
+   * пришёл ответ (или которого не дождались), в нём больше не нужен. Свои посты
+   * бот удаляет с правом публикации; чужие — только с правом удалять. Возвращает
+   * true, если сообщения больше нет.
+   */
+  async function clean(messageId) {
+    if (!tidy || messageId == null || !api || typeof api.deleteMessage !== "function") return false;
+    try { await api.deleteMessage({ chat_id: channelId, message_id: messageId }); return true; }
+    catch { return false; }
+  }
+  /** Часы разошлись сильнее допуска: об этом узнаёт владелец — словами, а не из JSON в канале. */
+  async function clockTrouble(seconds, who) {
+    if (typeof onClock !== "function") return;
+    try { await onClock({ seconds: Math.round(Math.abs(Number(seconds) || 0)), who }); } catch { /* отчёт не должен ломать ответ */ }
+  }
+
   /** Seal one call, post it, and wait for the signed answer. */
   async function call(tool, { actor = null, chat = null, chatType = null, args = {}, timeout = wait.call, lateKey = "" } = {}) {
     if (!open()) return { ok: false, code: "bridge_not_configured", text: "" };
@@ -152,7 +179,8 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
 
     const label = TOOL_NOTE[tool] ?? String(tool ?? "").slice(0, 32);
     const note = `🤍 ${name} → ${sister} · ${label}${chat != null ? ` · чат ${chat}` : ""}`;
-    try { await post(encodeEnvelope(sealed.envelope, note)); }
+    let asked = null;
+    try { asked = await post(encodeEnvelope(sealed.envelope, note)); }
     catch {
       // Вопрос не ушёл: ждать нечего, и таймер не должен сработать впустую.
       settled = true; clearTimeout(timer); clearTimeout(poll); pending.delete(id);
@@ -186,12 +214,17 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     try {
       const result = await answer;
       await answered();
+      // Сестра ответила, но отказом «срок вышел»: её часы и время в вопросе разошлись больше допуска.
+      if (result?.ok === false && result.code === "expired") await clockTrouble(((Number(result.ts) || now()) - Number(sealed.envelope.ts)) / 1000, "sister");
       return result;
     } catch (error) {
       // Молчание — это факт о сестре, а не о вопросе: запоминаем его.
       await missed();
       if (lateKey && canStore) await adoptLater(id, lateKey);
       return { ok: false, code: error.code ?? "bridge_timeout", text: "" };
+    } finally {
+      // Дождались или нет — вопрос из канала убирается.
+      await clean(asked?.message_id);
     }
   }
 
@@ -230,9 +263,13 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     // Ответ отличается от вопроса полем `ok`: вопросы (в том числе свои) — мимо.
     if (!envelope?.sig || typeof envelope.ok !== "boolean") return false;
     const verified = await bridge.verifyResult(envelope);
-    if (!verified.ok) return false;
+    if (!verified.ok) {
+      // Подпись верна, а время не сходится даже с допуском: это часы, а не подделка.
+      if (verified.code === "expired") await clockTrouble(Number(verified.age) / 1000, "self");
+      return false;
+    }
     const id = String(envelope.id);
-    const result = { ...verified.result, data: verified.result.data };
+    const result = { ...verified.result, data: verified.result.data, ts: Number(envelope.ts) || 0 };
     const waiter = pending.get(id);
     if (waiter) {
       pending.delete(id);
@@ -358,7 +395,7 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     return { silent: state.until > now(), until: state.until, since: state.since, failures: state.failures };
   }
 
-  return Object.freeze({ open, call, onPost, catalog, catalogue, context, verify, silent, ping, sweep, health: healthState, decode: decodeEnvelope, bridge });
+  return Object.freeze({ open, call, onPost, catalog, catalogue, context, verify, silent, ping, sweep, clean, health: healthState, decode: decodeEnvelope, bridge });
 }
 
 /**

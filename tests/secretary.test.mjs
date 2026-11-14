@@ -92,7 +92,7 @@ test("подключение: хозяину — слова один раз; ч�
   assert.deepEqual({ action: done.action, reply: done.reply }, { action: "secretary_connected", reply: true });
   assert.equal(toOwner().length, before + 1);
   assert.match(toOwner().at(-1).text, /^Вижу подключение к вашему аккаунту.*Пока я в них молчу и ничего не записываю\. Скажете «отвечай за меня»/su);
-  assert.match(toOwner().at(-1).text, /Что я при этом храню: имя человека, время и первые слова его последнего письма — только пока отвечаю за вас.*Модели эти письма не показываю и никуда не передаю\./su);
+  assert.match(toOwner().at(-1).text, /Что я при этом храню: имя человека, время, первые слова его последнего письма и то, что он просил передать, — только пока отвечаю за вас.*Модели эти письма не показываю и никуда не передаю\./su);
   assert.doesNotMatch(toOwner().at(-1).text, /Права отвечать вы мне не дали/u);
   assert.deepEqual({ id: state().conn.id, name: state().conn.name, reply: state().conn.reply }, { id: CONN, name: "Али", reply: true });
   // Telegram шлёт то же событие при правке: ничего не изменилось — она молчит.
@@ -611,4 +611,85 @@ test("письма валом после простоя: сорок пять р�
   assert.match(late, /Срок вышел: за вас я больше не отвечаю\.\n\nПока вас не было \(с 12:00\), писали — 45 человек:/u);
   assert.equal(ids.filter(id => late.includes(`• ${nameOf(id)} — 1 сообщение`)).length, 40, "ни одна строка списка не пропала");
   assert.match(late, /Ещё 5 человек писали до них/u);
+});
+
+test("срочное — хозяину сразу; просят передать после её ответа — «обязательно передам», и это в списке", async () => {
+  reset();
+  const { isUrgent, isRelay, ACKS_MAX } = await import("../tgcloud/lib/secretary.js");
+  // Разбор — по словам письма, без модели.
+  for (const text of ["Срочно позвони", "это очень срочно!!", "срочное дело", "у меня беда", "ЧП на работе", "Это важно.", "как можно скорее", "urgent, call me", "ASAP please"]) assert.equal(isUrgent({ text }), true, text);
+  for (const text of ["не срочно, как сможешь", "несрочно", "ничего срочного", "не беда", "это не важно", "no rush", "срочность не нужна", "победа!", "привет, как дела", ""]) assert.equal(isUrgent({ text }), false, text);
+  for (const text of ["передай ему, что я заходил", "Передайте, пожалуйста, что звонили из банка", "скажи ему, что жду", "пусть перезвонит", "пусть он мне наберёт", "попросите его ответить", "tell him I called", "let her know I am here", "Аи, передай привет"]) assert.equal(isRelay({ text }), true, text);
+  for (const text of ["я передам сам", "скажи что-нибудь", "передача началась", "пусть будет так", "tell me more", "перезвони мне", "привет"]) assert.equal(isRelay({ text }), false, text);
+
+  let clock = NOON;
+  const h = heart(ON, { now: () => clock });
+  await h.onBusinessConnection(connection(), KEY);
+  await h.onMessage(own("отвечай за меня"), KEY);
+  assert.match(last(OWNER), /Напишут «срочно» — сразу сообщу вам сюда\. Попросят что-то передать — отвечу, что передам, и покажу это в списке\.$/u);
+
+  // Обычное письмо — уведомление; затем «передай…» — второй ответ, из словаря; хозяина это не зовёт.
+  await h.onBusinessMessage(letter("привет, ты тут?", { id: 601, name: "Маша", user: "masha" }), KEY);
+  assert.equal(business(601).length, 1);
+  const calm = toOwner().length;
+  const asked = await h.onBusinessMessage(letter("Передай ему, пожалуйста, что я заходила и оставила ключи у соседки", { id: 601, name: "Маша", user: "masha" }), KEY);
+  assert.equal(asked.action, "secretary_ack");
+  assert.equal(business(601).length, 2);
+  assert.ok(pool("+секретарь:передам").includes(business(601)[1].text), business(601)[1].text);
+  assert.equal(toOwner().length, calm, "просьба передать — не срочное: хозяина не зовёт");
+  // Срочное после её ответа — хозяину сразу, человеку — что сообщила.
+  clock += 60_000;
+  const urgent = await h.onBusinessMessage(letter("Это срочно, позвони как сможешь!", { id: 601, name: "Маша", user: "masha", at: clock }), KEY);
+  assert.equal(urgent.action, "secretary_urgent");
+  assert.equal(toOwner().at(-1).text, "❗ Срочное. Маша (@masha) пишет вам:\n«Это срочно, позвони как сможешь!»\nЯ ответила, что уже сообщила вам.");
+  assert.ok(pool("+секретарь:срочно").includes(business(601)[2].text), business(601)[2].text);
+  // Тут же ещё одно «срочно» — второй раз в две минуты хозяина не зовёт и человеку не отвечает.
+  const pings = toOwner().length;
+  await h.onBusinessMessage(letter("срочно!!", { id: 601, name: "Маша", user: "masha", at: clock }), KEY);
+  assert.equal(toOwner().length, pings);
+  assert.equal(business(601).length, 3);
+  // Через две минуты — срочное с просьбой: зовёт снова, человеку — «передам и сообщила». Это третий, последний ответ.
+  clock += 3 * 60_000;
+  await h.onBusinessMessage(letter("Срочно! Пусть перезвонит маме", { id: 601, name: "Маша", user: "masha", at: clock }), KEY);
+  assert.equal(toOwner().length, pings + 1);
+  assert.ok(pool("+секретарь:срочно и передам").includes(business(601)[3].text), business(601)[3].text);
+  assert.equal(state().people.find(item => item.id === 601).acks, ACKS_MAX);
+  await h.onBusinessMessage(letter("передай ещё, что я жду", { id: 601, name: "Маша", user: "masha", at: clock }), KEY);
+  assert.equal(business(601).length, 4, "больше трёх вторых ответов человеку не уходит");
+
+  // Первое же письмо срочное: уведомление говорит, что хозяину сообщили; хозяин получает письмо сразу.
+  const first = await h.onBusinessMessage(letter("Urgent! Call me back please", { id: 602, name: "John", at: clock }), KEY);
+  assert.equal(first.action, "secretary_notice");
+  assert.match(business(602)[0].text, /^Hello\. This is Ai, an assistant\..*I see it's urgent: I've let them know right away\.$/su);
+  assert.equal(toOwner().at(-1).text, "❗ Срочное. John пишет вам:\n«Urgent! Call me back please»\nЯ ответила, что вы не на связи и что сообщила вам сразу.");
+
+  // Опоздавшее срочное письмо — хозяину всё равно, с пометкой; человеку она не отвечает.
+  const late = await h.onBusinessMessage(letter("срочно нужен ответ по договору", { id: 603, name: "Олег", at: clock - 40 * 60_000 }), KEY);
+  assert.equal(late.action, "secretary_urgent");
+  assert.equal(business(603).length, 0);
+  assert.match(toOwner().at(-1).text, /^❗ Срочное\. Олег пишет вам — письмо от 11:24, дошло с опозданием:\n«срочно нужен ответ по договору»\nСама я на это письмо не отвечала\.$/u);
+  // Там, где хозяин пишет сам, — ни зова, ни ответов: он это письмо видит.
+  await h.onBusinessMessage(mine(604, "я тут, пиши", clock), KEY);
+  const quiet = toOwner().length;
+  await h.onBusinessMessage(letter("срочно! передай ему привет", { id: 604, name: "Ира", at: clock }), KEY);
+  assert.equal(toOwner().length, quiet);
+  assert.equal(business(604).length, 0);
+
+  // В списке срочное и просьбы — на виду.
+  await h.onMessage(own("кто мне писал?"), KEY);
+  const list = last(OWNER);
+  assert.match(list, /❗ Маша \(@masha\) — 6 сообщений, последнее — 12:04: «передай ещё, что я жду» · срочное\n {3}просьба передать: «Передай ему, пожалуйста, что я заходила и оставила ключи у соседки»\n {3}просьба передать: «Срочно! Пусть перезвонит маме»\n {3}просьба передать: «передай ещё, что я жду»/u);
+  assert.match(list, /❗ John — 1 сообщение, 12:04: «Urgent! Call me back please» · срочное/u);
+  // Вернулся — просьбы и срочное стёрты вместе со списком.
+  await h.onMessage(own("я тут"), KEY);
+  assert.ok(![...sdk().kv.values()].some(value => /ключи у соседки|по договору/u.test(String(value))), "чужие слова нигде не остались");
+
+  // Без права отвечать: человеку — ничего, срочное хозяину — всё равно.
+  reset();
+  const mute = heart(ON, { now: () => NOON });
+  await mute.onBusinessConnection(connection({ reply: false }), KEY);
+  await mute.onMessage(own("отвечай за меня"), KEY);
+  await mute.onBusinessMessage(letter("срочно, это важно", { id: 701, name: "Тимур" }), KEY);
+  assert.equal(business(701).length, 0);
+  assert.equal(toOwner().at(-1).text, "❗ Срочное. Тимур пишет вам:\n«срочно, это важно»\nСама я на это письмо не отвечала.");
 });
