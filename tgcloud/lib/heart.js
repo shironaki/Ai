@@ -30,7 +30,7 @@ import { createParty, parseParty, PARTY_PREFIX } from "./party.js";
 import { parsePoll } from "./polls.js";
 import { parseWhois } from "./whois.js";
 import { createMedia, parseMedia, captions, creditOf } from "./media.js";
-import { createPhrasebook, partOfDay } from "./phrasebook.js";
+import { createPhrasebook, partOfDay, fill } from "./phrasebook.js";
 import { accentOf, accentInfo, parseAccent, randomAccent, keyboard as accentKeyboard, garnish, likesAnime } from "./accents.js";
 import { moodOf as feelingNow } from "./mood.js";
 import { createBond, parseJoke } from "./bond.js";
@@ -39,6 +39,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { detectFact, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
+import { createTaught, parseTeach } from "./taught.js";
 import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
@@ -281,6 +282,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   });
   // Рисование: тот же ключ Cloudflare. Нет ключа — честное «не умею».
   const DRAW_DAILY = Number.isFinite(Number(config.DRAW_DAILY_PER_PERSON)) ? Math.max(0, Number(config.DRAW_DAILY_PER_PERSON)) : 5;
+  // Чему её научил хозяин словами и что из короткого она не узнала.
+  const taught = createTaught({ store, now, random });
   const draw = createDraw({ fetchImpl, key: config.DRAW === false ? "" : (config.DRAW_KEY ?? extraKeys.cloudflare ?? ""), store, now, steps: config.DRAW_STEPS });
 
   /**
@@ -537,7 +540,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     ];
     if (draw.available) lines.push("• рисование — «нарисуй кота в шляпе», «нарисуй себя», «нарисуй ещё»;");
     if (owner(turn.actorId) && turn.isPrivate) {
-      lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня», «резервная копия».");
+      lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня», «резервная копия».", "Словарь: на «фраза» отвечай «ответ», «мои фразы», «забудь фразу 2», «что ты не поняла?».");
     }
     if (abilities.open()) {
       lines.push("", `${SISTER} рядом: профиль, задания, предупреждения и её игры — ${you(turn, "скажите", "скажи")} словами, я передам.`);
@@ -770,6 +773,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // A rehearsal reports state, not a live call: a test run must not spend a
     // provider request to find out whether the provider would answer.
     const probe = turn.dry ? null : await ai.checkProvider({ ctx: turn.ctx, apiKey });
+    const taughtCount = PHRASES ? await taught.count().catch(() => 0) : 0;
     const [today, study, waiting, unknown] = await Promise.all([
       pulse.day().catch(() => ({})), lessons.stats().catch(() => ({ active: 0, proposed: 0 })),
       queue.size().catch(() => 0), store.get("heart:unknown:v1").catch(() => null),
@@ -787,7 +791,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Способности: ${await bridgeLine({ live: turn.dry ? null : turn })}`,
       turn.dry ? "Источники: пробный запуск — живая проверка не выполнялась." : `Источники: ${await sourcesLine()}`,
       `Чувства: ${SENSES ? `слух — ${senses.models.hearing}, зрение — ${senses.models.vision}, ссылки читаю` : "выключены настройкой"}`,
-      `Словарь: ${PHRASES ? (({ sections, lines }) => `${sections} ${plural(sections, "тема", "темы", "тем")}, ${lines} ${plural(lines, "фраза", "фразы", "фраз")} — на них модель не трачу`)(book.stats()) : "выключен настройкой"} · манеры — ${MANNERS ? "включены" : "выключены"} · память чата — ${CHAT_MEMORY ? "двое суток" : "выключена"}`,
+      `Словарь: ${PHRASES ? (({ sections, lines }) => `${sections} ${plural(sections, "тема", "темы", "тем")}, ${lines} ${plural(lines, "фраза", "фразы", "фраз")} — на них модель не трачу`)(book.stats()) : "выключен настройкой"}${taughtCount ? ` · выучено от хозяина: ${taughtCount}` : ""} · манеры — ${MANNERS ? "включены" : "выключены"} · память чата — ${CHAT_MEMORY ? "двое суток" : "выключена"}`,
       `Рисование: ${await drawLine(today)}`,
       `Будильник: ${await clockLine()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
@@ -1772,10 +1776,65 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /**
+   * Словарь из разговора. Хозяин в личке: «на «…» отвечай «…»», «мои фразы»,
+   * «забудь фразу 2», «что ты не поняла?». Остальным — честное «учит хозяин».
+   */
+  async function phraseLesson(turn, prompt) {
+    const asked = PHRASES ? parseTeach(prompt) : null;
+    if (!asked) return null;
+    const mine = owner(turn.actorId) && turn.isPrivate;
+    if (!mine) {
+      // Чужая просьба научить — не повод обещать: слова для всех вкладывает только хозяин.
+      if (asked.add) return say(turn, "Новым фразам меня учит только хозяин. Но «наша шутка: …» я запомню и от вас.");
+      return null;
+    }
+    if (turn.dry) return say(turn, "Разобрала бы это как урок словаря — репетиция, ничего не пишу.");
+    if (asked.add) {
+      const done = await taught.add(asked.add.when, asked.add.say);
+      if (!done.ok) {
+        return say(turn, done.code === "long" ? "Реплика слишком длинная: учу только короткое, до 80 знаков."
+          : done.code === "too_many" ? `Выучено уже ${done.total} — больше не помещается. «Мои фразы» покажет, что можно забыть.`
+            : done.code === "too_many_answers" ? "На эту реплику уже восемь ответов — больше не запомню."
+              : done.code === "storage_unavailable" ? "Запомнить некуда: память сейчас недоступна." : "Не разобрала: нужна реплика и ответ на неё.");
+      }
+      await taught.settle(asked.add.when);
+      if (done.duplicate) return say(turn, `Это я уже знаю: на «${done.when}» отвечаю так.`);
+      return say(turn, done.answers > 1 ? `Запомнила ещё один ответ на «${done.when}» — теперь их ${done.answers}, буду чередовать.` : `Запомнила: на «${done.when}» отвечаю «${asked.add.say}». Забыть — «забудь фразу ${done.total}».`);
+    }
+    if (asked.list) {
+      const items = await taught.list();
+      if (!items.length) return say(turn, "Пока ничему. Научить: на «привет, медвед» отвечай «превед!».");
+      const rows = items.map((item, index) => `${index + 1}. «${item.when}» → ${item.say.map(text => `«${text}»`).join(" / ")}`);
+      return say(turn, `Чему вы меня научили (${items.length}):\n${rows.join("\n")}\n\nЗабыть — «забудь фразу 2».`);
+    }
+    if (asked.drop != null) {
+      const done = await taught.drop(asked.drop);
+      return say(turn, done.ok ? `Забыла: «${done.when}». Осталось выученного: ${done.total}.` : done.code === "not_found" ? "Такой фразы среди выученных нет. «Мои фразы» покажет список." : "Забыть не вышло: память сейчас недоступна.");
+    }
+    if (asked.unheardClear) {
+      await taught.clearUnheard();
+      return say(turn, "Список неузнанного очищен. Начинаю считать заново.");
+    }
+    const rows = await taught.unheard({ limit: 30 });
+    if (!rows.length) return say(turn, "Пока нечего показать: короткого, чего я не узнала бы, не было.");
+    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}\n\nНаучить сразу: на «фраза» отвечай «ответ». Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятое».`);
+  }
+
+  /**
    * Разговор по словарю: «привет», «как дела», «какой твой любимый цвет».
    * Реплика должна совпасть целиком; модель не тратится.
    */
   async function smallTalk(turn, prompt) {
+    // Выученное от хозяина важнее словаря из файла.
+    const own = PHRASES ? await taught.match(prompt).catch(() => null) : null;
+    if (own) {
+      if (turn.dry) return say(turn, "Разобрала бы это как выученную фразу — репетиция.");
+      const text = fill(own, voiceCtx(turn)) ?? own;
+      pulse.bump("phrased");
+      const sent = await say(turn, voiced(turn, text));
+      if (sent.ok) await keepThread(turn, prompt, text);
+      return { ...sent, action: "phrase", topics: ["выученное"] };
+    }
     const names = PHRASES ? book.match(prompt) : null;
     if (!names) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как разговор по словарю — репетиция.");
@@ -2655,11 +2714,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     ]);
     if (!pulse.active(counters) && !study.proposed && !problems.length) return;
     const asked = (Array.isArray(unknown?.items) ? unknown.items : []).filter(item => now() - Number(item.at) < 2 * DAY).slice(-3);
+    // Раз в неделю, по понедельникам: чего в словаре не хватило на деле.
+    const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await taught.unheard({ limit: 8, sinceMs: 7 * DAY }).catch(() => []) : [];
+    const unheardLine = weekly.length ? `За неделю не узнала из короткого: ${weekly.map(row => `«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join(", ")}. Весь список — «что ты не поняла?».` : "";
     const lines = [
       `🤍 Хозяин, мой день (${yesterday.slice(8, 10)}.${yesterday.slice(5, 7)}):`,
       ...pulse.lines(counters),
       study.active ? `Уроки: всего ${study.active}${study.proposed ? ` · ждут вашего слова: ${study.proposed} («покажи уроки»)` : ""}${study.doubt ? ` · под сомнением: ${study.doubt}` : ""}` : "",
       asked.length ? `Не знала ответа: ${asked.map(item => `«${item.q}»`).join("; ")}. Научить — «знай: …».` : "",
+      unheardLine,
       waiting ? `В очереди ждут ответа: ${waiting}` : "",
       `Мозги: ${await brainsLine(await resolveKey(ctx))}`,
       abilities.open() ? `Способности: ${await bridgeLine()}` : "",
@@ -3031,7 +3094,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt);
+    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
@@ -3154,6 +3217,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // К слову сказано имя, город или день рождения — после ответа спросит,
     // записать ли. Только в личке: в группе такой вопрос — шум для остальных.
     const fact = !dry && turn.isPrivate ? await factToOffer(turn, prompt).catch(() => null) : null;
+    // Короткое, чего не взял ни словарь, ни правило, — в список неузнанного.
+    if (!dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt)) await taught.note(prompt).catch(() => false);
     const sent = await answerByModel(turn, prompt);
     if (fact && sent?.ok) await offerFact(turn, fact);
     else if (sent?.ok && !turn.queuedNow) await offerManner(turn);
