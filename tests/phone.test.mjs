@@ -185,21 +185,34 @@ function sandbox({ lines = null } = {}) {
       const done = spawnSync("bash", ["scripts/phone.sh", ...String(mode).split(" ")], { cwd: phone, env: { ...CLEAN_ENV, ...GIT_ENV, ...env, ...extra }, encoding: "utf8", timeout: 60_000 });
       return { code: done.status, out: sane(`${done.stdout}${done.stderr}`) };
     },
-    /** Вечный цикл: работает, пока не выполнится условие, затем его останавливают, как Ctrl+C. */
+    /**
+     * Вечный цикл: работает, пока не выполнится условие, затем его останавливают,
+     * как Ctrl+C. Одного нажатия может не хватить: bash теряет SIGINT, пришедший
+     * в миг, когда он дожидается конца подстановки команды («$(date +%s)»), —
+     * ловушка не зовётся, цикл идёт дальше (проверено на bash 5.2: в цикле из
+     * одних подстановок теряется около шести нажатий из ста). Человек в таком
+     * случае нажимает ещё раз; тест тоже — раз в три секунды. `presses` —
+     * сколько нажатий понадобилось.
+     */
     loop(until, extra = {}) {
       return new Promise((resolveLoop) => {
         // Своя группа процессов: Ctrl+C в терминале получают все, кто в ней, — и bash, и его sleep.
         const child = spawn("bash", ["scripts/phone.sh"], { cwd: phone, env: { ...CLEAN_ENV, ...GIT_ENV, ...env, ...extra }, detached: true });
-        let out = "", asked = false;
+        let out = "", presses = 0, pressedAt = 0;
         child.stdout.on("data", chunk => { out += chunk; });
         child.stderr.on("data", chunk => { out += chunk; });
         const started = Date.now();
+        const press = (signal) => { try { process.kill(-child.pid, signal); } catch { child.kill(signal); } };
         const watch = setInterval(() => {
-          if (asked || !(until() || Date.now() - started > 40_000)) return;
-          asked = true;
-          try { process.kill(-child.pid, "SIGINT"); } catch { child.kill("SIGINT"); }
+          const now = Date.now();
+          if (!presses && !(until() || now - started > 40_000)) return;
+          if (presses && now - pressedAt < 3_000) return;
+          presses += 1;
+          pressedAt = now;
+          // Пятнадцать нажатий без толку — цикл завис: убить, чтобы тест упал, а не висел.
+          press(presses > 15 ? "SIGKILL" : "SIGINT");
         }, 100);
-        child.on("close", (code, signal) => { clearInterval(watch); resolveLoop({ code, signal, out: sane(out), ms: Date.now() - started }); });
+        child.on("close", (code, signal) => { clearInterval(watch); resolveLoop({ code, signal, out: sane(out), ms: Date.now() - started, presses }); });
       });
     },
     meanwhile: () => read(`${env.FAKE_LOG}.meanwhile`),
@@ -635,6 +648,7 @@ test("вечный цикл: публикует сразу, прошлые не�
     assert.match(done.out, /Дом запущен: ветка «work»/u);
     assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
     assert.equal(done.code, 0, "остановка — не ошибка");
+    assert.ok(done.presses <= 3, `Ctrl+C останавливает с первого раза, в худшем случае — со второго (понадобилось ${done.presses})`);
     assert.ok(done.ms < 30_000, "и конца минуты не ждёт");
     assert.ok(!existsSync(join(box.home, ".heart/lock")), "замок снят");
     assert.equal(box.status(), "");
@@ -642,30 +656,39 @@ test("вечный цикл: публикует сразу, прошлые не�
   } finally { box.clean(); }
 });
 
-test("«events»: спрашивает платформу о событиях, ничего не публикует и не создаёт; ответ — словами", { skip }, () => {
+test("«events»: спрашивает платформу о событиях, ничего не публикует; ответ — словами, токен не нужен", { skip }, () => {
+  // Ответы — как у настоящего инструмента на «add handlers»: список ещё не написанных обработчиков.
+  const says = (text) => ({ FAKE_FAIL: "add", FAKE_SAYS: text });
   const box = sandbox();
   try {
-    const yes = box.run("events", { FAKE_FAIL: "add", FAKE_SAYS: '✗ Specify a name, e.g. "handlers/business_connection". Available handlers/ types: business_connection, business_message, inline_query.' });
+    const yes = box.run("events", says('\u001b[31mError: \u001b[39mSpecify a name, e.g. "handlers/business_connection". Available handlers/ types: business_connection, business_message, inline_query.'));
     assert.equal(yes.code, 0);
-    assert.match(yes.out, /Ответ платформы:\n {2}✗ Specify a name/u);
-    assert.match(yes.out, /Событие business_message есть — «секретаря» сделать можно\./u);
-    const no = box.run("events", { FAKE_FAIL: "add", FAKE_SAYS: '✗ Specify a name, e.g. "handlers/inline_query". Available handlers/ types: inline_query, poll.' });
-    assert.match(no.out, /События business_message в списке нет/u);
-    const vague = box.run("events", { FAKE_FAIL: "add", FAKE_SAYS: '✗ Specify a name, e.g. "handlers/<name>".' });
-    assert.match(vague.out, /Списка событий в ответе нет\. Пришлите этот ответ/u);
+    assert.match(yes.out, /Платформа отдаёт ещё такие события \(кроме тех, что Аи уже слушает\):\n {2}business_connection, business_message, inline_query\nСобытие business_message есть — за «секретаря» можно браться\.\nПришлите эти строки в чат разработки\./u);
+    assert.doesNotMatch(yes.out, /\u001b/u, "цвета терминала в чат не уходят");
+    const no = box.run("events", says('Error: Specify a name, e.g. "handlers/inline_query". Available handlers/ types: inline_query, poll.'));
+    assert.match(no.out, /\n {2}inline_query, poll\nСобытия business_message в списке нет/u);
+    // Похожее имя — не то же самое.
+    const near = box.run("events", says('Error: Specify a name, e.g. "handlers/poll". Available handlers/ types: deleted_business_messages, edited_business_message.'));
+    assert.match(near.out, /События business_message в списке нет/u);
+    const full = box.run("events", says("Error: Every handlers/ module already exists."));
+    assert.match(full.out, /только те события, которые Аи уже слушает\. События business_message среди них нет/u);
+    const vague = box.run("events", says('Error: Specify a name, e.g. "handlers/<name>".'));
+    assert.match(vague.out, /Списка событий платформа не прислала\. Её ответ:\n {2}Error: Specify a name, e\.g\. "handlers\/<name>"\.\nПришлите эти строки/u);
     const calls = box.cli();
-    assert.deepEqual(calls.map(item => item.args.join(" ")), ["add handlers", "add handlers", "add handlers"], "только вопрос: ни публикации, ни запуска");
-    assert.ok(calls.every(item => item.token && !item.key), "токен — в окружении, ключей в слепке нет");
+    assert.deepEqual(calls.map(item => item.args.join(" ")), Array(5).fill("add handlers"), "только вопрос: ни публикации, ни запуска");
+    assert.ok(calls.every(item => !item.key && !item.giga), "ключей в слепке нет");
     assert.equal(box.status(), "");
-    assert.doesNotMatch(`${yes.out}${no.out}${vague.out}`, new RegExp(TOKEN.split(":")[1], "u"));
-    const blind = sandbox({ lines: ["HEART_BRANCH=work"] });
-    try {
-      const refused = blind.run("events");
-      assert.equal(refused.code, 1);
-      assert.match(refused.out, /нет токена публикации/u);
-      assert.equal(blind.cli().length, 0);
-    } finally { blind.clean(); }
+    assert.ok(!existsSync(join(box.home, ".heart/lock")), "замок не берётся: спрашивать можно рядом с работающим домом");
+    assert.doesNotMatch(`${yes.out}${no.out}${near.out}${full.out}${vague.out}`, new RegExp(`${TOKEN.split(":")[1]}|${KEYS.model}`, "u"));
   } finally { box.clean(); }
+  // Список у платформы открытый: без токена публикации вопрос тоже задаётся.
+  const blind = sandbox({ lines: ["HEART_BRANCH=work"] });
+  try {
+    const asked = blind.run("events", says('Error: Specify a name, e.g. "handlers/poll". Available handlers/ types: business_message, poll.'));
+    assert.equal(asked.code, 0);
+    assert.match(asked.out, /Событие business_message есть/u);
+    assert.deepEqual(blind.cli().map(item => [item.args.join(" "), item.token]), [["add handlers", false]]);
+  } finally { blind.clean(); }
 });
 
 test("будильник голосом самой Аи: себя она не услышит — сказано прямо, удар идёт через платформу", { skip }, () => {
