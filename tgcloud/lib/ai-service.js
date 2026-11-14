@@ -210,7 +210,8 @@ async function readProviderError(response) {
   try {
     const parsed = JSON.parse(text);
     return {
-      code: safeSnippet(parsed?.error?.code, 64),
+      // Cloudflare отвечает списком: { errors: [{ code, message }] }.
+      code: safeSnippet(parsed?.error?.code ?? parsed?.errors?.[0]?.code, 64),
       type: safeSnippet(parsed?.error?.type, 64),
       // Имя поля, которое провайдер не принял: по нему запрос упрощается сам.
       param: safeSnippet(parsed?.error?.param, 48),
@@ -754,7 +755,7 @@ export function createAiService({
           // кончился бесплатный объём. Повтор не поможет: сутки её не трогаем.
           const unpaid = status === 402;
           // Дневной объём исчерпан, а срока провайдер не назвал: до полуночи UTC.
-          const quota = status === 429 && limits.retryAfterMs == null && /quota|free_limit/u.test(reason);
+          const quota = status === 429 && limits.retryAfterMs == null && (/quota|free_limit/u.test(reason) || brain.kind === "cloudflare");
           if (brains) {
             if (limited) await brains.rest(brain.id, { ms: limits.retryAfterMs ?? (quota ? untilUtcMidnight(now()) : DEFAULT_REST_MS), why: "limit" });
             else if (gone || denied) await brains.retire(brain.id, { why: "gone" });

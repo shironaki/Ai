@@ -72,6 +72,7 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
       c("ruled") ? `${number(c("ruled"))} без модели${c("phrased") ? ` (по словарю: ${number(c("phrased"))})` : ""}` : "",
       c("reactions") ? `${number(c("reactions"))} ${plural(c("reactions"), "реакция", "реакции", "реакций")}` : "",
       c("silent") ? `промолчала сама: ${number(c("silent"))}` : "",
+      c("drawn") ? `нарисовала: ${number(c("drawn"))}` : "",
     ].filter(Boolean);
     out.push(`Разговоры: ${talk.length ? talk.join(" · ") : "тихо"}`);
     const models = Object.entries(counters)

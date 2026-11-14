@@ -59,7 +59,23 @@ export const CONFIG = Object.freeze({
       scope: "GIGACHAT_API_PERS",
       models: ["GigaChat-3-Ultra", "GigaChat-2-Max", "GigaChat-2-Pro", "GigaChat-2"],
     },
+    // Cloudflare Workers AI: бесплатно 10 000 «нейронов» в сутки, без карты
+    // (сброс в 00:00 UTC). Тем же ключом Аи рисует («нарисуй …»), поэтому как
+    // мозг он стоит последним: думает им, только когда кончились остальные.
+    // Ключ особого вида — «ID аккаунта:токен» одной строкой KEY_CLOUDFLARE;
+    // ID подставляется в адрес. Цены на 14.11.2026: ответ Gemma 4 — около 15
+    // нейронов, Llama 3.3 70B — около 60, картинка — около 58.
+    {
+      id: "cloudflare", name: "Cloudflare Workers AI", kind: "cloudflare",
+      baseUrl: "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1",
+      models: ["@cf/google/gemma-4-26b-a4b-it", "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/mistralai/mistral-small-3.1-24b-instruct"],
+    },
   ],
+
+  // Рисование («нарисуй кота в шляпе») — тем же ключом Cloudflare. Сколько
+  // картинок в день получает один собеседник; хозяина не касается. 0 — без
+  // предела. `DRAW: false` выключает рисование совсем.
+  DRAW_DAILY_PER_PERSON: 5,
 
   // Своё имя в Telegram без «@». Обычно сердце узнаёт его само (getMe); это
   // запасной вариант, чтобы «@имя привет» в группе понималось и без него.

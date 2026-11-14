@@ -74,6 +74,12 @@ for (const [name, value] of Object.entries(process.env)) {
   else warn(`${name} does not look like a key (spaces or non-Latin letters) — that provider stays off.`);
 }
 
+// Cloudflare (рисование и запасной мозг): ключ особого вида — «ID аккаунта:токен».
+if (extra.cloudflare && !/^[0-9a-f]{32}:[\x21-\x7e]{20,}$/iu.test(extra.cloudflare)) {
+  warn('KEY_CLOUDFLARE must look like "<account id>:<token>": 32 hex characters, a colon, the token — drawing and the Cloudflare brain stay off.');
+  delete extra.cloudflare;
+}
+
 let text = readFileSync(file, "utf8");
 const slots = [
   [/export const AI_API_KEY = .*;/u, `export const AI_API_KEY = ${JSON.stringify(key)};`],

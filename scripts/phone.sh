@@ -20,6 +20,7 @@
 #   AI_PROVIDER_KEY=…       ключ модели
 #   OWNER_TG_ID=…           числовой ID владельца
 #   KEY_GIGACHAT=…          ключ запасных мозгов: имя после KEY_ — id провайдера
+#   KEY_CLOUDFLARE=ID:токен  рисование и запасной мозг: ID аккаунта, двоеточие, токен
 #   HEART_BRANCH=…          за какой веткой следить (без строки — ветка, с
 #                           которой склонирована папка)
 #   ALARM_BOT_TOKEN=…       токен любого бота, кроме Аи, — минутный будильник
@@ -608,6 +609,8 @@ HEART_BRANCH=$BRANCH
 # Запасные мозги:
 # KEY_GIGACHAT=
 # KEY_EXPLABS=
+# Рисование и ещё один запасной мозг (Cloudflare): ID аккаунта, двоеточие, токен
+# KEY_CLOUDFLARE=
 # Минутный будильник — токен любого бота, кроме Аи, и числовой ID канала «Мост»:
 # ALARM_BOT_TOKEN=
 # ALARM_CHAT_ID=
@@ -659,6 +662,10 @@ EOF
       else echo "✗ $name не похож на ключ (пробелы или русские буквы) — впишите ключ или уберите строку"; bad=1; fi
     done
     [ -n "$extra" ] && echo "✓ запасные мозги: $extra"
+    if [ -n "${KEY_CLOUDFLARE:-}" ]; then
+      if printf '%s' "$KEY_CLOUDFLARE" | grep -Eq '^[0-9a-fA-F]{32}:[!-~]{20,}$'; then echo "✓ рисование: ключ Cloudflare записан верно"
+      else echo "• KEY_CLOUDFLARE записан не так: нужен вид «ID аккаунта:токен» — 32 знака ID, двоеточие, токен, без пробелов. Пока так — рисования не будет"; fi
+    fi
     [ -n "${AI_EXTRA_KEYS:-}" ] && echo "✓ запасные мозги: строка AI_EXTRA_KEYS есть"
     if fetch_branch; then
       local theirs mine

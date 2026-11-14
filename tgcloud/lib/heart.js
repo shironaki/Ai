@@ -39,6 +39,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { detectFact, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
+import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
 /**
@@ -270,8 +271,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     primary: config.AI_MODEL,
     fallbacks: Array.isArray(config.AI_MODELS) ? config.AI_MODELS : [],
     baseUrl: DEFAULT_AI_BASE_URL,
-    providers: (Array.isArray(config.AI_PROVIDERS) ? config.AI_PROVIDERS : []).map(item => ({ ...item, key: item?.key ?? extraKeys[item?.id] ?? "" })),
+    providers: (Array.isArray(config.AI_PROVIDERS) ? config.AI_PROVIDERS : []).map(item => {
+      const key = item?.key ?? extraKeys[item?.id] ?? "";
+      // Cloudflare: ключ — «ID аккаунта:токен», а ID стоит в самом адресе.
+      if (item?.kind !== "cloudflare") return { ...item, key };
+      const parts = splitDrawKey(key);
+      return parts ? { ...item, key: parts.token, baseUrl: String(item.baseUrl ?? "").replace("{account}", parts.account) } : { ...item, key: "" };
+    }),
   });
+  // Рисование: тот же ключ Cloudflare. Нет ключа — честное «не умею».
+  const DRAW_DAILY = Number.isFinite(Number(config.DRAW_DAILY_PER_PERSON)) ? Math.max(0, Number(config.DRAW_DAILY_PER_PERSON)) : 5;
+  const draw = createDraw({ fetchImpl, key: config.DRAW === false ? "" : (config.DRAW_KEY ?? extraKeys.cloudflare ?? ""), store, now, steps: config.DRAW_STEPS });
 
   /**
    * Что сердце знает о манере разговора с человеком: «вы» или «ты», насколько
@@ -525,6 +535,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       "Сказать словами — я пойму:",
       ...SPOKEN_HELP,
     ];
+    if (draw.available) lines.push("• рисование — «нарисуй кота в шляпе», «нарисуй себя», «нарисуй ещё»;");
     if (owner(turn.actorId) && turn.isPrivate) {
       lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня», «резервная копия».");
     }
@@ -695,6 +706,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return { kind: every <= 150_000 ? "minute" : every <= 6.5 * 3_600_000 ? "hour" : "none", every, at: saved.at };
   }
 
+  /** Рисование в «статус»: есть ли краски, не отдыхают ли, сколько нарисовано сегодня. */
+  async function drawLine(today = null) {
+    if (config.DRAW === false) return "выключено настройкой";
+    if (!draw.available) return "ключа нет (строка KEY_CLOUDFLARE) — на «нарисуй» честно отказываю";
+    const idle = await draw.state();
+    const count = today ? ` · сегодня нарисовано: ${Number(today.drawn) || 0}` : "";
+    if (idle.until > now()) return idle.why === "auth" ? `ключ не принят — проверьте KEY_CLOUDFLARE${count}` : `краски кончились до ${clock(idle.until)}${count}`;
+    return `краски есть${count}${DRAW_DAILY > 0 ? ` · на человека в день — ${DRAW_DAILY}` : ""}`;
+  }
+
   async function clockLine() {
     const precision = await clockPrecision();
     if (precision.kind === "minute") return "будят каждую минуту — напоминания и сводка приходят в срок";
@@ -767,6 +788,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       turn.dry ? "Источники: пробный запуск — живая проверка не выполнялась." : `Источники: ${await sourcesLine()}`,
       `Чувства: ${SENSES ? `слух — ${senses.models.hearing}, зрение — ${senses.models.vision}, ссылки читаю` : "выключены настройкой"}`,
       `Словарь: ${PHRASES ? (({ sections, lines }) => `${sections} ${plural(sections, "тема", "темы", "тем")}, ${lines} ${plural(lines, "фраза", "фразы", "фраз")} — на них модель не трачу`)(book.stats()) : "выключен настройкой"} · манеры — ${MANNERS ? "включены" : "выключены"} · память чата — ${CHAT_MEMORY ? "двое суток" : "выключена"}`,
+      `Рисование: ${await drawLine(today)}`,
       `Будильник: ${await clockLine()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
@@ -1915,8 +1937,66 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!WHENCE.test(normalize(prompt).replace(/[?!.…]+$/u, "").trim())) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как вопрос об источнике — репетиция.");
     const item = await store.get(`heart:credit:${turn.chatId}`).catch(() => null);
+    if (item?.own) return say(turn, `Это я нарисовала сама — по словам «${web(item.title)}».`, { extra: HTML });
     if (!item?.page) return say(turn, "Сейчас не о чем сказать: я давно ничего не показывала.");
     return say(turn, `Это не моя работа: ${item.title ? `«${web(item.title)}»` : "вещь"}${item.author ? `, автор — ${web(item.author)}` : ""}. Лежит здесь: <a href="${web(item.page)}">${web(item.source || "страница")}</a>.`, { extra: { ...HTML, disable_web_page_preview: true } });
+  }
+
+  /**
+   * «Нарисуй …» — картинка по словам. Что нельзя рисовать, решает код, до
+   * запроса; сколько можно в день — тоже: норма общая, и один человек не
+   * должен оставить без красок остальных.
+   */
+  const DRAW_NO = Object.freeze({
+    adult: "Откровенное я не рисую. Попросите что-нибудь другое — нарисую с удовольствием.",
+    minor: "Такое я рисовать не буду.",
+    gore: "Такое я рисовать не буду: жестокость — не моя тема.",
+    hate: "Такое я рисовать не буду.",
+  });
+  async function drawPicture(turn, query) {
+    const lastKey = `heart:drew:${turn.chatId}`;
+    let subject = subjectOf(query);
+    if (!subject) return say(turn, "Что нарисовать? Скажите словами: «нарисуй кота в шляпе».");
+    if (subject.me) return say(turn, `Я не знаю, как ${you(turn, "вы выглядите", "ты выглядишь")}. ${you(turn, "Опишите", "Опиши")} словами — нарисую: «нарисуй девушку с рыжими волосами у окна».`);
+    if (subject.again) {
+      const before = await store.get(lastKey).catch(() => null);
+      if (!before?.q) return say(turn, "Ещё — это что? Я пока ничего здесь не рисовала. «Нарисуй кота в шляпе» — и начнём.");
+      subject = subjectOf(before.q) ?? { text: before.q };
+      query = before.q;
+    }
+    const banned = subject.text ? drawRefusal(subject.text) : "";
+    if (banned) { pulse.bump("ruled"); return say(turn, DRAW_NO[banned]); }
+    const mine = owner(turn.actorId);
+    const countKey = `${DRAWN_PREFIX}${dayOf(now())}:${turn.actorId}`;
+    const used = Number((await store.get(countKey).catch(() => null))?.n) || 0;
+    if (!mine && DRAW_DAILY > 0 && used >= DRAW_DAILY) {
+      return say(turn, `На сегодня я ${you(turn, "вам", "тебе")} уже нарисовала ${used} ${plural(used, "картинку", "картинки", "картинок")} — краски не бесконечные, и они нужны всем. Завтра продолжим.`);
+    }
+    if (has("sendChatAction")) { try { await api.sendChatAction({ chat_id: turn.chatId, action: "upload_photo", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) }); } catch { /* индикатор не важнее рисунка */ } }
+    const got = await draw.paint(subject.prompt ?? subject.text, { translate: !subject.prompt, seed: Math.floor(random() * 1_000_000) });
+    if (!got.ok) {
+      if (got.code === "resting" || got.code === "limit" || got.code === "auth") {
+        const why = got.code === "resting" ? got.why : got.code;
+        if (why === "auth") {
+          try { await notices.report({ component: "draw", code: "auth", severity: "degraded", detail: "ключ для рисования (KEY_CLOUDFLARE) не принят: проверьте, что он записан как «ID аккаунта:токен» и что у токена есть право Workers AI" }); } catch { /* весть подождёт */ }
+          return say(turn, "Мои краски не открываются: ключ к ним не принят. Хозяин об этом уже знает.");
+        }
+        return say(turn, `Краски на сегодня кончились: рисую я не больше, чем позволяет дневная норма. Вернутся в ${clock(got.until)}.`);
+      }
+      if (got.code === "blocked") return say(turn, DRAW_NO.minor);
+      return say(turn, "Не вышло: мастерская сейчас не отвечает. Попробуйте чуть позже.");
+    }
+    if (typeof InputFile !== "function" || !has("sendPhoto")) return say(turn, "Рисунок готов, но отправить файл мне сейчас нечем.");
+    const caption = voiced(turn, book.pick(subject.own === "self" ? "+рисунок:себя" : "+рисунок", voiceCtx(turn)) ?? "Вот.");
+    try {
+      await api.sendPhoto({ chat_id: turn.chatId, photo: new InputFile(got.bytes, "ai.jpg", { type: "image/jpeg" }), caption, ...turn.extra });
+      turn.delivered = true;
+    } catch { return say(turn, "Рисунок готов, но Telegram его не принял. Попросите ещё раз."); }
+    pulse.bump("drawn");
+    await store.set(countKey, { n: used + 1 }).catch(() => false);
+    await store.set(lastKey, { q: String(query).slice(0, 300), at: now() }).catch(() => false);
+    await store.set(`heart:credit:${turn.chatId}`, { own: true, title: String(query).slice(0, 120), at: now() }).catch(() => false);
+    return { ok: true, action: "photo", kind: "draw" };
   }
 
   async function findMedia(turn, prompt) {
@@ -1924,7 +2004,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как поиск — репетиция, ничего не ищу.");
     if (asked.kind === "draw") {
-      return say(turn, `Рисовать я не умею: художника у меня нет, и выдавать чужое за своё не стану. Могу найти готовую картинку — «найди картинку ${asked.query}».`);
+      if (!draw.available) return say(turn, `Рисовать я не умею: художника у меня нет, и выдавать чужое за своё не стану. Могу найти готовую картинку — «найди картинку ${asked.query}».`);
+      return drawPicture(turn, asked.query);
     }
     await typing(turn);
     const page = { extra: { ...HTML, disable_web_page_preview: true } };
@@ -2542,6 +2623,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       ...(await spareLines(ctx, key)),
       `Способности: ${await bridgeLine()}`,
       `Источники: ${await sourcesLine()}`,
+      `Рисование: ${await drawLine()}`,
       `Будильник: ${await clockLine()}`,
     ];
     await notices.tell({ key: `build:${BUILD}`, text: lines.join("\n") });
@@ -2661,6 +2743,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await store.sweep("heart:heard:", 3 * DAY);
       await store.sweep("heart:stickers:", 30 * DAY);
       await store.sweep("heart:quota:", 3 * DAY);
+      await store.sweep(DRAWN_PREFIX, 3 * DAY);
+      await store.sweep("heart:drew:", 7 * DAY);
       await store.sweep("heart:mail:", 30 * DAY);
     } catch { /* уборка подождёт */ }
     try { await pulse.commit(); } catch { /* счётчики не важнее */ }
