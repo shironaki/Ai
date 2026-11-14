@@ -751,7 +751,8 @@ EOF
       return 0 ;;
     events)
       # Какие события платформа умеет отдавать коду. «Секретарю» нужно
-      # business_message. Это только вопрос: файлов не создаёт, ничего не публикует.
+      # business_message. Это только вопрос: в проекте ничего не создаётся и не
+      # публикуется; инструмент лишь обновляет свою памятку в папке .tgcloud.
       if ! tokenlike "$TOKEN"; then echo "В $ENV_FILE нет токена публикации — спросить платформу не от чьего имени. Начните с: bash scripts/phone.sh check" >&2; return 1; fi
       if [ ! -f "$CLI" ]; then echo "Инструмент публикации ещё не установлен. Сначала: bash scripts/phone.sh check" >&2; return 1; fi
       local asked_out

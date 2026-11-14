@@ -4,7 +4,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { heart, message, group, reset, last, chats, says, sdk, request, KEY } from "./fixtures/kit.mjs";
+import { heart, message, group, reset, last, chats, says, sdk, request, toChat, KEY } from "./fixtures/kit.mjs";
 
 const { parseTaste, readAnswer, readCasual, TASTES, TASTE_KEY, TASTE_ASK_KEY, TASTE_ASK_TTL_MS, TASTE_CASUAL_TTL_MS } = await import("../tgcloud/lib/tastes.js");
 const { SOUL_PREFIXES } = await import("../tgcloud/lib/soul.js");
@@ -12,6 +12,8 @@ const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
 
 const NOON = Date.parse("2026-11-18T09:00:00Z");
 const saved = (id = 5) => JSON.parse(sdk().kv.get(TASTE_KEY(id)) ?? "null")?.items ?? {};
+/** Вопрос о любимом, на который она сейчас ждёт ответа: вид или null. */
+const pending = (chat = 5, id = 5) => JSON.parse(sdk().kv.get(TASTE_ASK_KEY(chat, id)) ?? "null")?.kind || null;
 /** Всё, что ушло модели: система, память о человеке, история. */
 const context = () => request().messages.map(item => item.content).join("\n");
 
@@ -35,15 +37,37 @@ test("разбор: рассказать, спросить о своём, спи
   for (const [said, want] of Object.entries(cases)) assert.deepEqual(parseTaste(said), want, said);
   for (const said of ["какой твой любимый цвет?", "твой любимый цвет", "любимый цвет", "мой любимый человек — ты", "мой любимый цвет", "я люблю пиццу", "мой любимый день — пятница", "мой любимый цвет — это какой?", "мой любимый сайт — https://example.com", "привет"]) assert.equal(parseTaste(said), null, said);
 
-  assert.deepEqual(readAnswer("Зелёный"), { value: "Зелёный" });
-  assert.deepEqual(readAnswer("Тёмно-синий, почти чёрный."), { value: "Тёмно-синий, почти чёрный" });
-  assert.deepEqual(readAnswer("хватит"), { stop: true });
-  for (const said of ["не знаю", "дальше", "нет", "пропусти"]) assert.deepEqual(readAnswer(said), { skip: true }, said);
-  for (const said of ["спасибо", "ок", "а твой?", "круто", "я тоже", "/start", "это очень длинная речь о том как я провёл лето у бабушки в деревне"]) assert.equal(readAnswer(said), null, said);
-  // Встречный вопрос строже: длинное и «тоже синий» — не ответ.
-  assert.deepEqual(readCasual("Зелёный"), { value: "Зелёный" });
-  assert.deepEqual(readCasual("Тёмно-синий, почти чёрный"), { value: "Тёмно-синий, почти чёрный" });
-  for (const said of ["тоже синий", "хватит", "не знаю", "мне все цвета одинаковы", "привет, реши уравнение x+2=5", "реши x+2=5", "круто, мне нравится"]) assert.equal(readCasual(said), null, said);
+  // Ответ на вопрос анкеты: значение без вступления, «хватит», «дальше»; смех, «спасибо» и просьба — не ответ.
+  const answers = {
+    "Зелёный": { value: "Зелёный" }, "Тёмно-синий, почти чёрный.": { value: "Тёмно-синий, почти чёрный" },
+    "у меня зелёный": { value: "зелёный" }, "Мой — Зелёный": { value: "Зелёный" }, "я люблю пельмени": { value: "пельмени" },
+    "мне нравится рок": { value: "рок" }, "наверное, осень": { value: "осень" }, "у меня тоже синий": { value: "синий" },
+    "«Наруто»": { value: "Наруто" }, "Твоё имя": { value: "Твоё имя" }, "Как приручить дракона": { value: "Как приручить дракона" }, "Мы": { value: "Мы" },
+    "хватит": { stop: true }, "стоп": { stop: true }, "Всё, хватит": { stop: true }, "всё": { stop: true }, "не хочу": { stop: true },
+    "не знаю": { skip: true }, "дальше": { skip: true }, "нет": { skip: true }, "пропусти": { skip: true }, "все": { skip: true }, "любой": { skip: true },
+    "не скажу": { skip: true }, "секрет": { skip: true }, "не помню": { skip: true }, "какая разница": { skip: true }, "у меня нет любимого": { skip: true },
+    "не люблю сладкое": { skip: true }, "не смотрю аниме": { skip: true },
+  };
+  for (const [said, want] of Object.entries(answers)) assert.deepEqual(readAnswer(said), want, said);
+  for (const said of ["спасибо", "ок", "а твой?", "круто", "я тоже", "мой тоже", "и мой", "такой же", "ахаха", "хаха", "хихи", "эээ", "ммм", "лол", "ой", "/start",
+    "расскажи сказку", "давай играть", "хочу спать", "покажи себя", "это очень длинная речь о том как я провёл лето у бабушки в деревне"]) assert.equal(readAnswer(said), null, said);
+
+  // Встречный вопрос строже: слово должно быть похоже на ответ именно на этот вопрос.
+  const casual = {
+    color: { "Зелёный": "Зелёный", "тоже синий": "синий", "Мой — зелёный": "зелёный", "люблю синий": "синий", "Тёмно-синий, почти чёрный": "Тёмно-синий, почти чёрный", "цвет морской волны": "цвет морской волны", "хаки": "хаки" },
+    season: { "лето": "лето", "осень, конечно": "осень, конечно" }, drink: { "зелёный чай": "зелёный чай", "кофе с молоком": "кофе с молоком" },
+    animal: { "коты": "коты", "лиса": "лиса" }, holiday: { "Новый год": "Новый год", "8 марта": "8 марта" }, flower: { "пионы": "пионы" }, subject: { "физра": "физра" },
+  };
+  for (const [kind, cases] of Object.entries(casual)) for (const [said, value] of Object.entries(cases)) assert.deepEqual(readCasual(said, kind), { value }, `${kind}: ${said}`);
+  const stray = {
+    color: ["уважаю", "скучно", "о, классика", "красиво", "у меня вопрос", "мои фразы", "мой зелёный", "у меня зелёный", "синий — красивый цвет", "не синий", "расскажи про синий", "сериал", "белка", "синица",
+      "хватит", "не знаю", "секрет", "ахаха", "Наруто", "ты милая", "что это", "привет, реши уравнение x+2=5", "круто, мне нравится", "мне все цвета одинаковы"],
+    season: ["летать", "все"], drink: ["чайка", "сокол", "колбаса", "водка"], animal: ["котлеты", "который"], holiday: ["пятница"], flower: ["макароны", "розетка"], subject: ["трудно сказать"],
+    // Где ответ не узнать, встречного вопроса нет — и ответа на него тоже.
+    anime: ["Наруто"], food: ["пицца"], film: ["Матрица"],
+  };
+  for (const [kind, list] of Object.entries(stray)) for (const said of list) assert.equal(readCasual(said, kind), null, `${kind}: ${said}`);
+  assert.deepEqual(TASTES.filter(item => item.casual).map(item => item.key), ["color", "drink", "animal", "season", "holiday", "flower", "subject"]);
 
   // У каждого вида — своя тема словаря о её вкусе или хотя бы название для списка.
   assert.equal(new Set(TASTES.map(item => item.key)).size, TASTES.length);
@@ -99,14 +123,32 @@ test("анкета: спрашивает по очереди, «дальше» �
   await h.onMessage(message("сколько будет 2+2"), KEY);
   assert.match(last(), /4/u);
   assert.equal(saved().food, undefined);
+  // Просьба, для которой есть своё слово, — тоже: список показан, вопрос ждёт.
+  await h.onMessage(message("мои списки"), KEY);
+  assert.doesNotMatch(last(), /Запомнила/u);
+  // Смех — не ответ: на него она отзывается реакцией, как всегда.
+  const before = toChat(5).length;
+  await h.onMessage(message("ахаха"), KEY);
+  assert.equal(toChat(5).length, before, "текста в ответ на смех нет");
+  // Просьба к модели — не ответ: уходит в разговор, вопрос ждёт.
+  sdk().fetchQueue.push(says("Это уже разговор."));
+  await h.onMessage(message("сочини стих про кота"), KEY);
+  assert.equal(last(), "Это уже разговор.");
+  assert.equal(saved().food, undefined);
   await h.onMessage(message("дальше"), KEY);
   assert.equal(last(), "Пропустим. А пить — чай, кофе, что-то ещё?");
-  await h.onMessage(message("Зелёный чай с жасмином."), KEY);
+  await h.onMessage(message("у меня — Зелёный чай с жасмином."), KEY);
   assert.equal(last(), "Запомнила: ваш любимый напиток — Зелёный чай с жасмином. Какую музыку вы слушаете чаще всего?");
+  await h.onMessage(message("не скажу"), KEY);
+  assert.equal(last(), "Пропустим. Какое аниме у вас любимое?");
+  await h.onMessage(message("не смотрю аниме"), KEY);
+  assert.equal(last(), "Пропустим. Какой фильм или сериал вы готовы пересматривать?");
+  await h.onMessage(message("Твоё имя"), KEY);
+  assert.equal(last(), "Запомнила: ваш любимый фильм — Твоё имя. Какая книга у вас любимая?");
   await h.onMessage(message("хватит"), KEY);
   assert.equal(last(), "Хорошо, остановимся. Продолжить — «анкета».");
-  assert.deepEqual(Object.keys(saved()).sort(), ["color", "drink"]);
-  assert.equal(chats().length, 0);
+  assert.deepEqual(Object.keys(saved()).sort(), ["color", "drink", "film"]);
+  assert.equal(chats().length, 1, "модель понадобилась только на стих");
 
   // Анкета закончена — короткое слово снова обычная реплика.
   sdk().fetchQueue.push(says("Это уже разговор."));
@@ -183,6 +225,7 @@ test("словарь: к её «синий» — «а ваш — зелёный,
   const asked = await ask(0.1, ["какой твой любимый цвет?"]);
   assert.ok(hers.some(line => asked === `${line} А ваш?`), asked);
   assert.equal(JSON.parse(sdk().kv.get(TASTE_ASK_KEY(5, 5))).casual, true);
+  assert.equal(pending(), "color");
   // …и короткий ответ запомнит. Анкету встречный вопрос не начинает.
   assert.equal(await ask(0.1, ["какой твой любимый цвет?", "Зелёный"]), "Запомнила: ваш любимый цвет — Зелёный.");
   assert.equal(saved().color.v, "Зелёный");
@@ -190,17 +233,36 @@ test("словарь: к её «синий» — «а ваш — зелёный,
   // …а в другой половине — нет.
   const calm = await ask(0.9, ["какой твой любимый цвет?"]);
   assert.ok(hers.includes(calm), calm);
-  assert.equal(sdk().kv.get(TASTE_ASK_KEY(5, 5)) ?? null, null);
+  assert.equal(pending(), null);
 
-  // Отклик — не ответ: «круто» любимым цветом не становится.
-  assert.equal(await ask(0.1, ["какой твой любимый цвет?", { model: "Рада." }, "круто, мне нравится"]), "Рада.");
-  assert.equal(saved().color, undefined);
-  // Фраза из словаря — тоже не ответ; и после неё встречный вопрос больше не ждёт.
-  assert.equal(await ask(0.1, ["какой твой любимый цвет?", "скажи мяу", { model: "Красивый цвет." }, "Зелёный"]), "Красивый цвет.");
-  assert.equal(saved().color, undefined);
+  // Отклик — не ответ: ни «круто», ни «уважаю» любимым цветом не становятся.
+  for (const said of ["круто, мне нравится", "уважаю", "о, классика", "сочини стих про кота"]) {
+    assert.equal(await ask(0.1, ["какой твой любимый цвет?", { model: "Рада." }, said]), "Рада.", said);
+    assert.equal(saved().color, undefined, said);
+  }
+  // То же, когда следом — тема словаря: отвечает словарь, в анкету ничего не пишется.
+  for (const said of ["скучно", "у меня вопрос", "расскажи сказку"]) {
+    assert.doesNotMatch(await ask(0.1, ["какой твой любимый цвет?", said]), /Запомнила/u, said);
+    assert.equal(saved().color, undefined, said);
+  }
+  // Встречный вопрос ждёт одну реплику: фраза из словаря или просьба — и он снят.
+  for (const between of ["скажи мяу", "что нового", "мои списки"]) {
+    assert.equal(await ask(0.1, ["какой твой любимый цвет?", between, { model: "Красивый цвет." }, "Зелёный"]), "Красивый цвет.", between);
+    assert.equal(saved().color, undefined, between);
+    assert.equal(pending(), null, between);
+  }
   // Через три минуты слово уже о другом.
   assert.equal(await ask(0.1, ["какой твой любимый цвет?", TASTE_CASUAL_TTL_MS + 1000, { model: "Вы о чём?" }, "Зелёный"]), "Вы о чём?");
   assert.equal(saved().color, undefined);
+
+  // Где ответ не узнать по слову (аниме, еда, музыка), она в ответ не спрашивает.
+  const anime = book.pool("любимое аниме", { formal: true });
+  const plain = await ask(0.1, ["какое твоё любимое аниме?"]);
+  assert.ok(anime.includes(plain), plain);
+  assert.equal(pending(), null);
+  // А знает — напомнит и там.
+  const reminded = await ask(0.1, ["моё любимое аниме — Блич", "какое твоё любимое аниме?"]);
+  assert.ok(anime.some(line => reminded === `${line} А ваше — Блич, я помню.`), reminded);
 });
 
 test("выключено настройкой: анкеты нет, фраза уходит в разговор", async () => {

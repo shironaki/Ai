@@ -113,7 +113,7 @@ export const RELEASE_NOTES = Object.freeze([
   "записываю короткие фразы, которые не узнала, — без имён; «что ты не поняла?» покажет список, в понедельник напомню сама",
   "пишу хозяину первой: «доброе утро» и «спокойной ночи» в его час — «желай доброго утра в 7:30», «не пиши первой»",
   "настроение меняет поведение: сонная и ворчливая отвечаю короче, игривая — поддразню вдогонку",
-  "анкета «любимое»: «мой любимый цвет — синий» — запомню; «какой мой любимый цвет?», «что я люблю?» — отвечу сама, без модели; «анкета» — спрошу по очереди; на вопрос о моём любимом иногда спрошу в ответ «а ваш?»",
+  "анкета «любимое»: «мой любимый цвет — синий» — запомню; «какой мой любимый цвет?», «что я люблю?» — отвечу сама, без модели; «анкета» — спрошу по очереди; на вопрос о моём любимом цвете или времени года могу спросить в ответ «а ваш?»",
   "квиз по темам: «квиз про аниме», кино, игры, музыку, космос, животных, географию, науку, историю, книги — вопросов стало 180; «какие темы у квиза?»",
   "на «не хочу жить» и подобное отвечаю серьёзно, без манер и шуток, и называю номер 112",
 ]);
@@ -1846,20 +1846,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
   /**
    * Ответ на её вопрос: из анкеты («Какой у вас любимый цвет?») или встречный
-   * («Синий. А ваш?»). Не похоже на ответ — фраза идёт обычным путём.
+   * («Синий. А ваш?»). `waiting` — вопрос, которого она ждёт. Не похоже на
+   * ответ — null, и фраза идёт обычным путём.
    */
-  async function tasteAnswer(turn, prompt) {
-    if (!LIKES || turn.dry) return null;
-    const waiting = await tastes.asking(turn.chatId, turn.actorId);
-    if (!waiting) return null;
-    const answer = waiting.casual ? readCasual(prompt) : readAnswer(prompt);
+  async function tasteAnswer(turn, prompt, waiting) {
+    if (!LIKES || turn.dry || !waiting) return null;
+    const answer = waiting.casual ? readCasual(prompt, waiting.kind) : readAnswer(prompt);
     // Фраза из словаря («привет», «скажи мяу») — реплика, а не ответ на вопрос.
     const phrase = Boolean(answer?.value) && PHRASES && Boolean(book.match(prompt) || await taught.match(prompt).catch(() => null));
-    if (!answer || phrase) {
-      // Встречный вопрос ждёт только следующую реплику: не ответили сразу — значит, не ответили.
-      if (waiting.casual) await tastes.rest(turn.chatId, turn.actorId);
-      return null;
-    }
+    if (!answer || phrase) return null;
     const kind = tasteByKey(waiting.kind);
     if (answer.stop) {
       await tastes.rest(turn.chatId, turn.actorId);
@@ -2032,13 +2027,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (other && other.length < text.length) text = other;
     }
     // Спросили о её любимом — она помнит и чужое: «А ваш — зелёный, я помню».
-    // Не знает — спросит в ответ, и короткое слово следом запомнит.
+    // Не знает — спросит в ответ и запомнит слово следом. Спрашивает только
+    // там, где ответ можно узнать (цвет, время года, напиток…): см. tastes.js.
     let added = false;
     const liked = LIKES && !serious ? tasteByTitle(names[0]) : null;
     if (liked && !text.includes("?")) {
       const known = await tastes.get(turn.actorId, liked.key, { inGroup: turn.inGroup }).catch(() => "");
       if (known) { text = `${text} А ${yourWord(turn, liked.title)} — ${known}, я помню.`; added = true; }
-      else if (way !== "short" && random() < 0.5 && await tastes.ask(turn.chatId, turn.actorId, liked.key, { casual: true })) { text = `${text} А ${yourWord(turn, liked.title)}?`; added = true; }
+      else if (liked.casual && way !== "short" && random() < 0.5 && await tastes.ask(turn.chatId, turn.actorId, liked.key, { casual: true })) { text = `${text} А ${yourWord(turn, liked.title)}?`; added = true; }
     }
     if (!added && (way === "playful" || way === "chatty") && !parting && !text.includes("?") && random() < 0.3) {
       const tail = book.pick(way === "playful" ? "+настроение:игривое" : "+настроение:разговорчивое", ctx);
@@ -3284,11 +3280,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       }
     }
 
-    // Она спросила «какой у вас любимый цвет?» — короткое слово в ответ и есть ответ.
-    if (!dry && !request) {
-      const answered = await tasteAnswer(turn, prompt);
-      if (answered) return ruled(answered);
-    }
+    // Она ждёт ответа на вопрос о любимом? Встречное «а ваш?» ждёт только эту
+    // реплику, какой бы она ни была: следующее слово — уже о другом.
+    const awaited = !dry && LIKES ? await tastes.asking(turn.chatId, turn.actorId).catch(() => null) : null;
+    if (awaited?.casual) await tastes.rest(turn.chatId, turn.actorId).catch(() => false);
 
     // Забавы — до хода в игре и до всего остального: «обнять», настройка
     // чата, опрос, «мой айди», игра с кнопками. Просьба с известным смыслом
@@ -3321,6 +3316,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Ссылка с просьбой «перескажи» — и ссылка без слов в личке.
     const viaLink = await readLink(turn, prompt);
     if (viaLink) return ruled(viaLink);
+
+    // Она спросила «какой у вас любимый цвет?» — слово в ответ и есть ответ.
+    // Стоит после всех просьб: «мои списки» посреди анкеты — просьба.
+    if (awaited && !request) {
+      const answered = await tasteAnswer(turn, prompt, awaited);
+      if (answered) return ruled(answered);
+    }
 
     // Идёт игра — фраза может быть ходом. Судит код; не ход — идёт дальше,
     // к просьбам и разговору, а игра ждёт.
