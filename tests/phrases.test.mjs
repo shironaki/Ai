@@ -181,3 +181,27 @@ test("своё к приветствию: долгая разлука и общ�
   assert.match(last(), /Забыла\. Осталось: 0/u);
   assert.equal(chats().length, 0);
 });
+
+test("словарь 0.26.0: будни, праздники, её комната; серьёзная тема звучит как написана — без манер", async () => {
+  const hit = {
+    "я в душ": "я в душ", "С Новым годом!": "с новым годом", "какая у тебя комната?": "твоя комната", "у тебя есть кот": "питомец",
+    "good morning": "доброе утро", "хочу умереть": "!не хочу жить", "с днём учителя": "с праздником", "я купил новый телефон": "я купил",
+    "идёт дождь": "дождь", "можно вопрос?": "можно вопрос", "ну не хочу жить": "!не хочу жить",
+  };
+  for (const [said, name] of Object.entries(hit)) assert.deepEqual(book.match(said), [name], said);
+  // «да», «нет», «почему» зависят от разговора — их словарь не берёт.
+  for (const said of ["да", "нет", "почему", "пять"]) assert.equal(book.match(said), null, said);
+  assert.match(book.pool("+канон").join(" "), /комната.+кот Байт/su, "канон знает её комнату и кота");
+
+  reset();
+  const h = heart({ PHRASES: true, MANNERS: true }, { now: () => NOON, random: () => 0 });
+  await h.onMessage(message("будь кошкой"), KEY);
+  await h.onMessage(message("как дела"), KEY);
+  const usual = last();
+  assert.match(usual, /мяу|ня|мур/iu, `обычный ответ — по-кошачьи: ${usual}`);
+  await h.onMessage(message("не хочу жить"), KEY);
+  assert.match(last(), /112/u);
+  assert.match(last(), /рядом|никуда не ухожу/u);
+  assert.doesNotMatch(last(), /мяу|мур|(?:^|\s)ня(?:$|[\s~!.])/iu, "к серьёзному ответу манера не добавляется");
+  assert.equal(chats().length, 0, "модель не тратилась");
+});

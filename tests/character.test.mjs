@@ -186,9 +186,9 @@ test("флирт: хозяину наедине — смело и всегда; 
   assert.ok([...heard].some(text => /привыкаю|что ещё умеете/u.test(text)), "тёплому и согласному — строки с пометкой «флирт»");
   // Хозяину: подсказка модели — смелая; постороннему — закрытая.
   sdk().fetchQueue.push(says("Да, хозяин."), says("Да."));
-  await h.onMessage(message("расскажи, как прошёл твой день сегодня", { id: OWNER }), KEY);
+  await h.onMessage(message("придумай две строчки про осенний дождь и фонари", { id: OWNER }), KEY);
   assert.match(system(), /С ним можно флиртовать смело/u);
-  await h.onMessage(message("расскажи, как прошёл твой день сегодня", { id: 43 }), KEY);
+  await h.onMessage(message("придумай две строчки про осенний дождь и фонари", { id: 43 }), KEY);
   assert.match(system(), /Флирт не разрешён/u);
   await h.onMessage(message("можно флиртовать", { id: OWNER }), KEY);
   assert.match(last(OWNER), /С вами, хозяин, я и так не сдерживаюсь/u);
