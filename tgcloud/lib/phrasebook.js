@@ -53,6 +53,13 @@ const WEIGHT = Object.freeze({ "хозяин": 30, "близко": 6, "флир�
 /** Время суток по часу: для пометок «утро», «день», «вечер», «ночь». */
 export const partOfDay = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
 
+/**
+ * Имя темы или запаса, как оно лежит в собранном словаре: строчными и с «е»
+ * вместо «ё». Запас «+реакция:своё» при сборке становится «+реакция:свое» — и
+ * по имени с «ё» его было не найти.
+ */
+const keyOf = (name) => String(name).toLowerCase().replace(/ё/gu, "е");
+
 export function createPhrasebook({ sections = SECTIONS, random = Math.random } = {}) {
   const byName = new Map(), exact = new Map();
   let compiled = null;
@@ -106,7 +113,7 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
 
   /** Одна строка темы под человека и час. `avoid` — что уже звучало: не повторяться. */
   function pick(name, ctx = {}, { avoid = "" } = {}) {
-    const section = byName.get(String(name).toLowerCase());
+    const section = byName.get(keyOf(name));
     if (!section) return null;
     let pool = [];
     for (const [tagText, body] of section.l) {
@@ -126,7 +133,7 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
 
   /** Все строки запаса как есть (для манер и канона): без пометок и подстановок имени. */
   function pool(name, ctx = {}) {
-    const section = byName.get(String(name).toLowerCase());
+    const section = byName.get(keyOf(name));
     return section ? section.l.map(([, body]) => fill(body, ctx)).filter(Boolean) : [];
   }
 
@@ -147,5 +154,5 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
     lines: sections.reduce((sum, section) => sum + section.l.length, 0),
   });
 
-  return Object.freeze({ match, pick, pool, say, stats, has: (name) => byName.has(String(name).toLowerCase()), names: () => [...byName.keys()] });
+  return Object.freeze({ match, pick, pool, say, stats, has: (name) => byName.has(keyOf(name)), names: () => [...byName.keys()] });
 }

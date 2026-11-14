@@ -8,6 +8,7 @@ import { heart, message, group, hers, reset, last, calls, chats, says, sdk, toCh
 
 const { parseOwn, parseBond, matchOwn, ownActionProblem, actionKeyOf, bondProblem, BONDS_KEY } = await import("../tgcloud/lib/chatown.js");
 const { SOUL_PREFIXES } = await import("../tgcloud/lib/soul.js");
+const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
 
 const ON = { PHRASES: true };
 const NOON = Date.parse("2026-11-18T09:00:00Z");
@@ -87,6 +88,10 @@ test("своё действие: добавляет админ, работает
   assert.equal(toChat(-10).length, before + 1);
   await h.onMessage(petya("Аи, дать печеньку", { reply: hers() }), KEY);
   assert.match(text(), /^🍪 Петя дает печеньку Аи\n/u);
+  // Её слово — из запаса «+реакция:своё» (имя запаса с «ё» должно находиться).
+  const reactions = createPhrasebook().pool("+реакция:своё", { formal: true });
+  assert.ok(reactions.length >= 3);
+  assert.ok(reactions.includes(text().split("\n")[1]), text());
   // Сам себе.
   await h.onMessage(petya("дать печеньку", { reply: from(PETYA, "Петя") }), KEY);
   assert.match(text(), /Петя пробует это на себе/u);

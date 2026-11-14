@@ -60,7 +60,7 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
 
   /** Был ли день вообще: пустой день не стоит вести владельцу. */
   function active(counters = {}) {
-    return ["replies", "ruled", "reactions", "failed", "queued", "limited", "corrected", "lessons", "sourced", "games", "reminded", "heard", "seen", "read"].some(name => Number(counters[name]) > 0);
+    return ["replies", "ruled", "reactions", "failed", "queued", "limited", "corrected", "lessons", "sourced", "games", "reminded", "heard", "seen", "read", "secretary"].some(name => Number(counters[name]) > 0);
   }
 
   /** Сводка словами. Строки с нулями не печатаются: тишина — не новость. */
@@ -103,6 +103,7 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
       c("heard") ? `выслушала записей: ${number(c("heard"))}` : "",
       c("seen") ? `рассмотрела картинок: ${number(c("seen"))}` : "",
       c("read") ? `прочитала ссылок: ${number(c("read"))}` : "",
+      c("secretary") ? `ответила за вас в личке: ${number(c("secretary"))}` : "",
     ].filter(Boolean);
     if (deeds.length) out.push(`Дела: ${deeds.join(" · ")}`);
     if (c("failed")) out.push(`Не смогла ответить: ${number(c("failed"))}`);

@@ -656,6 +656,36 @@ test("вечный цикл: публикует сразу, прошлые не�
   } finally { box.clean(); }
 });
 
+test("секретарь: новые обработчики репетируются перед публикацией; «events» знает, что событие уже слушается", { skip }, () => {
+  const box = sandbox();
+  try {
+    for (const name of ["callback_query", "business_connection", "business_message"]) writeFileSync(join(box.seed, `tgcloud/handlers/${name}.js`), "export default async function () {}\n");
+    box.commit("1.1.0");
+    const first = box.run("once");
+    assert.equal(first.code, 0, first.out);
+    assert.match(first.out, /Сборка 1\.1\.0 опубликована/u);
+    assert.deepEqual(names(box.cli()), [
+      "run:handlers/message", "run:handlers/channel_post", "run:handlers/callback_query", "run:handlers/business_connection", "run:handlers/business_message",
+      "fetch", "push handlers", "migrate --yes", "webhook", "run:handlers/message:deployed",
+    ]);
+    // Репетиция — без побочных действий: обработчикам говорится, что это проба.
+    for (const call of box.cli().filter(item => /business_/u.test(item.args[1] ?? ""))) assert.ok(call.args.includes("{ testRun: true }"), call.args.join(" "));
+    // Письмо секретарю на репетиции упало — публикации нет, бот на прежней сборке.
+    box.commit("1.2.0");
+    const broken = box.run("once", { FAKE_FAIL: "run:handlers/business_message" });
+    assert.match(broken.out, /Не прошло: репетиция: письмо секретарю — публикации нет, бот на прежней сборке/u);
+    assert.match(box.state("published"), /\n1\.1\.0\n/u);
+
+    // Событие уже слушается: в списке «ещё не написанных» его нет — и это не «платформа не умеет».
+    const says = (text) => ({ FAKE_FAIL: "add", FAKE_SAYS: text });
+    const listed = box.run("events", says('Error: Specify a name, e.g. "handlers/poll". Available handlers/ types: inline_query, poll.'));
+    assert.match(listed.out, /\n {2}inline_query, poll\nСобытие business_message Аи уже слушает: «секретарь» в этой сборке есть\./u);
+    assert.doesNotMatch(listed.out, /в списке нет/u);
+    const full = box.run("events", says("Error: Every handlers/ module already exists."));
+    assert.match(full.out, /Среди них business_message: «секретарь» в этой сборке есть\./u);
+  } finally { box.clean(); }
+});
+
 test("«events»: спрашивает платформу о событиях, ничего не публикует; ответ — словами, токен не нужен", { skip }, () => {
   // Ответы — как у настоящего инструмента на «add handlers»: список ещё не написанных обработчиков.
   const says = (text) => ({ FAKE_FAIL: "add", FAKE_SAYS: text });
