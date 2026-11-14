@@ -7,7 +7,7 @@
  * исчезают вместе с ним. Это черта, проведённая владельцем: ставки и
  * награды — дело сестры.
  */
-import { QUIZ } from "./data/quiz.js";
+import { QUIZ, QUIZ_THEMES, quizTheme } from "./data/quiz.js";
 import { TRAITS, ANIMALS } from "./data/animals.js";
 import { QUESTS } from "./data/quest.js";
 import { fold } from "./sources.js";
@@ -80,8 +80,17 @@ export function storyEngines({ btn, esc, pick, same }) {
       record.tried = [];
       delete record.closed;
     },
-    open({ host, solo }) {
-      const record = { kind: "quiz", phase: "play", host, players: [host], solo: Boolean(solo), left: shuffled(QUIZ.map((_, index) => index)).slice(0, QUIZ_ROUNDS), n: 0, total: QUIZ_ROUNDS, score: {} };
+    /** `ask` — слова, которыми позвали игру («квиз про аниме»); `theme` — тема прошлой партии. */
+    open({ host, solo, ask = "", theme = "" }) {
+      const said = fold(ask).replace(/[.!?…]+$/u, "").replace(/\s+/gu, " ").trim();
+      const wish = said.match(/\s(?:про|об?|на\s+тему|по\s+теме|по)\s+(.{1,60})$/u)?.[1]?.trim() ?? "";
+      const lead = said.match(/(\S+?)[\s-]*квиз/u)?.[1] ?? "";
+      const found = theme ? QUIZ_THEMES.find(item => item.title === theme) : quizTheme(wish || lead);
+      const pool = found ? [...found.indices] : QUIZ.map((_, index) => index);
+      const record = {
+        kind: "quiz", phase: "play", host, players: [host], solo: Boolean(solo), left: shuffled(pool).slice(0, QUIZ_ROUNDS), n: 0, total: Math.min(QUIZ_ROUNDS, pool.length), score: {},
+        theme: found?.title ?? "", ...(wish && !found ? { note: `Темы «${wish.slice(0, 40)}» у меня нет — вопросы из всех. Есть темы: ${QUIZ_THEMES.map(item => item.title).join(", ")}.` } : {}),
+      };
       this.deal(record);
       return record;
     },
@@ -93,7 +102,7 @@ export function storyEngines({ btn, esc, pick, same }) {
         return { text: `🧠 <b>Квиз окончен</b>\n${body}\n\nОчки — только за этим столом: наград и рейтинга здесь нет.`, keyboard: [[btn("Ещё раз", "again")]] };
       }
       const [question, ...options] = QUIZ[record.q.i];
-      const head = `🧠 <b>Квиз</b> · вопрос ${record.n} из ${record.total}\n<b>${esc(question)}</b>`;
+      const head = `🧠 <b>Квиз${record.theme ? `: ${esc(record.theme)}` : ""}</b> · вопрос ${record.n} из ${record.total}${record.note && record.n === 1 ? `\n<i>${esc(record.note)}</i>` : ""}\n<b>${esc(question)}</b>`;
       if (record.closed) {
         const who = record.closed.by ? (record.solo ? "Верно!" : `Первый верный ответ: ${esc(record.closed.by.name)}.`) : record.solo ? "Мимо." : "Верного ответа никто не дал.";
         return { text: `${head}\n\n✅ ${esc(options[0])}\n${who}`, keyboard: [[btn(record.left.length ? "Дальше" : "Итоги", "next")]] };
@@ -105,7 +114,7 @@ export function storyEngines({ btn, esc, pick, same }) {
     },
     press(record, { verb, arg, user }) {
       if (verb === "again" && record.phase === "over") {
-        const fresh = this.open({ host: record.host, solo: record.solo });
+        const fresh = this.open({ host: record.host, solo: record.solo, theme: record.theme ?? "" });
         for (const key of Object.keys(record)) if (!["chat", "at"].includes(key)) delete record[key];
         Object.assign(record, fresh);
         return { changed: true };

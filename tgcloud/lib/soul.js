@@ -21,7 +21,7 @@ export const SOUL_PREFIXES = Object.freeze([
   "heart:style:", "heart:first:", "heart:last:",
   "heart:lists:", "heart:habits:", "heart:reminders:",
   "heart:chat:", "heart:quotes:", "heart:score:",
-  "heart:bond:", "heart:taught:",
+  "heart:bond:", "heart:taught:", "heart:tastes:",
 ]);
 const MAX_KEYS = 20_000;
 

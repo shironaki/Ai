@@ -41,6 +41,7 @@ import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.j
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { detectFact, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach } from "./taught.js";
+import { createTastes, parseTaste, readAnswer, readCasual, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
@@ -285,6 +286,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const DRAW_DAILY = Number.isFinite(Number(config.DRAW_DAILY_PER_PERSON)) ? Math.max(0, Number(config.DRAW_DAILY_PER_PERSON)) : 5;
   // Чему её научил хозяин словами и что из короткого она не узнала.
   const taught = createTaught({ store, now, random });
+  const tastes = createTastes({ store, now });
   const draw = createDraw({ fetchImpl, key: config.DRAW === false ? "" : (config.DRAW_KEY ?? extraKeys.cloudflare ?? ""), store, now, steps: config.DRAW_STEPS });
 
   /**
@@ -324,7 +326,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const items = (await memory.list(userId, { inGroup: !isPrivate })).slice(-10);
       const shared = inflight.get(`${chatId}:${userId}`);
       if (shared) shared.facts = items.length;
-      return items.length ? `Что известно о собеседнике:\n${items.map(item => `- ${item}`).join("\n")}` : "";
+      // Анкета «любимое» — те же правила места: названное в личке при всех не звучит.
+      const liked = LIKES ? await tastes.list(userId, { inGroup: !isPrivate }).catch(() => []) : [];
+      const lines = [...items, ...liked.map(item => `${item.title}: ${item.value}`)];
+      return lines.length ? `Что известно о собеседнике:\n${lines.map(item => `- ${item}`).join("\n")}` : "";
     },
     responseProfile: async ({ userId, chatId = null, isPrivate = true, prompt = "" }) => {
       const manner = inflight.get(`${chatId}:${userId}`)?.manner ?? await mannerFor(userId);
@@ -392,6 +397,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const CHAT_MEMORY = config.CHAT_MEMORY !== false;
   // Писать хозяину первой — утром и перед сном. Выключается и словом «не пиши первой».
   const GREET = config.GREET !== false;
+  /** Анкета «любимое»: помнит, что человек любит, и отвечает об этом сама. */
+  const LIKES = config.LIKES !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
   const chatlog = createChatLog({ store, now });
@@ -1781,6 +1788,103 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     } catch { /* нить подождёт */ }
   }
 
+  /** «Ваш любимый цвет», «твоя любимая еда»: притяжательное согласуется с названием. */
+  const genderOf = (title) => (/^любимая/u.test(title) ? 1 : /^любимое/u.test(title) ? 2 : /^любимые/u.test(title) ? 3 : 0);
+  const yourWord = (turn, title) => you(turn, ["ваш", "ваша", "ваше", "ваши"][genderOf(title)], ["твой", "твоя", "твоё", "твои"][genderOf(title)]);
+  const yours = (turn, title, { capital = false } = {}) => {
+    const word = yourWord(turn, title);
+    return `${capital ? `${word[0].toUpperCase()}${word.slice(1)}` : word} ${title}`;
+  };
+
+  /**
+   * Анкета «любимое»: «мой любимый цвет — синий», «какой мой любимый цвет?»,
+   * «что я люблю?», «анкета», «забудь анкету». Отвечает сама, без модели.
+   */
+  async function favourites(turn, prompt) {
+    const asked = LIKES ? parseTaste(prompt) : null;
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как анкету «любимое» — репетиция, ничего не пишу.");
+    const place = { inGroup: turn.inGroup };
+    const lost = "Запомнить не вышло: память сейчас недоступна.";
+    if (asked.set) {
+      const kind = tasteByKey(asked.set);
+      const saved = await tastes.set(turn.actorId, kind.key, asked.value, place);
+      if (!saved.ok) return say(turn, lost);
+      await tastes.rest(turn.chatId, turn.actorId);
+      if (saved.before && saved.before.toLowerCase() === saved.value.toLowerCase()) return say(turn, `Помню: ${yours(turn, kind.title)} — ${saved.value}.`);
+      return say(turn, saved.before ? `Запомнила: ${yours(turn, kind.title)} теперь — ${saved.value}. Раньше было «${saved.before}».` : `Запомнила: ${yours(turn, kind.title)} — ${saved.value}.`);
+    }
+    if (asked.get) {
+      const kind = tasteByKey(asked.get);
+      const value = await tastes.get(turn.actorId, kind.key, place);
+      if (value) return say(turn, `${yours(turn, kind.title, { capital: true })} — ${value}.`);
+      // В группе не повторяется сказанное в личке — и не выдаётся, что именно там сказано.
+      if (turn.inGroup && await tastes.get(turn.actorId, kind.key, { inGroup: false })) return say(turn, `Это ${you(turn, "вы говорили", "ты говорил(а)")} мне в личке — при всех не повторяю.`);
+      return say(turn, `Этого ${you(turn, "вы мне ещё не говорили. Скажите", "ты мне ещё не говорил(а). Скажи")}: «${["мой", "моя", "моё", "мои"][genderOf(kind.title)]} ${kind.title} — …» — и я запомню.`);
+    }
+    if (asked.list) {
+      const items = await tastes.list(turn.actorId, place);
+      if (!items.length) return say(turn, `Пока ничего: о любимом ${you(turn, "вы мне не рассказывали. Скажите", "ты мне не рассказывал(а). Скажи")} «анкета» — и я спрошу сама.`);
+      const left = TASTES.length - (await tastes.list(turn.actorId, { inGroup: false })).length;
+      return say(turn, `Что я знаю о ${you(turn, "вашем", "твоём")} любимом:\n${items.map(item => `• ${item.title.replace(/^любим\S+\s+/u, "")} — ${item.value}`).join("\n")}${left > 0 ? `\n\nЕщё не знаю: ${left}. Продолжить — «анкета».` : ""}`);
+    }
+    if (asked.start) {
+      const first = await tastes.next(turn.actorId);
+      if (!first) return say(turn, `Анкета заполнена: я знаю всё, о чём умею спрашивать. Поменять — «мой любимый цвет — …», посмотреть — «что я люблю».`);
+      if (!await tastes.ask(turn.chatId, turn.actorId, first.key)) return say(turn, lost);
+      return say(turn, `${you(turn, "Давайте. Я спрашиваю — вы отвечаете", "Давай. Я спрашиваю — ты отвечаешь")} парой слов. «Дальше» — пропустить вопрос, «хватит» — закончить.\n\n${you(turn, first.ask.vy, first.ask.ty)}`);
+    }
+    if (asked.drop) {
+      const kind = tasteByKey(asked.drop);
+      const dropped = await tastes.drop(turn.actorId, kind.key);
+      if (!dropped.ok) return say(turn, lost);
+      return say(turn, dropped.had ? `Забыла: ${yours(turn, kind.title)}.` : "Этого я и не знала.");
+    }
+    const cleared = await tastes.clear(turn.actorId);
+    if (!cleared.ok) return say(turn, lost);
+    await tastes.rest(turn.chatId, turn.actorId);
+    return say(turn, cleared.had ? `Анкета чистая: всё, что ${you(turn, "вы говорили", "ты говорил(а)")} о любимом, я забыла.` : "Анкета и так пустая.");
+  }
+
+  /**
+   * Ответ на её вопрос: из анкеты («Какой у вас любимый цвет?») или встречный
+   * («Синий. А ваш?»). Не похоже на ответ — фраза идёт обычным путём.
+   */
+  async function tasteAnswer(turn, prompt) {
+    if (!LIKES || turn.dry) return null;
+    const waiting = await tastes.asking(turn.chatId, turn.actorId);
+    if (!waiting) return null;
+    const answer = waiting.casual ? readCasual(prompt) : readAnswer(prompt);
+    // Фраза из словаря («привет», «скажи мяу») — реплика, а не ответ на вопрос.
+    const phrase = Boolean(answer?.value) && PHRASES && Boolean(book.match(prompt) || await taught.match(prompt).catch(() => null));
+    if (!answer || phrase) {
+      // Встречный вопрос ждёт только следующую реплику: не ответили сразу — значит, не ответили.
+      if (waiting.casual) await tastes.rest(turn.chatId, turn.actorId);
+      return null;
+    }
+    const kind = tasteByKey(waiting.kind);
+    if (answer.stop) {
+      await tastes.rest(turn.chatId, turn.actorId);
+      return say(turn, "Хорошо, остановимся. Продолжить — «анкета».");
+    }
+    let head = "Пропустим.";
+    const skipped = answer.skip ? [...waiting.skipped, kind.key] : waiting.skipped;
+    if (answer.value) {
+      const saved = await tastes.set(turn.actorId, kind.key, answer.value, { inGroup: turn.inGroup });
+      if (!saved.ok) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      head = `Запомнила: ${yours(turn, kind.title)} — ${saved.value}.`;
+      pulse.bump("ruled");
+    }
+    // Встречный вопрос — один: анкету он не начинает.
+    const following = waiting.casual ? null : await tastes.next(turn.actorId, { skipped });
+    if (!following) {
+      await tastes.rest(turn.chatId, turn.actorId);
+      return say(turn, waiting.casual ? head : `${head} На этом вопросы кончились. Посмотреть — «что я люблю».`);
+    }
+    await tastes.ask(turn.chatId, turn.actorId, following.key, { skipped });
+    return say(turn, `${head} ${you(turn, following.ask.vy, following.ask.ty)}`);
+  }
+
   /**
    * «Желай доброго утра в 7:30», «не пиши первой», «когда ты пишешь первой?» —
    * только хозяин и только в личке: писать первой она будет ему одному.
@@ -1928,7 +2032,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (way === "short") {
       const other = book.say(names, ctx, { avoid: String(last?.t ?? "") });
       if (other && other.length < text.length) text = other;
-    } else if ((way === "playful" || way === "chatty") && !parting && !text.includes("?") && random() < 0.3) {
+    }
+    // Спросили о её любимом — она помнит и чужое: «А ваш — зелёный, я помню».
+    // Не знает — спросит в ответ, и короткое слово следом запомнит.
+    let added = false;
+    const liked = LIKES && !serious ? tasteByTitle(names[0]) : null;
+    if (liked && !text.includes("?")) {
+      const known = await tastes.get(turn.actorId, liked.key, { inGroup: turn.inGroup }).catch(() => "");
+      if (known) { text = `${text} А ${yourWord(turn, liked.title)} — ${known}, я помню.`; added = true; }
+      else if (way !== "short" && random() < 0.5 && await tastes.ask(turn.chatId, turn.actorId, liked.key, { casual: true })) { text = `${text} А ${yourWord(turn, liked.title)}?`; added = true; }
+    }
+    if (!added && (way === "playful" || way === "chatty") && !parting && !text.includes("?") && random() < 0.3) {
       const tail = book.pick(way === "playful" ? "+настроение:игривое" : "+настроение:разговорчивое", ctx);
       if (tail) text = `${text} ${tail}`;
     }
@@ -3157,7 +3271,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
 
@@ -3170,6 +3284,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (guessed.won) pulse.bump("games");
         return ruled(guessed);
       }
+    }
+
+    // Она спросила «какой у вас любимый цвет?» — короткое слово в ответ и есть ответ.
+    if (!dry && !request) {
+      const answered = await tasteAnswer(turn, prompt);
+      if (answered) return ruled(answered);
     }
 
     // Забавы — до хода в игре и до всего остального: «обнять», настройка
@@ -3186,7 +3306,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt);
+    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки

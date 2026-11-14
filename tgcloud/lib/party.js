@@ -17,6 +17,7 @@ import { ACTIONS, lineFor, accusative } from "./rp.js";
 import { fold } from "./sources.js";
 import { safeName } from "./address.js";
 import { storyEngines } from "./tables.js";
+import { QUIZ_THEMES } from "./data/quiz.js";
 
 export const PARTY_PREFIX = "heart:party:";
 export const PARTY_KEY = (chatId, messageId) => `${PARTY_PREFIX}${chatId}:${messageId}`;
@@ -43,7 +44,7 @@ const NAMED = [
   ["bottle", "бутылочк[ауи]"],
   ["croc", "крокодил[а]?"],
   ["rps", "(?:камень[\\s,-]+ножницы[\\s,-]+бумаг[ау]|кнб|цу[\\s-]?е[\\s-]?фа)\\s+(?:вдвоем|на\\s+двоих|с\\s+кем[\\s-]?(?:нибудь|то)|друг\\s+с\\s+другом|кнопками)"],
-  ["quiz", "квиз(?:ик)?(?:\\s+на\\s+эрудицию)?|вопросы\\s+на\\s+эрудицию|викторин[ауы](?:\\s+(?:про|о|об|на\\s+тему|по\\s+теме|по)\\s+.{1,60})?"],
+  ["quiz", "(?:(?:аниме|кино|музыкальн[а-я]+|космическ[а-я]+|игров[а-я]+|исторический|географический|научный)[\\s-]*)?квиз(?:ик)?(?:\\s+на\\s+эрудицию|\\s+(?:про|о|об|на\\s+тему|по\\s+теме|по)\\s+.{1,60})?|вопросы\\s+на\\s+эрудицию|викторин[ауы](?:\\s+(?:про|о|об|на\\s+тему|по\\s+теме|по)\\s+.{1,60})?"],
   ["akin", "(?:угадай|отгадай)\\s+(?:мое\\s+)?животное|(?:угадай|отгадай)\\s+(?:кого|что)\\s+я\\s+загадал[а]?|акинатор[а]?|(?:20|двадцать)\\s+вопросов|данетк[иау]"],
   ["hide", "загадай\\s+(?:мне\\s+|нам\\s+)?животное|(?:я\\s+)?угадаю\\s+животное"],
   ["quest", "приключение|текстов(?:ое|ую)\\s+(?:приключение|игру)|текстовый\\s+квест|историю\\s+с\\s+выбором|маяк"],
@@ -396,6 +397,9 @@ export function createParty({
    * кнопками». В личке компании нет: там только крестики-нолики, с ней самой.
    */
   async function begin(turn, prompt, { say }) {
+    if (/^(?:а\s+)?(?:какие\s+)?(?:(?:есть|бывают)\s+)?темы\s+(?:у\s+)?(?:квиза|викторин[ыа]?)(?:\s+(?:есть|бывают))?$|^(?:квиз|викторина)\s*:?\s*темы$/u.test(fold(prompt).replace(/[.!?…]+$/u, "").trim())) {
+      return say(turn, `Темы квиза: ${QUIZ_THEMES.map(item => item.title).join(", ")}. Сказать так: «квиз про аниме». Без темы — вопросы из всех.`);
+    }
     const kind = parseParty(prompt);
     if (!kind) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как игру с кнопками — репетиция, стол не открываю.");
@@ -407,7 +411,7 @@ export function createParty({
     }
     if (!store?.available || !has("editMessageText")) return say(turn, "Игры с кнопками мне сейчас недоступны: хранилище не отвечает.");
     const host = { id: turn.actorId, name: safeName(turn.name) || "Игрок" };
-    const record = { ...ENGINE[kind].open({ host, solo: turn.isPrivate }), chat: turn.chatId, at: now() };
+    const record = { ...ENGINE[kind].open({ host, solo: turn.isPrivate, ask: prompt }), chat: turn.chatId, at: now() };
     const view = ENGINE[kind].view(record);
     const thread = turn.extra?.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {};
     let sent = null;

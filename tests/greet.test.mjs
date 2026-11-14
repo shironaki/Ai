@@ -42,7 +42,7 @@ test("утром и перед сном — по разу, в свой час, �
   await h.tick({});
   assert.equal(toOwner().length, 1);
   assert.ok(MORNING.some(line => toOwner()[0].text.startsWith(line.split("X")[0].slice(0, 12))), `утренняя строка из словаря: ${toOwner()[0].text}`);
-  assert.match(toOwner()[0].text, /хозяин/u);
+  assert.match(toOwner()[0].text, /хозяин/iu);
   assert.doesNotMatch(toOwner()[0].text, /[{}]/u, "переменные подставлены");
   await h.tick({});
   now += 30 * 60_000;
@@ -197,9 +197,9 @@ test("игривая поддразнит вдогонку — не всегда
     await h.onMessage(message(text, { id }), KEY);
     return last(id);
   };
-  const teased = await ask("какой твой любимый цвет", 0.1);
+  const teased = await ask("где ты живешь", 0.1);
   assert.ok(tails.some(tail => teased.endsWith(` ${tail}`)), `в ответ добавлена игривая строка: ${teased}`);
-  const calm = await ask("какой твой любимый цвет", 0.9);
+  const calm = await ask("где ты живешь", 0.9);
   assert.ok(!tails.some(tail => calm.endsWith(` ${tail}`)), "чаще — без добавки");
   const bye = await ask("пока", 0.1);
   assert.ok(!tails.some(tail => bye.endsWith(` ${tail}`)), "на прощание не дразнит");

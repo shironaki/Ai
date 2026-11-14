@@ -8,7 +8,7 @@ import { heart, message, group, reset, sdk, source, calls, toChat, last, reactio
 
 const { parseParty } = await import("../tgcloud/lib/party.js");
 const { BEASTS, beastNamed, beastsLeft, bestTrait, MAX_ASK, HIDE_ASKS, QUIZ_ROUNDS } = await import("../tgcloud/lib/tables.js");
-const { QUIZ } = await import("../tgcloud/lib/data/quiz.js");
+const { QUIZ, QUIZ_THEMES, quizTheme } = await import("../tgcloud/lib/data/quiz.js");
 const { TRAITS, ANIMALS } = await import("../tgcloud/lib/data/animals.js");
 const { QUESTS } = await import("../tgcloud/lib/data/quest.js");
 
@@ -45,6 +45,51 @@ test("данные квиза: вопросов хватает, ответы р�
     assert.ok(row[0].endsWith("?") && row[0].length <= 90, row[0]);
     for (const option of row.slice(1)) assert.ok(option.length >= 1 && option.length <= 28, `${row[0]} → ${option}`);
   }
+});
+
+test("темы квиза: в каждой хватает вопросов на партию, старые номера вопросов не сдвинулись, тема узнаётся по слову", () => {
+  assert.equal(QUIZ[0][0], "Какая река самая длинная в Европе?");
+  assert.equal(QUIZ[89][0], "Как называется детёныш лошади?", "начатая до обновления игра помнит вопросы по номерам");
+  assert.ok(QUIZ.length >= 170, `вопросов ${QUIZ.length}`);
+  for (const theme of QUIZ_THEMES) {
+    assert.ok(theme.indices.length >= QUIZ_ROUNDS, `${theme.title}: ${theme.indices.length}`);
+    for (const index of theme.indices) assert.ok(QUIZ[index], `${theme.title}: ${index}`);
+  }
+  const cases = { "аниме": "аниме", "манге": "аниме", "кино": "кино", "мультики": "кино", "игры": "игры", "видеоигры": "игры", "космос": "космос", "планеты": "космос", "животных": "животные", "историю": "история", "музыку": "музыка", "столицы": "география", "физику": "наука", "книги": "книги и искусство" };
+  for (const [word, title] of Object.entries(cases)) assert.equal(quizTheme(word)?.title, title, word);
+  for (const word of ["игре престолов", "динозавров", "поиграем", ""]) assert.equal(quizTheme(word), null, word);
+  for (const phrase of ["квиз про аниме", "аниме-квиз", "киноквиз", "сыграем в квиз по кино", "музыкальный квиз", "викторина про космос"]) assert.equal(parseParty(phrase), "quiz", phrase);
+});
+
+test("квиз по теме: вопросы только из неё, «ещё раз» тему помнит, незнакомая тема — честно из всех", async () => {
+  reset();
+  const h = heart();
+  const anime = new Set(QUIZ_THEMES.find(item => item.title === "аниме").indices.map(index => QUIZ[index][0]));
+  const started = await h.onMessage(message("давай квиз про аниме"), KEY);
+  assert.equal(started.kind, "quiz");
+  const id = started.messageId;
+  let table = toChat(5).at(-1);
+  assert.match(table.text, /^🧠 <b>Квиз: аниме<\/b> · вопрос 1 из 7/u);
+  for (let round = 1; round <= QUIZ_ROUNDS; round++) {
+    const row = asked(table.text);
+    assert.ok(anime.has(row[0]), `вопрос не из темы: ${row[0]}`);
+    await press(h, dataOf(table.reply_markup, row[1]), { id: 5, chat: 5, messageId: id });
+    await press(h, "next", { id: 5, chat: 5, messageId: id });
+    table = edits().at(-1);
+  }
+  assert.match(table.text, /Верных ответов: 7 из 7\./u);
+  await press(h, "again", { id: 5, chat: 5, messageId: id });
+  table = edits().at(-1);
+  assert.match(table.text, /^🧠 <b>Квиз: аниме<\/b> · вопрос 1 из 7/u);
+  assert.ok(anime.has(asked(table.text)[0]));
+
+  await h.onMessage(message("квиз про динозавров"), KEY);
+  table = toChat(5).at(-1);
+  assert.match(table.text, /^🧠 <b>Квиз<\/b> · вопрос 1 из 7\n<i>Темы «динозавров» у меня нет — вопросы из всех\. Есть темы: география, наука, [^<]*животные\.<\/i>\n<b>/u);
+
+  const themes = await h.onMessage(message("какие темы у квиза?"), KEY);
+  assert.equal(themes.ok, true);
+  assert.match(last(), /^Темы квиза: география, наука, книги и искусство, история, аниме, кино, игры, музыка, космос, животные\. Сказать так: «квиз про аниме»/u);
 });
 
 test("данные животных: у каждого свой набор признаков, имя узнаётся, а «летучая мышь» — не «мышь»", () => {
