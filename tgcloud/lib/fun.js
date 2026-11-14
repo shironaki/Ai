@@ -6,13 +6,17 @@
  * в Telegram. Сердце зовёт эти функции из своего порядка разбора и получает
  * либо результат, либо null — «это не моё, иди дальше».
  */
-import { parseAction, lineFor, selfLine, reactionFor, willingness, levelOf, listText, parseEmote, emoteLine, KIND_NAME } from "./rp.js";
+import { parseAction, lineFor, selfLine, reactionFor, willingness, levelOf, listText, parseEmote, emoteLine, KIND_NAME, dative, ACTIONS as RP_ACTIONS } from "./rp.js";
 import { parsePoll, pollFromModel } from "./polls.js";
 import { parseWhois, registeredText } from "./whois.js";
 import { safeName } from "./address.js";
 import { fold } from "./sources.js";
 import { pickSticker } from "./pictures.js";
 import { QUESTIONS } from "./data/party.js";
+import {
+  parseOwn, ownActionProblem, matchOwn, actionKeyOf, gifKeyOf, OWN_ACTIONS_MAX, OWN_GIFS_MAX,
+  parseBond, bondInfo, bondsOf, partnerOf, bondProblem, bondKeyboard, BONDS, BONDS_KEY, BOND_ASK_TTL_MS,
+} from "./chatown.js";
 
 export const CHAT_KEY = (chatId) => `heart:chat:${chatId}`;
 const DEFAULTS = Object.freeze({ rp: true, gifs: true, welcome: true, welcomeText: "", quietUntil: 0, tone: "" });
@@ -117,7 +121,9 @@ export function createFun({
   random = Math.random, now = () => Date.now(), owner = () => false, has = () => false,
   name = "Аи", say = async () => ({ ok: false }), react = async () => false, compose = async () => null,
   book = null, bond = null, voice = (turn, text) => text, likes = async () => true, bookCtx = () => ({}),
+  isMinor = async () => false,
 } = {}) {
+  const ACTION_TITLE = (key) => RP_ACTIONS.find(item => item.key === key)?.title ?? key;
   const pick = (list) => list[Math.min(list.length - 1, Math.floor(random() * list.length))];
   const thread = (turn) => (turn.extra?.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {});
 
@@ -247,8 +253,18 @@ export function createFun({
       return true;
     } catch { return false; }
   }
-  /** Гифка с подписью; не вышло — подпись словами. */
-  async function show(turn, category, html, { reply = false, gifs = true } = {}) {
+  /**
+   * Гифка с подписью; не вышло — подпись словами. `own` — свои гифки чата к
+   * этому действию: они идут вместо аниме и от «не люблю аниме» не зависят.
+   */
+  async function show(turn, category, html, { reply = false, gifs = true, own = null } = {}) {
+    if (Array.isArray(own) && own.length && has("sendAnimation")) {
+      try {
+        await api.sendAnimation({ chat_id: turn.chatId, animation: pick(own), caption: html, parse_mode: "HTML", ...(reply ? turn.extra : thread(turn)) });
+        turn.delivered = true;
+        return "gif";
+      } catch { /* своя гифка не ушла — дальше как обычно */ }
+    }
     if (gifs && category && sources && has("sendAnimation")) {
       const url = await sources.gesture(category).catch(() => null);
       if (url) {
@@ -329,13 +345,14 @@ export function createFun({
       const sent = await show(turn, emote.gif, emoteLine(emote, esc(turn.name || "Кто-то")), { gifs: chat.gifs && await likes(turn) });
       return sent ? { ok: true, action: "rp", kind: emote.key, emote: true, via: sent } : { ok: false, code: "send_failed" };
     }
-    if (!parsed) return null;
+    if (!parsed) return ownAction(turn, span ? String(prompt).replace(span, " ") : prompt, { self, addressed });
     const target = targetOf(turn, parsed, self);
     const third = target && !target.self ? target : null;
     // Между людьми: только изъявительное («обнял»), только с адресатом.
     if (!addressed && (parsed.asked || !third)) return null;
     if (turn.dry) return addressed ? say(turn, "Разобрала бы это как действие — репетиция, ничего не отправляю.") : null;
-    const chat = await chatSettings(turn.chatId);
+    const chat = turn.chat ?? await chatSettings(turn.chatId);
+    const ownGifs = chat.gifs ? chat.ownGifs?.[gifKeyOf(parsed.action)] : null;
     // Её попросили помолчать — молчит и в чужих действиях.
     if (!addressed && Number(chat.quietUntil) > now()) return { ignored: true, reason: "quiet" };
     if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
@@ -348,7 +365,7 @@ export function createFun({
       if (!(await underFlood(turn))) return { ignored: true, reason: "rp_flood" };
       pulse?.bump("rp");
       const html = String(third.id) === String(turn.actorId) ? selfLine(action, actor) : lineFor(action, actor, label(third), { tail: esc(tail), bName: esc(third.name) });
-      const sent = await show(turn, action.gif, html, { gifs: chat.gifs && await likes(turn) });
+      const sent = await show(turn, action.gif, html, { gifs: chat.gifs && await likes(turn), own: ownGifs });
       return sent ? { ok: true, action: "rp", kind: action.key, via: sent } : { ok: false, code: "send_failed" };
     }
 
@@ -371,7 +388,7 @@ export function createFun({
       }
       const object = third ?? { id: turn.actorId, name: turn.name };
       const html = `${lineFor(action, esc(name), label(object), { tail: esc(tail), bName: esc(object.name) })}${will.note ? `\n${esc(will.note)}` : ""}`;
-      const sent = await show(turn, action.gif, html, { reply: !third, gifs });
+      const sent = await show(turn, action.gif, html, { reply: !third, gifs, own: ownGifs });
       return sent ? { ok: true, action: "rp", kind: action.key, via: sent, by: "self" } : { ok: false, code: "send_failed" };
     }
 
@@ -395,6 +412,205 @@ export function createFun({
     if (sent === "text") await ownSticker(turn, reaction.mood);
     if (reaction.deed && policy) { try { await policy.recordDeed({ userId: turn.actorId, kind: reaction.deed }); } catch { /* шаг отношений подождёт */ } }
     return sent ? { ok: true, action: "rp", kind: action.key, via: sent, level: reaction.level } : { ok: false, code: "send_failed" };
+  }
+
+  // ── своё у чата: действия и гифки ───────────────────────────────────────
+  /**
+   * Своё действие чата: «угостить печенькой» ответом на сообщение или с
+   * @именем. Работает только в группе; без адресата — не действие, а слова.
+   */
+  async function ownAction(turn, text, { self = null, addressed = false } = {}) {
+    if (!turn.inGroup || turn.dry) return null;
+    // Без адресата своё действие не срабатывает — и в базу за ним ходить незачем.
+    const message = turn.message ?? {};
+    const pointed = Boolean(message.reply_to_message) || /@[A-Za-z0-9_]{3,32}/u.test(String(text)) || (message.entities ?? []).some(item => item?.type === "text_mention");
+    if (!pointed) return null;
+    const chat = turn.chat ?? await chatSettings(turn.chatId);
+    const parsed = matchOwn(text, chat.acts);
+    if (!parsed) return null;
+    if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
+    if (!addressed && Number(chat.quietUntil) > now()) return { ignored: true, reason: "quiet" };
+    const target = targetOf(turn, parsed, self);
+    if (!target) return null;
+    if (!(await underFlood(turn))) return { ignored: true, reason: "rp_flood" };
+    pulse?.bump("rp");
+    const actor = esc(turn.name || "Кто-то");
+    const { action, tail } = parsed;
+    const own = chat.gifs ? chat.ownGifs?.[gifKeyOf(action)] : null;
+    let html;
+    if (target.self) {
+      // Действие обращено к ней: строка та же, и короткое слово от неё.
+      const word = book?.pick("+реакция:своё", bookCtx(turn)) ?? "Ого. Такого со мной ещё не делали.";
+      html = `${lineFor(action, actor, esc(name), { tail: esc(tail), bName: esc(name) })}\n${esc(voice(turn, word))}`;
+    } else if (target.id != null && String(target.id) === String(turn.actorId)) html = selfLine(action, actor);
+    else html = lineFor(action, actor, label(target), { tail: esc(tail), bName: esc(target.name) });
+    const sent = await show(turn, "", html, { gifs: false, own, reply: Boolean(target.self) });
+    return sent ? { ok: true, action: "rp", kind: action.key, own: true, via: sent } : { ok: false, code: "send_failed" };
+  }
+
+  /** Слова админа: «новое действие: … — …», «наши действия», «это для обнять», «убери гифки для …». */
+  async function own(turn, prompt) {
+    const asked = parseOwn(prompt);
+    if (!asked) return null;
+    // «Это для …» — слова обычные: вне группы и без известного действия это не просьба.
+    if (!turn.inGroup) return asked.loose ? null : say(turn, "Свои действия и гифки заводятся в группе: там они и работают.");
+    const chat = turn.chat ?? await chatSettings(turn.chatId);
+    const acts = Array.isArray(chat.acts) ? chat.acts : [];
+    const shelf = chat.ownGifs && typeof chat.ownGifs === "object" ? chat.ownGifs : {};
+    const title = asked.gifFor ?? asked.gifDrop;
+    const hit = title ? actionKeyOf(title, acts) : null;
+    if (asked.loose && !hit) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как настройку своих действий чата — репетиция.");
+    if (asked.list) {
+      if (!acts.length) return say(turn, "Своих действий в этом чате пока нет. Добавить может админ: «новое действие: угостить печенькой — угощает печенькой».");
+      return say(turn, `Свои действия этого чата:\n${acts.map((item, index) => `${index + 1}. ${item.say.join(" / ")} — «${item.verb}»`).join("\n")}\n\nРаботают как остальные: ответом на сообщение или с @именем.`);
+    }
+    if (asked.gifList) {
+      const rows = Object.entries(shelf).filter(([, list]) => Array.isArray(list) && list.length);
+      if (!rows.length) return say(turn, "Своих гифок в этом чате пока нет. Админ может ответить на гифку словами «это для обнять» — и к этому действию пойдёт она.");
+      return say(turn, `Свои гифки этого чата:\n${rows.map(([key, list]) => `• ${key.startsWith("own:") ? key.slice(4) : ACTION_TITLE(key)} — ${list.length}`).join("\n")}\n\nУбрать — «убери гифки для обнять».`);
+    }
+    if (!(await canManage(turn))) return say(turn, "Своё в этом чате настраивают админы.");
+    if (asked.bad) return say(turn, asked.bad);
+    if (asked.add) {
+      if (acts.length >= OWN_ACTIONS_MAX) return say(turn, `Своих действий в чате уже ${OWN_ACTIONS_MAX} — это предел. Лишнее можно убрать: «убери действие …».`);
+      const problem = ownActionProblem(asked.add, acts);
+      if (problem) return say(turn, problem);
+      if (!await saveChat(turn.chatId, { acts: [...acts, asked.add] })) return say(turn, "Не запомнилось: хранилище не отвечает.");
+      const sample = lineFor({ key: "own", emoji: asked.add.emoji || "✨", verb: asked.add.verb, tail: "", how: asked.add.how }, turn.name || "Вася", "Маша", { bName: "Маша" });
+      return say(turn, `Запомнила действие «${asked.add.say[0]}». Выглядеть будет так: ${sample}\nРаботает как остальные — ответом на сообщение или с @именем.`);
+    }
+    if (asked.drop != null) {
+      const index = typeof asked.drop === "number" ? asked.drop - 1 : acts.findIndex(item => item.say.includes(asked.drop));
+      if (!(index >= 0 && index < acts.length)) return say(turn, "Такого своего действия в этом чате нет. Список — «наши действия».");
+      const gone = acts[index];
+      const { [`own:${gone.say[0]}`]: _dropped, ...rest } = shelf;
+      if (!await saveChat(turn.chatId, { acts: acts.filter((_, at) => at !== index), ownGifs: rest })) return say(turn, "Не убралось: хранилище не отвечает.");
+      return say(turn, `Убрала действие «${gone.say[0]}».`);
+    }
+    if (!hit) return say(turn, "Такого действия я не знаю. Мои — «какие есть рп», свои этого чата — «наши действия».");
+    if (asked.gifDrop) {
+      if (!shelf[hit.key]?.length) return say(turn, `Своих гифок для «${hit.title}» здесь и не было.`);
+      const { [hit.key]: _gone, ...rest } = shelf;
+      if (!await saveChat(turn.chatId, { ownGifs: rest })) return say(turn, "Не убралось: хранилище не отвечает.");
+      return say(turn, `Убрала свои гифки для «${hit.title}». Дальше — как раньше.`);
+    }
+    const clip = turn.message?.reply_to_message?.animation;
+    if (!clip?.file_id) return say(turn, "Ответьте этими словами на саму гифку — её и запомню.");
+    const before = Array.isArray(shelf[hit.key]) ? shelf[hit.key] : [];
+    const list = [...before.filter(id => id !== clip.file_id), clip.file_id].slice(-OWN_GIFS_MAX);
+    if (!await saveChat(turn.chatId, { ownGifs: { ...shelf, [hit.key]: list } })) return say(turn, "Не запомнилось: хранилище не отвечает.");
+    return say(turn, `Запомнила: к «${hit.title}» в этом чате теперь идёт эта гифка${list.length > 1 ? ` (своих к нему — ${list.length}, выбираю случайную)` : ""}. Убрать — «убери гифки для ${hit.title}».`);
+  }
+
+  // ── связи: пары, браки, названая семья, лучшие друзья ───────────────────
+  const loadBonds = async (chatId) => {
+    const saved = store?.available ? await store.get(BONDS_KEY(chatId)).catch(() => null) : null;
+    return { bonds: Array.isArray(saved?.bonds) ? saved.bonds : [], asks: (Array.isArray(saved?.asks) ? saved.asks : []).filter(item => now() - Number(item.at) < BOND_ASK_TTL_MS) };
+  };
+  const saveBonds = (chatId, data) => store.set(BONDS_KEY(chatId), { bonds: data.bonds.slice(-300), asks: data.asks.slice(-30), at: now() });
+  const bondLine = (item) => `${bondInfo(item.kind).emoji} ${esc(item.an)} и ${esc(item.bn)} — ${bondInfo(item.kind).title}`;
+
+  /**
+   * «Пара», «брак», «семья», «лучшие друзья» — ответом на сообщение человека.
+   * Связь появляется только после его собственного «Да». Наград нет.
+   */
+  async function bonds(turn, prompt, { self = null } = {}) {
+    const asked = turn.inGroup ? parseBond(prompt) : null;
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как слова о парах чата — репетиция.");
+    if (!store?.available) return say(turn, "Пары я сейчас не веду: хранилище не отвечает.");
+    const data = await loadBonds(turn.chatId);
+    if (asked.list) {
+      if (!data.bonds.length) return say(turn, "В этом чате пока никто ни с кем. Начать — ответить на сообщение человека: «Аи, пара», «Аи, брак», «Аи, семья», «Аи, лучшие друзья».");
+      const rows = BONDS.flatMap(info => data.bonds.filter(item => item.kind === info.key).map(bondLine));
+      return post(turn, `Кто с кем в этом чате:\n${rows.slice(0, 40).join("\n")}${rows.length > 40 ? `\n…и ещё ${rows.length - 40}` : ""}`, { reply: true }).then(ok => (ok ? { ok: true, action: "bonds" } : { ok: false, code: "send_failed" }));
+    }
+    const mineBonds = bondsOf(data.bonds, turn.actorId);
+    if (asked.mine) {
+      if (!mineBonds.length) return say(turn, "Здесь вы пока ни с кем. Ответьте на сообщение человека: «Аи, пара» — и я спрошу его.");
+      return say(turn, `Ваши связи в этом чате:\n${mineBonds.map(item => `${bondInfo(item.kind).emoji} ${bondInfo(item.kind).title} — ${partnerOf(item, turn.actorId).name}`).join("\n")}`);
+    }
+    const mention = (String(prompt).match(/@([A-Za-z0-9_]{3,32})/u)?.[1] ?? "").toLowerCase() || null;
+    const target = targetOf(turn, { mention }, self);
+    if (asked.leave) {
+      const kinds = mineBonds.filter(item => item.kind === asked.leave);
+      const chosen = target?.id != null ? kinds.find(item => String(partnerOf(item, turn.actorId).id) === String(target.id)) : kinds.length === 1 ? kinds[0] : null;
+      if (!kinds.length) return say(turn, "Такой связи у вас здесь нет.");
+      if (!chosen) return say(turn, "С кем именно? Ответьте этими словами на сообщение человека.");
+      data.bonds = data.bonds.filter(item => item !== chosen);
+      if (!await saveBonds(turn.chatId, data)) return say(turn, "Не записалось: хранилище не отвечает.");
+      pulse?.bump("rp");
+      return post(turn, `💔 ${esc(turn.name)} и ${esc(partnerOf(chosen, turn.actorId).name)} — больше не ${bondInfo(chosen.kind).title}.`, { reply: true }).then(ok => (ok ? { ok: true, action: "bond_end", kind: chosen.kind } : { ok: false, code: "send_failed" }));
+    }
+    // Предложение.
+    const info = bondInfo(asked.propose);
+    if (target?.self) return say(turn, "Со мной так не выйдет: я в этих списках не участвую. А между вами — пожалуйста.");
+    if (!target) return say(turn, "Кому? Ответьте этими словами на сообщение человека — и я спрошу его.");
+    if (target.id == null) return say(turn, "По одному @имени я человека не узнаю: ответьте этими словами на его сообщение.");
+    if (target.bot) return say(turn, "С ботом связь не оформить.");
+    if (info.romantic && (await isMinor(turn.actorId) || await isMinor(target.id))) return say(turn, "Пары и браки — для взрослых. Могу записать лучшими друзьями: «Аи, лучшие друзья».");
+    const from = { id: turn.actorId, name: turn.name || "Кто-то" }, to = { id: target.id, name: target.name || "кто-то" };
+    const problem = bondProblem(data.bonds, info.key, from, to);
+    if (problem) return say(turn, problem);
+    const id = `${now().toString(36)}${Math.floor(random() * 1296).toString(36)}`;
+    data.asks = [...data.asks.filter(item => !(String(item.from) === String(from.id) && item.kind === info.key)), { id, kind: info.key, from: from.id, fn: from.name, to: to.id, tn: to.name, at: now() }];
+    if (!await saveBonds(turn.chatId, data)) return say(turn, "Не записалось: хранилище не отвечает.");
+    pulse?.bump("rp");
+    // «Предлагает Маше»: имя склоняется только там, где нельзя ошибиться.
+    const bent = dative(to.name);
+    try {
+      await api.sendMessage({
+        chat_id: turn.chatId, parse_mode: "HTML", reply_markup: bondKeyboard(id), ...thread(turn),
+        text: `${info.emoji} ${esc(from.name)} предлагает ${bent !== to.name ? label(to).replace(esc(to.name), esc(bent)) : label(to)} ${info.ask}.\n${esc(to.name)}, слово за вами — ответить можете только вы. Десять минут.`,
+      });
+      turn.delivered = true;
+      return { ok: true, action: "bond_ask", kind: info.key, id };
+    } catch { return { ok: false, code: "send_failed" }; }
+  }
+
+  /** Нажатие «Да» или «Нет» под предложением: считается только нажатие того, кого спросили. */
+  async function pressBond(query) {
+    const [, verdict, id] = String(query?.data ?? "").split(":");
+    const chatId = query?.message?.chat?.id, userId = query?.from?.id;
+    const toast = async (text) => { try { await api.answerCallbackQuery({ callback_query_id: query.id, ...(text ? { text } : {}) }); } catch { /* не страшно */ } };
+    if (chatId == null || userId == null || !store?.available) { await toast(); return { ok: true, ignored: true }; }
+    const data = await loadBonds(chatId);
+    const ask = data.asks.find(item => item.id === id);
+    const edit = async (text) => {
+      try { await api.editMessageText({ chat_id: chatId, message_id: query.message.message_id, text, parse_mode: "HTML" }); }
+      catch { try { await api.sendMessage({ chat_id: chatId, text, parse_mode: "HTML" }); } catch { /* слова не обязательны */ } }
+    };
+    if (!ask) {
+      await toast("Это предложение уже не действует.");
+      try { await api.editMessageReplyMarkup({ chat_id: chatId, message_id: query.message.message_id }); } catch { /* кнопки останутся — не беда */ }
+      return { ok: true, ignored: true, reason: "expired" };
+    }
+    const info = bondInfo(ask.kind);
+    // Тот, кто предлагал, может передумать — своим «Нет».
+    if (String(userId) === String(ask.from) && verdict === "n") {
+      data.asks = data.asks.filter(item => item !== ask);
+      await saveBonds(chatId, data);
+      await toast("Отозвано.");
+      await edit(`${info.emoji} ${esc(ask.fn)} передумывает. Предложение снято.`);
+      return { ok: true, action: "bond_withdrawn" };
+    }
+    if (String(userId) !== String(ask.to)) { await toast(`Спрашивают не вас. Ответить может только тот, кому предложили: ${ask.tn}.`); return { ok: true, ignored: true, reason: "foreign_button" }; }
+    data.asks = data.asks.filter(item => item !== ask);
+    if (verdict !== "y") {
+      await saveBonds(chatId, data);
+      await toast("Хорошо.");
+      await edit(`${info.emoji} ${esc(ask.tn)} говорит «нет». ${esc(ask.fn)}, не в этот раз.`);
+      return { ok: true, action: "bond_no", kind: ask.kind };
+    }
+    // Пока ждали ответа, всё могло измениться: проверяется заново.
+    const problem = bondProblem(data.bonds, ask.kind, { id: ask.from, name: ask.fn }, { id: ask.to, name: ask.tn });
+    if (problem) { await saveBonds(chatId, data); await toast("Уже не получится."); await edit(`${info.emoji} Не вышло: пока ждали ответа, всё изменилось.`); return { ok: true, ignored: true, reason: "stale" }; }
+    data.bonds = [...data.bonds, { kind: ask.kind, a: ask.from, an: ask.fn, b: ask.to, bn: ask.tn, at: now() }];
+    if (!await saveBonds(chatId, data)) { await toast("Не записалось: хранилище не отвечает."); return { ok: false, code: "storage_unavailable" }; }
+    await toast("Да!");
+    await edit(`${info.emoji} ${esc(ask.fn)} и ${esc(ask.tn)} — ${info.done}. Поздравляю.`);
+    return { ok: true, action: "bond", kind: ask.kind };
   }
 
   // ── приветствие новичков ────────────────────────────────────────────────
@@ -535,5 +751,5 @@ export function createFun({
     return say(turn, lines.join("\n"));
   }
 
-  return Object.freeze({ roleplay, welcome, poll, whois, chatSetting, chatSettings, saveChat, canManage, hush, quiet, question, questionFor });
+  return Object.freeze({ roleplay, welcome, poll, whois, chatSetting, chatSettings, saveChat, canManage, hush, quiet, question, questionFor, own, bonds, pressBond });
 }

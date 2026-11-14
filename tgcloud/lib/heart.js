@@ -412,6 +412,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     book: PHRASES ? book : null, bond: PHRASES ? bond : null,
     voice: (turn, text) => voiced(turn, text),
     likes: (turn) => likesGifs(turn),
+    isMinor: async (userId) => (await personal.settings(userId).catch(() => null))?.minor === true,
     bookCtx: (turn, vars) => voiceCtx(turn, vars),
     say: (turn, text, options) => say(turn, text, options),
     react: (turn, emoji) => react(turn, emoji),
@@ -647,13 +648,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (MANNERS) {
       const current = accentInfo(accentOf(turn.manner?.settings, { owner: owner(turn.actorId) })).title;
       lines.push("", `Сейчас мой режим общения — ${current}. Не ${you(turn, "хотите", "хочешь")} ли его изменить? ${you(turn, "Спросите", "Спроси")} «какие есть режимы» — покажу.`);
-      // «Да», «хочу», «какие?» следом — и она покажет выбор. Только в личке: в группе «да» — чужое слово.
-      if (turn.isPrivate && !turn.dry && store.available) {
-        const before = await store.get(OFFER_KEY(turn.actorId)).catch(() => null);
-        await store.set(OFFER_KEY(turn.actorId), { asked: before?.asked ?? [], fact: { kind: "manner" }, at: now() }).catch(() => false);
-      }
     }
-    return say(turn, lines.join("\n"));
+    const sent = await say(turn, lines.join("\n"));
+    // «Да», «хочу», «какие?» следом — и она покажет выбор. Только в личке (в группе «да» — чужое
+    // слово) и только самым следующим сообщением: номер приветствия запоминается, и «да» через
+    // реплику — уже ответ на что-то другое.
+    if (MANNERS && turn.isPrivate && !turn.dry && store.available && sent?.ok && Number.isInteger(sent.messageId)) {
+      const before = await store.get(OFFER_KEY(turn.actorId)).catch(() => null);
+      await store.set(OFFER_KEY(turn.actorId), { asked: before?.asked ?? [], fact: { kind: "manner" }, mid: sent.messageId + Math.max(0, (sent.parts ?? 1) - 1), at: now() }).catch(() => false);
+    }
+    return sent;
   }
 
   /**
@@ -1446,7 +1450,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (more && fact.kind !== "manner") return null;
     await store.set(OFFER_KEY(turn.actorId), { asked: saved.asked ?? [], at: now() });
     if (fact.kind === "manner") {
-      if (!MANNERS) return null;
+      // Между приветствием и этим «да» было что-то ещё — значит, «да» не о режиме.
+      if (!MANNERS || Number(turn.message?.message_id) !== Number(saved.mid) + 1) return null;
       return accept ? askManner(turn) : say(turn, `Хорошо, остаюсь как есть. ${you(turn, "Передумаете", "Передумаешь")} — «какие есть режимы».`);
     }
     if (!accept) return say(turn, "Хорошо, не записываю — и больше об этом не спрошу.");
@@ -3243,7 +3248,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Память чата: последние реплики группы — для «что я пропустил?» и фона.
     if (CHAT_MEMORY && inGroup && !dry && message.message_id != null && message.from?.is_bot !== true && !turn.heard) {
       try {
-        if ((await fun.chatSettings(chat.id)).log !== false) await chatlog.note(chat.id, { id: message.message_id, userId: actorId, name: turn.name, text });
+        // Настройки чата прочитаны — пригодятся и дальше: своим действиям чата второй раз в базу не идти.
+        turn.chat = await fun.chatSettings(chat.id);
+        if (turn.chat.log !== false) await chatlog.note(chat.id, { id: message.message_id, userId: actorId, name: turn.name, text });
       } catch { /* журнал не важнее разговора */ }
     }
 
@@ -3448,7 +3455,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
       if (acted) return ruled(acted);
     }
-    const viaFun = await dailyThings(turn, prompt) ?? await fun.hush(turn, prompt) ?? await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt)
+    const viaFun = await dailyThings(turn, prompt) ?? await fun.hush(turn, prompt) ?? await fun.own(turn, prompt) ?? await fun.bonds(turn, prompt, { self })
+      ?? await fun.chatSetting(turn, prompt) ?? await fun.poll(turn, prompt)
       ?? await fun.whois(turn, prompt, { self }) ?? await party.begin(turn, prompt, { say })
       ?? await fun.question(turn, prompt, { day: dayOf(now()) });
     if (viaFun) return ruled(viaFun);
@@ -3652,13 +3660,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   async function onCallback(query, ctx = {}) {
     const data = String(query?.data ?? "");
-    const route = data.startsWith("p:") ? "party" : data.startsWith("a:") ? "again" : data.startsWith("m:") ? "manner" : "none";
+    const route = data.startsWith("p:") ? "party" : data.startsWith("a:") ? "again" : data.startsWith("m:") ? "manner" : data.startsWith("r:") ? "bond" : "none";
     if (ctx?.testRun === true) return { ok: true, route, side_effects: "none" };
     try {
       let result = { ignored: true };
       if (route === "party") result = await party.press(query);
       else if (route === "again") result = await pressAgain(query);
       else if (route === "manner") result = await pressManner(query);
+      else if (route === "bond") result = await fun.pressBond(query);
       else if (query?.id != null && has("answerCallbackQuery")) {
         try { await api.answerCallbackQuery({ callback_query_id: query.id }); } catch { /* устаревшее нажатие — не поломка */ }
       }

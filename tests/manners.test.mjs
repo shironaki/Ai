@@ -182,23 +182,49 @@ test("режим общения — в приветствии: /start назыв
   }
 
   // Короткое «да», «хочу», «какие?» сразу после приветствия — тот же выбор; «нет» — остаётся как есть.
+  // «Сразу» — буквально: следующим сообщением в личке (в Telegram его номер на единицу больше).
+  const next = (text) => message(text, { extra: { message_id: sdk().sent.length + 1 } });
   for (const said of ["да", "хочу", "какие?", "Давай", "покажи", "а какие есть?"]) {
     reset();
     const fresh = heart(ON, { now: () => NOON, random: () => 0 });
     await fresh.onMessage(message("/start"), KEY);
-    const done = await fresh.onMessage(message(said), KEY);
+    const done = await fresh.onMessage(next(said), KEY);
     assert.equal(done.action, "manner_ask", said);
     assert.match(toChat(5).at(-1).text, /Сейчас я — обычная\./u);
     // Предложение одно: второе «да» — уже не о режиме.
     sdk().fetchQueue.push(says("Что — да?"));
-    await fresh.onMessage(message("да"), KEY);
+    await fresh.onMessage(next("да"), KEY);
     assert.equal(last(), "Что — да?", said);
   }
   reset();
   const calm = heart(ON, { now: () => NOON, random: () => 0 });
   await calm.onMessage(message("/start"), KEY);
-  await calm.onMessage(message("нет"), KEY);
+  await calm.onMessage(next("нет"), KEY);
   assert.equal(last(), "Хорошо, остаюсь как есть. Передумаете — «какие есть режимы».");
+
+  // Между приветствием и «да» было что-то ещё — «да» уже не о режиме: её могли спросить о другом.
+  for (const said of ["да", "давай", "покажи", "хочу", "нет"]) {
+    reset();
+    const busy = heart(ON, { now: () => NOON, random: () => 0 });
+    await busy.onMessage(message("/start"), KEY);
+    sdk().fetchQueue.push(says("Могу рассказать сказку про дождь. Рассказать?"));
+    await busy.onMessage(next("придумай две строчки про осенний дождь и фонари"), KEY);
+    sdk().fetchQueue.push(says("Тогда слушайте."));
+    const done = await busy.onMessage(next(said), KEY);
+    assert.notEqual(done.action, "manner_ask", said);
+    assert.equal(last(), "Тогда слушайте.", said);
+  }
+  // Чужие слова сразу после приветствия — не согласие: выбор не открывается.
+  for (const said of ["привет", "ахаха", "спасибо", "не скажу", "а что ты умеешь?", "давай поговорим о погоде и о том, как прошёл день", "хочу узнать, как у тебя дела сегодня вечером",
+    "какие у тебя планы на вечер, расскажи подробно", "покажи, пожалуйста, как выглядит северное сияние зимой"]) {
+    reset();
+    const other = heart(ON, { now: () => NOON, random: () => 0 });
+    await other.onMessage(message("/start"), KEY);
+    sdk().fetchQueue.push(says("Ответ модели."));
+    const done = await other.onMessage(next(said), KEY);
+    assert.notEqual(done?.action, "manner_ask", said);
+    assert.ok(!toChat(5).at(-1)?.reply_markup, said);
+  }
 
   // Предложение живёт недолго: «хочу» через час — обычные слова, а не выбор режима.
   reset();
@@ -207,7 +233,7 @@ test("режим общения — в приветствии: /start назыв
   await late.onMessage(message("/start"), KEY);
   at += 3_600_000;
   sdk().fetchQueue.push(says("Чего именно?"));
-  await late.onMessage(message("хочу"), KEY);
+  await late.onMessage(next("хочу"), KEY);
   assert.equal(last(), "Чего именно?");
 
   // Хозяину — его режим; в группе приветствие то же, но «да» там — чужое слово.
