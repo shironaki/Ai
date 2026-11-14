@@ -13,7 +13,7 @@ const { encodeEnvelope, decodeEnvelope, matchPhrase, createAbilities } = await i
 const SECRET = "0123456789abcdef0123456789abcdef";
 const CONFIG = {
   // Словарь, манеры и память чата — в своих тестах: здесь проверяется путь к модели.
-  PHRASES: false, MANNERS: false, CHAT_MEMORY: false,
+  PHRASES: false, MANNERS: false, CHAT_MEMORY: false, GREET: false,
   OWNER_TG_ID: 7,
   TIME_ZONE: "Europe/Moscow",
   AI_MODEL: "openai/gpt-oss-20b",

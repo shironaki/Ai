@@ -35,6 +35,9 @@ export const BASE = {
   PHRASES: false,
   MANNERS: false,
   CHAT_MEMORY: false,
+  // Писать хозяину первой — тоже в своём тесте: иначе «доброе утро» приходило бы
+  // в чужие проверки в зависимости от часа, в который их запустили.
+  GREET: false,
 };
 
 export const sdk = () => globalThis.__sdkStub;

@@ -16,7 +16,7 @@ import { createLessons } from "./lessons.js";
 import { createPulse } from "./pulse.js";
 import { createQueue } from "./queue.js";
 import { parseCommand, mentions, stripMention, vocative, isReplyToMe, safeName } from "./address.js";
-import { calendarDate, localHour, localClock, nowLine, dayLine, localParts, validTimeZone } from "./time.js";
+import { calendarDate, localHour, localClock, nowLine, dayLine, localParts, validTimeZone, zonedEpoch } from "./time.js";
 import { createReminders, parseReminder, REPEAT_LABEL } from "./reminders.js";
 import { createSources, detectSource, factQuery, parseTarget, knownCity } from "./sources.js";
 import { calculate } from "./calc.js";
@@ -32,7 +32,8 @@ import { parseWhois } from "./whois.js";
 import { createMedia, parseMedia, captions, creditOf } from "./media.js";
 import { createPhrasebook, partOfDay, fill } from "./phrasebook.js";
 import { accentOf, accentInfo, parseAccent, randomAccent, keyboard as accentKeyboard, garnish, likesAnime } from "./accents.js";
-import { moodOf as feelingNow } from "./mood.js";
+import { moodOf as feelingNow, behaviourOf } from "./mood.js";
+import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.js";
 import { createBond, parseJoke } from "./bond.js";
 import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS } from "./chatlog.js";
 import { levelOf } from "./rp.js";
@@ -357,6 +358,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const hint = accent === "mix" ? "С этим собеседником твоя манера — всё сразу: можно назвать его семпаем, мурлыкнуть, смутиться." : accentInfo(accent).hint;
         if (hint) frames.push(hint);
       }
+      // Настроение меняет поведение: ворчливая — короче, игривая — шутит чаще.
+      const way = inflight.get(`${chatId}:${userId}`)?.way ?? "";
+      if (way) frames.push(way);
       if (PHRASES && TASTE.test(prompt)) frames.push(...book.pool("+канон"));
       return {
         tier: promptTier(prompt),
@@ -386,6 +390,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const MANNERS = config.MANNERS !== false;
   const PHRASES = config.PHRASES !== false;
   const CHAT_MEMORY = config.CHAT_MEMORY !== false;
+  // Писать хозяину первой — утром и перед сном. Выключается и словом «не пиши первой».
+  const GREET = config.GREET !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
   const chatlog = createChatLog({ store, now });
@@ -1776,6 +1782,73 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /**
+   * «Желай доброго утра в 7:30», «не пиши первой», «когда ты пишешь первой?» —
+   * только хозяин и только в личке: писать первой она будет ему одному.
+   */
+  async function firstWords(turn, prompt) {
+    const asked = GREET && owner(turn.actorId) && turn.isPrivate ? parseGreet(prompt) : null;
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как настройку «писать первой» — репетиция.");
+    const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
+    const describe = (set) => [set.morningOff ? "по утрам не пишу" : `доброе утро — в ${set.morning}`, set.nightOff ? "перед сном не пишу" : `спокойной ночи — в ${set.night}`].join(", ");
+    if (asked.show) return say(turn, `Пишу вам первой так: ${describe(greetSettings(saved))}. Изменить — «желай доброго утра в 7:30», «желай спокойной ночи в 0:30», «не пиши первой».`);
+    const next = { ...saved };
+    if (asked.set) { next[asked.set] = asked.time; next[`${asked.set}Off`] = false; }
+    for (const slot of asked.off === "all" ? ["morning", "night"] : asked.off ? [asked.off] : []) next[`${slot}Off`] = true;
+    for (const slot of asked.on === "all" ? ["morning", "night"] : asked.on ? [asked.on] : []) next[`${slot}Off`] = false;
+    const kept = await store.set(GREET_KEY, { ...next, at: now() }).then(() => true).catch(() => false);
+    if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+    if (asked.off === "all") return say(turn, "Хорошо, хозяин: первой писать не буду. Передумаете — «пиши первой».");
+    return say(turn, `Хорошо, хозяин: ${describe(greetSettings(next))}.`);
+  }
+
+  /**
+   * Написать хозяину первой: утром и перед сном, в его час, словами из
+   * словаря. Опоздание больше двух часов — значит, сегодня без этого.
+   */
+  async function greetOwner() {
+    if (!GREET || !PHRASES || !(OWNER > 0) || !store.available) return;
+    const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
+    const set = greetSettings(saved);
+    if (set.morningOff && set.nightOff) return;
+    const manner = await mannerFor(OWNER, { dry: true }).catch(() => null);
+    const zone = zoneOf({ manner });
+    const at = now();
+    const parts = localParts(at, zone);
+    for (const [slot, mark, said, pool] of [["morning", "m", "mAt", "+утро хозяину"], ["night", "n", "nAt", "+ночь хозяину"]]) {
+      if (set[`${slot}Off`]) continue;
+      const [hh, mm] = set[slot].split(":").map(Number);
+      const today = zonedEpoch({ y: parts.y, m: parts.m, d: parts.d, hh, mm }, zone);
+      // Час мог наступить и вчера: «спокойной ночи в 23:00» уместно и в половине первого.
+      const due = [today, today - DAY].find(moment => at >= moment && at < moment + GREET_WINDOW_MS);
+      if (due == null) continue;
+      const key = calendarDate(due, zone);
+      if (set[mark] === key) continue;
+      const fresh = (await store.get(GREET_KEY).catch(() => null)) ?? {};
+      await store.set(GREET_KEY, { ...fresh, [mark]: key, at });
+      // Сам уже сказал это — или с утра уже разговаривали: повторять незачем.
+      if (at - (Number(saved[said]) || 0) < 12 * 3_600_000) continue;
+      if (slot === "morning") {
+        const lastSeen = await store.get(`heart:last:${OWNER}`).catch(() => null);
+        if (Number(lastSeen?.at) >= due - 4 * 3_600_000) continue;
+      }
+      const turn = { actorId: OWNER, chatId: OWNER, isPrivate: true, manner, seen: null, extra: {} };
+      const feel = await feelFor(turn);
+      const vars = { "настроение": feel.mood };
+      vars["причина"] = book.pick(`+причина:${feel.reason}`, voiceCtx(turn, vars)) ?? "";
+      const text = book.pick(pool, voiceCtx(turn, vars));
+      if (!text) continue;
+      try { await api.sendMessage({ chat_id: OWNER, text: voiced(turn, text) }); } catch { continue; }
+      pulse.bump("greeted");
+      // Сказанное остаётся в переписке: ответит хозяин — модель увидит, на что.
+      try {
+        const history = await store.memory.load({ userId: OWNER, chatId: OWNER });
+        await store.memory.save({ userId: OWNER, chatId: OWNER, messages: [...(Array.isArray(history) ? history : []), { role: "assistant", content: text.slice(0, 600) }].slice(-12) });
+      } catch { /* нить подождёт */ }
+    }
+  }
+
+  /**
    * Словарь из разговора. Хозяин в личке: «на «…» отвечай «…»», «мои фразы»,
    * «забудь фразу 2», «что ты не поняла?». Остальным — честное «учит хозяин».
    */
@@ -1847,6 +1920,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const last = await store.get(`heart:said:${turn.chatId}`).catch(() => null);
     let text = book.say(names, ctx, { avoid: String(last?.t ?? "") });
     if (!text) return null;
+    const serious = names.some(name => name.startsWith("!"));
+    const parting = names.includes("пока") || names.includes("спокойной ночи");
+    // Настроение меняет речь: ворчливая и сонная выбирает что покороче,
+    // игривая — поддразнит вдогонку, разговорчивая — спросит в ответ.
+    const way = serious ? "plain" : behaviourOf(feel.mood).kind;
+    if (way === "short") {
+      const other = book.say(names, ctx, { avoid: String(last?.t ?? "") });
+      if (other && other.length < text.length) text = other;
+    } else if ((way === "playful" || way === "chatty") && !parting && !text.includes("?") && random() < 0.3) {
+      const tail = book.pick(way === "playful" ? "+настроение:игривое" : "+настроение:разговорчивое", ctx);
+      if (tail) text = `${text} ${tail}`;
+    }
     await store.set(`heart:said:${turn.chatId}`, { t: text, at: now() }).catch(() => false);
     // К приветствию — своё: долгая разлука, круглая дата знакомства, общая шутка.
     if (names[0] === "привет" || names[0] === "доброе утро" || names[0] === "добрый вечер" || names[0] === "я вернулся") {
@@ -1861,7 +1946,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     pulse.bump("phrased");
     // Серьёзная тема (название с «!») звучит как написана: без «мяу» и без шуток вдогонку.
-    const sent = await say(turn, names.some(name => name.startsWith("!")) ? text : voiced(turn, text));
+    const sent = await say(turn, serious ? text : voiced(turn, text));
+    // Хозяин сам сказал «доброе утро» или «спокойной ночи» — первой сегодня писать уже незачем.
+    if (sent.ok && GREET && owner(turn.actorId) && turn.isPrivate) {
+      const mark = names.includes("доброе утро") ? "mAt" : names.includes("спокойной ночи") ? "nAt" : "";
+      if (mark) await store.get(GREET_KEY).then(saved => store.set(GREET_KEY, { ...(saved ?? {}), [mark]: now() })).catch(() => false);
+    }
     if (sent.ok) await keepThread(turn, prompt, text);
     return { ...sent, action: "phrase", topics: names };
   }
@@ -2486,13 +2576,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!deferred) await typing(turn);
     const context = dry ? { note: "", lessons: [] } : await contextFor(turn, prompt, { lateMs });
     const key = `${chatId}:${actorId}`;
-    const shared = { manner: turn.manner, facts: 0, mood: "" };
+    const shared = { manner: turn.manner, facts: 0, mood: "", way: "" };
     if (!dry && !plain && PHRASES) {
       // То же настроение, что она назвала бы словами, — и его причина.
       try {
         const feel = await feelFor(turn);
         const why = book.pick(`+причина:${feel.reason}`, voiceCtx(turn, { "дней": days(Math.max(1, Number(turn.seen?.gapDays) || 1)) }));
         shared.mood = `${feel.mood}${why ? ` — ${why}` : ""}`;
+        shared.way = behaviourOf(feel.mood).hint;
       } catch { /* без причины — старое настроение */ }
     }
     if (!dry && !plain && CHAT_MEMORY) {
@@ -2646,6 +2737,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     // Напоминания звонят при любом пробуждении: от будильника или от сообщения.
     try { await ring(); } catch { /* следующее пробуждение повторит */ }
+    try { await greetOwner(); } catch { /* доброе утро подождёт до завтра */ }
     if (!selfReports) return;
     if (now() - digestCheckedAt > 10 * 60_000) {
       digestCheckedAt = now();
@@ -3094,7 +3186,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt);
+    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
