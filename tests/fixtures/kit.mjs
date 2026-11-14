@@ -57,6 +57,7 @@ export function reset() {
   for (const name of Object.keys(state.failing)) delete state.failing[name];
   delete state.me;
   delete state.whispers;
+  delete state.duringSend;
 }
 
 export const KEY = { env: { AI_PROVIDER_KEY: "test-provider-key" } };

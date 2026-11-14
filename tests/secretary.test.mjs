@@ -92,21 +92,34 @@ test("подключение: хозяину — слова один раз; ч�
   assert.deepEqual({ action: done.action, reply: done.reply }, { action: "secretary_connected", reply: true });
   assert.equal(toOwner().length, before + 1);
   assert.match(toOwner().at(-1).text, /^Вижу подключение к вашему аккаунту.*Пока я в них молчу и ничего не записываю\. Скажете «отвечай за меня»/su);
+  assert.match(toOwner().at(-1).text, /Что я при этом храню: имя человека, время и первые слова его последнего письма — только пока отвечаю за вас.*Модели эти письма не показываю и никуда не передаю\./su);
   assert.doesNotMatch(toOwner().at(-1).text, /Права отвечать вы мне не дали/u);
   assert.deepEqual({ id: state().conn.id, name: state().conn.name, reply: state().conn.reply }, { id: CONN, name: "Али", reply: true });
   // Telegram шлёт то же событие при правке: ничего не изменилось — она молчит.
   await h.onBusinessConnection(connection(), KEY);
   assert.equal(toOwner().length, before + 1);
-  // Право отвечать забрали — говорит.
+  // Право отвечать забрали — говорит, и коротко: подключение то же, изменилось одно.
   await h.onBusinessConnection(connection({ reply: false }), KEY);
-  assert.match(toOwner().at(-1).text, /Права отвечать вы мне не дали: смогу только записывать, кто писал/u);
+  assert.match(toOwner().at(-1).text, /^Права отвечать в ваших чатах у меня больше нет: пока вас нет, смогу только записывать, кто писал\./u);
   await h.onMessage(own("секретарь"), KEY);
   assert.match(last(OWNER), /подключена, но отвечать мне не разрешено/u);
-  // Сняли подключение.
+  // Вернули — тоже говорит; сама отвечать не начинает.
+  await h.onBusinessConnection(connection(), KEY);
+  assert.match(toOwner().at(-1).text, /^Теперь мне разрешено отвечать в ваших чатах\. Сама не начну — только после слов «отвечай за меня»\.$/u);
+  assert.equal(state().away.on, false);
+  // Сняли другое подключение, не её: это не новость, своё она не теряет.
+  const told = toOwner().length;
+  await h.onBusinessConnection(connection({ id: "conn-old", enabled: false }), KEY);
+  assert.equal(toOwner().length, told);
+  assert.equal(state().conn.id, CONN);
+  // Сняли её подключение.
   const off = await h.onBusinessConnection(connection({ enabled: false }), KEY);
   assert.equal(off.action, "secretary_disconnected");
-  assert.match(toOwner().at(-1).text, /^Подключение к вашему аккаунту снято/u);
+  assert.match(toOwner().at(-1).text, /^Подключение к вашему аккаунту снято: ваших чатов я больше не вижу и за вас не отвечаю\.$/u);
   assert.equal(state().conn, null);
+  // Сняли ещё раз — молчит.
+  await h.onBusinessConnection(connection({ enabled: false }), KEY);
+  assert.equal(toOwner().length, told + 1);
 
   // Чужой человек подключил её к себе: один раз — отказ; его письма не читаются и не хранятся.
   const stranger = await h.onBusinessConnection(connection({ id: "conn-x", user: 777, name: "Некто" }), KEY);
@@ -176,6 +189,10 @@ test("отлучка: одному человеку — одно уведомл�
   assert.deepEqual(await h.onBusinessMessage(letter("бип", { id: 506, name: "Робот", at: now, extra: { from: { id: 506, first_name: "Робот", is_bot: true } } }), KEY), { ignored: true, reason: "bot" });
   assert.equal((await h.onBusinessMessage(letter("старое письмо", { id: 507, name: "Оля", at: now - 40 * 60_000 }), KEY)).action, "secretary_noted");
   assert.equal(business(505).length + business(506).length + business(507).length, 0);
+  // Служебный чат Telegram с кодом входа: ни ответа, ни записи — код у неё не лежит.
+  assert.deepEqual(await h.onBusinessMessage(letter("Login code: 54321. Do not give this code to anyone.", { id: 777000, name: "Telegram", at: now }), KEY), { ignored: true, reason: "service" });
+  assert.equal(business(777000).length, 0);
+  assert.ok(!sdk().kv.get(SECRETARY_KEY).includes("54321"));
   // Группа с тем же подключением (так не бывает, но вдруг) — мимо.
   assert.deepEqual(await h.onBusinessMessage({ ...letter("в группе", { id: -77 }), chat: { id: -77, type: "supergroup" } }, KEY), { ignored: true });
 
@@ -193,6 +210,17 @@ test("отлучка: одному человеку — одно уведомл�
   assert.equal(state().away.on, true);
   await h.onMessage(own("секретарь"), KEY);
   assert.match(last(OWNER), /Сейчас отвечаю за вас до 18:00: писали — 5 человек\..*Людям я говорю: «Здравствуйте/su);
+
+  // «Управление ботом» в чате с Машей: Telegram открывает личку с ней ссылкой /start bizChat<номер>.
+  await h.onMessage(own("/start bizChat501"), KEY);
+  assert.match(last(OWNER), /^Секретарь: к вашему аккаунту я подключена\.\n.*\nВ том чате \(Маша\): за эту отлучку — 3 сообщения; я один раз ответила, что вы не на связи\.$/su);
+  await h.onMessage(own("/start bizChat504"), KEY);
+  assert.match(last(OWNER), /В том чате \(Петя\): за эту отлучку — 2 сообщения; я один раз ответила/u);
+  await h.onMessage(own("/start bizChat999"), KEY);
+  assert.match(last(OWNER), /В том чате за эту отлучку мне ничего не приходило — и я там ничего не писала\.$/u);
+  // Чужому такая ссылка — обычное приветствие.
+  await h.onMessage(message("/start bizChat501"), KEY);
+  assert.match(last(), /^Аи\. Я рядом\./u);
 
   // «Я тут» — конец отлучки: список отдан и стёрт; дальше в чатах снова тишина.
   await h.onMessage(own("я тут"), KEY);
@@ -291,9 +319,8 @@ test("без права отвечать — только записывает; 
   await h.onMessage(own("кто мне писал?"), KEY);
   assert.match(last(OWNER), /• Рома — 1 сообщение, 12:00: «ау»\nНикому не отвечала\. Не вышло ответить — 1: Telegram отказал, проверьте права подключения\.$/u);
   // Второе письмо того же человека — второй попытки нет: не долбить Telegram.
-  const tries = calls("sendMessage").length;
   assert.equal((await h.onBusinessMessage(letter("ау?", { id: 520, name: "Рома", at: now }), KEY)).action, "secretary_noted");
-  assert.equal(business(520).length, 0);
+  assert.equal(business(520).length, 0, "Telegram уже принимает, а второго ответа всё равно нет");
   await h.onMessage(own("я тут"), KEY);
 
   // Тридцать ответов за час — и пауза: похоже на рассылку или на двух секретарей друг против друга.
@@ -395,4 +422,193 @@ test("секретарь — только хозяину и только в ли
   await off.onMessage(own("отвечай за меня"), KEY);
   assert.equal(last(OWNER), "Секретаря у меня нет.");
   assert.equal(sdk().kv.has(SECRETARY_KEY), false);
+
+  // Выключили настройкой посреди отлучки: чужие письма лежать не остаются — список хозяину, и стёрто.
+  reset();
+  const on = heart(ON, { now: () => NOON });
+  await on.onBusinessConnection(connection(), KEY);
+  await on.onMessage(own("отвечай за меня"), KEY);
+  await on.onBusinessMessage(letter("напиши, когда освободишься", { id: 530, name: "Брат" }), KEY);
+  assert.equal(state().people.length, 1);
+  const later = heart({ ...ON, SECRETARY: false }, { now: () => NOON + 60_000 });
+  await later.tick({ ...KEY, now: NOON + 60_000 });
+  assert.match(toOwner().at(-1).text, /^Секретарь выключен в настройках: за вас я больше не отвечаю\.\n\nПока вас не было \(с 12:00\), писали — 1 человек:\n• Брат — 1 сообщение, 12:00: «напиши, когда освободишься»/u);
+  assert.deepEqual({ on: state().away.on, people: state().people }, { on: false, people: [] });
+  assert.ok(![...sdk().kv.values()].some(value => String(value).includes("освободишься")), "выдержка из чужого письма нигде не осталась");
+  // Второй удар будильника — тишина.
+  const told = toOwner().length;
+  await later.tick({ ...KEY, now: NOON + 120_000 });
+  assert.equal(toOwner().length, told);
+});
+
+test("разные люди пишут разом — в списке все, каждому один ответ; срок, увиденный тремя письмами, кончается один раз", async () => {
+  reset();
+  let clock = NOON;
+  const h = heart(ON, { now: () => clock });
+  await h.onBusinessConnection(connection(), KEY);
+  await h.onMessage(own("отвечай за меня на 2 часа"), KEY);
+  // Восемь человек в одну и ту же секунду: каждое письмо читает одно и то же состояние.
+  const ids = [601, 602, 603, 604, 605, 606, 607, 608];
+  const results = await Promise.all(ids.map((id, index) => h.onBusinessMessage(letter(`письмо номер ${index + 1}`, { id, name: `Гость${index + 1}` }), KEY)));
+  assert.deepEqual(results.map(item => item.action), ids.map(() => "secretary_notice"));
+  assert.deepEqual(state().people.map(item => item.id).sort(), ids, "ни одно письмо не затёрто соседним");
+  assert.ok(state().people.every(item => item.n === 1 && item.told === true && item.failed === false));
+  assert.equal(state().sent.n, ids.length, "счёт ответов за час тоже не потерян");
+  for (const id of ids) assert.equal(business(id).length, 1, `гостю ${id} — один ответ`);
+  // И вперемешку: трое пишут по два письма разом — у каждого счёт 2, ответ один.
+  await Promise.all([611, 612, 613, 611, 612, 613].map(id => h.onBusinessMessage(letter("ещё письмо", { id, name: `Друг${id}` }), KEY)));
+  for (const id of [611, 612, 613]) {
+    assert.equal(state().people.find(item => item.id === id).n, 2);
+    assert.equal(business(id).length, 1);
+  }
+  assert.equal(state().people.length, 11);
+  await h.onMessage(own("кто мне писал?"), KEY);
+  assert.match(last(OWNER), /писали — 11 человек:/u);
+  assert.match(last(OWNER), /Каждому я один раз сказала, что вы не на связи\.$/u);
+
+  // Срок вышел, будильник ещё не звонил — и три письма приходят разом. «Срок вышел» — одно.
+  clock = NOON + 2 * 3_600_000 + 5_000;
+  const before = toOwner().length;
+  const late = await Promise.all([621, 622, 623].map(id => h.onBusinessMessage(letter("вы тут?", { id, at: clock }), KEY)));
+  assert.deepEqual(late, [621, 622, 623].map(() => ({ ignored: true, reason: "not_away" })));
+  const ended = toOwner().slice(before);
+  assert.equal(ended.length, 1, "хозяину — одно письмо о конце срока, а не три");
+  assert.match(ended[0].text, /^Срок вышел: за вас я больше не отвечаю\.\n\nПока вас не было \(с 12:00\), писали — 11 человек:/u);
+  assert.equal(state().away.on, false);
+  assert.deepEqual(state().people, []);
+  for (const id of [621, 622, 623]) assert.equal(business(id).length, 0);
+  // И будильник следом молчит.
+  await h.tick({ ...KEY, now: clock + 60_000 });
+  assert.equal(toOwner().filter(item => /Срок вышел/u.test(item.text)).length, 1);
+});
+
+test("посреди отлучки: сняли подключение — список не пропадает; хозяин вернулся посреди ответа — человек в списке есть", async () => {
+  reset();
+  let clock = NOON;
+  const h = heart(ON, { now: () => clock });
+  await h.onBusinessConnection(connection(), KEY);
+  await h.onMessage(own("отвечай за меня"), KEY);
+  await h.onBusinessMessage(letter("перезвони, как сможешь", { id: 701, name: "Отец" }), KEY);
+  assert.equal(business(701).length, 1);
+  const since = state().away.since;
+  assert.ok(sdk().kv.has(toldKey(since, 701)));
+  // Подключение снято в настройках Telegram, пока она отвечала: кто писал — хозяин узнаёт тут же.
+  await h.onBusinessConnection(connection({ enabled: false }), KEY);
+  assert.match(toOwner().at(-1).text, /^Подключение к вашему аккаунту снято: ваших чатов я больше не вижу и за вас не отвечаю\.\n\nПока вас не было \(с 12:00\), писали — 1 человек:\n• Отец — 1 сообщение, 12:00: «перезвони, как сможешь»/u);
+  assert.deepEqual({ conn: state().conn, on: state().away.on, people: state().people }, { conn: null, on: false, people: [] });
+  assert.ok(!sdk().kv.has(toldKey(since, 701)), "отметка «уже сказано» убрана");
+  assert.ok(![...sdk().kv.values()].some(value => String(value).includes("перезвони")), "чужое письмо нигде не осталось");
+
+  // Снова подключена, снова отлучка. Письмо пришло, ответ уходит — и в эту секунду хозяин пишет «я тут».
+  clock = NOON + 3_600_000;
+  await h.onBusinessConnection(connection(), KEY);
+  await h.onMessage(own("отвечай за меня"), KEY);
+  let back = null;
+  sdk().duringSend = async (params) => {
+    if (!params.business_connection_id || back) return;
+    back = h.onMessage(own("я тут"), KEY);
+    await back;
+  };
+  const done = await h.onBusinessMessage(letter("ты где?", { id: 702, name: "Сестра", at: clock }), KEY);
+  delete sdk().duringSend;
+  assert.equal(done.action, "secretary_notice");
+  const welcome = toOwner().find(item => /^С возвращением, хозяин/u.test(item.text) && /Сестра/u.test(item.text));
+  assert.ok(welcome, "человек, которому она как раз отвечала, в списке у хозяина есть");
+  assert.match(welcome.text, /писали — 1 человек:\n• Сестра — 1 сообщение, 13:00: «ты где\?»/u);
+  assert.equal(state().away.on, false);
+  assert.deepEqual(state().people, [], "после возвращения список не воскресает");
+
+  // Хозяин вернулся раньше, чем письмо успело записаться, — она не отвечает вовсе.
+  clock = NOON + 2 * 3_600_000;
+  await h.onMessage(own("отвечай за меня"), KEY);
+  await h.onMessage(own("я тут"), KEY);
+  const quiet = await h.onBusinessMessage(letter("и ещё вопрос", { id: 703, at: clock }), KEY);
+  assert.deepEqual(quiet, { ignored: true, reason: "not_away" });
+  assert.equal(business(703).length, 0);
+});
+
+test("срок продлён в ту же секунду, когда он вышел: отлучка не обрывается, письмо — обычное", async () => {
+  reset();
+  let clock = NOON;
+  const h = heart(ON, { now: () => clock });
+  await h.onBusinessConnection(connection(), KEY);
+  await h.onMessage(own("отвечай за меня на 1 час"), KEY);
+  clock = NOON + 3_600_000 + 1_000;
+  // Будильник читает состояние с вышедшим сроком — и ровно в этот миг хозяин срок продлевает.
+  // Кончать отлучку по прочитанному раньше нельзя: решает то, что лежит в базе сейчас.
+  const { db } = await import("./fixtures/sdk-stub.mjs");
+  const read = db.get;
+  let reads = 0;
+  db.get = async (query, params = {}) => {
+    const row = await read(query, params);
+    if (params[":key"] === SECRETARY_KEY && (reads += 1) === 1) await h.onMessage(own("отвечай за меня на 2 часа"), KEY);
+    return row;
+  };
+  const before = toOwner().length;
+  try { await h.tick({ ...KEY, now: clock }); } finally { db.get = read; }
+  assert.ok(reads >= 2, "будильник дошёл до секретаря");
+  const said = toOwner().slice(before).map(item => item.text);
+  assert.equal(said.filter(text => /Срок вышел/u.test(text)).length, 0, "продлённую отлучку будильник не обрывает");
+  assert.equal(said.filter(text => /^Хорошо, хозяин: до 15:00 отвечаю за вас/u.test(text)).length, 1);
+  assert.equal(state().away.on, true);
+  assert.equal(state().away.until, clock + 2 * 3_600_000);
+
+  // То же с письмом: оно видит вышедший срок, а хозяин его как раз продлил, — письмо обычное.
+  clock = NOON + 3 * 3_600_000 + 2_000;
+  reads = 0;
+  db.get = async (query, params = {}) => {
+    const row = await read(query, params);
+    if (params[":key"] === SECRETARY_KEY && (reads += 1) === 1) await h.onMessage(own("отвечай за меня на 30 минут"), KEY);
+    return row;
+  };
+  let done = null;
+  try { done = await h.onBusinessMessage(letter("можно вопрос?", { id: 801, at: clock }), KEY); } finally { db.get = read; }
+  assert.equal(done.action, "secretary_notice");
+  assert.equal(business(801).length, 1);
+  assert.equal(toOwner().filter(item => /Срок вышел/u.test(item.text)).length, 0);
+  assert.equal(state().people.length, 1);
+});
+
+test("письма валом после простоя: сорок пять разом — помнит сорок и число остальных; длинный список уходит частями и целиком", async () => {
+  reset();
+  let clock = NOON;
+  const h = heart(ON, { now: () => clock });
+  await h.onBusinessConnection(connection(), KEY);
+  await h.onMessage(own("отвечай за меня на 1 час"), KEY);
+  // Платформа простояла полчаса, и Telegram отдаёт накопившееся разом. Письма старые — на них она не отвечает.
+  clock = NOON + 30 * 60_000;
+  const ids = Array.from({ length: 45 }, (_, index) => 900 + index);
+  const nameOf = (id) => `Собеседник с длинным именем номер ${id}`;
+  const long = "очень длинное письмо ".repeat(12);
+  const results = await Promise.all(ids.map(id => h.onBusinessMessage(letter(`${long}${id}`, { id, name: nameOf(id), at: NOON + 60_000 }), KEY)));
+  assert.ok(results.every(item => item.action === "secretary_noted"), "каждое письмо записано");
+  assert.equal(state().people.length, 40, "список — на сорок человек");
+  assert.equal(state().more, 5, "о вытесненных помнит число");
+  for (const id of ids) assert.equal(business(id).length, 0);
+  // «Кто мне писал?» — все сорок, частями: одним сообщением столько не уходит.
+  let before = toOwner().length;
+  await h.onMessage(own("кто мне писал?"), KEY);
+  const asked = toOwner().slice(before).map(item => item.text);
+  assert.ok(asked.length > 1 && asked.every(text => text.length <= 4096));
+  assert.match(asked[0], /^Пока вас не было \(с 12:00\), писали — 45 человек:/u);
+  assert.equal(ids.filter(id => asked.join("\n").includes(`• ${nameOf(id)} — 1 сообщение`)).length, 40);
+  assert.match(asked.join("\n"), /Ещё 5 человек писали до них: список у меня на 40 человек, тех я уже не помню — смотрите в самих чатах\.\nНикому не отвечала\. Остальным не стала:/u);
+
+  // Срок вышел, а Telegram в эту минуту не принимает: список не теряется — уходит с очередью вестей, тоже целиком.
+  clock = NOON + 3_600_000 + 1_000;
+  before = toOwner().length;
+  sdk().failing.sendMessage = Object.assign(new Error("Bad Gateway"), { code: 502 });
+  await h.tick({ ...KEY, now: clock });
+  assert.equal(toOwner().length, before);
+  assert.equal(state().away.on, false);
+  assert.deepEqual(state().people, [], "у неё список стёрт");
+  delete sdk().failing.sendMessage;
+  for (let minute = 2; minute <= 12 && !toOwner().slice(before).some(item => /Ещё 5 человек писали до них/u.test(item.text)); minute += 2) {
+    clock += 2 * 60_000;
+    await h.tick({ ...KEY, now: clock });
+  }
+  const late = toOwner().slice(before).map(item => item.text).join("\n");
+  assert.match(late, /Срок вышел: за вас я больше не отвечаю\.\n\nПока вас не было \(с 12:00\), писали — 45 человек:/u);
+  assert.equal(ids.filter(id => late.includes(`• ${nameOf(id)} — 1 сообщение`)).length, 40, "ни одна строка списка не пропала");
+  assert.match(late, /Ещё 5 человек писали до них/u);
 });

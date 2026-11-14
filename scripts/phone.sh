@@ -409,14 +409,30 @@ main() {
     elif grep -q "TGCLOUD_TOKEN" "$DEPLOY_LOG" 2>/dev/null; then echo " Причина: платформа не приняла токен публикации."
     fi
   }
+  # Каких событий нет в подписке бота, хотя обработчик для них опубликован.
+  WEBHOOK_MISSING=""
   webhook_check() {
-    local out
+    local out words file name
+    WEBHOOK_MISSING=""
     out="$(tg webhook 2>&1)"
     # Адрес вебхука в журнал не пишется.
     printf '%s\n' "$out" | grep -v -i "url"
     if printf '%s' "$out" | grep -q "OUT OF SYNC"; then
       echo "Вебхук не совпал с обработчиками — чиню."
-      tg webhook sync 2>&1 | grep -v -i "url"
+      out="$(tg webhook sync 2>&1)"
+      printf '%s\n' "$out" | grep -v -i "url"
+    fi
+    # Подписка: событие каждого обработчика должно быть в списке «allowed updates».
+    # Строки такой в ответе нет — проверять нечего, и тревоги нет.
+    words="$(printf '%s\n' "$out" | sed "s/$(printf '\033')\[[0-9;]*m//g" | sed -n 's/^[[:space:]]*allowed updates:[[:space:]]*//p' | head -n 1 | tr ',' ' ')"
+    if [ -n "$words" ]; then
+      for file in "$REPO"/tgcloud/handlers/*.js; do
+        [ -f "$file" ] || continue
+        name="$(basename "$file" .js)"
+        case "$name" in _*) continue ;; esac
+        case " $(printf '%s' "$words" | tr -s '[:space:]' ' ') " in *" $name "*) ;; *) WEBHOOK_MISSING="$WEBHOOK_MISSING $name" ;; esac
+      done
+      [ -z "$WEBHOOK_MISSING" ] || echo "В подписке бота нет событий:$WEBHOOK_MISSING"
     fi
     return 0
   }
@@ -474,6 +490,10 @@ main() {
     local warn=""
     step "схема базы" tg migrate --yes || warn="схема базы не применилась"
     step "вебхук" webhook_check || true
+    if [ -n "$WEBHOOK_MISSING" ]; then
+      log "⚠ Бот не подписан на события:$WEBHOOK_MISSING — то, что на них держится (кнопки, секретарь), работать не будет. Пришлите эту строку в чат разработки."
+      tell_owner "⚠️ Сборка $build опубликована, но бот не подписан на события:$WEBHOOK_MISSING. То, что на них держится (кнопки, секретарь), работать не будет. Перешлите эту строку в чат разработки."
+    fi
     if step "пробуждение" wake_new_build; then :; else [ -z "$warn" ] && warn="пробуждение не подтвердилось"; fi
     restore
     if ! snapshot "$head"; then

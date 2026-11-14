@@ -30,6 +30,11 @@ export const OWNER_BUSY_MS = 15 * 60_000;
 /** Письмо дошло с опозданием больше этого — отвечать на него уже невпопад. */
 export const STALE_MS = 15 * 60_000;
 export const EXCERPT_MAX = 120;
+/**
+ * Служебные чаты самого Telegram (уведомления, коды входа): им не отвечают, и
+ * их письма не записываются — код входа не должен лежать у неё даже минуту.
+ */
+export const SERVICE_CHATS = Object.freeze([777000, 42777]);
 
 const clean = (text) => String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/[«»"“”]/gu, "").replace(/\s+/gu, " ").trim().replace(/[.!…]+$/u, "").trim();
 
@@ -148,7 +153,7 @@ export function noticeRussian({ name = "", until = "", words = "" } = {}) {
 
 /** Пустое состояние: подключения нет, отлучки нет, никто не писал. */
 export function blank() {
-  return { conn: null, away: { on: false, since: 0, until: 0, words: "" }, people: [], own: {}, sent: { from: 0, n: 0 } };
+  return { conn: null, away: { on: false, since: 0, until: 0, words: "" }, people: [], more: 0, own: {}, sent: { from: 0, n: 0 } };
 }
 /** Состояние из базы → полное: чего нет — как в пустом. */
 export function stateOf(saved) {
@@ -158,6 +163,8 @@ export function stateOf(saved) {
     conn: saved.conn && typeof saved.conn === "object" && saved.conn.id ? saved.conn : null,
     away: { ...base.away, ...(saved.away && typeof saved.away === "object" ? saved.away : {}) },
     people: Array.isArray(saved.people) ? saved.people.filter(item => item && item.id != null) : [],
+    // Сколько человек список уже вытеснил: он на PEOPLE_MAX, а писать могут и больше.
+    more: Math.max(0, Math.round(Number(saved.more) || 0)),
     own: saved.own && typeof saved.own === "object" ? saved.own : {},
     sent: { ...base.sent, ...(saved.sent && typeof saved.sent === "object" ? saved.sent : {}) },
   };

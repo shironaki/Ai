@@ -115,6 +115,81 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
 
   const compareSetGuarded = (key, before, next) => compareSet(key, before, next);
 
+  /** Пауза в миллисекундах; где таймеров нет — без паузы. */
+  const pause = (ms) => (typeof setTimeout === "function" && ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve());
+
+  /**
+   * Правка поверх самого свежего значения. `change(value)` получает то, что
+   * лежит сейчас (или null), и возвращает новое; null — «править нечего».
+   *
+   * Пишется одним условным запросом — «замени, только если там всё ещё то, что
+   * я читала». База выполняет его целиком, поэтому из двух одновременных правок
+   * проходит одна, а вторая повторяется уже поверх первой: ничья запись не
+   * затирается. У `compareSet` между чтением и записью есть щель в один запрос;
+   * здесь её нет.
+   *
+   * Возвращает true, если правка легла. `change` может быть вызвана несколько
+   * раз — она не должна ничего делать, кроме как считать новое значение.
+   */
+  async function update(key, change, { tries = 16 } = {}) {
+    if (!has || typeof change !== "function") return false;
+    const name = String(key);
+    const read = () => db.get("SELECT value FROM kv_state WHERE key = :key", { ":key": name });
+    let seen;
+    let cycle = 0;
+    for (let attempt = 0; attempt < tries; attempt += 1) {
+      // Не прошло — кто-то пишет в ту же секунду. Разойтись с ним на случайное время:
+      // окно растёт вдвое с каждой неудачей и меряется тем, сколько длится одна попытка
+      // здесь, — тогда и сорок одновременных правок расходятся, а две почти не ждут.
+      if (attempt > 0) await pause(Math.random() * Math.min(1500, cycle * 2 ** attempt));
+      // Время — настоящее: `now` в тестах стоит на месте.
+      const started = Date.now();
+      let before = null;
+      let next;
+      try {
+        const row = await read();
+        before = row?.value == null ? null : String(row.value);
+        next = change(before == null ? null : JSON.parse(before));
+      } catch { return false; }
+      if (next == null) return false;
+      const text = JSON.stringify(next);
+      // Значение не менялось, а условная запись всё равно не прошла: база сравнивает
+      // не так, как ожидалось. Пишем по-старому — редкая гонка лучше правки, которая
+      // не ложится никогда.
+      if (attempt > 0 && before === seen) return set(name, next);
+      seen = before;
+      try {
+        const result = before == null
+          ? await db.run(
+            "INSERT INTO kv_state (key, value, updated_at) VALUES (:key, :value, :at) ON CONFLICT(key) DO NOTHING",
+            { ":key": name, ":value": text, ":at": now() },
+          )
+          : await db.run(
+            "UPDATE kv_state SET value = :value, updated_at = :at WHERE key = :key AND value = :before",
+            { ":key": name, ":value": text, ":at": now(), ":before": before },
+          );
+        if (typeof result?.rowsAffected === "number") {
+          if (result.rowsAffected > 0) return true;
+        } else {
+          // База не сказала, сколько строк тронула: смотрим, что лежит. Две одинаковые
+          // правки так не различить (обе увидят «своё») — разные не теряются и здесь.
+          const row = await read();
+          if (row?.value === text) return true;
+        }
+      } catch {
+        // Условный запрос не выполнился вовсе — пишем по-старому.
+        return set(name, next);
+      }
+      cycle = Math.max(2, Date.now() - started);
+    }
+    // Столько раз подряд опередили. Свою правку всё равно кладём — поверх того, что лежит
+    // сейчас: потерять её наверняка хуже, чем, может быть, задеть соседнюю.
+    try {
+      const last = change(await get(name));
+      return last == null ? false : await set(name, last);
+    } catch { return false; }
+  }
+
   /** Conversation history: one row per (chat, user), bounded by the caller. */
   async function load({ userId, chatId }) {
     if (!has) return [];
@@ -178,7 +253,7 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
     available: has,
     dump, tail,
     probe,
-    get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded, remove, sweep,
+    get, getChecked, set, setIfAbsent, compareSet, compareSetGuarded, update, remove, sweep,
     memory: Object.freeze({ load, save, clear, clearUser }),
   });
 }

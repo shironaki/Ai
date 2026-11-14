@@ -21,6 +21,8 @@ const SOURCE_HOSTS = /(?:cloudflare\.com\/client\/v4\/accounts\/[^/]+\/ai\/run\/
 const methods = {
   async sendMessage(params) {
     if (state.failing.sendMessage) throw state.failing.sendMessage;
+    // Отправка в Telegram длится: тест может сделать что-то посреди неё.
+    if (typeof state.duringSend === "function") await state.duringSend(params);
     // Шёпот — сообщение для одного человека. Стаб знает его, только если тест задал
     // `state.whispers = { admin: [чаты] }`: без этого он, как старый сервер, молча
     // отбрасывает параметр и шлёт сообщение всем.
@@ -112,12 +114,21 @@ export const db = {
     return null;
   },
   async run(query, params = {}) {
+    // Запись в kv_state отвечает так же, как настоящая база: сколько строк тронуто.
+    const touched = (n) => ({ rowsAffected: n, lastInsertRowid: 0, rows: [] });
     if (query.includes("INSERT INTO kv_state")) {
       // «Только если нет» — отдельный запрос: существующую запись он не трогает.
-      if (query.includes("DO NOTHING") && state.kv.has(params[":key"])) return true;
+      if (query.includes("DO NOTHING") && state.kv.has(params[":key"])) return touched(0);
       state.kv.set(params[":key"], params[":value"]);
       state.kvAt.set(params[":key"], Number(params[":at"]) || 0);
-      return true;
+      return touched(1);
+    }
+    if (query.includes("UPDATE kv_state SET value")) {
+      // Условная замена: только если лежит ровно то, что читали. Один шаг, без щели.
+      if (state.kv.get(params[":key"]) !== params[":before"]) return touched(0);
+      state.kv.set(params[":key"], params[":value"]);
+      state.kvAt.set(params[":key"], Number(params[":at"]) || 0);
+      return touched(1);
     }
     if (query.includes("DELETE FROM kv_state WHERE key LIKE")) {
       const prefix = String(params[":prefix"]).replace(/%$/u, "");

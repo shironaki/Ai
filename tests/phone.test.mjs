@@ -59,7 +59,8 @@ if (process.env.FAKE_MEANWHILE && args[0] === "fetch") {
 const fail = String(process.env.FAKE_FAIL || "");
 const name = args[0] === "run" ? "run:" + args[1] : args[0];
 if (fail && (fail === args[0] || fail === name)) { console.log(process.env.FAKE_SAYS || "✗ boom"); process.exit(1); }
-if (args[0] === "webhook") console.log("  url: https://secret.example/hook\\n  allowed updates: message, channel_post");
+// Настоящий инструмент печатает «allowed updates:» с выравниванием и цветом; список — через запятую.
+if (args[0] === "webhook") console.log("  url: https://secret.example/hook\\n  \\u001b[2mallowed updates:\\u001b[22m   " + (process.env.FAKE_UPDATES || "message, channel_post"));
 if (args[0] === "run") console.log(args.includes("{ tick: true }") && process.env.FAKE_MISMATCH ? "{ ok: false, code: 'build_mismatch' }" : "{ ok: true }");
 `;
 
@@ -661,9 +662,11 @@ test("секретарь: новые обработчики репетируют
   try {
     for (const name of ["callback_query", "business_connection", "business_message"]) writeFileSync(join(box.seed, `tgcloud/handlers/${name}.js`), "export default async function () {}\n");
     box.commit("1.1.0");
-    const first = box.run("once");
+    const SUBSCRIBED = { FAKE_UPDATES: "message, channel_post, callback_query, business_connection, business_message" };
+    const first = box.run("once", SUBSCRIBED);
     assert.equal(first.code, 0, first.out);
-    assert.match(first.out, /Сборка 1\.1\.0 опубликована/u);
+    assert.match(first.out, /✓ Сборка 1\.1\.0 опубликована/u);
+    assert.doesNotMatch(first.out, /не подписан/u);
     assert.deepEqual(names(box.cli()), [
       "run:handlers/message", "run:handlers/channel_post", "run:handlers/callback_query", "run:handlers/business_connection", "run:handlers/business_message",
       "fetch", "push handlers", "migrate --yes", "webhook", "run:handlers/message:deployed",
@@ -675,6 +678,17 @@ test("секретарь: новые обработчики репетируют
     const broken = box.run("once", { FAKE_FAIL: "run:handlers/business_message" });
     assert.match(broken.out, /Не прошло: репетиция: письмо секретарю — публикации нет, бот на прежней сборке/u);
     assert.match(box.state("published"), /\n1\.1\.0\n/u);
+
+    // Опубликовано, но подписка бота не обновилась: владелец узнаёт, каких событий нет.
+    box.commit("1.3.0");
+    const deaf = box.run("once", { FAKE_UPDATES: "message,channel_post,callback_query" });
+    assert.match(deaf.out, /⚠ Бот не подписан на события: business_connection business_message — то, что на них держится/u);
+    assert.match(box.state("published"), /\n1\.3\.0\n/u, "сборка при этом опубликована");
+    assert.ok(box.curl().some(line => /не подписан на события: business_connection business_message/u.test(decodeURIComponent(line))), "и в Telegram владельцу — тоже");
+    // Строки о подписке в ответе нет — проверять нечего, тревоги нет.
+    box.commit("1.4.0");
+    const blind = box.run("once", { FAKE_UPDATES: " " });
+    assert.doesNotMatch(blind.out, /не подписан/u);
 
     // Событие уже слушается: в списке «ещё не написанных» его нет — и это не «платформа не умеет».
     const says = (text) => ({ FAKE_FAIL: "add", FAKE_SAYS: text });

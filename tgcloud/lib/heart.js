@@ -37,7 +37,7 @@ import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.j
 import { fajrOn, parseFajr, FAJR_ANGLE, FAJR_METHODS } from "./fajr.js";
 import {
   parseSecretary, canReply, langOf, noticeEnglish, noticeRussian, stateOf as secretaryStateOf, notePerson, toldKey,
-  SECRETARY_KEY, TOLD_PREFIX, ALIEN_PREFIX, AWAY_DEFAULT_MS, AWAY_MAX_MS, NOTICES_PER_HOUR, OWNER_BUSY_MS, STALE_MS,
+  SECRETARY_KEY, TOLD_PREFIX, ALIEN_PREFIX, AWAY_DEFAULT_MS, AWAY_MAX_MS, NOTICES_PER_HOUR, OWNER_BUSY_MS, STALE_MS, SERVICE_CHATS, PEOPLE_MAX,
 } from "./secretary.js";
 import { createBond, parseJoke } from "./bond.js";
 import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS } from "./chatlog.js";
@@ -109,20 +109,16 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.27.0";
+export const BUILD = "0.28.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.27.0 — «доброе утро» теперь на фаджр: начало рассвета считаю сама, по солнцу, для города хозяина («когда фаджр», «считай фаджр по ДУМ», «угол фаджра 16»); города не знаю — пишу в шесть утра. «Спокойной ночи» — как было, в 23:00",
-  "в «добром утре» — строка о погоде в городе хозяина и круглый день знакомства",
-  "о режиме общения сама больше не спрашиваю: говорю о нём один раз, в приветствии после /start; «какие есть режимы» — покажу выбор с кнопками. Повтор «Сейчас я — всё сразу» дважды исправлен",
-  "в группе выбор режима — одному: стараюсь показать кнопки только спросившему (если я администратор чата), а если Telegram не разрешил — кнопки видны всем, но слушаются только его",
-  "сводка хозяину называет день прямо: «вот мой вчерашний день»; по понедельникам в ней — неделя в цифрах; «покажи свой дневник» — моя неделя по дням",
-  "рисование: с хозяином наедине своих отказов у меня больше нет. Одного не рисую никому: откровенного с детьми и насилия в нём. Если запрос не пропустила мастерская — так и говорю: это её фильтр",
-  "«нарисуй себя в шляпе» — рисую себя так, как просили; «мои рисунки» — альбом последних десяти, «повтори рисунок 2»",
-  "своё у чата: админ добавляет действия («новое действие: угостить печенькой — угощает печенькой») и свои гифки к действиям («это для обнять» ответом на гифку), учит фразам, которые действуют только в его чате",
-  "пары и семьи в группе: «пара», «брак», «семья», «лучшие друзья» ответом на сообщение — связь появляется только с согласия второго; «кто с кем», «расстаться». Без очков и наград",
-  "«сколько до моего дня рождения», «сколько мы знакомы» — считаю сама",
+  "0.28.0 — секретарь: если хозяин подключит меня к своему аккаунту (Secretary Mode в @BotFather, затем «Автоматизация чатов» в настройках Telegram), я смогу отвечать тем, кто пишет ему в личку. Как подключить — скажите мне «секретарь»",
+  "пока хозяин не сказал «отвечай за меня», в его чатах я молчу и ничего не записываю. Сказал — каждому, кто напишет, один раз отвечу от его аккаунта, что он не на связи, и первой строкой назову себя: «это Аи, помощница»",
+  "срок и слова — по желанию: «отвечай за меня до 18:00», «…на 2 часа», «отвечай за меня: я на встрече, перезвоню вечером». Без срока — двенадцать часов. Хозяин видит ровно тот текст, который получат люди; пишущим не по-русски — то же по-английски",
+  "«кто мне писал?» — список: кто, сколько раз, когда и первые слова последнего письма. «Я тут» — перестаю отвечать, отдаю список и стираю его. Срок вышел — перестаю сама и пишу хозяину",
+  "там, где хозяин пишет сам, не вмешиваюсь; модели чужие письма не показываю; команды, игры и рисунки в его чатах не работают; секретарём работаю только у хозяина — чужое подключение не слушаю",
+  "исправлено: мои слова в ответ на своё действие чата брались не из словаря, а всегда одни и те же — запас с буквой «ё» в названии не находился",
 ]);
 
 const DAY = 86_400_000;
@@ -566,6 +562,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (draw.available) lines.push("• рисование — «нарисуй кота в шляпе», «нарисуй себя в шляпе», «нарисуй ещё»; альбом — «мои рисунки», «повтори рисунок 2»;");
     if (owner(turn.actorId) && turn.isPrivate) {
       lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня», «резервная копия».", "Словарь: на «фраза» отвечай «ответ», «мои фразы», «забудь фразу 2», «что ты не поняла?».", "Пишу первой: «когда ты пишешь первой?», «желай доброго утра на фаджр» или «…в 7:30», «считай фаджр по ДУМ», «угол фаджра 16», «не пиши первой». Мой дневник — «покажи свой дневник».");
+      if (SECRETARY) lines.push("Секретарь: «секретарь» (что с ним и как подключить), «отвечай за меня», «отвечай за меня до 18:00: я на встрече», «кто мне писал?», «я тут».");
     }
     if (abilities.open()) {
       lines.push("", `${SISTER} рядом: профиль, задания, предупреждения и её игры — ${you(turn, "скажите", "скажи")} словами, я передам.`);
@@ -3231,7 +3228,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * сердца: в тестах та одинакова, и два письма разом «побеждали» бы оба.
    */
   const stamp = (id = null) => ({ at: now(), id, r: Math.floor(Math.random() * 1e9) });
-  const saveSecretary = (state) => store.set(SECRETARY_KEY, { ...state, at: now() });
+  const AWAY_OFF = Object.freeze({ on: false, since: 0, until: 0, words: "", ru: "", en: "" });
+  /**
+   * Правка состояния поверх самого свежего. Письма приходят одновременно, каждое —
+   * своему запуску: записать то, что прочитано в начале, значит затереть письмо
+   * соседа. `change` получает свежее состояние и возвращает новое — или null,
+   * если править уже нечего. Вернёт true, если правка легла.
+   */
+  const mutateSecretary = (change) => store.update(SECRETARY_KEY, raw => {
+    const next = change(secretaryStateOf(raw));
+    return next ? { ...next, at: now() } : null;
+  });
   const ownerZone = async () => zoneOf({ manner: await mannerFor(OWNER, { dry: true }).catch(() => null) });
   /** «в 16:10» сегодня, «14.11 в 16:10» — в другой день. */
   const whenShort = (at, zone) => {
@@ -3239,12 +3246,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const clockText = localClock(at, zone);
     return a.y === b.y && a.m === b.m && a.d === b.d ? clockText : `${String(a.d).padStart(2, "0")}.${String(a.m).padStart(2, "0")} в ${clockText}`;
   };
-  /** Сказать хозяину сразу; не вышло — письмо уйдёт с очередью вестей. */
+  /**
+   * Сказать хозяину сразу. Длинный список — частями: одним сообщением Telegram его
+   * не примет, а список после этого стирается. Что не ушло — уйдёт с очередью вестей.
+   */
   async function tellOwnerNow(text, key = "") {
     if (!(OWNER > 0)) return false;
-    try { await api.sendMessage({ chat_id: OWNER, text, disable_web_page_preview: true }); return true; }
-    catch {
-      try { await notices.tell({ key: key || `secretary:${now()}`, text }); } catch { /* вести подождут */ }
+    // Часть — не длиннее вести: иначе очередь вестей обрезала бы её.
+    const parts = partsOf(text, 3700);
+    let sent = 0;
+    try {
+      for (const part of parts) {
+        await api.sendMessage({ chat_id: OWNER, text: part, disable_web_page_preview: true });
+        sent += 1;
+      }
+      return true;
+    } catch {
+      const base = key || `secretary:${now()}`;
+      for (let index = sent; index < parts.length; index += 1) {
+        try { await notices.tell({ key: parts.length > 1 ? `${base}:${index + 1}` : base, text: parts[index] }); } catch { /* вести подождут */ }
+      }
       return false;
     }
   }
@@ -3255,27 +3276,41 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const people = [...state.people].reverse();
     const since = state.away.since ? ` (с ${whenShort(state.away.since, zone)})` : "";
     if (!people.length) return `Пока вас не было${since}, в личку никто не писал.`;
-    const rows = people.slice(0, 20).map(item => `• ${item.name}${item.user ? ` (@${item.user})` : ""} — ${item.n} ${plural(item.n, "сообщение", "сообщения", "сообщений")}, ${item.n > 1 ? "последнее — " : ""}${whenShort(item.at, zone)}: ${item.text}`);
+    // Показываются все, кого она помнит: список после этого стирается, и «…и ещё двадцать» пропали бы.
+    const rows = people.map(item => `• ${item.name}${item.user ? ` (@${item.user})` : ""} — ${item.n} ${plural(item.n, "сообщение", "сообщения", "сообщений")}, ${item.n > 1 ? "последнее — " : ""}${whenShort(item.at, zone)}: ${item.text}`);
+    const more = Number(state.more) || 0, total = people.length + more;
     const told = people.filter(item => item.told).length, failed = people.filter(item => item.failed && !item.told).length;
     const tail = !state.conn?.reply ? "Отвечать за вас мне не разрешено — я только записывала."
-      : told === people.length ? "Каждому я один раз сказала, что вы не на связи."
+      : told === people.length ? `Каждому${more ? " из перечисленных" : ""} я один раз сказала, что вы не на связи.`
         : [
           told ? `Сказала, что вы не на связи, — ${told} из ${people.length}.` : "Никому не отвечала.",
           failed ? `Не вышло ответить — ${failed}: Telegram отказал, проверьте права подключения.` : "",
           people.length - told - failed > 0 ? "Остальным не стала: вы писали им сами, письмо дошло с опозданием или ответов за час было слишком много." : "",
         ].filter(Boolean).join(" ");
-    return [`Пока вас не было${since}, писали — ${people.length} ${plural(people.length, "человек", "человека", "человек")}:`, ...rows, people.length > 20 ? `…и ещё ${people.length - 20}` : "", tail].filter(Boolean).join("\n");
+    return [
+      `Пока вас не было${since}, писали — ${total} ${plural(total, "человек", "человека", "человек")}:`,
+      ...rows,
+      more ? `Ещё ${more} ${plural(more, "человек писал", "человека писали", "человек писали")} до них: список у меня на ${PEOPLE_MAX} человек, тех я уже не помню — смотрите в самих чатах.` : "",
+      tail,
+    ].filter(Boolean).join("\n");
   }
 
   /**
    * Кончить отлучку: список «кто писал» отдаётся хозяину и стирается — чужие
-   * письма у неё дольше не лежат. Возвращает текст списка.
+   * письма у неё дольше не лежат. Возвращает текст списка; null — отлучку уже
+   * кончил другой запуск или запись не прошла: говорить хозяину нечего.
+   * `expired` — кончать, только если срок и правда вышел: хозяин мог его продлить.
    */
-  async function endAway(state, zone) {
-    const text = secretaryDigest(state, zone);
-    const since = state.away.since;
-    const people = state.people;
-    await saveSecretary({ ...state, away: { on: false, since: 0, until: 0, words: "", ru: "", en: "" }, people: [], own: {} });
+  async function endAway(zone, { expired = false } = {}) {
+    let text = "", since = 0, people = [];
+    const done = await mutateSecretary(cur => {
+      if (!cur.away.on || (expired && !(cur.away.until && now() >= cur.away.until))) return null;
+      text = secretaryDigest(cur, zone);
+      since = cur.away.since;
+      people = cur.people;
+      return { ...cur, away: { ...AWAY_OFF }, people: [], more: 0, own: {} };
+    });
+    if (!done) return null;
     // Отметки «уже сказано» больше не нужны; не убрались — их сметёт уборка.
     await Promise.all(people.slice(0, 40).map(item => store.remove(toldKey(since, item.id)).catch(() => false)));
     return text;
@@ -3283,11 +3318,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
   /** Срок вышел — она сама перестаёт отвечать и рассказывает, кто писал. Зовётся с будильника. */
   async function secretaryClock() {
-    if (!SECRETARY || !store.available || !(OWNER > 0)) return;
+    if (!store.available || !(OWNER > 0)) return;
     const state = await secretaryState();
-    if (!state.away.on || !state.away.until || now() < state.away.until) return;
-    const text = await endAway(state, await ownerZone());
-    await tellOwnerNow(`Срок вышел: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
+    if (!state.away.on) return;
+    if (!SECRETARY) {
+      // Выключили настройкой посреди отлучки: письма к ней больше не идут, а список остался бы
+      // лежать. Обещано, что он живёт только до конца отлучки, — отдать хозяину и стереть.
+      const text = await endAway(await ownerZone());
+      if (text != null) await tellOwnerNow(`Секретарь выключен в настройках: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
+      return;
+    }
+    if (!state.away.until || now() < state.away.until) return;
+    const text = await endAway(await ownerZone(), { expired: true });
+    if (text != null) await tellOwnerNow(`Срок вышел: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
   }
 
   /**
@@ -3313,20 +3356,40 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         pulse.bump("secretary_alien");
         return { ignored: true, reason: "not_owner" };
       }
-      const state = await secretaryState();
-      const before = state.conn;
       if (connection.is_enabled === false) {
-        await saveSecretary({ ...state, conn: null, away: { on: false, since: 0, until: 0, words: "", ru: "", en: "" }, people: [], own: {} });
-        if (before) await tellOwnerNow("Подключение к вашему аккаунту снято: ваших чатов я больше не вижу и за вас не отвечаю.", `secretary:off:${connection.id}:${now()}`);
+        const zone = await ownerZone();
+        let digest = "", since = 0, people = [];
+        const done = await mutateSecretary(cur => {
+          // Снято не то подключение, с которым она работает (или она его и не знала): это не новость.
+          if (!cur.conn || cur.conn.id !== String(connection.id)) return null;
+          // Отлучка шла — список «кто писал» хозяин получит и тут: стереть молча было бы потерей.
+          digest = cur.away.on ? secretaryDigest(cur, zone) : "";
+          since = cur.away.since;
+          people = cur.people;
+          return { ...cur, conn: null, away: { ...AWAY_OFF }, people: [], more: 0, own: {} };
+        });
+        if (done) {
+          await Promise.all(people.slice(0, 40).map(item => store.remove(toldKey(since, item.id)).catch(() => false)));
+          await tellOwnerNow(["Подключение к вашему аккаунту снято: ваших чатов я больше не вижу и за вас не отвечаю.", digest].filter(Boolean).join("\n\n"), `secretary:off:${connection.id}:${now()}`);
+        }
         return { ok: true, action: "secretary_disconnected" };
       }
       const conn = { id: String(connection.id), name: safeName(connection.user?.first_name), reply: canReply(connection), at: now() };
-      await saveSecretary({ ...state, conn });
+      let before = null, away = false;
+      const saved = await mutateSecretary(cur => { before = cur.conn; away = cur.away.on; return { ...cur, conn }; });
+      if (!saved) return { ok: false, code: "storage_unavailable" };
       // Telegram шлёт это событие и при правке подключения: говорить стоит, только если что-то изменилось.
-      if (!before || before.id !== conn.id || before.reply !== conn.reply) {
+      if (before && before.id === conn.id && before.reply !== conn.reply) {
+        await tellOwnerNow(conn.reply
+          ? (away ? "Теперь мне разрешено отвечать в ваших чатах: тем, кто напишет вам дальше, один раз скажу, что вы не на связи."
+            : "Теперь мне разрешено отвечать в ваших чатах. Сама не начну — только после слов «отвечай за меня».")
+          : "Права отвечать в ваших чатах у меня больше нет: пока вас нет, смогу только записывать, кто писал. Вернуть его можно в настройках подключения в Telegram.",
+        `secretary:right:${conn.id}:${conn.reply}:${now()}`);
+      } else if (!before || before.id !== conn.id) {
         await tellOwnerNow([
           "Вижу подключение к вашему аккаунту: теперь мне приходят письма из тех ваших личных чатов, куда вы меня пустили.",
           "Пока я в них молчу и ничего не записываю. Скажете «отвечай за меня» — каждому, кто вам напишет, один раз отвечу, что вы не на связи, и запомню, кто писал. «Я тут» — перестану и расскажу.",
+          "Что я при этом храню: имя человека, время и первые слова его последнего письма — только пока отвечаю за вас; вернётесь — расскажу и сотру. Модели эти письма не показываю и никуда не передаю.",
           conn.reply ? "" : "Права отвечать вы мне не дали: смогу только записывать, кто писал. Дать его можно в настройках подключения в Telegram.",
         ].filter(Boolean).join("\n\n"), `secretary:on:${conn.id}:${conn.reply}`);
       }
@@ -3340,15 +3403,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /** Подключение, о котором она не знает: чьё оно, скажет Telegram. Чужое — запоминается как чужое. */
-  async function adoptConnection(state, connId) {
+  async function adoptConnection(connId) {
     if (await store.get(`${ALIEN_PREFIX}${connId}`).catch(() => null)) return null;
     let info = null;
     try { info = await api.getBusinessConnection({ business_connection_id: connId }); } catch { return null; }
     if (!owner(info?.user?.id)) { await store.set(`${ALIEN_PREFIX}${connId}`, { at: now() }).catch(() => false); return null; }
     if (info.is_enabled === false) return null;
-    const next = { ...state, conn: { id: connId, name: safeName(info.user?.first_name), reply: canReply(info), at: now() } };
-    await saveSecretary(next);
-    return next;
+    const conn = { id: connId, name: safeName(info.user?.first_name), reply: canReply(info), at: now() };
+    if (!await mutateSecretary(cur => ({ ...cur, conn }))) return null;
+    return secretaryState();
   }
 
   /**
@@ -3366,58 +3429,79 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (message.sender_business_bot || message.is_from_offline === true) return { ignored: true, reason: "echo" };
       let state = await secretaryState();
       if (state.conn?.id !== String(connId)) {
-        state = await adoptConnection(state, String(connId));
-        if (!state) return { ignored: true, reason: "not_owner" };
+        state = await adoptConnection(String(connId));
+        if (!state?.conn) return { ignored: true, reason: "not_owner" };
       }
       const at = now();
       if (state.away.on && state.away.until && at >= state.away.until) {
-        const text = await endAway(state, await ownerZone());
-        await tellOwnerNow(`Срок вышел: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
-        return { ignored: true, reason: "not_away" };
+        const text = await endAway(await ownerZone(), { expired: true });
+        if (text != null) {
+          await tellOwnerNow(`Срок вышел: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
+          return { ignored: true, reason: "not_away" };
+        }
+        // Кончать было нечего: либо отлучку уже кончил соседний запуск, либо хозяин только что продлил срок.
+        state = await secretaryState();
+        if (!state.conn || !state.away.on || (state.away.until && at >= state.away.until)) return { ignored: true, reason: "not_away" };
       }
+      const since = state.away.since;
+      const going = (cur) => cur.away.on && cur.away.since === since;
       if (owner(message.from?.id)) {
         // Хозяин сам пишет в этом чате: туда она четверть часа не вмешивается.
         if (state.away.on) {
-          const own = Object.fromEntries(Object.entries({ ...state.own, [chatId]: at }).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 40));
-          await saveSecretary({ ...state, own });
+          await mutateSecretary(cur => (going(cur)
+            ? { ...cur, own: Object.fromEntries(Object.entries({ ...cur.own, [chatId]: at }).sort((x, y) => Number(y[1]) - Number(x[1])).slice(0, 40)) }
+            : null));
         }
         return { ignored: true, reason: "owner_speaks" };
       }
       if (!state.away.on) return { ignored: true, reason: "not_away" };
       if (message.from?.is_bot === true || owner(chatId)) return { ignored: true, reason: "bot" };
+      if (SERVICE_CHATS.includes(Number(chatId))) return { ignored: true, reason: "service" };
 
-      state.people = notePerson(state.people, message, at);
-      const person = state.people.at(-1);
+      const hour = Math.floor(at / 3_600_000);
+      const same = (item) => String(item.id) === String(chatId);
+      // Письмо — в список «кто писал» сразу, до ответа, и поверх самого свежего состояния:
+      // соседнее письмо не затрётся, а вернись хозяин посреди отправки — человек в списке уже есть.
+      let seen = null;
+      const noted = await mutateSecretary(cur => {
+        if (!going(cur) || !cur.conn) return null;
+        seen = { known: cur.people.find(same) ?? null, own: Number(cur.own?.[chatId]) || 0, sent: cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0, conn: cur.conn, away: cur.away };
+        const people = notePerson(cur.people, message, at);
+        // Список — на сорок человек: кого он вытеснил, того она уже не помнит, но счёт им ведёт.
+        const pushed = cur.people.length + (seen.known ? 0 : 1) - people.length;
+        return { ...cur, people, more: cur.more + Math.max(0, pushed) };
+      });
+      // Не записалось: хозяин уже вернулся или хранилище молчит — отвечать за него тогда нельзя.
+      if (!noted) return { ignored: true, reason: "not_away" };
       pulse.bump("secretary_seen");
       const fresh = !(Number(message.date) > 0) || at - Number(message.date) * 1000 < STALE_MS;
-      const busy = at - (Number(state.own?.[chatId]) || 0) < OWNER_BUSY_MS;
-      const hour = Math.floor(at / 3_600_000);
-      if (state.sent.from !== hour) state.sent = { from: hour, n: 0 };
+      const busy = at - seen.own < OWNER_BUSY_MS;
+      const may = seen.conn.reply && fresh && !busy && seen.known?.told !== true && seen.known?.failed !== true;
       let action = "secretary_noted";
-      const may = state.conn.reply && fresh && !busy && !person.told;
-      if (may && state.sent.n >= NOTICES_PER_HOUR) {
+      if (may && seen.sent >= NOTICES_PER_HOUR) {
         // Писем слишком много — похоже на рассылку или на двух секретарей друг против друга.
         await notices.tell({ key: `secretary:cap:${hour}`, text: `Секретарь: за час я ответила за вас ${NOTICES_PER_HOUR} раз и остановилась до следующего часа — писем слишком много. Записывать, кто писал, продолжаю.` }).catch(() => null);
-      } else if (may && !(await store.setIfAbsent(toldKey(state.away.since, chatId), stamp(message.message_id)))) {
-        // Отметка уже стоит: этому человеку ответили, пока шло это письмо (два письма подряд), —
-        // или прошлая попытка не удалась, и повторять её незачем.
-        if (!person.failed) person.told = true;
-      } else if (may) {
-        person.told = true;
-        state.sent.n += 1;
-        const text = (langOf(message) === "en" ? state.away.en : state.away.ru) || noticeRussian({ name: state.conn.name });
+      } else if (may && await store.setIfAbsent(toldKey(since, chatId), stamp(message.message_id))) {
+        // Отметка её: этому человеку отвечает именно этот запуск. У кого отметка не легла —
+        // тому человеку уже отвечает (ответил или не смог) другой запуск: повторять незачем.
+        const text = (langOf(message) === "en" ? seen.away.en : seen.away.ru) || noticeRussian({ name: seen.conn.name });
+        let told = false;
         try {
-          await api.sendMessage({ business_connection_id: state.conn.id, chat_id: chatId, text });
+          await api.sendMessage({ business_connection_id: String(connId), chat_id: chatId, text });
+          told = true;
           pulse.bump("secretary");
           action = "secretary_notice";
         } catch (error) {
-          person.told = false;
-          person.failed = true;
           action = "secretary_failed";
           await notices.report({ component: "secretary", code: "send_failed", title: "Секретарь", detail: `ответить за вас не вышло: ${String(error?.description ?? error?.message ?? error).slice(0, 160)}`, severity: "degraded", hint: "Проверьте в Telegram, что в подключении мне разрешено отвечать." }).catch(() => null);
         }
+        // Чем кончилось — в список; счёт ответов за час растёт и от неудачной попытки.
+        await mutateSecretary(cur => {
+          if (!going(cur)) return null;
+          const base = cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0;
+          return { ...cur, people: cur.people.map(item => (same(item) ? { ...item, told, failed: !told } : item)), sent: { from: hour, n: base + 1 } };
+        });
       }
-      await saveSecretary(state);
       return { ok: true, action };
     } catch (error) {
       await reportCrash(error, ctx);
@@ -3431,7 +3515,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * Слова хозяина о секретаре — только от него и только в личке с ней:
    * «отвечай за меня до 18:00», «я тут», «кто мне писал?», «секретарь».
    */
-  async function secretaryWords(turn, prompt) {
+  async function secretaryWords(turn, prompt, { chatId = null } = {}) {
     const asked = SECRETARY && owner(turn.actorId) && turn.isPrivate ? parseSecretary(prompt) : null;
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как слова о секретаре — репетиция.");
@@ -3450,10 +3534,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const lines = [
         `Секретарь: к вашему аккаунту я подключена${state.conn.reply ? "" : ", но отвечать мне не разрешено — могу только записывать, кто писал"}.`,
         state.away.on
-          ? `Сейчас отвечаю за вас ${untilText(state.away.until)}: писали — ${state.people.length} ${plural(state.people.length, "человек", "человека", "человек")}. Кто именно — «кто мне писал?»; закончить — «я тут».`
+          ? `Сейчас отвечаю за вас ${untilText(state.away.until)}: писали — ${state.people.length + state.more} ${plural(state.people.length + state.more, "человек", "человека", "человек")}. Кто именно — «кто мне писал?»; закончить — «я тут».`
           : "Сейчас в ваших чатах я молчу и ничего не записываю. Начать — «отвечай за меня» (можно со сроком: «…до 18:00», «…на 2 часа») или со словами для людей: «отвечай за меня: я на встрече, перезвоню».",
         state.away.on && state.away.ru ? `Людям я говорю: «${state.away.ru}»` : "",
       ];
+      // Открыто из чата с человеком («Управление ботом»): что она делала именно там.
+      if (chatId != null) {
+        const person = state.people.find(item => String(item.id) === String(chatId));
+        lines.push(person
+          ? `В том чате (${person.name}): за эту отлучку — ${person.n} ${plural(person.n, "сообщение", "сообщения", "сообщений")}; ${person.told ? "я один раз ответила, что вы не на связи" : "я не отвечала"}.`
+          : state.away.on ? "В том чате за эту отлучку мне ничего не приходило — и я там ничего не писала." : "В том чате я ничего не писала.");
+      }
       return say(turn, lines.filter(Boolean).join("\n"));
     }
     if (asked.who) {
@@ -3462,7 +3553,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     if (asked.off || asked.back) {
       if (!state.away.on) return say(turn, "Я и так за вас не отвечаю.");
-      const text = await endAway(state, zone);
+      const text = await endAway(zone);
+      if (text == null) {
+        // Отлучку в эту же секунду кончил срок (список ушёл отдельным письмом) — или запись не прошла.
+        const fresh = await secretaryState();
+        return say(turn, fresh.away.on ? "Не вышло: хранилище не отвечает, и я всё ещё отвечаю за вас. Скажите «я тут» ещё раз." : "Я и так за вас не отвечаю.");
+      }
       return say(turn, `С возвращением, хозяин. За вас больше не отвечаю.\n\n${text}`);
     }
     // «Отвечай за меня»: срок — названный или двенадцать часов, чтобы забытая отлучка не длилась неделю.
@@ -3483,10 +3579,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const ru = (PHRASES ? book.pick(words ? "+секретарь:слова" : clockText ? "+секретарь:нет на связи до" : "+секретарь:нет на связи", { formal: true, vars }) : null)
       ?? noticeRussian({ name, until: clockText, words });
     const en = noticeEnglish({ name, until: clockText, words });
-    // Отлучка уже шла — меняются срок и слова, а список писавших и «уже сказано» остаются.
-    const going = state.away.on;
-    const next = { ...state, away: { on: true, since: going ? state.away.since : at, until, words, ru, en }, ...(going ? {} : { people: [], own: {} }) };
-    if (!await saveSecretary(next)) return say(turn, "Не запомнилось: хранилище не отвечает — за вас не отвечаю.");
+    const armed = await mutateSecretary(cur => {
+      if (!cur.conn) return null;
+      // Отлучка уже шла — меняются срок и слова, а список писавших и «уже сказано» остаются.
+      const going = cur.away.on;
+      return { ...cur, away: { on: true, since: going ? cur.away.since : at, until, words, ru, en }, ...(going ? {} : { people: [], more: 0, own: {} }) };
+    });
+    if (!armed) return say(turn, "Не запомнилось: хранилище не отвечает — за вас не отвечаю.");
     if (!state.conn.reply) return say(turn, `Отвечать за вас мне не разрешено: ${untilText(until)} буду только записывать, кто писал. Вернётесь раньше — «я тут».`);
     return say(turn, [
       `Хорошо, хозяин: ${untilText(until)} отвечаю за вас. Каждому, кто напишет вам в личку, один раз скажу:`,
@@ -3763,6 +3862,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       turn.addressed = true;
       turn.manner = await mannerFor(actorId, { dry });
       const sub = command.rest.toLowerCase();
+      // «Управление ботом» в чате, который она ведёт как секретарь: Telegram открывает личку с ней
+      // по ссылке /start bizChat<номер чата>. Хозяину — что с секретарём и что было в том чате.
+      const managed = command.name === "start" ? sub.match(/^bizchat(-?\d+)$/u) : null;
+      if (managed && SECRETARY && owner(actorId) && turn.isPrivate) return ruled(await secretaryWords(turn, "секретарь", { chatId: managed[1] }));
       if (command.name === "start") return ruled(await greeting(turn));
       if (command.name === "help") return ruled(await say(turn, helpLines(turn)));
       if (["status", "aidiag", "диагностика"].includes(command.name)) return diagnostic(turn);
