@@ -3,3 +3,6 @@ node_modules/
 *.log
 .env
 .env.*
+
+# черновые пробы агента
+tests/_*.mjs
