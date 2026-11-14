@@ -642,6 +642,32 @@ test("вечный цикл: публикует сразу, прошлые не�
   } finally { box.clean(); }
 });
 
+test("«events»: спрашивает платформу о событиях, ничего не публикует и не создаёт; ответ — словами", { skip }, () => {
+  const box = sandbox();
+  try {
+    const yes = box.run("events", { FAKE_FAIL: "add", FAKE_SAYS: '✗ Specify a name, e.g. "handlers/business_connection". Available handlers/ types: business_connection, business_message, inline_query.' });
+    assert.equal(yes.code, 0);
+    assert.match(yes.out, /Ответ платформы:\n {2}✗ Specify a name/u);
+    assert.match(yes.out, /Событие business_message есть — «секретаря» сделать можно\./u);
+    const no = box.run("events", { FAKE_FAIL: "add", FAKE_SAYS: '✗ Specify a name, e.g. "handlers/inline_query". Available handlers/ types: inline_query, poll.' });
+    assert.match(no.out, /События business_message в списке нет/u);
+    const vague = box.run("events", { FAKE_FAIL: "add", FAKE_SAYS: '✗ Specify a name, e.g. "handlers/<name>".' });
+    assert.match(vague.out, /Списка событий в ответе нет\. Пришлите этот ответ/u);
+    const calls = box.cli();
+    assert.deepEqual(calls.map(item => item.args.join(" ")), ["add handlers", "add handlers", "add handlers"], "только вопрос: ни публикации, ни запуска");
+    assert.ok(calls.every(item => item.token && !item.key), "токен — в окружении, ключей в слепке нет");
+    assert.equal(box.status(), "");
+    assert.doesNotMatch(`${yes.out}${no.out}${vague.out}`, new RegExp(TOKEN.split(":")[1], "u"));
+    const blind = sandbox({ lines: ["HEART_BRANCH=work"] });
+    try {
+      const refused = blind.run("events");
+      assert.equal(refused.code, 1);
+      assert.match(refused.out, /нет токена публикации/u);
+      assert.equal(blind.cli().length, 0);
+    } finally { blind.clean(); }
+  } finally { box.clean(); }
+});
+
 test("будильник голосом самой Аи: себя она не услышит — сказано прямо, удар идёт через платформу", { skip }, () => {
   // Номер бота в токене будильника тот же, что в токене публикации (app123): это один бот.
   const box = sandbox({ lines: [`TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`, "HEART_BRANCH=work", "ALARM_BOT_TOKEN=123:OWN-BOT-SECRET", "ALARM_CHAT_ID=-100"] });

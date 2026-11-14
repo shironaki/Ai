@@ -12,6 +12,8 @@
 #   bash scripts/phone.sh deploy    опубликовать сейчас то, что лежит в ветке
 #   bash scripts/phone.sh tick      разбудить сердце один раз
 #   bash scripts/phone.sh once      один круг цикла — для cron и для тестов
+#   bash scripts/phone.sh events    спросить платформу, какие события она отдаёт
+#                                   (нужно для «секретаря»); ничего не меняет
 #
 # Ключи живут вне репозитория, в файле ~/.heart.env — строки «ИМЯ=значение»,
 # кавычки не нужны. Читаются один раз, при запуске. Подробно — docs/PHONE.md.
@@ -747,8 +749,24 @@ EOF
       sync && publish_if_needed
       alarm
       return 0 ;;
+    events)
+      # Какие события платформа умеет отдавать коду. «Секретарю» нужно
+      # business_message. Это только вопрос: файлов не создаёт, ничего не публикует.
+      if ! tokenlike "$TOKEN"; then echo "В $ENV_FILE нет токена публикации — спросить платформу не от чьего имени. Начните с: bash scripts/phone.sh check" >&2; return 1; fi
+      if [ ! -f "$CLI" ]; then echo "Инструмент публикации ещё не установлен. Сначала: bash scripts/phone.sh check" >&2; return 1; fi
+      local asked_out
+      # Цвета терминала из ответа убираются: в чат уходят буквы, а не «[31m».
+      asked_out="$(tg add handlers 2>&1 | sed "s/$(printf '\033')\[[0-9;]*m//g")"
+      echo "Ответ платформы:"
+      printf '%s\n' "$asked_out" | sed 's/^/  /'
+      case "$asked_out" in
+        *business_message*) echo "Событие business_message есть — «секретаря» сделать можно." ;;
+        *"types:"*|*"Allowed:"*) echo "События business_message в списке нет — «секретаря» на этой платформе пока не сделать." ;;
+        *) echo "Списка событий в ответе нет. Пришлите этот ответ в чат разработки." ;;
+      esac
+      return 0 ;;
     run) ;;
-    *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once." >&2; return 1 ;;
+    *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once, events." >&2; return 1 ;;
   esac
 
   if [ -z "$TOKEN" ] && [ "$CHANNEL_ALARM" = 0 ]; then
