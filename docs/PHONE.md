@@ -61,6 +61,7 @@ OWNER_TG_ID=
 HEART_BRANCH=arena/95ac5a16-ai
 # KEY_GIGACHAT=
 # KEY_EXPLABS=
+# KEY_CLOUDFLARE=
 # ALARM_BOT_TOKEN=
 # ALARM_CHAT_ID=
 ```
@@ -187,6 +188,7 @@ cd ~/Ai && bash scripts/phone.sh >> ~/.heart/boot.log 2>&1
 | `bash scripts/phone.sh deploy` | опубликовать сейчас то, что лежит в ветке |
 | `bash scripts/phone.sh tick` | разбудить сердце один раз |
 | `bash scripts/phone.sh once` | один круг: проверить ветку, опубликовать, разбудить |
+| `bash scripts/phone.sh events` | спросить платформу, какие события она отдаёт коду (нужно для «секретаря»); ничего не меняет и не публикует |
 
 Журналы — в `~/.heart/`: `phone.log` (что происходило), `deploy.log`
 (последняя публикация), `tests.log` (последние тесты). Там же `live/` —
