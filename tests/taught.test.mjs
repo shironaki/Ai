@@ -72,9 +72,10 @@ test("учит только хозяин и только в личке; слиш
   const h = heart(ON, { now: () => NOON });
   await h.onMessage(message("на «привет» отвечай «уходи»"), KEY);
   assert.match(last(), /Новым фразам меня учит только хозяин/u);
+  // В группе учат фразам самого чата (0.27.0): общий словарь, для всех чатов, там не пополняется.
   await h.onMessage(group("Аи, на «привет» отвечай «уходи»", { id: OWNER }), KEY);
-  assert.match(last(-10), /учит только хозяин/u, "в группе — даже хозяин не учит: при всех это не делается");
-  assert.equal(sdk().kv.has(TAUGHT_KEY), false);
+  assert.match(last(-10), /^Запомнила: в этом чате на «привет» отвечаю «уходи»\. В других чатах этого не будет\.$/u);
+  assert.equal(sdk().kv.has(TAUGHT_KEY), false, "общий словарь не тронут");
   await h.onMessage(own(`на «${"очень ".repeat(20)}длинно» отвечай «нет»`), KEY);
   assert.match(last(OWNER), /учу только короткое/u);
 
