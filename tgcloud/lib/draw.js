@@ -16,6 +16,29 @@
 
 export const DRAW_STATE_KEY = "heart:draw:v1";
 export const DRAWN_PREFIX = "heart:drawn:";
+/** Альбом человека: его последние просьбы о рисунке, свежая — последней. */
+export const ALBUM_KEY = (userId) => `heart:album:${userId}`;
+export const ALBUM_MAX = 10;
+
+const ORDINAL = ["перв", "втор", "трет", "четверт", "пят", "шест", "седьм", "восьм", "девят", "десят"];
+/**
+ * Слова об альбоме → просьба, иначе null:
+ *   { list: true } — «мои рисунки», «альбом»; { repeat: 3 } — «повтори рисунок 3», «повтори третий рисунок».
+ * Слово «рисунок» обязательно: «повтори третий» говорят и о другом.
+ */
+export function parseAlbum(text) {
+  const value = String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
+  if (!value || value.length > 60) return null;
+  if (/^(?:(?:покажи|открой)\s+)?(?:мои\s+рисунки|мой\s+альбом|альбом(?:\s+рисунков)?)$|^что\s+ты\s+(?:мне\s+)?(?:уже\s+)?(?:на)?рисовала$/u.test(value)) return { list: true };
+  let found = value.match(/^(?:повтори|перерисуй|нарисуй(?:\s+(?:еще\s+раз|снова|заново))?)\s+рисунок\s+(?:номер\s+|№\s*)?(\d{1,2})(?:\s+(?:еще\s+раз|снова|заново))?$/u);
+  if (found) return Number(found[1]) >= 1 && Number(found[1]) <= ALBUM_MAX ? { repeat: Number(found[1]) } : null;
+  found = value.match(/^(?:повтори|перерисуй|нарисуй(?:\s+(?:еще\s+раз|снова|заново))?)\s+([а-я]+?)(?:ый|ой|ий)\s+рисунок(?:\s+(?:еще\s+раз|снова|заново))?$/u);
+  if (found) {
+    const index = ORDINAL.indexOf(found[1]);
+    return index >= 0 ? { repeat: index + 1 } : null;
+  }
+  return null;
+}
 const API = "https://api.cloudflare.com/client/v4/accounts";
 const PAINTER = "@cf/black-forest-labs/flux-1-schnell";
 const TRANSLATOR = "@cf/meta/m2m100-1.2b";

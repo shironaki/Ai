@@ -42,8 +42,9 @@ import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.j
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { detectFact, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach } from "./taught.js";
+import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
-import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX } from "./draw.js";
+import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
 /**
@@ -1943,6 +1944,49 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `Хорошо, хозяин: ${await describe(next)}.`);
   }
 
+  /** Сколько календарных дней человек с ней знаком — по его часам, а не по суткам с первой минуты. */
+  async function daysKnown(userId, zone) {
+    const first = await personal.daysWith(userId).catch(() => null);
+    if (!Number.isFinite(first?.at)) return 0;
+    const [a, b] = [localParts(first.at, zone), localParts(now(), zone)];
+    return Math.max(0, Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / DAY));
+  }
+
+  /** Круглые дни знакомства: о них она скажет в «добром утре». */
+  const MILESTONE_DAYS = new Set([7, 30, 50, 100, 200, 300, 500, 1000, 1500, 2000]);
+  function milestoneLine(days) {
+    if (!(days > 0)) return "";
+    if (days % 365 === 0) { const years = days / 365; return `Сегодня ровно ${years === 1 ? "год" : `${years} ${plural(years, "год", "года", "лет")}`}, как мы знакомы.`; }
+    return MILESTONE_DAYS.has(days) ? `Сегодня ${days}-й день, как мы знакомы.` : "";
+  }
+
+  /**
+   * Памятные даты: «сколько до моего дня рождения», «сколько мы знакомы».
+   * День рождения она знает, если человек его называл (и поздравит сама).
+   */
+  async function dates(turn, prompt) {
+    const value = String(prompt ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
+    if (!value || value.length > 70) return null;
+    const birthday = /^(?:а\s+)?(?:сколько|скоро\s+ли|когда)\s+(?:(?:дней|еще|осталось|там)\s+)*(?:до\s+)?(?:мо(?:его|й|я)\s+)?(?:дня\s+рождения|день\s+рождения|др|днюх[аи])(?:\s+осталось)?$/u.test(value);
+    const known = /^(?:а\s+)?(?:сколько|как\s+давно|давно\s+ли)\s+(?:(?:дней|уже|времени)\s+)*мы\s+(?:с\s+тобой\s+)?(?:знакомы|общаемся|дружим)$/u.test(value);
+    if (!birthday && !known) return null;
+    if (turn.dry) return say(turn, "Посчитала бы дни — репетиция.");
+    if (known) {
+      const days = await daysKnown(turn.actorId, zoneOf(turn));
+      return say(turn, days > 0 ? `Мы знакомы ${days} ${plural(days, "день", "дня", "дней")}.` : "Мы знакомы с сегодняшнего дня.");
+    }
+    const items = await reminders.list(turn.actorId).catch(() => []);
+    const item = (Array.isArray(items) ? items : []).find(entry => entry.kind === "birthday");
+    if (!item) return say(turn, `Я не знаю, когда у ${you(turn, "вас", "тебя")} день рождения. ${you(turn, "Скажите", "Скажи")}: «у меня день рождения 5 мая» — запомню и поздравлю.`);
+    const zone = zoneOf(turn);
+    const [a, b] = [localParts(now(), zone), localParts(item.at, zone)];
+    const left = Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / DAY);
+    const settings = turn.manner?.settings ?? {};
+    const when = settings.birthday ? ` (${settings.birthday})` : "";
+    if (left <= 0) return say(turn, "Сегодня! С днём рождения.");
+    return say(turn, left === 1 ? `Завтра${when}. Я помню.` : `До ${you(turn, "вашего", "твоего")} дня рождения — ${left} ${plural(left, "день", "дня", "дней")}${when}. Поздравлю сама.`);
+  }
+
   /**
    * Координаты города человека — для расчёта по солнцу. У хозяина они лежат
    * рядом с настройкой «писать первой»: будильник не должен каждый раз идти в
@@ -2037,15 +2081,28 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (at - (Number(saved[said]) || 0) < 12 * 3_600_000) continue;
       if (slot === "morning") {
         const lastSeen = await store.get(`heart:last:${OWNER}`).catch(() => null);
-        if (Number(lastSeen?.at) >= due - 4 * 3_600_000) continue;
+        // По часам: с утра уже говорили — здороваться вдогонку незачем. На фаджр: он сам просил
+        // писать с началом рассвета, и молчит она, только если он уже написал после него.
+        if (Number(lastSeen?.at) >= (dawn ? due : due - 4 * 3_600_000)) continue;
       }
       const turn = { actorId: OWNER, chatId: OWNER, isPrivate: true, manner, seen: null, extra: {} };
       const feel = await feelFor(turn);
       const vars = { "настроение": feel.mood };
       vars["причина"] = book.pick(`+причина:${feel.reason}`, voiceCtx(turn, vars)) ?? "";
-      const text = book.pick(pool, voiceCtx(turn, vars));
+      let text = book.pick(pool, voiceCtx(turn, vars));
       if (!text) continue;
-      try { await api.sendMessage({ chat_id: OWNER, text: voiced(turn, text) }); } catch { continue; }
+      text = voiced(turn, text);
+      if (slot === "morning") {
+        // Строка о погоде в его городе и круглый день знакомства — без модели; нет данных — без строки.
+        const city = String(manner?.settings?.city ?? "").trim();
+        const sky = city && sources.available() ? await sources.weather(city).catch(() => null) : null;
+        const more = [
+          sky?.ok && sky.today && !sky.stale ? sky.today : "",
+          milestoneLine(await daysKnown(OWNER, zone)),
+        ].filter(Boolean);
+        if (more.length) text = `${text}\n${more.join("\n")}`;
+      }
+      try { await api.sendMessage({ chat_id: OWNER, text }); } catch { continue; }
       pulse.bump("greeted");
       // Сказанное остаётся в переписке: ответит хозяин — модель увидит, на что.
       try {
@@ -2053,6 +2110,47 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         await store.memory.save({ userId: OWNER, chatId: OWNER, messages: [...(Array.isArray(history) ? history : []), { role: "assistant", content: text.slice(0, 600) }].slice(-12) });
       } catch { /* нить подождёт */ }
     }
+  }
+
+  const CHAT_WORDS_MAX = 60, CHAT_ANSWERS_MAX = 4;
+  /**
+   * Словарь группы: фразы, которым её научил админ этого чата. Действуют
+   * только здесь и только когда к ней обращаются. Откровенному и злому она
+   * не учится, кто бы ни учил.
+   */
+  async function chatWords(turn, asked) {
+    if (turn.dry) return say(turn, "Разобрала бы это как урок словаря чата — репетиция.");
+    const chat = await fun.chatSettings(turn.chatId);
+    const words = (Array.isArray(chat.words) ? chat.words : []).filter(item => item && typeof item.w === "string" && Array.isArray(item.a) && item.a.length);
+    if (asked.list) {
+      if (!words.length) return say(turn, "В этом чате меня пока ничему не учили. Админ может сказать: на «привет, медвед» отвечай «превед!» — и фраза будет работать только здесь.");
+      return say(turn, `Фразы этого чата (${words.length}):\n${words.map((item, index) => `${index + 1}. «${item.w}» → ${item.a.map(text => `«${text}»`).join(" / ")}`).join("\n")}\n\nЗабыть — «забудь фразу 2».`);
+    }
+    if (!(await fun.canManage(turn))) return say(turn, "Фразам этого чата меня учат его админы.");
+    if (asked.drop != null) {
+      const at = typeof asked.drop === "number" ? asked.drop - 1 : words.findIndex(item => item.w === cleanPhrase(asked.drop));
+      if (!(at >= 0 && at < words.length)) return say(turn, "Такой фразы среди выученных в этом чате нет. Список — «фразы чата».");
+      const gone = words[at];
+      if (!await fun.saveChat(turn.chatId, { words: words.filter((_, index) => index !== at) })) return say(turn, "Не забылось: память сейчас недоступна.");
+      return say(turn, `Забыла: «${gone.w}». Фраз этого чата осталось: ${words.length - 1}.`);
+    }
+    const key = cleanPhrase(asked.add.when), answer = String(asked.add.say).replace(/\s+/gu, " ").trim().slice(0, 300);
+    if (!key || !answer) return say(turn, "Не разобрала: нужна реплика и ответ на неё.");
+    if (key.length > 80) return say(turn, "Реплика слишком длинная: учу только короткое, до 80 знаков.");
+    if (drawRefusal(`${key} ${answer}`)) return say(turn, "Такому я учиться не буду.");
+    const at = words.findIndex(item => item.w === key);
+    let next;
+    if (at >= 0) {
+      if (words[at].a.includes(answer)) return say(turn, `Это я здесь уже знаю: на «${key}» отвечаю так.`);
+      if (words[at].a.length >= CHAT_ANSWERS_MAX) return say(turn, `На эту реплику здесь уже ${CHAT_ANSWERS_MAX} ответа — больше не запомню.`);
+      next = words.map((item, index) => (index === at ? { ...item, a: [...item.a, answer] } : item));
+    } else {
+      if (words.length >= CHAT_WORDS_MAX) return say(turn, `В этом чате выучено уже ${CHAT_WORDS_MAX} фраз — больше не помещается. «Фразы чата» покажет, что можно забыть.`);
+      next = [...words, { w: key, a: [answer] }];
+    }
+    if (!await fun.saveChat(turn.chatId, { words: next })) return say(turn, "Запомнить некуда: память сейчас недоступна.");
+    const count = next.find(item => item.w === key).a.length;
+    return say(turn, count > 1 ? `Запомнила ещё один ответ на «${key}» — в этом чате их теперь ${count}, буду чередовать.` : `Запомнила: в этом чате на «${key}» отвечаю «${answer}». В других чатах этого не будет.`);
   }
 
   /**
@@ -2064,6 +2162,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!asked) return null;
     const mine = owner(turn.actorId) && turn.isPrivate;
     if (!mine) {
+      // В группе админ учит её фразам этого чата: действуют только здесь.
+      if (turn.inGroup && (asked.add || asked.list || asked.drop != null)) return chatWords(turn, asked);
       // Чужая просьба научить — не повод обещать: слова для всех вкладывает только хозяин.
       if (asked.add) return say(turn, "Новым фразам меня учит только хозяин. Но «наша шутка: …» я запомню и от вас.");
       return null;
@@ -2105,6 +2205,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * Реплика должна совпасть целиком; модель не тратится.
    */
   async function smallTalk(turn, prompt) {
+    // Фразы этого чата — первыми: их вложил его админ, и действуют они только здесь.
+    if (PHRASES && turn.inGroup && String(prompt ?? "").trim().length <= 160) {
+      turn.chat ??= await fun.chatSettings(turn.chatId).catch(() => null);
+      const key = Array.isArray(turn.chat?.words) && turn.chat.words.length ? cleanPhrase(prompt) : "";
+      const local = key ? turn.chat.words.find(item => item?.w === key && Array.isArray(item.a) && item.a.length) : null;
+      if (local) {
+        if (turn.dry) return say(turn, "Разобрала бы это как фразу этого чата — репетиция.");
+        const picked = local.a[Math.min(local.a.length - 1, Math.floor(Math.max(0, Number(random()) || 0) * local.a.length))];
+        const text = fill(picked, voiceCtx(turn)) ?? picked;
+        pulse.bump("phrased");
+        const sent = await say(turn, voiced(turn, text));
+        return { ...sent, action: "phrase", topics: ["фразы чата"] };
+      }
+    }
     // Выученное от хозяина важнее словаря из файла.
     const own = PHRASES ? await taught.match(prompt).catch(() => null) : null;
     if (own) {
@@ -2413,7 +2527,47 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     await store.set(countKey, { n: used + 1 }).catch(() => false);
     await store.set(lastKey, { q: String(query).slice(0, 300), at: now() }).catch(() => false);
     await store.set(`heart:credit:${turn.chatId}`, { own: true, title: String(query).slice(0, 120), at: now() }).catch(() => false);
+    // Альбом человека: последние десять просьб. Повтор той же просьбы подряд — одна строка.
+    try {
+      const wish = String(query).replace(/\s+/gu, " ").trim().slice(0, 200);
+      const album = await store.get(ALBUM_KEY(turn.actorId)).catch(() => null);
+      const items = (Array.isArray(album?.items) ? album.items : []).filter(item => item?.q && item.q !== wish);
+      await store.set(ALBUM_KEY(turn.actorId), { items: [...items, { q: wish, at: now() }].slice(-ALBUM_MAX), at: now() });
+    } catch { /* альбом не важнее рисунка */ }
     return { ok: true, action: "photo", kind: "draw" };
+  }
+
+  /**
+   * Альбом: «мои рисунки» — последние десять просьб, свежая первой; «повтори
+   * рисунок 3» — нарисовать ту же просьбу заново. Только в личке: чужим
+   * глазам список чужих просьб ни к чему.
+   */
+  async function album(turn, prompt) {
+    const asked = draw.available ? parseAlbum(prompt) : null;
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как просьбу об альбоме рисунков — репетиция.");
+    if (!turn.isPrivate) return say(turn, "Альбом показываю в личке: там — «мои рисунки».");
+    const saved = await store.get(ALBUM_KEY(turn.actorId)).catch(() => null);
+    const items = (Array.isArray(saved?.items) ? saved.items : []).filter(item => item?.q).reverse();
+    if (!items.length) return say(turn, `Альбом пока пуст: я ${you(turn, "вам", "тебе")} ещё ничего не рисовала. «Нарисуй кота в шляпе» — и начнём.`);
+    if (asked.repeat) {
+      const item = items[asked.repeat - 1];
+      if (!item) return say(turn, `В альбоме ${items.length} ${plural(items.length, "рисунок", "рисунка", "рисунков")} — такого номера нет. Список — «мои рисунки».`);
+      return drawPicture(turn, item.q);
+    }
+    const zone = zoneOf(turn);
+    const day = (at) => { const parts = localParts(at, zone); return `${String(parts.d).padStart(2, "0")}.${String(parts.m).padStart(2, "0")}`; };
+    const lines = [
+      `${you(turn, "Ваши", "Твои")} рисунки — последние ${items.length}:`,
+      ...items.map((item, index) => `${index + 1}. ${item.q} — ${day(item.at)}`),
+      "",
+      "Сами картинки — выше в переписке. Нарисовать такую же заново — «повтори рисунок 2».",
+    ];
+    if (owner(turn.actorId)) {
+      const state = await draw.state().catch(() => null);
+      if (state?.until > now()) lines.push(`Краски на сегодня кончились — вернутся в ${clock(state.until)}.`);
+    }
+    return say(turn, lines.join("\n"));
   }
 
   async function findMedia(turn, prompt) {
@@ -3061,6 +3215,64 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /** Утренняя весть: что было вчера. Тихий день без проблем — не новость. */
+  /** Счётчики за семь дней до сегодняшнего: по дням и суммой. */
+  async function lastWeek() {
+    const days = Array.from({ length: 7 }, (_, index) => dayOf(now() - (7 - index) * DAY));
+    const rows = await Promise.all(days.map(day => pulse.day(day).catch(() => ({}))));
+    const sum = {};
+    for (const row of rows) for (const [name, value] of Object.entries(row ?? {})) if (Number(value)) sum[name] = (sum[name] ?? 0) + Number(value);
+    return { days, rows, sum };
+  }
+  const shortDay = (day) => `${day.slice(8, 10)}.${day.slice(5, 7)}`;
+
+  /** «Неделя в цифрах» — строки для понедельничной сводки. Тихая неделя — без строк. */
+  async function weekInNumbers() {
+    const { days, rows, sum } = await lastWeek();
+    const c = (name) => Number(sum[name]) || 0;
+    const answers = c("replies") + c("ruled");
+    if (!answers && !c("reactions")) return [];
+    const busiest = rows.map((row, index) => [Number(row?.replies) || 0, Number(row?.ruled) || 0, days[index]]).sort((a, b) => (b[0] + b[1]) - (a[0] + a[1]))[0];
+    const extra = [
+      c("drawn") ? `рисунков — ${c("drawn")}` : "", c("games") ? `игр — ${c("games")}` : "", c("rp") ? `действий — ${c("rp")}` : "",
+      c("reminded") ? `напомнила — ${c("reminded")}` : "", c("sourced") ? `из источников — ${c("sourced")}` : "", c("greeted") ? `написала первой — ${c("greeted")}` : "",
+    ].filter(Boolean);
+    return [
+      `Неделя в цифрах (${shortDay(days[0])}–${shortDay(days[6])}): ответов — ${answers}, из них без модели — ${c("ruled")}${answers ? ` (${Math.round(c("ruled") * 100 / answers)}%)` : ""}${c("phrased") ? `, по словарю — ${c("phrased")}` : ""}; реакций — ${c("reactions")}.`,
+      extra.length ? `За неделю: ${extra.join(", ")}.` : "",
+      busiest && busiest[0] + busiest[1] > 0 ? `Самый разговорчивый день — ${shortDay(busiest[2])}: ${busiest[0] + busiest[1]} ${plural(busiest[0] + busiest[1], "ответ", "ответа", "ответов")}.${c("corrected") ? ` Поправили меня за неделю ${c("corrected")} ${plural(c("corrected"), "раз", "раза", "раз")}.` : ""}` : "",
+    ].filter(Boolean);
+  }
+
+  /**
+   * Дневник: её неделя по дням, её словами и без модели — из тех же счётчиков,
+   * что и сводка. Только хозяину и только в личке.
+   */
+  async function diary(turn, prompt) {
+    const value = String(prompt ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
+    // «Дневник» без «твой» — записи самого человека (`notes.js`); её дневник — «твой дневник».
+    if (!/^(?:(?:покажи|открой|дай\s+почитать)\s+)?(?:твой|свой)\s+дневник$|^что\s+(?:у\s+тебя\s+в\s+дневнике|в\s+твоем\s+дневнике)$|^как\s+прошла\s+твоя\s+неделя$/u.test(value)) return null;
+    if (!owner(turn.actorId) || !turn.isPrivate) return null;
+    if (turn.dry) return say(turn, "Показала бы дневник — репетиция.");
+    const { days, rows } = await lastWeek();
+    const today = await pulse.day(dayOf(now())).catch(() => ({}));
+    const entries = [...days.map((day, index) => [day, rows[index]]), [dayOf(now()), today]];
+    const lines = [];
+    for (const [day, row] of entries) {
+      const c = (name) => Number(row?.[name]) || 0;
+      const talk = c("replies") + c("ruled");
+      if (!talk && !c("reactions") && !c("drawn") && !c("games")) continue;
+      const bits = [
+        talk >= 60 ? `говорила без умолку — ${talk} ${plural(talk, "ответ", "ответа", "ответов")}` : talk >= 15 ? `хорошо поговорили — ${talk} ${plural(talk, "ответ", "ответа", "ответов")}` : talk ? `говорила мало — ${talk} ${plural(talk, "ответ", "ответа", "ответов")}` : "молчала и слушала",
+        c("drawn") ? `рисовала (${c("drawn")})` : "", c("games") ? `играла (${c("games")})` : "", c("rp") ? `дурачились в чате (${c("rp")})` : "",
+        c("greeted") ? "писала вам первой" : "", c("corrected") ? `меня поправили (${c("corrected")})` : "", c("lessons") ? `выучила новое (${c("lessons")})` : "",
+        c("limited") ? "упиралась в лимит" : "", c("failed") ? `не смогла ответить (${c("failed")})` : "",
+      ].filter(Boolean);
+      lines.push(`${shortDay(day)}${day === dayOf(now()) ? " (сегодня)" : ""} — ${bits.join(", ")}.`);
+    }
+    if (!lines.length) return say(turn, "В дневнике за неделю пусто: дни были тихие.");
+    return say(turn, `Мой дневник за неделю:\n${lines.join("\n")}`);
+  }
+
   async function morningDigest(ctx) {
     if (localHour(now(), TZ) < (Number.isFinite(Number(config.DIGEST_HOUR)) ? Number(config.DIGEST_HOUR) : 9)) return;
     const today = dayOf(now());
@@ -3076,12 +3288,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const asked = (Array.isArray(unknown?.items) ? unknown.items : []).filter(item => now() - Number(item.at) < 2 * DAY).slice(-3);
     // Раз в неделю, по понедельникам: чего в словаре не хватило на деле.
     const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await taught.unheard({ limit: 8, sinceMs: 7 * DAY }).catch(() => []) : [];
+    const weekLines = localParts(now(), TZ).weekday === 1 ? await weekInNumbers().catch(() => []) : [];
     const unheardLine = weekly.length ? `За неделю не узнала из короткого: ${weekly.map(row => `«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join(", ")}. Весь список — «что ты не поняла?».` : "";
     const lines = [
       `🤍 Хозяин, вот мой вчерашний день, ${yesterday.slice(8, 10)}.${yesterday.slice(5, 7)}:`,
       ...pulse.lines(counters),
       study.active ? `Уроки: всего ${study.active}${study.proposed ? ` · ждут вашего слова: ${study.proposed} («покажи уроки»)` : ""}${study.doubt ? ` · под сомнением: ${study.doubt}` : ""}` : "",
       asked.length ? `Не знала ответа: ${asked.map(item => `«${item.q}»`).join("; ")}. Научить — «знай: …».` : "",
+      ...weekLines,
       unheardLine,
       waiting ? `В очереди ждут ответа: ${waiting}` : "",
       `Мозги: ${await brainsLine(await resolveKey(ctx))}`,
@@ -3338,6 +3552,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
     if (!dry) {
       try { turn.seen = await personal.seen(actorId); } catch { turn.seen = null; }
+      // Первый разговор: день знакомства запоминается сразу, а не со второго прихода.
+      if (turn.seen && !turn.seen.known) await personal.daysWith(actorId).catch(() => null);
       if (turn.seen?.newDay && turn.seen.known) {
         const days = await personal.daysWith(actorId).then(value => value.days).catch(() => 0);
         if ([7, 30, 100].includes(days) || (days > 0 && days % 365 === 0)) turn.anniversary = days;
@@ -3462,7 +3678,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки

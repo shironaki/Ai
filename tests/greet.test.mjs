@@ -274,6 +274,63 @@ test("«когда фаджр?»: время для города человек�
   assert.equal(chats().length, 0, "модель не тратится");
 });
 
+test("в «добром утре» — строка о погоде в городе хозяина и круглый день знакомства; данных нет — без строки", async () => {
+  const forecast = {
+    current: { temperature_2m: 4.6, apparent_temperature: 1.2, weather_code: 61, wind_speed_10m: 5.2 },
+    daily: { temperature_2m_max: [6.1, 3.4, 1.2], temperature_2m_min: [1.9, -0.6, -3.1], weather_code: [61, 3, 71], precipitation_probability_max: [80, 10, 55] },
+  };
+  reset();
+  moscow();
+  source("api.open-meteo.com/v1/forecast", forecast);
+  let now = at("2026-11-13T09:00:00Z");
+  const h = heart({ ...ON, SOURCES: true }, { now: () => now });
+  await h.onMessage(own("мой город — Москва"), KEY);
+  now = at("2026-11-14T02:54:00Z"); // 05:54 — фаджр начался
+  await h.tick({});
+  const [first, ...rest] = toOwner().at(-1).text.split("\n");
+  assert.ok(MORNING.some(line => first.startsWith(line.split("X")[0].slice(0, 12))), first);
+  assert.deepEqual(rest, ["Сегодня: от +2° до +6°, небольшой дождь, осадки — 80%."]);
+  assert.equal(chats().length, 0, "модель не тратится");
+
+  // Сотый день знакомства — отдельной строкой; погоды нет — только она.
+  reset();
+  moscow();
+  now = at("2026-08-06T09:00:00Z");
+  const long = heart({ ...ON, SOURCES: true }, { now: () => now });
+  await long.onMessage(own("мой город — Москва"), KEY);
+  now = at("2026-11-14T02:54:00Z"); // ровно сто дней спустя, утро
+  await long.tick({});
+  assert.deepEqual(toOwner().at(-1).text.split("\n").slice(1), ["Сегодня 100-й день, как мы знакомы."]);
+
+  // «Спокойной ночи» — без погоды и дат.
+  now = at("2026-11-14T20:10:00Z");
+  await long.tick({});
+  assert.ok(NIGHT.includes(toOwner().at(-1).text));
+});
+
+test("на фаджр она здоровается, даже если ночью говорили; молчит — только если он уже написал после рассвета", async () => {
+  reset();
+  moscow();
+  let now = at("2026-11-13T09:00:00Z");
+  const h = heart({ ...ON, SOURCES: true }, { now: () => now });
+  await h.onMessage(own("мой город — Москва"), KEY);
+  // Ночной разговор в 04:30 — за полтора часа до фаджра (05:52): по часам это было бы «уже говорили».
+  now = at("2026-11-14T01:30:00Z");
+  await h.onMessage(own("привет"), KEY);
+  const before = toOwner().length;
+  now = at("2026-11-14T02:54:00Z");
+  await h.tick({});
+  assert.equal(toOwner().length, before + 1, "с началом фаджра — пишет");
+
+  // На следующий день он сам написал уже после начала фаджра — вдогонку она не здоровается.
+  now = at("2026-11-15T02:55:00Z"); // 05:55, фаджр — 05:53
+  await h.onMessage(own("привет"), KEY);
+  const count = toOwner().length;
+  now = at("2026-11-15T02:58:00Z");
+  await h.tick({});
+  assert.equal(toOwner().length, count);
+});
+
 // ── настроение меняет поведение ──────────────────────────────────────────
 /** Человек, у которого в этот час нужное настроение: зерно зависит от его номера. */
 const someone = (moment, mood, extra = {}) => {

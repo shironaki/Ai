@@ -451,7 +451,8 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     }
     const text = lines.filter(Boolean).join("\n");
     if (!text.includes("°")) return { ok: false, code: "network", place };
-    return { ok: true, place, text: `${text}${got.stale ? "\n(Свежих данных нет — это прогноз трёхчасовой давности.)" : ""}`, source: "Open-Meteo" };
+    // `today` — одна строка о сегодняшнем дне: её она добавляет к «доброму утру».
+    return { ok: true, place, text: `${text}${got.stale ? "\n(Свежих данных нет — это прогноз трёхчасовой давности.)" : ""}`, today: dayLine(0, "Сегодня"), stale: Boolean(got.stale), source: "Open-Meteo" };
   }
 
   // ── курсы ───────────────────────────────────────────────────────────────
