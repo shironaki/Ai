@@ -2,12 +2,13 @@
  * Она пишет хозяину первой: «доброе утро» и «спокойной ночи» в его время.
  *
  * Слова — из словаря (запасы «+утро хозяину», «+ночь хозяину»), модель не
- * тратится. Время хозяин называет словами; по умолчанию — восемь утра и
- * одиннадцать вечера по его часам. Опоздать больше чем на два часа она не
- * станет: будильник молчал — значит, сегодня без этого.
+ * тратится. Утро по умолчанию — на фаджр, начало рассвета в его городе (расчёт
+ * в `fajr.js`); города она не знает или посчитать нельзя — в шесть утра. Вечер —
+ * в одиннадцать. Время хозяин меняет словами. Опоздать больше чем на два часа
+ * она не станет: будильник молчал — значит, сегодня без этого.
  */
 export const GREET_KEY = "heart:greet:v1";
-export const GREET_DEFAULTS = Object.freeze({ morning: "08:00", night: "23:00" });
+export const GREET_DEFAULTS = Object.freeze({ morning: "06:00", night: "23:00" });
 /** Сколько после назначенного часа слова ещё уместны. */
 export const GREET_WINDOW_MS = 2 * 3_600_000;
 
@@ -26,15 +27,19 @@ const clockOf = (hour, minute, part = "") => {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 };
 
+const FAJR = "(?:(?:на|по|к|в|с|около)\\s+фаджр\\S*|с\\s+началом\\s+фаджра|когда\\s+(?:начинается|наступает|начн[её]тся|наступит)\\s+фаджр|на\\s+рассвете|с\\s+рассветом)";
+
 /**
  * Слова хозяина → просьба, иначе null:
  *   { set: "morning" | "night", time: "07:30" } · { off: "morning" | "night" | "all" }
+ *   { set: "morning", by: "fajr" } — «желай доброго утра на фаджр»
  *   { on: "morning" | "night" | "all" } · { show: true }
  */
 export function parseGreet(text) {
   const value = squash(text);
   if (!value || value.length > 90) return null;
   if (/^(?:когда|во\s+сколько)\s+ты\s+(?:мне\s+)?пишешь\s+(?:мне\s+)?(?:первой|сама)$/u.test(value) || /^(?:когда|во\s+сколько)\s+ты\s+(?:мне\s+)?желаешь\s+(?:мне\s+)?(?:доброго\s+утра|спокойной\s+ночи)$/u.test(value)) return { show: true };
+  if (new RegExp(`^${VERB}\\s+(?:мне\\s+)?${MORNING}\\s+${FAJR}$`, "u").test(value) || new RegExp(`^${VERB}\\s+(?:мне\\s+)?${FAJR}$`, "u").test(value)) return { set: "morning", by: "fajr" };
   let found = value.match(new RegExp(`^${VERB}\\s+(?:мне\\s+)?${MORNING}\\s+${TIME}$`, "u"));
   if (found) { const time = clockOf(found[1], found[2], value); return time ? { set: "morning", time } : null; }
   found = value.match(new RegExp(`^${VERB}\\s+(?:мне\\s+)?${NIGHT}\\s+${TIME}$`, "u"));
@@ -48,11 +53,18 @@ export function parseGreet(text) {
   return null;
 }
 
-/** Настройка из базы → полная: времена и выключатели. */
+/**
+ * Настройка из базы → полная: времена и выключатели. `byFajr` — утро считается
+ * по фаджру; так по умолчанию, пока хозяин сам не назвал час («в 7:30»).
+ */
 export function greetSettings(saved = null) {
-  const time = (value, fallback) => (/^\d{2}:\d{2}$/u.test(String(value ?? "")) ? String(value) : fallback);
+  const valid = (value) => /^\d{2}:\d{2}$/u.test(String(value ?? ""));
+  const time = (value, fallback) => (valid(value) ? String(value) : fallback);
+  const byFajr = saved?.by === "fajr" || (saved?.by !== "clock" && !valid(saved?.morning));
   return {
-    morning: time(saved?.morning, GREET_DEFAULTS.morning), night: time(saved?.night, GREET_DEFAULTS.night),
+    byFajr, angle: Number(saved?.angle) >= 9 && Number(saved?.angle) <= 24 ? Number(saved.angle) : null,
+    // Назван час — он; фаджр без города — запасные шесть утра.
+    morning: byFajr ? GREET_DEFAULTS.morning : time(saved?.morning, GREET_DEFAULTS.morning), night: time(saved?.night, GREET_DEFAULTS.night),
     morningOff: saved?.morningOff === true, nightOff: saved?.nightOff === true,
     m: String(saved?.m ?? ""), n: String(saved?.n ?? ""),
   };

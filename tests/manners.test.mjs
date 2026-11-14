@@ -13,8 +13,8 @@ const ON = { PHRASES: true, MANNERS: true };
 const NOON = Date.parse("2026-11-18T09:00:00Z");
 const book = createPhrasebook();
 const pool = (name) => book.pool(name, { formal: true });
-const press = (h, data, { id = 5, chat = id, type = "private", name = "Тест", messageId = 900 } = {}) => h.onCallback({
-  id: `q${id}${data}`, from: { id, first_name: name }, data, message: { message_id: messageId, chat: { id: chat, type } },
+const press = (h, data, { id = 5, chat = id, type = "private", name = "Тест", messageId = 900, extra = {} } = {}) => h.onCallback({
+  id: `q${id}${data}`, from: { id, first_name: name }, data, message: { message_id: messageId, chat: { id: chat, type }, ...extra },
 }, KEY);
 const gif = (category) => source(`nekos.best/api/v2/${category}`, { results: [{ url: `https://nekos.best/api/v2/${category}/001.gif` }] });
 
@@ -137,25 +137,183 @@ test("кнопками: вопрос с выбором, нажатие сохр�
   assert.equal(chats().length, 0);
 });
 
-test("сама спрашивает: один раз, в личке, знакомого человека — после ответа", async () => {
+test("сама о манере не спрашивает: ни знакомого, ни хозяина, ни в группе", async () => {
   reset();
   let at = NOON;
   const h = heart(ON, { now: () => at, random: () => 0 });
-  await h.onMessage(message("привет"), KEY);
-  assert.equal(toChat(5).length, 1, "при первом знакомстве не спрашивает");
-  at += DAY;
-  await h.onMessage(message("привет"), KEY);
-  const asked = toChat(5).at(-1);
-  assert.match(asked.text, /Какой мне быть/u);
-  assert.ok(asked.reply_markup?.inline_keyboard?.length > 3);
-  at += DAY;
-  await h.onMessage(message("привет"), KEY);
-  assert.doesNotMatch(toChat(5).at(-1).text, /Какой мне быть/u, "второй раз не спрашивает");
-  // В группе — никогда.
-  await h.onMessage(group("Аи, привет", { id: 21 }), KEY);
-  at += DAY;
-  await h.onMessage(group("Аи, привет", { id: 21 }), KEY);
-  assert.ok(!toChat(-10).some(item => /Какой мне быть/u.test(item.text)));
+  for (let day = 0; day < 4; day += 1) {
+    await h.onMessage(message("привет"), KEY);
+    await h.onMessage(message("привет", { id: OWNER }), KEY);
+    await h.onMessage(group("Аи, привет", { id: 21 }), KEY);
+    at += DAY;
+  }
+  for (const chat of [5, OWNER, -10]) {
+    assert.ok(!toChat(chat).some(item => /Какой мне быть|какой мне быть/u.test(item.text) || item.reply_markup), `чат ${chat}: вопроса и кнопок нет`);
+  }
+  assert.equal(chats().length, 0);
+});
+
+test("вопрос хозяину: «сейчас я — всё сразу» сказано один раз", async () => {
+  // Строка из словаря уже кончалась этими словами — и к ней добавлялись они же.
+  for (const line of book.pool("+манера:вопрос", { formal: true, owner: true })) assert.doesNotMatch(line, /Сейчас я/u, line);
+  for (let seed = 0; seed < 12; seed += 1) {
+    reset();
+    const h = heart(ON, { now: () => NOON, random: () => seed / 12 });
+    await h.onMessage(message("какой ты можешь быть?", { id: OWNER }), KEY);
+    const text = toChat(OWNER).at(-1).text;
+    assert.equal(text.split("Сейчас я").length - 1, 1, text);
+    assert.match(text, /\nСейчас я — всё сразу\.$/u);
+  }
+});
+
+test("режим общения — в приветствии: /start называет его и предлагает сменить; «да», «какие?» — показывает выбор", async () => {
+  reset();
+  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  await h.onMessage(message("/start"), KEY);
+  assert.match(last(), /^Аи\. Я рядом\./u);
+  assert.match(last(), /\n\nСейчас мой режим общения — обычная\. Не хотите ли его изменить\? Спросите «какие есть режимы» — покажу\.$/u);
+  assert.equal(toChat(5).at(-1).reply_markup, undefined, "кнопок в приветствии нет: они — по просьбе");
+
+  // Спросил, какие есть, — показывает выбор с кнопками.
+  for (const said of ["какие есть режимы", "Какие режимы общения есть?", "какие у тебя режимы", "смени режим общения", "хочу другой режим", "режим общения"]) {
+    const done = await h.onMessage(message(said), KEY);
+    assert.equal(done.action, "manner_ask", said);
+    assert.ok(toChat(5).at(-1).reply_markup.inline_keyboard.length > 3, said);
+  }
+
+  // Короткое «да», «хочу», «какие?» сразу после приветствия — тот же выбор; «нет» — остаётся как есть.
+  for (const said of ["да", "хочу", "какие?", "Давай", "покажи", "а какие есть?"]) {
+    reset();
+    const fresh = heart(ON, { now: () => NOON, random: () => 0 });
+    await fresh.onMessage(message("/start"), KEY);
+    const done = await fresh.onMessage(message(said), KEY);
+    assert.equal(done.action, "manner_ask", said);
+    assert.match(toChat(5).at(-1).text, /Сейчас я — обычная\./u);
+    // Предложение одно: второе «да» — уже не о режиме.
+    sdk().fetchQueue.push(says("Что — да?"));
+    await fresh.onMessage(message("да"), KEY);
+    assert.equal(last(), "Что — да?", said);
+  }
+  reset();
+  const calm = heart(ON, { now: () => NOON, random: () => 0 });
+  await calm.onMessage(message("/start"), KEY);
+  await calm.onMessage(message("нет"), KEY);
+  assert.equal(last(), "Хорошо, остаюсь как есть. Передумаете — «какие есть режимы».");
+
+  // Предложение живёт недолго: «хочу» через час — обычные слова, а не выбор режима.
+  reset();
+  let at = NOON;
+  const late = heart(ON, { now: () => at, random: () => 0 });
+  await late.onMessage(message("/start"), KEY);
+  at += 3_600_000;
+  sdk().fetchQueue.push(says("Чего именно?"));
+  await late.onMessage(message("хочу"), KEY);
+  assert.equal(last(), "Чего именно?");
+
+  // Хозяину — его режим; в группе приветствие то же, но «да» там — чужое слово.
+  reset();
+  const mine = heart(ON, { now: () => NOON, random: () => 0 });
+  await mine.onMessage(message("/start", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /Сейчас мой режим общения — всё сразу\./u);
+  await mine.onMessage(group("/start", { id: 21 }), KEY);
+  assert.match(last(-10), /Сейчас мой режим общения — обычная\./u);
+  const before = toChat(-10).length;
+  await mine.onMessage(group("да", { id: 21 }), KEY);
+  assert.equal(toChat(-10).length, before, "в группе на «да» без обращения не отвечает");
+
+  // Манеры выключены — в приветствии о режиме ни слова.
+  reset();
+  const off = heart({ PHRASES: true, MANNERS: false }, { now: () => NOON });
+  await off.onMessage(message("/start"), KEY);
+  assert.doesNotMatch(last(), /режим/u);
+});
+
+test("в группе выбор — одному: шёпотом, если Telegram позволяет; иначе кнопки видны всем, но слушаются спросившего", async () => {
+  const eph = (item) => item.ephemeral_message_parameters;
+  const keys = (item) => item.reply_markup.inline_keyboard.flat().map(button => button.callback_data);
+
+  // 1. Она администратор чата: вопрос с кнопками видит только спросивший.
+  reset();
+  sdk().whispers = { admin: [-10] };
+  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  const asked = await h.onMessage(group("Аи, какие есть режимы", { id: 21, name: "Вася" }), KEY);
+  assert.equal(asked.action, "manner_ask");
+  assert.equal(asked.whispered, true);
+  assert.equal(toChat(-10).length, 1);
+  const whisper = toChat(-10)[0];
+  assert.deepEqual(eph(whisper), { receiver_user_id: 21 });
+  assert.equal(whisper.reply_parameters, undefined, "шёпот — без «ответа на сообщение»");
+  assert.ok(keys(whisper).every(data => data.endsWith(":21")), "кнопки привязаны к спросившему");
+  assert.deepEqual(keys(whisper).slice(0, 2), ["m:plain:21", "m:cat:21"]);
+
+  // Нажал он — ответ остаётся шёпотом: правится то же сообщение, при всех ничего не говорится.
+  const done = await press(h, "m:cat:21", { id: 21, chat: -10, type: "supergroup", name: "Вася", extra: { message_id: 0, ephemeral_message_id: 1 } });
+  assert.equal(done.accent, "cat");
+  assert.deepEqual(calls("editEphemeralMessageText").at(-1), { chat_id: -10, receiver_user_id: 21, ephemeral_message_id: 1, text: "Буду кошкой, мяу." });
+  assert.equal(toChat(-10).length, 1, "в чат при всех ничего не ушло");
+  assert.equal(calls("answerCallbackQuery").at(-1).text, "кошка");
+  await h.onMessage(group("Аи, привет", { id: 21, name: "Вася" }), KEY);
+  assert.match(last(-10), /мяу/u);
+
+  // Шёпот не правится — ответ уходит шёпотом в ответ на нажатие, а не в общий чат.
+  sdk().failing.editEphemeralMessageText = new Error("message to edit not found");
+  await press(h, "m:fox:21", { id: 21, chat: -10, type: "supergroup", name: "Вася", extra: { message_id: 0, ephemeral_message_id: 1 } });
+  assert.equal(eph(toChat(-10).at(-1)).callback_query_id, "q21m:fox:21");
+  assert.equal(eph(toChat(-10).at(-1)).receiver_user_id, undefined);
+  delete sdk().failing.editEphemeralMessageText;
+
+  // 2. Не администратор: Telegram отказывает — кнопки при всех, но привязаны; отказ помнится, вторая просьба с ошибки не начинается.
+  reset();
+  sdk().whispers = { admin: [] };
+  const plain = heart(ON, { now: () => NOON, random: () => 0 });
+  const open = await plain.onMessage(group("Аи, какие есть режимы", { id: 21, name: "Вася" }), KEY);
+  assert.equal(open.whispered, false);
+  assert.equal(toChat(-10).length, 1);
+  assert.equal(eph(toChat(-10)[0]), undefined);
+  assert.ok(toChat(-10)[0].reply_parameters?.message_id, "при всех — ответом на его сообщение");
+  assert.ok(keys(toChat(-10)[0]).every(data => data.endsWith(":21")));
+  assert.equal(calls("sendMessage:refused").length, 1);
+  await plain.onMessage(group("Аи, какие есть режимы", { id: 22, name: "Петя" }), KEY);
+  assert.equal(calls("sendMessage:refused").length, 1, "отказ чата помнится — не пробует каждый раз");
+  assert.ok(keys(toChat(-10)[1]).every(data => data.endsWith(":22")));
+
+  // Чужое нажатие ничего не меняет: только подсказка нажавшему.
+  const foreign = await press(plain, "m:cat:21", { id: 22, chat: -10, type: "supergroup", name: "Петя", messageId: 1 });
+  assert.equal(foreign.ignored, true);
+  assert.equal(foreign.reason, "foreign_button");
+  assert.match(calls("answerCallbackQuery").at(-1).text, /Эти кнопки — не ваши\. Скажите мне «какие есть режимы»/u);
+  assert.equal(calls("editMessageText").length, 0);
+  await plain.onMessage(group("Аи, привет", { id: 22, name: "Петя" }), KEY);
+  assert.doesNotMatch(last(-10), /мяу/u, "манера нажавшего чужую кнопку не изменилась");
+  // Свой — выбирает: вопрос сменяется ответом, клавиатура уходит.
+  const own = await press(plain, "m:cat:21", { id: 21, chat: -10, type: "supergroup", name: "Вася", messageId: 1 });
+  assert.equal(own.accent, "cat");
+  assert.deepEqual(calls("editMessageText").at(-1), { chat_id: -10, message_id: 1, text: "Вася: Буду кошкой, мяу." });
+  // Через шесть часов — пробует снова: её могли сделать администратором.
+  sdk().whispers = { admin: [-10] };
+  let at = NOON;
+  const later = heart(ON, { now: () => at, random: () => 0 });
+  assert.equal((await later.onMessage(group("Аи, какие есть режимы", { id: 23, name: "Оля" }), KEY)).whispered, false);
+  at += 6 * 3_600_000 + 1;
+  assert.equal((await later.onMessage(group("Аи, какие есть режимы", { id: 23, name: "Оля" }), KEY)).whispered, true);
+
+  // 3. Сервер такого параметра не знает: сообщение уходит всем — один раз, с привязанными кнопками.
+  reset();
+  const old = heart(ON, { now: () => NOON, random: () => 0 });
+  const sent = await old.onMessage(group("Аи, какие есть режимы", { id: 21, name: "Вася" }), KEY);
+  assert.equal(sent.whispered, false);
+  assert.equal(toChat(-10).length, 1, "не дважды");
+  assert.ok(keys(toChat(-10)[0]).every(data => data.endsWith(":21")));
+
+  // 4. Выключено настройкой — шёпот не пробуется вовсе; в личке привязки нет.
+  reset();
+  sdk().whispers = { admin: [-10] };
+  const off = heart({ ...ON, WHISPERS: false }, { now: () => NOON, random: () => 0 });
+  await off.onMessage(group("Аи, какие есть режимы", { id: 21, name: "Вася" }), KEY);
+  assert.equal(eph(toChat(-10)[0]), undefined);
+  await off.onMessage(message("какие есть режимы"), KEY);
+  assert.deepEqual(keys(toChat(5)[0]).slice(0, 2), ["m:plain", "m:cat"]);
+  assert.equal(chats().length, 0);
 });
 
 test("«не люблю аниме» и «строгая»: действие остаётся, гифка — нет", async () => {

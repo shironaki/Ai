@@ -429,7 +429,7 @@ test("вести: утром — сводка вчерашнего дня, од�
   await h.onMessage(message("доброе утро"), KEY);
   const digest = toOwner();
   assert.equal(digest.length, 1);
-  assert.match(digest[0].text, /Хозяин, мой день \(11\.11\)/);
+  assert.match(digest[0].text, /Хозяин, вот мой вчерашний день, 11\.11:/);
   assert.match(digest[0].text, /Разговоры: 2 ответа моделью · 1 без модели · 2 реакции/);
   assert.match(digest[0].text, /Мысли: 60 токенов \(gpt-oss-20b ×2\)/);
   assert.match(digest[0].text, /не знала ответа: 2/);

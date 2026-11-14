@@ -57,11 +57,32 @@ const ADULT = /(?:(?<![а-я])гол(?:ая|ый|ую|ого|ой|ые|ых|ым
 const MINOR = /(?:(?<![а-я])лоли|\bloli|(?<![а-я])шота(?![а-я])|\bshota|малолет)/iu;
 const GORE = /(?:расчлен|кишки|внутренност|обезглав|отрубленн|\bgore\b|повешенн|самоубийств|суицид|вскрыт(?:ые|ых)\s+вен|пытк)/iu;
 const HATE = /(?:свастик|нацист|гитлер|swastika|\bnazi|hitler|ку-клукс|\bkkk\b)/iu;
-/** Причина отказа или пустая строка: «adult», «minor», «gore», «hate». */
-export function refusal(text) {
+// Откровенное в широком смысле — только для проверки «не про ребёнка ли это».
+const LEWD = /(?:соблазн|пошл|возбужд|развратн|разврат|похотл|страстн|(?<![а-я])бель[её]|нижн\S+\s+бель|чулк|чулоч|бикини|стринг|(?<![а-я])трусик|(?<![а-я])трусах|(?<![а-я])трусы|лифчик|корсет|латекс|этти|ecchi|lewd|lingerie|underwear|panties|bikini|seductive|sensual|horny|aroused|18\s*\+|откровенн|полуголы|полуобнаж|полуразд|раздева|без\s+(?:футболки|майки|штанов|юбки|платья)|в\s+одних\s+|секси)/iu;
+// Любой намёк на возраст до восемнадцати. «Девушка» и «женщина» сюда не входят.
+const YOUNG = /(?:(?<![а-я])(?:ребен|ребят|дет(?:и|ей|ям|ьми|ях|ск|к[аиуе]|ишк|очк)|девочк|девчонк|девчушк|мальчик|мальчишк|мальчуган|пацан|школьн|школот|подрост|несовершеннолет|малолет|малыш|малютк|младен|юн(?:ая|ый|ую|ого|ой|ые|ых|ым|ость|ец|ош)|молоденьк|младш(?:ая|ую|ей|ий|его)|сестренк|сестричк|братик|братишк|доч(?:ь|к|ер|ур|ень)|сын(?:а|у|ом|ок|очек|ишк)?(?![а-я])|внучк|внук|ученик|учениц|первоклассн|второклассн|третьеклассн|пятиклассн|шестиклассн|семиклассн|восьмиклассн|девятиклассн|старшеклассн|младшеклассн|одноклассн|гимназистк|пионерк|октябрен|детсад|лоли|шота(?![а-я])|чиби)|(?<![a-z])(?:loli|lolicon|shota|shotacon|child|children|childish|kid|kids|kiddo|teen|teens|teenage|teenager|underage|minor|minors|schoolgirl|schoolboy|school\s+uniform|preteen|toddler|infant|baby|babyface|juvenile|adolescent|youngster|little\s+(?:girl|boy|sister|brother)|young\s+(?:girl|boy)|daughter|son|chibi|petite\s+young)(?![a-z]))/iu;
+// Насилие в откровенном — не рисуется никому.
+const FORCED = /(?:изнасил|насилу|принужд|против\s+(?:ее|его|их)\s+воли|(?<![a-z])(?:rape|raped|raping|rapist|non-?con|forced\s+sex)(?![a-z]))/iu;
+/** Возраст цифрой: «15 лет», «16-летняя», «14 y.o.» — меньше восемнадцати. */
+function underage(value) {
+  for (const hit of value.matchAll(/(?<![\d.,])(\d{1,2})\s*(?:-\s*)?(?:лет(?![а-я])|год(?:а|ик|ика|иков|ов)?(?![а-я])|летн|летк|years?\s*old|y\.?\s?o\.?(?![a-z])|yrs?)/giu)) {
+    if (Number(hit[1]) < 18) return true;
+  }
+  return false;
+}
+/**
+ * Причина отказа или пустая строка: «adult», «minor», «gore», «hate».
+ * `free` — просит хозяин, в личке: своих границ для него у неё нет, и «adult»,
+ * «gore», «hate» не возвращаются. Не зависит от того, кто просит, одно: откровенное
+ * с любым намёком на ребёнка и насилие в откровенном — «minor» для всех.
+ */
+export function refusal(text, { free = false } = {}) {
   const value = fold(text);
-  if (MINOR.test(value)) return "minor";
-  if (ADULT.test(value)) return "adult";
+  if (MINOR.test(value) || FORCED.test(value)) return "minor";
+  const adult = ADULT.test(value);
+  if ((adult || LEWD.test(value)) && (YOUNG.test(value) || underage(value))) return "minor";
+  if (free) return "";
+  if (adult) return "adult";
   if (GORE.test(value)) return "gore";
   if (HATE.test(value)) return "hate";
   return "";
@@ -69,7 +90,9 @@ export function refusal(text) {
 
 // ── что именно просят ────────────────────────────────────────────────────
 /** Она сама, её комната и кот — по канону из словаря; описания на английском. */
-const SELF = "anime style portrait of a young woman with shoulder-length dark hair with one blue streak, blue eyes, headphones around her neck, oversized cozy sweater, gentle smile, rainy window with city lights in the background, soft warm light, detailed illustration";
+const SELF = "anime style portrait of a young adult woman with shoulder-length dark hair with one blue streak, blue eyes, headphones around her neck, oversized cozy sweater, gentle smile, rainy window with city lights in the background, soft warm light, detailed illustration";
+/** Её приметы без позы и фона — для «нарисуй себя в шляпе». */
+const LOOK = "a young adult woman with shoulder-length dark hair with one blue streak, blue eyes, anime style, detailed illustration";
 const ROOM = "cozy small room at night, floor-to-ceiling window with rain and city lights outside, wooden desk with a warm lamp and a teapot, bookshelf with manga, blue plaid on an armchair, string lights, a small cactus on the windowsill, a grey cat sleeping on a pillow, anime background art, warm atmosphere, detailed";
 const CAT = "a fluffy grey cat sleeping on a computer keyboard in a cozy room with a rainy window, anime style, warm light, detailed illustration";
 /**
@@ -85,6 +108,9 @@ export function subjectOf(query) {
   if (/^(?:себя|саму\s+себя|свой\s+портрет|автопортрет|свое\s+лицо|аи|как\s+ты\s+выглядишь|себя\s+(?:еще|снова))$/u.test(text)) return { own: "self", prompt: SELF };
   if (/^(?:свою\s+комнату|свой\s+дом|где\s+ты\s+живешь|свою\s+комнатку)$/u.test(text)) return { own: "room", prompt: ROOM };
   if (/^(?:своего\s+кота|кота\s+байта|байта|своего\s+котика)$/u.test(text)) return { own: "cat", prompt: CAT };
+  // «Себя в шляпе», «себя на пляже»: она же, но как просили. Просьба переводится и ставится перед её приметами.
+  const as = String(query).replace(/[.!?…]+$/u, "").replace(/\s+/gu, " ").trim().match(/^(?:себя|саму\s+себя)\s+(?!еще$|ещё$|снова$)(.{2,200})$/iu);
+  if (as) return { own: "self", text: as[1].trim(), look: LOOK };
   if (/^(?:меня|мой\s+портрет|мое\s+лицо|нас|нас\s+с\s+тобой|нас\s+вместе)$/u.test(text)) return { me: true };
   if (/^(?:еще|еще\s+раз|еще\s+одну|еще\s+один|снова|заново|такую\s+же|другую|другой|по-другому|по\s+другому|что-нибудь\s+еще)$/u.test(text)) return { again: true };
   return { text: String(query).replace(/\s+/gu, " ").trim().slice(0, 300) };

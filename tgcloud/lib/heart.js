@@ -34,6 +34,7 @@ import { createPhrasebook, partOfDay, fill } from "./phrasebook.js";
 import { accentOf, accentInfo, parseAccent, randomAccent, keyboard as accentKeyboard, garnish, likesAnime } from "./accents.js";
 import { moodOf as feelingNow, behaviourOf } from "./mood.js";
 import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.js";
+import { fajrOn, parseFajr, FAJR_ANGLE, FAJR_METHODS } from "./fajr.js";
 import { createBond, parseJoke } from "./bond.js";
 import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS } from "./chatlog.js";
 import { levelOf } from "./rp.js";
@@ -137,6 +138,8 @@ const CORRECTION = /^(?:нет[,.!\s]|неа[,.!\s]|не\s+так|не\s+то[,.
 const UNSURE = /(?:^|[\s,])(?:не\s+знаю|не\s+уверена|нет\s+данных|не\s+располагаю|мне\s+неизвестно|не\s+могу\s+сказать\s+точно)(?=$|[\s,.!])/iu;
 const YES = /^(?:да|ага|принять|прими|принимаю|ок|ok|хорошо|верно|согласен|согласна|\+)[\s!.]*$/iu;
 const NO = /^(?:нет|неа|отклонить|отклони|не\s+надо|не\s+нужно|-)[\s!.]*$/iu;
+/** После её слов о режиме общения: «хочу», «покажи», «какие?» — то же «да». */
+const MORE_PLEASE = /^(?:(?:да[,\s]+)?(?:хочу|давай|покажи|можно|интересно)|(?:а\s+)?какие(?:\s+(?:есть|бывают))?)[\s!.?]*$/iu;
 
 /** Что прислали, если это не текст. Служебные сообщения — «ничего». */
 function senseOf(message = {}) {
@@ -398,6 +401,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const GREET = config.GREET !== false;
   /** Анкета «любимое»: помнит, что человек любит, и отвечает об этом сама. */
   const LIKES = config.LIKES !== false;
+  /** В группе личное (выбор с кнопками) показывать одному человеку, а не всем. */
+  const WHISPERS = config.WHISPERS !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
   const chatlog = createChatLog({ store, now });
@@ -638,6 +643,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         ? `Профиль, наказания и игры умеет ${SISTER} — попросите её словами.`
         : "",
     ].filter(Boolean);
+    // О режиме общения говорится здесь, при знакомстве: сама с этим вопросом она потом не приходит.
+    if (MANNERS) {
+      const current = accentInfo(accentOf(turn.manner?.settings, { owner: owner(turn.actorId) })).title;
+      lines.push("", `Сейчас мой режим общения — ${current}. Не ${you(turn, "хотите", "хочешь")} ли его изменить? ${you(turn, "Спросите", "Спроси")} «какие есть режимы» — покажу.`);
+      // «Да», «хочу», «какие?» следом — и она покажет выбор. Только в личке: в группе «да» — чужое слово.
+      if (turn.isPrivate && !turn.dry && store.available) {
+        const before = await store.get(OFFER_KEY(turn.actorId)).catch(() => null);
+        await store.set(OFFER_KEY(turn.actorId), { asked: before?.asked ?? [], fact: { kind: "manner" }, at: now() }).catch(() => false);
+      }
+    }
     return say(turn, lines.join("\n"));
   }
 
@@ -1423,11 +1438,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /** «Да» или «нет» на её вопрос «запомнить?». `null` — вопроса не было или он устарел. */
-  async function settleOffer(turn, accept) {
+  async function settleOffer(turn, accept, { more = false } = {}) {
     const saved = await store.get(OFFER_KEY(turn.actorId)).catch(() => null);
     const fact = saved?.fact;
     if (!fact || now() - Number(saved.at) > OFFER_TTL_MS) return null;
+    // «Хочу», «какие?» — ответ только на её слова о режиме общения, не на «запомнить?».
+    if (more && fact.kind !== "manner") return null;
     await store.set(OFFER_KEY(turn.actorId), { asked: saved.asked ?? [], at: now() });
+    if (fact.kind === "manner") {
+      if (!MANNERS) return null;
+      return accept ? askManner(turn) : say(turn, `Хорошо, остаюсь как есть. ${you(turn, "Передумаете", "Передумаешь")} — «какие есть режимы».`);
+    }
     if (!accept) return say(turn, "Хорошо, не записываю — и больше об этом не спрошу.");
     if (fact.kind === "name") {
       const done = await personal.setAddress(turn.actorId, fact.value).catch(() => ({ ok: false }));
@@ -1888,16 +1909,86 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как настройку «писать первой» — репетиция.");
     const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
-    const describe = (set) => [set.morningOff ? "по утрам не пишу" : `доброе утро — в ${set.morning}`, set.nightOff ? "перед сном не пишу" : `спокойной ночи — в ${set.night}`].join(", ");
-    if (asked.show) return say(turn, `Пишу вам первой так: ${describe(greetSettings(saved))}. Изменить — «желай доброго утра в 7:30», «желай спокойной ночи в 0:30», «не пиши первой».`);
+    const zone = zoneOf(turn);
+    /** Утро словами: час, фаджр с сегодняшним временем или фаджр, который пока не посчитать. */
+    const morningOf = async (set, kept) => {
+      if (set.morningOff) return "по утрам не пишу";
+      if (!set.byFajr) return `доброе утро — в ${set.morning}`;
+      const spot = await spotOf(turn.manner?.settings, kept);
+      const parts = localParts(now(), zone);
+      const sun = spot ? fajrOn({ y: parts.y, m: parts.m, d: parts.d, latitude: spot.lat, longitude: spot.lon, angle: set.angle ?? FAJR_ANGLE }) : null;
+      if (sun) return `доброе утро — на фаджр (сегодня он в ${localClock(sun.fajr, zone)}, ${spot.city})`;
+      return spot
+        ? `доброе утро — в ${set.morning}: фаджр там сегодня по солнцу не посчитать`
+        : `доброе утро — в ${set.morning}, а будет на фаджр, когда узнаю ваш город: «я живу в …»`;
+    };
+    const describe = async (kept) => {
+      const set = greetSettings(kept);
+      return [await morningOf(set, kept), set.nightOff ? "перед сном не пишу" : `спокойной ночи — в ${set.night}`].join("; ");
+    };
+    if (asked.show) return say(turn, `Пишу вам первой так: ${await describe(saved)}. Изменить — «желай доброго утра в 7:30», «желай доброго утра на фаджр», «желай спокойной ночи в 0:30», «не пиши первой».`);
     const next = { ...saved };
-    if (asked.set) { next[asked.set] = asked.time; next[`${asked.set}Off`] = false; }
+    if (asked.set && asked.by === "fajr") { next.by = "fajr"; delete next.morning; next.morningOff = false; }
+    else if (asked.set) { next[asked.set] = asked.time; next[`${asked.set}Off`] = false; if (asked.set === "morning") next.by = "clock"; }
     for (const slot of asked.off === "all" ? ["morning", "night"] : asked.off ? [asked.off] : []) next[`${slot}Off`] = true;
     for (const slot of asked.on === "all" ? ["morning", "night"] : asked.on ? [asked.on] : []) next[`${slot}Off`] = false;
     const kept = await store.set(GREET_KEY, { ...next, at: now() }).then(() => true).catch(() => false);
     if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
     if (asked.off === "all") return say(turn, "Хорошо, хозяин: первой писать не буду. Передумаете — «пиши первой».");
-    return say(turn, `Хорошо, хозяин: ${describe(greetSettings(next))}.`);
+    return say(turn, `Хорошо, хозяин: ${await describe(next)}.`);
+  }
+
+  /**
+   * Координаты города человека — для расчёта по солнцу. У хозяина они лежат
+   * рядом с настройкой «писать первой»: будильник не должен каждый раз идти в
+   * справочник. null — города нет или справочник его не нашёл.
+   */
+  async function spotOf(settings, kept = null) {
+    const city = String(settings?.city ?? "").trim();
+    if (!city) return null;
+    if (kept?.spot?.city === city && Number.isFinite(Number(kept.spot.lat)) && Number.isFinite(Number(kept.spot.lon))) return kept.spot;
+    const place = await sources.findPlace(city, { tries: 1 }).catch(() => null);
+    if (!place?.ok || !Number.isFinite(place.latitude) || !Number.isFinite(place.longitude)) return null;
+    return { city, lat: place.latitude, lon: place.longitude };
+  }
+
+  /**
+   * «Когда фаджр?» — время по солнцу для города человека. Угол расчёта меняет
+   * только хозяин: «фаджр по 16 градусам», «считай фаджр по ДУМ».
+   */
+  async function fajrWords(turn, prompt) {
+    const asked = parseFajr(prompt);
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Посчитала бы время фаджра — репетиция.");
+    const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
+    const mine = owner(turn.actorId);
+    const angle = greetSettings(saved).angle ?? FAJR_ANGLE;
+    const named = (value) => { const hit = FAJR_METHODS.find(item => item.angle === value); return `${String(value).replace(".", ",")}°${hit ? ` (${FAJR_METHODS.filter(item => item.angle === value).map(item => item.title).join("; ")})` : ""}`; };
+    if (asked.methods) {
+      return say(turn, `Фаджр считаю сама, по солнцу: это час, когда оно утром на ${named(angle)} ниже горизонта. Другие общины берут другой угол: ${FAJR_METHODS.filter(item => item.angle !== angle).map(item => `${item.title} — ${String(item.angle).replace(".", ",")}°`).join(", ")}.${mine ? " Сменить — «считай фаджр по ДУМ» или «угол фаджра 16»." : ""}`);
+    }
+    const zone = zoneOf(turn);
+    const timeFor = async (deg, { tomorrow = false } = {}) => {
+      const spot = await spotOf(turn.manner?.settings, mine ? saved : null);
+      if (!spot) return { text: `Чтобы посчитать, мне нужен ${you(turn, "ваш", "твой")} город. ${you(turn, "Скажите", "Скажи")}: «я живу в Казани».`, spot: null };
+      const parts = localParts(now() + (tomorrow ? DAY : 0), zone);
+      const sun = fajrOn({ y: parts.y, m: parts.m, d: parts.d, latitude: spot.lat, longitude: spot.lon, angle: deg });
+      if (!sun) return { text: `${spot.city}: в этот день там нет восхода или заката — по солнцу фаджр не посчитать.`, spot };
+      const lines = [`Фаджр ${tomorrow ? "завтра" : "сегодня"} — в ${localClock(sun.fajr, zone)}, восход — в ${localClock(sun.sunrise, zone)} (${spot.city}, угол ${String(deg).replace(".", ",")}°).`];
+      if (sun.adjusted) lines.push("Сейчас солнце там не опускается так низко, и время взято долей ночи — в такие дни расписания расходятся сильнее всего.");
+      lines.push(`Это мой расчёт по солнцу, а не расписание мечети: расхождение в несколько минут — обычное дело, и в сомнении верить надо ему.`);
+      return { text: lines.join(" "), spot };
+    };
+    if (asked.angle != null) {
+      if (!mine || !turn.isPrivate) return say(turn, "Угол для расчёта выбирает хозяин — и в личке.");
+      const got = await timeFor(asked.angle);
+      const kept = await store.set(GREET_KEY, { ...saved, angle: asked.angle, ...(got.spot ? { spot: got.spot } : {}), at: now() }).then(() => true).catch(() => false);
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, `Хорошо, хозяин: фаджр считаю по углу ${named(asked.angle)}.${got.spot ? ` ${got.text}` : ""}`);
+    }
+    const got = await timeFor(angle, { tomorrow: asked.tomorrow });
+    if (mine && got.spot && saved?.spot?.city !== got.spot.city) await store.set(GREET_KEY, { ...saved, spot: got.spot }).catch(() => false);
+    return say(turn, got.text);
   }
 
   /**
@@ -1913,12 +2004,25 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const zone = zoneOf({ manner });
     const at = now();
     const parts = localParts(at, zone);
+    // Утро — на фаджр: начало рассвета в городе хозяина. Города нет или в этот день
+    // по солнцу не посчитать — остаётся запасной час.
+    let dawn = null;
+    if (set.byFajr && !set.morningOff) {
+      const spot = await spotOf(manner?.settings, saved);
+      if (spot) {
+        if (saved?.spot?.city !== spot.city) { saved.spot = spot; await store.set(GREET_KEY, { ...saved, at: Number(saved.at) || at }).catch(() => false); }
+        const before = localParts(at - DAY, zone);
+        dawn = [parts, before].map(day => fajrOn({ y: day.y, m: day.m, d: day.d, latitude: spot.lat, longitude: spot.lon, angle: set.angle ?? FAJR_ANGLE })?.fajr ?? null);
+        if (dawn.some(moment => moment == null)) dawn = null;
+      }
+    }
     for (const [slot, mark, said, pool] of [["morning", "m", "mAt", "+утро хозяину"], ["night", "n", "nAt", "+ночь хозяину"]]) {
       if (set[`${slot}Off`]) continue;
       const [hh, mm] = set[slot].split(":").map(Number);
       const today = zonedEpoch({ y: parts.y, m: parts.m, d: parts.d, hh, mm }, zone);
       // Час мог наступить и вчера: «спокойной ночи в 23:00» уместно и в половине первого.
-      const due = [today, today - DAY].find(moment => at >= moment && at < moment + GREET_WINDOW_MS);
+      const moments = slot === "morning" && dawn ? dawn : [today, today - DAY];
+      const due = moments.find(moment => at >= moment && at < moment + GREET_WINDOW_MS);
       if (due == null) continue;
       const key = calendarDate(due, zone);
       if (set[mark] === key) continue;
@@ -2070,17 +2174,53 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const info = accentInfo(key);
     return voiced({ ...turn, manner: { ...turn.manner, settings: { ...turn.manner?.settings, accent: key } } }, info.done);
   };
+  /**
+   * Шёпот: сообщение в группе, которое видит один человек. Telegram разрешает
+   * его боту-администратору чата — или в ответ на нажатие кнопки, в течение
+   * пятнадцати секунд. Не вышло — null, и вызывающий отвечает при всех.
+   * Отказ чата помнится шесть часов: иначе каждая просьба начиналась бы с ошибки.
+   */
+  const WHISPER_KEY = (chatId) => `heart:whisper:${chatId}`;
+  const WHISPER_RETRY_MS = 6 * 3_600_000;
+  async function whisper(chatId, userId, payload, { queryId = null } = {}) {
+    if (!WHISPERS || chatId == null || (userId == null && queryId == null)) return null;
+    if (queryId == null && store.available) {
+      const refused = await store.get(WHISPER_KEY(chatId)).catch(() => null);
+      if (refused?.no && now() - Number(refused.at) < WHISPER_RETRY_MS) return null;
+    }
+    const refuse = async () => { if (queryId == null && store.available) await store.set(WHISPER_KEY(chatId), { no: true, at: now() }).catch(() => false); };
+    try {
+      const sent = await api.sendMessage({
+        chat_id: chatId, ...payload,
+        ephemeral_message_parameters: queryId != null ? { callback_query_id: queryId } : { receiver_user_id: userId },
+      });
+      // Сервер, который такого не знает, молча отбросит параметр — и сообщение уйдёт всем.
+      // Отличить можно только по ответу: у шёпота есть свой номер.
+      if (sent?.ephemeral_message_id == null) { await refuse(); return { ...sent, whispered: false }; }
+      return { ...sent, whispered: true };
+    } catch { await refuse(); return null; }
+  }
+
   async function askManner(turn, { lead = "" } = {}) {
     const mine = owner(turn.actorId);
     const current = accentOf(turn.manner?.settings, { owner: mine });
     const question = book.pick("+манера:вопрос", voiceCtx(turn)) ?? "Какой мне быть?";
+    const text = `${lead ? `${lead}\n\n` : ""}${question}\nСейчас я — ${accentInfo(current).title}.`;
     try {
-      await api.sendMessage({
-        chat_id: turn.chatId, text: `${lead ? `${lead}\n\n` : ""}${question}\nСейчас я — ${accentInfo(current).title}.`,
-        reply_markup: accentKeyboard({ owner: mine, current }), ...turn.extra,
-      });
+      if (turn.isPrivate) {
+        await api.sendMessage({ chat_id: turn.chatId, text, reply_markup: accentKeyboard({ owner: mine, current }), ...turn.extra });
+        turn.delivered = true;
+        return { ok: true, action: "manner_ask" };
+      }
+      // В группе выбор — личное: кнопки привязаны к спросившему, и показать их она
+      // старается только ему. Не разрешил Telegram — видны всем, но слушаются одного.
+      const payload = { text, reply_markup: accentKeyboard({ owner: mine, current, bind: turn.actorId }) };
+      // Шёпот — без «ответа на сообщение»: только тема, если чат с темами.
+      const { reply_parameters: _reply, ...place } = turn.extra ?? {};
+      const sent = await whisper(turn.chatId, turn.actorId, { ...payload, ...place });
+      if (!sent) await api.sendMessage({ chat_id: turn.chatId, ...payload, ...turn.extra });
       turn.delivered = true;
-      return { ok: true, action: "manner_ask" };
+      return { ok: true, action: "manner_ask", whispered: sent?.whispered === true };
     } catch { return say(turn, `${question} Скажите словом: «будь кошкой», «будь строгой», «будь собой».`); }
   }
   async function manners(turn, prompt) {
@@ -2089,11 +2229,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как выбор манеры — репетиция, ничего не меняю.");
     const mine = owner(turn.actorId);
-    if (asked.show) {
-      // Выбор показан по просьбе — сама она с тем же вопросом уже не придёт.
-      if (!turn.manner?.settings?.accentAsked) await personal.save(turn.actorId, { accentAsked: true }).catch(() => ({ ok: false }));
-      return askManner(turn);
-    }
+    if (asked.show) return askManner(turn);
     if (asked.anime != null) {
       const saved = await personal.save(turn.actorId, { anime: asked.anime }).catch(() => ({ ok: false }));
       if (!saved?.ok) return say(turn, "Не запомнилось: хранилище не отвечает.");
@@ -2101,48 +2237,59 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     const key = asked.random ? randomAccent({ owner: mine, random, except: accentOf(turn.manner?.settings, { owner: mine }) }) : asked.set;
     if (accentInfo(key).ownerOnly && !mine) return say(turn, "Так я зову только одного человека.");
-    const saved = await personal.save(turn.actorId, { accent: key, accentAsked: true }).catch(() => ({ ok: false }));
+    const saved = await personal.save(turn.actorId, { accent: key }).catch(() => ({ ok: false }));
     if (!saved?.ok) return say(turn, "Не запомнилось: хранилище не отвечает.");
     turn.manner = { ...turn.manner, settings: { ...turn.manner?.settings, accent: key } };
     return say(turn, `${asked.random ? `Выпало: ${accentInfo(key).title}. ` : ""}${mannerText(turn, key)}`);
   }
-  /** Нажатие кнопки манеры: выбирает нажавший — себе. */
+  /**
+   * Нажатие кнопки манеры: выбирает нажавший — себе. Кнопки из группы привязаны
+   * к тому, кто спрашивал («m:ключ:кому»): чужое нажатие — только подсказка нажавшему.
+   */
   async function pressManner(query) {
     const chatId = query?.message?.chat?.id, userId = query?.from?.id;
     const done = async (text) => { try { await api.answerCallbackQuery({ callback_query_id: query.id, ...(text ? { text } : {}) }); } catch { /* не страшно */ } };
     if (!MANNERS || chatId == null || userId == null) { await done(); return { ok: true, ignored: true }; }
+    let [key, bound = ""] = String(query.data).slice(2).split(":");
+    if (bound && bound !== String(userId)) {
+      await done("Эти кнопки — не ваши. Скажите мне «какие есть режимы» — покажу и вам.");
+      return { ok: true, ignored: true, reason: "foreign_button" };
+    }
     const mine = owner(userId);
     const manner = await mannerFor(userId).catch(() => null);
-    let key = String(query.data).slice(2);
     const lucky = key === "random";
     if (lucky) key = randomAccent({ owner: mine, random, except: accentOf(manner?.settings, { owner: mine }) });
     const info = accentInfo(key);
     if (info.key !== key || (info.ownerOnly && !mine)) { await done("Так я зову только одного человека."); return { ok: true, ignored: true }; }
-    const saved = await personal.save(userId, { accent: key, accentAsked: true }).catch(() => ({ ok: false }));
+    const saved = await personal.save(userId, { accent: key }).catch(() => ({ ok: false }));
     if (!saved?.ok) { await done("Не запомнилось: хранилище не отвечает."); return { ok: false, code: "storage_unavailable" }; }
-    const turn = { actorId: userId, chatId, isPrivate: query.message.chat.type === "private", manner: { ...manner, settings: { ...manner?.settings, accent: key } } };
-    const text = `${lucky ? `Выпало: ${info.title}. ` : ""}${mannerText(turn, key)}`;
-    await done(info.title);
     const isPrivate = query.message.chat.type === "private";
+    const turn = { actorId: userId, chatId, isPrivate, manner: { ...manner, settings: { ...manner?.settings, accent: key } } };
+    const text = `${lucky ? `Выпало: ${info.title}. ` : ""}${mannerText(turn, key)}`;
+    const named = `${safeName(query.from?.first_name)}: ${text}`;
+    const thread = query.message.message_thread_id != null && query.message.is_topic_message ? { message_thread_id: query.message.message_thread_id } : {};
+    const whisperId = query.message.ephemeral_message_id;
     try {
-      // В личке вопрос сменяется ответом; в группе кнопки остаются — выбрать может каждый.
-      if (isPrivate && has("editMessageText")) await api.editMessageText({ chat_id: chatId, message_id: query.message.message_id, text });
-      else await api.sendMessage({ chat_id: chatId, text: isPrivate ? text : `${safeName(query.from?.first_name)}: ${text}`, ...(query.message.message_thread_id != null && query.message.is_topic_message ? { message_thread_id: query.message.message_thread_id } : {}) });
+      if (whisperId != null) {
+        // Вопрос видел только он — и ответ остаётся там же, при нём одном.
+        try { await api.editEphemeralMessageText({ chat_id: chatId, receiver_user_id: userId, ephemeral_message_id: whisperId, text }); }
+        catch { await whisper(chatId, userId, { text, ...thread }, { queryId: query.id }); }
+      } else if (isPrivate) {
+        if (has("editMessageText")) await api.editMessageText({ chat_id: chatId, message_id: query.message.message_id, text });
+        else await api.sendMessage({ chat_id: chatId, text });
+      } else if (bound) {
+        // Кнопки были для него одного: вопрос сменяется ответом, клавиатура уходит.
+        try { await api.editMessageText({ chat_id: chatId, message_id: query.message.message_id, text: named }); }
+        catch { await api.sendMessage({ chat_id: chatId, text: named, ...thread }); }
+      } else {
+        // Старое сообщение с общими кнопками: выбирает каждый себе, кнопки остаются.
+        await api.sendMessage({ chat_id: chatId, text: named, ...thread });
+      }
     } catch { /* выбор сохранён — слова не обязательны */ }
+    // Ответ на нажатие — после слов: шёпот в ответ на кнопку Telegram принимает, пока нажатие не закрыто.
+    await done(info.title);
     return { ok: true, action: "manner", accent: key };
   }
-  /** Один раз, в личке, знакомому человеку: «какой мне быть с вами?» */
-  async function offerManner(turn) {
-    // Не при знакомстве и не посреди разговора: в первый разговор нового дня.
-    if (!MANNERS || turn.dry || !turn.isPrivate || !turn.seen?.known || !turn.seen?.newDay) return false;
-    const settings = turn.manner?.settings ?? {};
-    if (settings.accent || settings.accentAsked) return false;
-    const saved = await personal.save(turn.actorId, { accentAsked: true }).catch(() => ({ ok: false }));
-    if (!saved?.ok) return false;
-    await askManner(turn);
-    return true;
-  }
-
   /** «Наша шутка: …» — общее с человеком, без модели. */
   async function ourJokes(turn, prompt) {
     const asked = PHRASES ? parseJoke(prompt) : null;
@@ -2222,16 +2369,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       subject = subjectOf(before.q) ?? { text: before.q };
       query = before.q;
     }
-    const banned = subject.text ? drawRefusal(subject.text) : "";
-    if (banned) { pulse.bump("ruled"); return say(turn, DRAW_NO[banned]); }
     const mine = owner(turn.actorId);
+    // С хозяином наедине своих границ у неё нет: «откровенное не рисую» — это для остальных.
+    // Одного она не рисует никому: откровенного с детьми и насилия в нём.
+    const free = mine && turn.isPrivate;
+    const banned = subject.text ? drawRefusal(subject.text, { free }) : "";
+    // Хозяину в группе — без «откровенное я не рисую»: дело не в нём, а в том, что вокруг люди.
+    if (banned) { pulse.bump("ruled"); return say(turn, mine && !turn.isPrivate && banned !== "minor" ? "При всех я такое не рисую." : DRAW_NO[banned]); }
     const countKey = `${DRAWN_PREFIX}${dayOf(now())}:${turn.actorId}`;
     const used = Number((await store.get(countKey).catch(() => null))?.n) || 0;
     if (!mine && DRAW_DAILY > 0 && used >= DRAW_DAILY) {
       return say(turn, `На сегодня я ${you(turn, "вам", "тебе")} уже нарисовала ${used} ${plural(used, "картинку", "картинки", "картинок")} — краски не бесконечные, и они нужны всем. Завтра продолжим.`);
     }
     if (has("sendChatAction")) { try { await api.sendChatAction({ chat_id: turn.chatId, action: "upload_photo", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) }); } catch { /* индикатор не важнее рисунка */ } }
-    const got = await draw.paint(subject.prompt ?? subject.text, { translate: !subject.prompt, seed: Math.floor(random() * 1_000_000) });
+    // «Себя в шляпе»: просьба переводится отдельно и встаёт перед её приметами.
+    const wish = subject.look ? `${await draw.english(subject.text)}, ${subject.look}` : subject.prompt ?? subject.text;
+    const got = await draw.paint(wish, { translate: !subject.prompt && !subject.look, seed: Math.floor(random() * 1_000_000) });
     if (!got.ok) {
       if (got.code === "resting" || got.code === "limit" || got.code === "auth") {
         const why = got.code === "resting" ? got.why : got.code;
@@ -2241,7 +2394,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         }
         return say(turn, `Краски на сегодня кончились: рисую я не больше, чем позволяет дневная норма. Вернутся в ${clock(got.until)}.`);
       }
-      if (got.code === "blocked") return say(turn, DRAW_NO.minor);
+      // Отказалась мастерская, а не она: хозяину так и говорится.
+      if (got.code === "blocked") return say(turn, free ? "Я бы нарисовала, но мастерская такой запрос не пропустила: это её фильтр, не мой. Попробуйте описать иначе." : DRAW_NO.minor);
       return say(turn, "Не вышло: мастерская сейчас не отвечает. Попробуйте чуть позже.");
     }
     if (typeof InputFile !== "function" || !has("sendPhoto")) return say(turn, "Рисунок готов, но отправить файл мне сейчас нечем.");
@@ -2919,7 +3073,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await taught.unheard({ limit: 8, sinceMs: 7 * DAY }).catch(() => []) : [];
     const unheardLine = weekly.length ? `За неделю не узнала из короткого: ${weekly.map(row => `«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join(", ")}. Весь список — «что ты не поняла?».` : "";
     const lines = [
-      `🤍 Хозяин, мой день (${yesterday.slice(8, 10)}.${yesterday.slice(5, 7)}):`,
+      `🤍 Хозяин, вот мой вчерашний день, ${yesterday.slice(8, 10)}.${yesterday.slice(5, 7)}:`,
       ...pulse.lines(counters),
       study.active ? `Уроки: всего ${study.active}${study.proposed ? ` · ждут вашего слова: ${study.proposed} («покажи уроки»)` : ""}${study.doubt ? ` · под сомнением: ${study.doubt}` : ""}` : "",
       asked.length ? `Не знала ответа: ${asked.map(item => `«${item.q}»`).join("; ")}. Научить — «знай: …».` : "",
@@ -3258,8 +3412,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
 
     // «Да» или «нет» на её вопрос «запомнить?» — в личке и пока вопрос свеж.
-    if (!dry && turn.isPrivate && (YES.test(prompt) || NO.test(prompt))) {
-      const settled = await settleOffer(turn, YES.test(prompt));
+    if (!dry && turn.isPrivate && (YES.test(prompt) || NO.test(prompt) || MORE_PLEASE.test(prompt))) {
+      const settled = await settleOffer(turn, !NO.test(prompt), { more: !YES.test(prompt) && !NO.test(prompt) });
       if (settled) return ruled(settled);
     }
 
@@ -3300,7 +3454,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
@@ -3384,10 +3538,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Словарь: «привет», «как дела», вкусы, пасхалки. Модель на это не тратится.
     if (!request) {
       const phrased = await smallTalk(turn, prompt);
-      if (phrased) {
-        if (phrased.ok) await offerManner(turn);
-        return ruled(phrased);
-      }
+      if (phrased) return ruled(phrased);
     }
 
     if (!dry) {
@@ -3434,7 +3585,6 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt)) await taught.note(prompt).catch(() => false);
     const sent = await answerByModel(turn, prompt);
     if (fact && sent?.ok) await offerFact(turn, fact);
-    else if (sent?.ok && !turn.queuedNow) await offerManner(turn);
     return sent;
   }
 

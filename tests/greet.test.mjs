@@ -4,9 +4,10 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { heart, message, group, reset, last, chats, says, sdk, system, toOwner, toChat, OWNER, KEY, DAY } from "./fixtures/kit.mjs";
+import { heart, message, group, reset, last, chats, says, sdk, source, system, toOwner, toChat, OWNER, KEY, DAY } from "./fixtures/kit.mjs";
 
 const { parseGreet, greetSettings, GREET_KEY } = await import("../tgcloud/lib/greet.js");
+const { fajrOn, parseFajr, FAJR_METHODS } = await import("../tgcloud/lib/fajr.js");
 const { moodOf, behaviourOf } = await import("../tgcloud/lib/mood.js");
 const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
 
@@ -26,19 +27,28 @@ test("разбор: время утра и ночи, выключить, вкл�
     "не пиши мне первой": { off: "all" }, "не желай спокойной ночи": { off: "night" }, "не пиши по утрам": { off: "morning" },
     "пиши первой": { on: "all" }, "желай доброго утра": { on: "morning" }, "желай спокойной ночи": { on: "night" },
     "когда ты пишешь первой?": { show: true },
+    "желай доброго утра на фаджр": { set: "morning", by: "fajr" }, "Пиши мне доброе утро по фаджру.": { set: "morning", by: "fajr" },
+    "желай доброго утра с рассветом": { set: "morning", by: "fajr" }, "пиши мне к фаджру": { set: "morning", by: "fajr" },
   };
   for (const [said, want] of Object.entries(cases)) assert.deepEqual(parseGreet(said), want, said);
   for (const said of ["доброе утро", "спокойной ночи", "пиши мне", "желай удачи", "пиши доброе утро в 25", "не пиши ночью"]) assert.equal(parseGreet(said), null, said);
-  assert.deepEqual(greetSettings(null), { morning: "08:00", night: "23:00", morningOff: false, nightOff: false, m: "", n: "" });
+  assert.deepEqual(greetSettings(null), { byFajr: true, angle: null, morning: "06:00", night: "23:00", morningOff: false, nightOff: false, m: "", n: "" });
+  // Час, названный до появления фаджра, остаётся часом; «на фаджр» — возвращает расчёт.
+  assert.equal(greetSettings({ morning: "07:30" }).byFajr, false);
+  assert.equal(greetSettings({ morning: "07:30" }).morning, "07:30");
+  assert.equal(greetSettings({ morning: "07:30", by: "fajr" }).byFajr, true);
+  assert.equal(greetSettings({ angle: 16 }).angle, 16);
+  assert.equal(greetSettings({ angle: 90 }).angle, null);
 });
 
 test("утром и перед сном — по разу, в свой час, словами из словаря; опоздала на два часа — молчит", async () => {
   reset();
-  let now = at("2026-11-18T04:30:00Z"); // 07:30 по Москве
+  // Города хозяина она не знает — фаджр не посчитать, утро в запасные шесть.
+  let now = at("2026-11-18T02:30:00Z"); // 05:30 по Москве
   const h = heart(ON, { now: () => now });
   await h.tick({});
   assert.equal(toOwner().length, 0, "раньше времени не пишет");
-  now = at("2026-11-18T05:05:00Z"); // 08:05
+  now = at("2026-11-18T03:05:00Z"); // 06:05
   await h.tick({});
   assert.equal(toOwner().length, 1);
   assert.ok(MORNING.some(line => toOwner()[0].text.startsWith(line.split("X")[0].slice(0, 12))), `утренняя строка из словаря: ${toOwner()[0].text}`);
@@ -78,11 +88,11 @@ test("утром и перед сном — по разу, в свой час, �
 
 test("не повторяет сказанное: с утра уже говорили, «спокойной ночи» он сказал сам", async () => {
   reset();
-  let now = at("2026-11-18T04:20:00Z"); // 07:20 — хозяин уже пишет
+  let now = at("2026-11-18T02:20:00Z"); // 05:20 — хозяин уже пишет
   const h = heart(ON, { now: () => now });
   await h.onMessage(own("привет"), KEY);
   const before = toOwner().length;
-  now = at("2026-11-18T05:10:00Z");
+  now = at("2026-11-18T03:10:00Z"); // 06:10
   await h.tick({});
   assert.equal(toOwner().length, before, "уже разговаривали утром — «доброе утро» вдогонку не шлёт");
 
@@ -99,27 +109,27 @@ test("время и выключатель — словами хозяина; д
   let now = at("2026-11-18T09:00:00Z");
   const h = heart(ON, { now: () => now });
   await h.onMessage(own("желай доброго утра в 6:30"), KEY);
-  assert.match(last(OWNER), /Хорошо, хозяин: доброе утро — в 06:30, спокойной ночи — в 23:00\./u);
+  assert.match(last(OWNER), /Хорошо, хозяин: доброе утро — в 06:30; спокойной ночи — в 23:00\./u);
   await h.onMessage(own("желай спокойной ночи в 0:30"), KEY);
   await h.onMessage(own("когда ты пишешь первой?"), KEY);
-  assert.match(last(OWNER), /доброе утро — в 06:30, спокойной ночи — в 00:30/u);
+  assert.match(last(OWNER), /доброе утро — в 06:30; спокойной ночи — в 00:30/u);
   const count = toOwner().length;
   now = at("2026-11-19T03:40:00Z"); // 06:40
   await h.tick({});
   assert.equal(toOwner().length, count + 1, "в новый час — пишет");
-  now = at("2026-11-19T05:10:00Z"); // 08:10 — прежний час больше не её
+  now = at("2026-11-19T05:10:00Z"); // 08:10 — второго утра за день нет
   await h.tick({});
   assert.equal(toOwner().length, count + 1);
 
   await h.onMessage(own("не пиши по утрам"), KEY);
-  assert.match(last(OWNER), /по утрам не пишу, спокойной ночи — в 00:30/u);
+  assert.match(last(OWNER), /по утрам не пишу; спокойной ночи — в 00:30/u);
   await h.onMessage(own("не пиши первой"), KEY);
   assert.match(last(OWNER), /первой писать не буду/u);
   const quiet = toOwner().length;
   for (const moment of ["2026-11-20T03:40:00Z", "2026-11-20T21:40:00Z"]) { now = at(moment); await h.tick({}); }
   assert.equal(toOwner().length, quiet, "выключено — молчит");
   await h.onMessage(own("пиши первой"), KEY);
-  assert.match(last(OWNER), /доброе утро — в 06:30, спокойной ночи — в 00:30/u);
+  assert.match(last(OWNER), /доброе утро — в 06:30; спокойной ночи — в 00:30/u);
 
   // Посторонний: настройка не его, и первой ему никто не пишет.
   sdk().fetchQueue.push(says("Ответ модели."));
@@ -130,11 +140,138 @@ test("время и выключатель — словами хозяина; д
   // Выключено настройкой сборки или нет словаря — не пишет вовсе.
   for (const config of [{ PHRASES: true, GREET: false }, { PHRASES: false, GREET: true }]) {
     reset();
-    now = at("2026-11-18T05:05:00Z");
+    now = at("2026-11-18T03:05:00Z");
     const off = heart(config, { now: () => now });
     await off.tick({});
     assert.equal(toOwner().length, 0);
   }
+});
+
+// ── утро на фаджр ────────────────────────────────────────────────────────
+const utc = (text) => new Date(text).toISOString().slice(0, 16);
+const moscow = () => source("geocoding-api.open-meteo.com", { results: [{ name: "Москва", country: "Россия", admin1: "Москва", latitude: 55.7558, longitude: 37.6173, timezone: "Europe/Moscow", feature_code: "PPLC" }] });
+
+test("фаджр по солнцу: сверено с открытой библиотекой расчёта намаза — расхождение меньше двух минут", () => {
+  // Эталон — пакет adhan 4.4.6 (правило высоких широт «угол сумерек», без округления): место, дата, угол → фаджр и восход, UTC.
+  const rows = [
+    ["Мекка", 21.4225, 39.8262, 2026, 3, 1, 18.5, "2026-03-01T02:25Z", "2026-03-01T03:41Z", false],
+    ["Москва", 55.7558, 37.6173, 2026, 11, 14, 18, "2026-11-14T02:52Z", "2026-11-14T05:02Z", false],
+    ["Москва", 55.7558, 37.6173, 2026, 11, 14, 16, "2026-11-14T03:06Z", "2026-11-14T05:02Z", false],
+    ["Казань", 55.7887, 49.1221, 2026, 1, 15, 16, "2026-01-15T03:02Z", "2026-01-15T05:03Z", false],
+    ["Амстердам", 52.3676, 4.9041, 2026, 11, 14, 18, "2026-11-14T05:00Z", "2026-11-14T06:59Z", false],
+    ["Амстердам", 52.3676, 4.9041, 2026, 6, 21, 18, "2026-06-21T01:08Z", "2026-06-21T03:18Z", true],
+    ["Джакарта", -6.2088, 106.8456, 2026, 7, 7, 18, "2026-07-06T21:49Z", "2026-07-06T23:04Z", false],
+    ["Нью-Йорк", 40.7128, -74.006, 2026, 12, 25, 15, "2026-12-25T10:56Z", "2026-12-25T12:18Z", false],
+    ["Владивосток", 43.1155, 131.8855, 2026, 4, 10, 18, "2026-04-09T18:59Z", "2026-04-09T20:39Z", false],
+    ["Гонолулу", 21.3069, -157.8583, 2026, 9, 9, 18, "2026-09-09T15:02Z", "2026-09-09T16:17Z", false],
+    ["Санкт-Петербург", 59.9311, 30.3609, 2026, 6, 1, 16, "2026-05-31T23:17Z", "2026-06-01T00:48Z", true],
+    ["Кейптаун", -33.9249, 18.4241, 2027, 2, 2, 18, "2027-02-02T02:34Z", "2027-02-02T04:08Z", false],
+  ];
+  for (const [name, latitude, longitude, y, m, d, angle, fajr, sunrise, adjusted] of rows) {
+    const got = fajrOn({ y, m, d, latitude, longitude, angle });
+    assert.ok(got, name);
+    assert.ok(Math.abs(got.fajr - Date.parse(fajr.replace("Z", ":00Z"))) < 120_000, `${name}: фаджр ${utc(got.fajr)} против ${fajr}`);
+    assert.ok(Math.abs(got.sunrise - Date.parse(sunrise.replace("Z", ":00Z"))) < 120_000, `${name}: восход ${utc(got.sunrise)} против ${sunrise}`);
+    assert.equal(got.adjusted, adjusted, `${name}: белые ночи — долей ночи`);
+  }
+  // За полярным кругом в солнцестояние восхода нет — и расчёта нет; негодные числа — тоже.
+  assert.equal(fajrOn({ y: 2026, m: 6, d: 21, latitude: 69.6, longitude: 18.9 }), null);
+  assert.equal(fajrOn({ y: 2026, m: 12, d: 21, latitude: 69.6, longitude: 18.9 }), null);
+  assert.equal(fajrOn({ y: 2026, m: 6, d: 21, latitude: 91, longitude: 0 }), null);
+  assert.equal(fajrOn({ y: 2026, m: 6, d: 21, latitude: 50, longitude: 10, angle: 40 }), null);
+  assert.equal(fajrOn({ y: 2026, m: 6, d: 21, latitude: "x", longitude: 10 }), null);
+  // Фаджр всегда раньше восхода, в любой день года и на любой широте, где восход есть.
+  for (const latitude of [-60, -35, 0, 25, 45, 56, 64]) for (let day = 1; day <= 365; day += 9) {
+    const date = new Date(Date.UTC(2026, 0, day));
+    const got = fajrOn({ y: 2026, m: date.getUTCMonth() + 1, d: date.getUTCDate(), latitude, longitude: 30 });
+    assert.ok(got && got.fajr < got.sunrise && got.sunrise - got.fajr < 5 * HOUR, `${latitude}° день ${day}`);
+  }
+});
+
+test("слова о фаджре: спросить время, сменить угол или общину; чужие фразы — мимо", () => {
+  const cases = {
+    "когда фаджр": { show: true, tomorrow: false }, "Во сколько сегодня фаджр?": { show: true, tomorrow: false },
+    "во сколько завтра фаджр": { show: true, tomorrow: true }, "когда фаджр завтра": { show: true, tomorrow: true },
+    "время фаджра": { show: true, tomorrow: false }, "когда начинается утренний намаз": { show: true, tomorrow: false },
+    "фаджр": { show: true, tomorrow: false }, "а когда у нас фаджр": { show: true, tomorrow: false },
+    "угол фаджра 16": { angle: 16 }, "фаджр по 16 градусам": { angle: 16 }, "считай фаджр по углу 19,5": { angle: 19.5 },
+    "считай фаджр по ДУМ": { method: "russia", angle: 16 }, "фаджр по Турции": { method: "turkey", angle: 18 },
+    "считай фаджр как в Египте": { method: "egypt", angle: 19.5 }, "фаджр по исна": { method: "isna", angle: 15 },
+    "как ты считаешь фаджр?": { methods: true },
+  };
+  for (const [said, want] of Object.entries(cases)) assert.deepEqual(parseFajr(said), want, said);
+  for (const said of ["привет", "доброе утро", "я проспал фаджр", "фаджр по 90 градусам", "расскажи про фаджр подробно, что это за намаз",
+    "утренний намаз я уже прочитал", "считай фаджр по настроению", "когда рассвет", "фаджр по 3"]) assert.equal(parseFajr(said), null, said);
+  assert.ok(FAJR_METHODS.every(item => item.angle >= 15 && item.angle <= 19.5));
+});
+
+test("утро на фаджр: город хозяина известен — пишет с началом рассвета, а не в шесть", async () => {
+  reset();
+  moscow();
+  let now = at("2026-11-13T09:00:00Z");
+  const h = heart({ ...ON, SOURCES: true }, { now: () => now });
+  await h.onMessage(own("мой город — Москва"), KEY);
+  assert.match(last(OWNER), /Запомнила: ваш город — Москва/u);
+  await h.onMessage(own("когда ты пишешь первой?"), KEY);
+  // 13 ноября в Москве фаджр (18°) — около 05:50.
+  assert.match(last(OWNER), /доброе утро — на фаджр \(сегодня он в 05:5\d, Москва\); спокойной ночи — в 23:00/u);
+  const count = toOwner().length;
+
+  // 14 ноября фаджр в Москве — 05:52 (02:52 UTC). В 05:45 — рано; в шесть по часам уже не ждёт.
+  now = at("2026-11-14T02:45:00Z");
+  await h.tick({});
+  assert.equal(toOwner().length, count, "до фаджра молчит");
+  now = at("2026-11-14T02:54:00Z"); // 05:54
+  await h.tick({});
+  assert.equal(toOwner().length, count + 1, "с началом фаджра — пишет");
+  assert.ok(MORNING.some(line => toOwner().at(-1).text.startsWith(line.split("X")[0].slice(0, 12))), toOwner().at(-1).text);
+  assert.doesNotMatch(toOwner().at(-1).text, /фаджр|намаз/iu, "о времени молитвы она не объявляет: это приветствие");
+  now = at("2026-11-14T03:10:00Z"); // 06:10
+  await h.tick({});
+  assert.equal(toOwner().length, count + 1, "второй раз за утро не пишет");
+  assert.equal(chats().length, 0);
+  // Координаты лежат рядом с настройкой: будильник в справочник больше не ходит.
+  assert.equal(JSON.parse(sdk().kv.get(GREET_KEY)).spot.city, "Москва");
+  const lookups = sdk().sourceFetches.filter(item => item.url.includes("geocoding")).length;
+  now = at("2026-11-15T02:56:00Z");
+  await h.tick({});
+  assert.equal(sdk().sourceFetches.filter(item => item.url.includes("geocoding")).length, lookups);
+  assert.equal(toOwner().length, count + 2, "и на следующий день — по фаджру");
+
+  // Назвал час — пишет по часам; «на фаджр» — возвращает расчёт.
+  await h.onMessage(own("желай доброго утра в 7:30"), KEY);
+  assert.match(last(OWNER), /доброе утро — в 07:30; спокойной ночи — в 23:00/u);
+  const fixed = toOwner().length;
+  now = at("2026-11-16T02:58:00Z"); // 05:58 — фаджр уже был, но час назначен другой
+  await h.tick({});
+  assert.equal(toOwner().length, fixed);
+  await h.onMessage(own("желай доброго утра на фаджр"), KEY);
+  assert.match(last(OWNER), /доброе утро — на фаджр \(сегодня он в 05:5\d, Москва\)/u);
+});
+
+test("«когда фаджр?»: время для города человека, с оговоркой; без города — просит город; угол меняет только хозяин", async () => {
+  reset();
+  moscow();
+  const now = at("2026-11-14T09:00:00Z");
+  const h = heart({ ...ON, SOURCES: true }, { now: () => now });
+  await h.onMessage(message("когда фаджр?"), KEY);
+  assert.match(last(), /мне нужен ваш город\. Скажите: «я живу в Казани»/u);
+  await h.onMessage(message("мой город — Москва"), KEY);
+  await h.onMessage(message("когда фаджр?"), KEY);
+  assert.match(last(), /^Фаджр сегодня — в 05:52, восход — в 08:02 \(Москва, угол 18°\)\. Это мой расчёт по солнцу, а не расписание мечети/u);
+  await h.onMessage(message("во сколько завтра фаджр"), KEY);
+  assert.match(last(), /^Фаджр завтра — в 05:5\d/u);
+  await h.onMessage(message("угол фаджра 16"), KEY);
+  assert.equal(last(), "Угол для расчёта выбирает хозяин — и в личке.");
+
+  await h.onMessage(own("мой город — Москва"), KEY);
+  await h.onMessage(own("считай фаджр по ДУМ"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: фаджр считаю по углу 16° \(ДУМ России\)\. Фаджр сегодня — в 06:06/u);
+  await h.onMessage(message("когда фаджр"), KEY);
+  assert.match(last(), /в 06:06.*угол 16°/u, "угол хозяина — для всех");
+  await h.onMessage(own("как ты считаешь фаджр?"), KEY);
+  assert.match(last(OWNER), /на 16° \(ДУМ России\) ниже горизонта.*Всемирная исламская лига — 18°.*Сменить — «считай фаджр по ДУМ»/u);
+  assert.equal(chats().length, 0, "модель не тратится");
 });
 
 // ── настроение меняет поведение ──────────────────────────────────────────

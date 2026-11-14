@@ -21,6 +21,19 @@ const SOURCE_HOSTS = /(?:cloudflare\.com\/client\/v4\/accounts\/[^/]+\/ai\/run\/
 const methods = {
   async sendMessage(params) {
     if (state.failing.sendMessage) throw state.failing.sendMessage;
+    // Шёпот — сообщение для одного человека. Стаб знает его, только если тест задал
+    // `state.whispers = { admin: [чаты] }`: без этого он, как старый сервер, молча
+    // отбрасывает параметр и шлёт сообщение всем.
+    const eph = params.ephemeral_message_parameters;
+    if (eph && state.whispers) {
+      // Не администратор и не ответ на нажатие — отказ. Текст ошибки условный: код от него не зависит.
+      if (eph.callback_query_id == null && !(state.whispers.admin ?? []).includes(params.chat_id)) {
+        state.calls.push({ method: "sendMessage:refused", params });
+        throw Object.assign(new Error("Bad Request: ephemeral message can't be sent"), { code: 400 });
+      }
+      state.sent.push(params);
+      return { message_id: 0, ephemeral_message_id: state.sent.length, receiver_user: { id: eph.receiver_user_id ?? 0 } };
+    }
     state.sent.push(params);
     return { message_id: state.sent.length };
   },
