@@ -62,6 +62,7 @@
 | 10 | См. ниже | См. ниже |
 | 11 | «Продолжи где остановился» | Ход 10 оборвался на середине: доделаны анкета и режим `events`, выпущена поправка **0.26.1**, дописаны журнал и реестр |
 | 12 | См. ниже | См. ниже |
+| 13 | Ответ платформы на `events` (см. ниже) | См. ниже |
 
 ### Сообщение 10 (14.11.2026), дословно
 
@@ -204,6 +205,35 @@ Actions (лимит минут), и в этом ходе о кнопке не п
 - «Да» после `/start` могло бы открыть выбор режима через реплику, в ответ на
   другой вопрос. Теперь считается только самое следующее сообщение (номер
   сообщения на единицу больше приветствия).
+
+### Сообщение 13 (14.11.2026, вечер), дословно
+
+> Держи
+>
+> ~/Ai $ bash scripts/phone.sh events
+>
+> Платформа отдаёт ещё такие события (кроме тех, что Аи уже слушает):
+>
+> edited_message, stopped_message_generation, business_connection,
+> business_message, edited_business_message, deleted_business_messages,
+> inline_query, chosen_inline_result, widget_query, shared_widget_query,
+> guest_message, shipping_query, pre_checkout_query, purchased_paid_media,
+> subscription, message_reaction, message_reaction_count, poll, poll_answer,
+> my_chat_member, chat_member, chat_join_request, chat_boost,
+> removed_chat_boost, managed_bot
+>
+> Событие business_message есть — за «секретаря» можно браться.
+>
+> Пришлите эти строки в чат разработки.
+
+Это первый ответ живой платформы, дошедший до чата разработки: режим `events`
+работает, список обработчиков теперь известен. Вместе с четырьмя, которые Аи
+уже слушала (`message`, `callback_query`, `channel_post`,
+`edited_channel_post`), это весь закрытый список имён для
+`tgcloud/handlers/`. Из вывода следует и другое: на телефоне опубликована
+сборка, в которой есть режим `events`, то есть не старше 0.26.0.
+
+Что сделано в ответ — в разделе «Сборка 0.28.0» (дописывается по ходу).
 
 ## Не проверено вживую
 
