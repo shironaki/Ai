@@ -13,7 +13,7 @@ import { createMemory } from "./memory.js";
 import { parseIntent, normalize, ABILITY_OF, INTENTS } from "./intents.js";
 import { parseSkillAsk, findSkill, shown as skillShown, skillsList, skillText } from "./skills.js";
 import { SKILLS } from "./data/skills.js";
-import { createBrains } from "./brains.js";
+import { createBrains, switchKind, restOf, limitWords, SWITCH_WORDS, LONG_REST_MS } from "./brains.js";
 import { createLessons } from "./lessons.js";
 import { createPulse } from "./pulse.js";
 import { createQueue } from "./queue.js";
@@ -159,6 +159,8 @@ const LAUGH = /^(?:лол|кек|а?(?:ха){2,}х?|а?хах|\)\)+)[\s!.)]*$/iu
 const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:тупая|глупая|никч[её]мная|бесполезная)|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+)(?=$|[\s,.!?])/iu;
 const APOLOGY = /(?:^|[\s,])(?:прости|простите|извини|извините|извиняюсь|сорян|сорри|sorry|виновата?)(?=$|[\s,.!])/iu;
 /** Человек поправляет её ответ: это сигнал ошибки и повод для урока. */
+/** Темы словаря «где ты, почему долго»: если вопрос человека ждёт в очереди, ответ — о нём. */
+const WAITING_TOPICS = new Set(["ты тут", "ты зависла", "побыстрее", "жду", "пасхалка: где была"]);
 const CORRECTION = /^(?:нет[,.!\s]|неа[,.!\s]|не\s+так|не\s+то[,.!\s]|неправильно|неверно|ты\s+(?:ошиблась|ошибаешься|не\s+права|путаешь|перепутала)|вы\s+(?:ошиблись|ошибаетесь|не\s+правы)|это\s+(?:не\s+так|неправда|неверно|ошибка)|на\s+самом\s+деле|вообще-то|поправлю)/iu;
 /** Она сама призналась, что не знает: вопрос уходит в список «спросить у хозяина». */
 const UNSURE = /(?:^|[\s,])(?:не\s+знаю|не\s+уверена|нет\s+данных|не\s+располагаю|мне\s+неизвестно|не\s+могу\s+сказать\s+точно)(?=$|[\s,.!?:;…)—–-])/iu;
@@ -853,9 +855,43 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!list.length) return "нет — ключ провайдера не задан";
     return list.map((item, index) => {
       const short = item.model.replace(/^[^/]+\//u, "");
-      const why = ({ limit: "лимит", network: "нет связи", down: "сбой", gone: "снята", payment: "ждёт шага в кабинете провайдера" })[item.why] ?? "отдыхает";
+      const why = ({ limit: limitWords(item.scope), network: "нет связи", down: "сбой", gone: "снята", payment: "ждёт шага в кабинете провайдера" })[item.why] ?? "отдыхает";
       return `${short}${index === 0 ? " (осн.)" : ""}${item.ok ? "" : ` — ${why} до ${clock(item.until)}`}`;
     }).join(" · ");
+  }
+
+  /** Последняя запинка основной модели: для «статуса» и разбора после. */
+  const STUMBLE_KEY = "heart:brains:stumble:v1";
+  /** Сколько раз за день основная должна подвести без лимита, чтобы об этом стоило сказать. */
+  const SHAKY_FROM = 10;
+  const SHAKY = Object.freeze(["network", "down", "empty", "filtered", "error"]);
+  const thousands = (value) => String(Math.round(Number(value) || 0)).replace(/\B(?=(\d{3})+(?!\d))/gu, " ");
+  /** «7 с», «12 мин», «1 ч 30 мин», «3 ч» — на сколько модель ушла отдыхать: рядом стоит час возврата, и они должны сходиться. */
+  const restText = (ms) => {
+    if (ms < 90_000) return `${Math.max(1, Math.round(ms / 1000))} с`;
+    const minutes = Math.round(ms / 60_000);
+    if (minutes < 60 || minutes >= 48 * 60) return spanText(ms);
+    return `${Math.floor(minutes / 60)} ч${minutes % 60 ? ` ${minutes % 60} мин` : ""}`;
+  };
+
+  /**
+   * Что случилось с основной моделью в последний раз: причина, числа провайдера, срок
+   * и кто ответил. Короткий отдых кончается раньше, чем хозяин успеет спросить, — поэтому
+   * запинка записывается, а не читается из цепочки. Старше суток — не новость.
+   */
+  async function stumbleLine() {
+    const saved = await store.get(STUMBLE_KEY).catch(() => null);
+    if (!saved?.at || now() - Number(saved.at) > DAY) return "";
+    const why = saved.why === "limit" ? limitWords(saved.scope) : (SWITCH_WORDS[saved.why] ?? "не ответила");
+    const facts = [
+      saved.status ? `HTTP ${saved.status}` : "",
+      saved.limit != null ? `предел ${thousands(saved.limit)}` : "",
+      saved.used != null ? `занято ${thousands(saved.used)}` : "",
+      saved.requested != null ? `запрос ${thousands(saved.requested)}` : "",
+      Number(saved.fails) > 1 ? `${saved.fails} ${plural(Number(saved.fails), "раз", "раза", "раз")} подряд` : "",
+    ].filter(Boolean).join(", ");
+    const rest = Number(saved.until) > Number(saved.at) ? `, отдых ${restText(Number(saved.until) - Number(saved.at))}` : "";
+    return `Запинка основной (${saved.model}): ${clock(saved.at)} — ${why}${facts ? ` (${facts})` : ""}${rest}; ответила ${saved.to}`;
   }
 
   /** Имя провайдера для владельца: «основной» или то, как он назван в настройках. */
@@ -908,6 +944,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Хозяин: ${OWNER > 0 ? "это вы — узнаю" : "не задан — не узнаю никого"}`,
       `Модель: ${config.AI_MODEL}`,
       `Мозги: ${await brainsLine(apiKey)}`,
+      await stumbleLine(),
       `Память: ${memoryLine(await store.probe())}`,
       `Способности: ${await bridgeLine({ live: turn.dry ? null : turn })}`,
       turn.dry ? "Источники: пробный запуск — живая проверка не выполнялась." : `Источники: ${await sourcesLine()}`,
@@ -922,7 +959,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
       `Сегодня: ${pulse.lines(today).join("; ")}${waiting ? `; в очереди: ${waiting}` : ""}`,
       await incidentLine(),
-    ];
+    ].filter(Boolean);
     // A rehearsal must not send the screen either: the caller asked what the
     // answer would be, not to receive it.
     return say(turn, lines.join("\n"));
@@ -2883,6 +2920,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const names = PHRASES ? book.match(prompt) : null;
     if (!names) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как разговор по словарю — репетиция.");
+    // Его вопрос ждёт в очереди — на «ты зависла?», «жду», «ау» она отвечает по делу, а не шуткой.
+    if (names.some(name => WAITING_TOPICS.has(name))) {
+      const mine = await queue.waiting({ chatId: turn.chatId, userId: turn.actorId }).catch(() => 0);
+      if (mine) {
+        let back = 0;
+        try { back = Number(await brains.nextAt({ apiKey: await resolveKey(turn.ctx), model: config.AI_MODEL })) || 0; } catch { back = 0; }
+        pulse.bump("phrased");
+        const whose = mine > 1 ? you(turn, "Ваши вопросы у меня записаны", "Твои вопросы у меня записаны") : you(turn, "Ваш вопрос у меня записан", "Твой вопрос у меня записан");
+        const sent = await say(turn, `Я здесь. ${whose}: думать сейчас нечем, отвечу сама, как только смогу${back > now() ? ` — примерно после ${clock(back)}` : ""}. Писать заново не нужно.`);
+        return { ...sent, action: "phrase", topics: ["очередь"] };
+      }
+    }
     const feel = await feelFor(turn);
     const gap = Number(turn.seen?.gapDays) || 0;
     const vars = { "настроение": feel.mood, "дней": gap >= 1 ? days(gap) : "" };
@@ -3334,8 +3383,6 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const mine = owner(turn.actorId) && turn.isPrivate;
     const tail = other ? `Перепроверила другой моделью${mine ? `: ${short}` : ""}.` : fresh && trace.model ? `Другой модели сейчас нет: перепроверяла та же${mine && short ? ` (${short})` : ""}.` : "";
     pulse.bump("replies");
-    pulse.bump("tokens", answer.usage?.total ?? 0);
-    if (short) pulse.bump(`model:${short}`);
     // Следующее «ты уверена?» спросит уже третью — или вернётся к первой.
     if (fresh) await store.set(traceKey, { ...trace, at: now(), model: short || trace.model }).catch(() => false);
     return say(turn, `${String(answer.text).trim()}${tail ? `\n\n${tail}` : ""}`);
@@ -4612,11 +4659,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
   /** Одна строка для /status: что сломалось и сколько ждёт отправки. */
   async function incidentLine() {
-    const recent = await notices.list({ limit: 3 });
+    const recent = await notices.list({ limit: 6 });
     const pending = await notices.pending();
     // Что именно и когда: одно имя компонента («handler») владельцу ничего не говорило.
-    const parts = recent.map(item => `${item.title}${item.detail ? ` — ${String(item.detail).slice(0, 140)}` : ""} (${clock(item.lastAt)}${Number(item.count) > 1 ? `, ${item.count} раз` : ""})`);
-    return `Сбои: ${parts.length ? parts.join("; ") : "нет"}${pending ? ` · ждут отправки: ${pending}` : ""}`;
+    const cut = (text) => (text.length > 180 ? `${text.slice(0, 179).trimEnd()}…` : text);
+    const part = (item) => `${item.title}${item.detail ? ` — ${cut(String(item.detail))}` : ""} (${clock(item.lastAt)}${Number(item.count) > 1 ? `, ${item.count} ${plural(Number(item.count), "раз", "раза", "раз")}` : ""})`;
+    // «К сведению» — не сбой: дневной лимит основной модели вышел, а отвечает запасная.
+    const faults = recent.filter(item => item.severity !== "info").slice(0, 3).map(part);
+    const notes = recent.filter(item => item.severity === "info").slice(0, 2).map(part);
+    return `Сбои: ${faults.length ? faults.join("; ") : "нет"}${notes.length ? ` · к сведению: ${notes.join("; ")}` : ""}${pending ? ` · ждут отправки: ${pending}` : ""}`;
   }
 
   /** Вложение без единого слова в личке: стикер — реакция, остальное — честная фраза. */
@@ -4797,12 +4848,124 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return null;
   }
 
+  /**
+   * То, что само не пройдёт: модель снята у провайдера, провайдер ждёт оплаты, ключ не
+   * принят. Весть — по модели и причине, с советом по этой причине. `answered` — кто
+   * ответил вместо основной; пусто — не ответил никто, и тогда это уже поломка.
+   */
+  function troubleNotice(item, answered = "") {
+    const name = String(item.model ?? "").replace(/^[^/]+\//u, "");
+    const http = item.status ? ` (HTTP ${item.status})` : "";
+    const tail = answered ? ` — отвечаю запасной (${answered})` : " — ответить не вышло";
+    const severity = answered ? "degraded" : "fault";
+    const cabinet = "Загляните в кабинет провайдера: подтверждение карты, оплата — или у модели кончился бесплатный объём.";
+    if (item.why === "gone") {
+      if (item.primary) return { code: "gone", severity, detail: `основная модель ${name} закрыта или снята у провайдера${http}${tail}`, hint: "Имя основной модели пора заменить в настройках: напишите об этом в рабочий чат. До тех пор отвечаю запасными." };
+      // Модель, которую сердце нашло у провайдера само, в настройках не записана: менять нечего.
+      const configured = item.provider !== "main" || (Array.isArray(config.AI_MODELS) ? config.AI_MODELS : []).includes(item.model);
+      return configured ? { code: `spare_gone:${name}`, detail: `запасная модель ${name} закрыта или снята у провайдера${http} — сутки её не трогаю`, hint: "Имя запасной модели пора заменить в настройках: напишите об этом в рабочий чат. Остальные модели отвечают." } : null;
+    }
+    if (item.why === "payment") {
+      return item.primary
+        ? { code: "payment", severity, detail: `провайдер основной модели ${name} ждёт шага в кабинете${http}${tail}`, hint: cabinet }
+        : { code: `spare_payment:${item.provider}`, detail: `запасной провайдер ${providerName(item.provider)} ждёт шага в кабинете${http} — его модель ${name} сутки не трогаю`, hint: cabinet };
+    }
+    if (item.why === "key") {
+      const line = item.primary || item.provider === "main" ? "AI_PROVIDER_KEY" : `KEY_${String(item.provider ?? "").toUpperCase()}`;
+      const hint = `Проверьте строку ${line} в файле ~/.heart.env и опубликуйте заново: bash scripts/phone.sh deploy.`;
+      return item.primary
+        ? { code: "key", severity: "fault", detail: `ключ основного провайдера не принят${http}${answered ? ` — отвечает запасной провайдер (${answered})` : tail}`, hint }
+        : { code: `spare_key:${item.provider}`, detail: `ключ запасного провайдера ${providerName(item.provider)} не принят${http}`, hint };
+    }
+    return null;
+  }
+
+  /**
+   * Отказы, которые сами не пройдут, — владельцу. Запасную спрашивают редко, когда
+   * основная отдыхает, и о снятой запасной раньше не узнавал никто: её молча пропускали
+   * сутки за сутками. `primary` — сказать об основной (когда не ответил никто); иначе —
+   * о запасных. Возвращает, сказано ли хоть что-то.
+   */
+  async function noteTroubles(answer, { primary = false } = {}) {
+    let told = false;
+    for (const item of Array.isArray(answer?.stumbles) ? answer.stumbles : []) {
+      if (Boolean(item.primary) !== primary) continue;
+      const notice = troubleNotice(item);
+      if (!notice) continue;
+      told = true;
+      try { await notices.report({ component: "brains", title: "Модели", severity: "degraded", ...notice }); } catch { /* ответ важнее отчёта */ }
+    }
+    return told;
+  }
+
+  /** Совет к отказу провайдера — по причине: ключ проверяют, сбой пережидают. */
+  function providerHint(answer) {
+    if (answer.code === "ai_not_configured") return "Впишите ключ в строку AI_PROVIDER_KEY файла ~/.heart.env и опубликуйте: bash scripts/phone.sh deploy.";
+    if (answer.code === "provider_network_error" || Number(answer.status) >= 500) return "Обычно это сбой у провайдера и проходит само. Держится дольше часа — скажите мне «проверь мозги» и перешлите ответ в рабочий чат.";
+    if (answer.status === 401 || answer.status === 403) return "Проверьте строку AI_PROVIDER_KEY в файле ~/.heart.env и опубликуйте заново: bash scripts/phone.sh deploy.";
+    return "Скажите мне «проверь мозги» и перешлите её ответ в рабочий чат.";
+  }
+
+  /**
+   * Ответила не основная модель. Раньше об этом сразу шла весть «у меня это работает
+   * хуже» — и когда основная упёрлась в лимит на семь секунд, а запасная ответила так
+   * же хорошо. Причины в ней не было, совет был один на всё («лимит вернётся сам») —
+   * даже когда ключ отозван. Теперь: счёт с причиной — всегда (сводка дня, «статус»);
+   * слово хозяину — только когда это надолго или без него не решится, с настоящей
+   * причиной, сроком и советом по этой причине.
+   */
+  async function noteSwitch(answer, short) {
+    const cause = answer.cause ?? {};
+    // Перепроверку и так ведёт другая модель: основная при этом в строю.
+    if (cause.why === "choice") return;
+    const kind = switchKind(cause, now());
+    pulse.bump("switched");
+    pulse.bump(`switched:${kind}`);
+    const primary = String(cause.model || config.AI_MODEL || "").replace(/^[^/]+\//u, "");
+    const until = Number(cause.until) > now() ? Number(cause.until) : 0;
+    const fails = Number(cause.fails) || 0;
+    // Запинка записывается, когда она случилась, и когда отдых начался не в разговоре
+    // (экзамен, проба мозгов): один отдых — одна запись, а не запись на каждый ответ.
+    try {
+      const saved = cause.fresh ? null : await store.get(STUMBLE_KEY).catch(() => null);
+      if (cause.fresh || Number(saved?.until) !== Number(cause.until) || saved?.why !== cause.why) {
+        await store.set(STUMBLE_KEY, {
+          // Час запинки — когда основная ушла отдыхать, а не когда об этом узнал разговор.
+          at: Number(cause.since) || now(), model: primary, to: short, why: String(cause.why || "rest"), kind, scope: String(cause.scope ?? ""),
+          until: Number(cause.until) || 0, status: cause.status ?? null, limit: cause.limit ?? null, used: cause.used ?? null, requested: cause.requested ?? null, fails,
+        });
+      }
+    } catch { /* запись о запинке не важнее ответа */ }
+
+    const again = until ? `; основную попробую снова в ${clock(until)}` : "";
+    let notice = null;
+    if (kind === "long") {
+      // Не поломка: люди получают ответы, как получали. Тон — «к сведению».
+      notice = { code: "limit", severity: "info", detail: `у основной модели ${primary} вышел ${limitWords(cause.scope)} — отвечаю запасной (${short})${again}`, hint: "Ничего: запасная отвечает так же, лимит вернётся сам. Упрутся и запасные — скажу отдельно." };
+    } else if (kind === "network" && restOf(cause, now()) >= LONG_REST_MS) {
+      notice = { code: "offline", detail: `с основной моделью ${primary} нет связи${fails > 1 ? ` ${fails} ${plural(fails, "раз", "раза", "раз")} подряд` : ""} — отвечаю запасной (${short})${again}`, hint: "Обычно это сбой у провайдера и проходит само. Держится дольше суток — скажите мне «проверь мозги» и перешлите ответ в рабочий чат." };
+    } else if (SHAKY.includes(kind)) {
+      // Разовый сбой — не весть. Десятый за день — уже весть: одна, с разбивкой по причинам.
+      const today = await pulse.day().catch(() => ({}));
+      const rows = SHAKY.map(name => [name, (Number(today[`switched:${name}`]) || 0) + (name === kind ? 1 : 0)]).filter(([, count]) => count > 0);
+      const total = rows.reduce((sum, [, count]) => sum + count, 0);
+      if (total >= SHAKY_FROM) {
+        notice = { code: "shaky", detail: `основная модель ${primary} сегодня подвела ${total} ${plural(total, "раз", "раза", "раз")} (${rows.map(([name, count]) => `${SWITCH_WORDS[name]} ${count}`).join(", ")}) — отвечала запасная (${short})`, hint: "Запасные справляются. Если так и завтра — скажите мне «проверь мозги» и перешлите ответ в рабочий чат." };
+      }
+    } else {
+      // Модель снята, ждёт оплаты, ключ не принят: само не пройдёт. Основная могла уйти на
+      // отдых и не в этом запросе — тогда о ней говорит причина, а не список отказов.
+      notice = troubleNotice({ model: cause.model || config.AI_MODEL, why: cause.why, status: cause.status, primary: true }, short);
+    }
+    // Короткий лимит (в минуту) — обычная работа цепочки на бесплатном плане: только счёт.
+    if (!notice) return;
+    try { await notices.report({ component: "brains", title: "Модели", severity: "degraded", ...notice }); } catch { /* ответ важнее отчёта */ }
+  }
+
   /** Записать, чем закончился ответ: для «почему ты так ответила» и для нити группы. */
   async function remember(turn, prompt, answer, context, facts = 0) {
     const short = String(answer.model ?? "").replace(/^[^/]+\//u, "");
     pulse.bump("replies");
-    pulse.bump("tokens", answer.usage?.total ?? 0);
-    if (short) pulse.bump(`model:${short}`);
     if (DAILY && !owner(turn.actorId)) {
       const key = quotaKey(turn.actorId);
       const used = await store.get(key).catch(() => null);
@@ -4811,12 +4974,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Лимит на исходе: владелец узнаёт заранее, а не когда она уже замолчала.
     const left = Number(answer.remainingRequests), cap = Number(answer.limitRequests);
     if (answer.remainingRequests != null && Number.isFinite(left) && cap > 0 && left / cap <= 0.1) {
-      try { await notices.report({ component: "brains", code: "low", severity: "degraded", detail: `лимит модели ${short} на исходе: осталось ${left} из ${cap} запросов до сброса` }); } catch { /* ответ важнее отчёта */ }
+      try { await notices.report({ component: "brains", code: "low", title: "Модели", severity: "info", detail: `лимит модели ${short} на исходе: осталось ${left} из ${cap} запросов до сброса`, hint: "Ничего: выйдет лимит — отвечу запасной моделью, а он вернётся сам." }); } catch { /* ответ важнее отчёта */ }
     }
-    if (answer.switched) {
-      pulse.bump("switched");
-      try { await notices.report({ component: "brains", code: "switched", severity: "degraded", detail: `основная модель недоступна — думаю запасной (${short})` }); } catch { /* ответ важнее отчёта */ }
-    }
+    if (answer.switched) await noteSwitch(answer, short);
     await store.set(`heart:trace:${turn.chatId}:${turn.actorId}`, {
       at: now(), q: prompt.slice(0, 160), model: short, tier: answer.tier,
       facts, lessons: context.lessons ?? [], thread: Boolean(context.thread), reply: Boolean(context.reply),
@@ -4853,13 +5013,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const limited = answer.limited === true;
     const short = String(answer.model ?? "").replace(/^[^/]+\//u, "");
     try {
+      // Основная снята, ждёт оплаты, ключ не принят — весть об этом, а не общее «провайдер отклонил запрос».
+      const named = await noteTroubles(answer, { primary: true });
       if (limited) {
-        await notices.report({ component: "brains", code: "exhausted", severity: "degraded", detail: "все модели упёрлись в лимит — вопросы записываю и отвечу позже" });
-      } else if (answer.code !== "brains_exhausted" && PROVIDER_REASONS[answer.code]) {
         await notices.report({
-          component: "provider", code: answer.code,
+          component: "brains", code: "exhausted", title: "Модели", severity: "degraded",
+          detail: `все модели упёрлись в лимит — вопросы записываю и отвечу сама${answer.retryAt > now() ? `, примерно после ${clock(answer.retryAt)}` : ", как только лимит вернётся"}`,
+          hint: "Лимит вернётся сам, вопросы не пропадут. Чтобы так не было — ключ ещё одного провайдера в файле ~/.heart.env: список в docs/BRAINS.md.",
+        });
+      } else if (!named && answer.code !== "brains_exhausted" && PROVIDER_REASONS[answer.code]) {
+        await notices.report({
+          component: "provider", code: answer.code, title: "Провайдер моделей",
           detail: `${PROVIDER_REASONS[answer.code]}${answer.status ? ` (HTTP ${answer.status})` : ""}${short ? ` · ${short}` : ""}`,
           severity: answer.code === "ai_not_configured" ? "degraded" : "fault",
+          hint: providerHint(answer),
         });
       }
     } catch { /* ответ важнее отчёта */ }
@@ -4933,6 +5100,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `На сегодня мы с ${you(turn, "вами", "тобой")} наговорились: мыслей на день у меня не бесконечно, и они нужны всем. Память, напоминания, игры, погода и счёт работают, а разговор продолжим завтра.`);
   }
 
+  /**
+   * Счёт после любого вопроса к модели — разговор, сцена, перепроверка, служебная реплика,
+   * экзамен, ночная мысль. Раньше токены считались только у ответов людям, и расход
+   * экзамена с ночной мыслью в «статусе» не был виден. Здесь же — запасные, которые сами
+   * не вернутся (модель снята, оплата, ключ): владелец узнаёт о них после первого отказа.
+   */
+  async function spent(answer) {
+    if (answer?.ok && !answer.testRun) {
+      const short = String(answer.model ?? "").replace(/^[^/]+\//u, "");
+      pulse.bump("tokens", answer.usage?.total ?? 0);
+      pulse.bump("cached", answer.usage?.cached ?? 0);
+      if (short) pulse.bump(`model:${short}`);
+    }
+    await noteTroubles(answer).catch(() => false);
+  }
+
   /** Разговор: всё, что не команда, не настройка, не умение и не намерение. */
   async function talk(turn, prompt, { lateMs = 0, deferred = false, plain = false, avoid = "" } = {}) {
     const { chatId, actorId, ctx, dry } = turn;
@@ -4976,6 +5159,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         ...(avoid ? { avoidModel: avoid } : {}),
       });
     } finally { inflight.delete(key); }
+    await spent(answer);
     return { answer, context, facts: shared.facts };
   }
 
@@ -5017,10 +5201,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * незнакомому человеку в личке: без истории, без памяти, без сестры; ничего не пишется.
    */
   async function ponder(ctx, prompt, { note = "", who = "exam" } = {}) {
-    return ai.generateReply({
+    const answer = await ai.generateReply({
       userId: who, chatId: "ponder", prompt, ctx, role: "Участник", trusted: false, apiKey: await resolveKey(ctx),
       isPrivate: true, note, deferred: true, stateless: true,
     });
+    await spent(answer);
+    return answer;
   }
   const shortModel = (name) => String(name ?? "").replace(/^[^/]+\//u, "");
 
@@ -6079,10 +6265,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (last?.day === today) return;
     await store.set("heart:digest", { day: today, at: now() });
     const yesterday = dayOf(now() - DAY);
-    const [counters, study, problems, unknown, waiting] = await Promise.all([
-      pulse.day(yesterday), lessons.stats(), notices.list({ limit: 5 }),
+    const [counters, study, noticed, unknown, waiting] = await Promise.all([
+      pulse.day(yesterday), lessons.stats(), notices.list({ limit: 8 }),
       store.get("heart:unknown:v1").catch(() => null), queue.size().catch(() => 0),
     ]);
+    // «К сведению» — не сбой: в строку сбоев идут только поломки и «работает хуже».
+    const problems = noticed.filter(item => item.severity !== "info").slice(0, 5);
     if (!pulse.active(counters) && !study.proposed && !problems.length) return;
     const asked = (Array.isArray(unknown?.items) ? unknown.items : []).filter(item => now() - Number(item.at) < 2 * DAY).slice(-3);
     // Раз в неделю, по понедельникам: чего в словаре не хватило на деле.

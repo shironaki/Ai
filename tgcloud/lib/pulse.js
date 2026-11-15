@@ -1,4 +1,5 @@
 import { plural } from "./sibling.js";
+import { SWITCH_WORDS } from "./brains.js";
 
 /**
  * Пульс: что сердце делало за день, числами.
@@ -63,6 +64,15 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
     return ["replies", "ruled", "reactions", "failed", "queued", "limited", "corrected", "lessons", "sourced", "games", "reminded", "heard", "seen", "read", "secretary"].some(name => Number(counters[name]) > 0);
   }
 
+  /** «(короткий лимит 30, нет связи 2)» — почему отвечала запасная; причин не записано — пусто. */
+  function switchedWhy(counters = {}) {
+    const rows = Object.keys(SWITCH_WORDS)
+      .map(kind => [SWITCH_WORDS[kind], Number(counters[`switched:${kind}`]) || 0])
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]);
+    return rows.length ? ` (${rows.map(([words, count]) => `${words} ${number(count)}`).join(", ")})` : "";
+  }
+
   /** Сводка словами. Строки с нулями не печатаются: тишина — не новость. */
   function lines(counters = {}) {
     const c = (name) => Number(counters[name]) || 0;
@@ -79,10 +89,12 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
       .filter(([name, value]) => name.startsWith("model:") && Number(value) > 0)
       .sort((a, b) => Number(b[1]) - Number(a[1]))
       .map(([name, value]) => `${name.slice(6)} ×${number(value)}`);
-    if (c("tokens") || models.length) out.push(`Мысли: ${number(c("tokens"))} ${plural(c("tokens"), "токен", "токена", "токенов")}${models.length ? ` (${models.join(", ")})` : ""}`);
+    // «Из кэша» — начало запроса, которое провайдер узнал: такие токены в его лимит не идут.
+    const cached = c("cached") ? `; из кэша провайдера — ${number(c("cached"))}, в лимит не идут` : "";
+    if (c("tokens") || models.length) out.push(`Мысли: ${number(c("tokens"))} ${plural(c("tokens"), "токен", "токена", "токенов")}${models.length ? ` (${models.join(", ")})` : ""}${cached}`);
     const limit = [
       c("limited") ? `упиралась ${number(c("limited"))} ${plural(c("limited"), "раз", "раза", "раз")}` : "",
-      c("switched") ? `думала запасной: ${number(c("switched"))}` : "",
+      c("switched") ? `думала запасной: ${number(c("switched"))}${switchedWhy(counters)}` : "",
       c("queued") ? `отложила: ${number(c("queued"))}` : "",
       c("late") ? `дослала: ${number(c("late"))}` : "",
       c("dropped") ? `не успела: ${number(c("dropped"))}` : "",

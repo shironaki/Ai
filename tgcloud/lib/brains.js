@@ -58,6 +58,42 @@ export function readLimits(headers) {
 
 const unique = (items) => [...new Set(items.map(item => String(item ?? "").trim()).filter(Boolean))];
 
+/** Сколько основная модель должна отдыхать, чтобы об этом стоило сразу сказать владельцу. */
+export const LONG_REST_MS = 15 * 60_000;
+
+const LIMIT_WORDS = Object.freeze({ tpm: "лимит токенов в минуту", rpm: "лимит запросов в минуту", tpd: "дневной лимит токенов", rpd: "дневной лимит запросов" });
+/** Какой лимит — словами; провайдер не назвал — просто «лимит». */
+export const limitWords = (scope) => LIMIT_WORDS[String(scope ?? "")] ?? "лимит";
+
+/**
+ * Почему ответила запасная — видом, по которому решается, говорить ли владельцу.
+ * Лимит делится на короткий (в минуту: проходит сам за секунды) и долгий
+ * (дневной — по слову провайдера или по сроку отдыха). Остальное — как есть.
+ */
+export function switchKind(cause = {}, at = Date.now()) {
+  const why = String(cause?.why || "rest");
+  if (why !== "limit") return why;
+  const daily = cause.scope === "tpd" || cause.scope === "rpd";
+  return daily || restOf(cause, at) >= LONG_REST_MS ? "long" : "short";
+}
+
+/**
+ * На сколько модель ушла отдыхать — целиком, от начала отдыха, а не «сколько
+ * осталось»: иначе один и тот же часовой лимит в начале считался бы долгим, а
+ * под конец — коротким.
+ */
+export function restOf(cause = {}, at = Date.now()) {
+  const until = Number(cause?.until) || 0;
+  return until > 0 ? Math.max(0, until - (Number(cause?.since) || at)) : 0;
+}
+
+/** Те же причины словами: одни и те же в «статусе», сводке дня и вести. */
+export const SWITCH_WORDS = Object.freeze({
+  short: "короткий лимит", long: "долгий лимит", network: "нет связи", down: "сбой у провайдера",
+  gone: "модель снята", payment: "ждёт оплаты", key: "ключ не принят", empty: "пустой ответ",
+  filtered: "фильтр провайдера", error: "ошибка провайдера", rest: "отдыхала",
+});
+
 export function createBrains({
   store = null, now = () => Date.now(),
   primary = "", fallbacks = [], baseUrl = "",
@@ -134,17 +170,27 @@ export function createBrains({
    * связи раз за разом — отдых растёт вчетверо, до шести часов: провайдер,
    * чей сертификат платформа не принимает, не должен стоить попытки на
    * каждое сообщение.
+   *
+   * `scope` — какой именно лимит назвал провайдер («tpm», «tpd», «rpm», «rpd»):
+   * «вернётся через семь секунд» и «дневной объём вышел» — разные вести.
+   * Возвращает час, до которого модель отдыхает.
    */
-  async function rest(id, { ms = DEFAULT_REST_MS, why = "limit" } = {}) {
+  async function rest(id, { ms = DEFAULT_REST_MS, why = "limit", scope = "" } = {}) {
     const state = await read();
     const fails = why === "network" ? Number(state.models[id]?.fails ?? 0) + 1 : 0;
     const base = Math.max(1000, Number(ms) || DEFAULT_REST_MS);
     const pause = why === "network" ? Math.min(6 * 3_600_000, base * 4 ** Math.min(fails - 1, 6)) : Math.min(DAY, base);
-    await patch(id, { until: now() + pause, why, fails });
+    const until = now() + pause;
+    await patch(id, { until, why, fails, scope: why === "limit" ? String(scope || "") : "", since: now() });
+    return until;
   }
 
   /** Модели больше нет у провайдера: сутки не трогаем, потом проверим снова. */
-  const retire = (id, { why = "gone" } = {}) => patch(id, { until: now() + DAY, why });
+  async function retire(id, { why = "gone" } = {}) {
+    const until = now() + DAY;
+    await patch(id, { until, why, scope: "", since: now() });
+    return until;
+  }
 
   /** Модель не принимает дополнительные параметры: впредь спрашиваем проще. */
   const simplify = (id) => patch(id, { plain: true });
@@ -170,7 +216,7 @@ export function createBrains({
     await patch(id, {
       remainReq: limits.remainingRequests, limitReq: limits.limitRequests,
       remainTok: limits.remainingTokens, limitTok: limits.limitTokens,
-      until: 0, why: "", fails: 0,
+      until: 0, why: "", fails: 0, scope: "",
     });
   }
 
@@ -179,7 +225,7 @@ export function createBrains({
     const state = await read();
     const before = state.models[id] ?? {};
     if (!(Number(before.fails) > 0) && !(Number(before.until) > 0)) return;
-    await patch(id, { until: 0, why: "", fails: 0 });
+    await patch(id, { until: 0, why: "", fails: 0, scope: "" });
   }
 
   /**
@@ -215,6 +261,9 @@ export function createBrains({
       return {
         id: item.id, model: item.model, provider: item.provider, name: item.name ?? "",
         ok: !resting, until: resting ? Number(row.until) : 0, why: resting ? String(row.why ?? "") : "",
+        // Какой лимит и который раз подряд нет связи — чтобы владельцу называлась настоящая причина.
+        scope: resting ? String(row.scope ?? "") : "", fails: resting ? Number(row.fails) || 0 : 0,
+        since: resting ? Number(row.since) || 0 : 0,
         remainingRequests: row.remainReq ?? null, remainingTokens: row.remainTok ?? null,
         limitRequests: row.limitReq ?? null, limitTokens: row.limitTok ?? null,
       };

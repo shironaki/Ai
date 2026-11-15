@@ -22,6 +22,12 @@ const MAX_WAIT_MS = 3000;
 const SHORT_RETRY_MS = 2500;
 /** Модели, которые рассуждают перед ответом и принимают параметр усилия. */
 const REASONING_MODEL = /gpt-oss/iu;
+/**
+ * Модели, которым раздумья для разговора не нужны вовсе: у Qwen 3 на основном
+ * ключе параметр `none` их выключает (документация провайдера, 15.11.2026).
+ * Не примет — поле уберётся само, как любое отвергнутое.
+ */
+const NO_REASONING_MODEL = /^qwen\/qwen3/iu;
 /** Поля запроса, без которых можно обойтись, если модель их не принимает. */
 const DROPPABLE = Object.freeze(["temperature", "reasoning_effort", "max_tokens"]);
 
@@ -36,7 +42,7 @@ export function shapePayload(brain, base, drop = []) {
   const payload = { ...base, model: brain.model };
   // Рассуждающая модель по умолчанию тратит на раздумья сотни токенов до
   // первого слова ответа. Для разговора хватает малого усилия.
-  const effort = brain.effort || (REASONING_MODEL.test(brain.model) ? "low" : "");
+  const effort = brain.effort || (REASONING_MODEL.test(brain.model) ? "low" : NO_REASONING_MODEL.test(brain.model) ? "none" : "");
   if (effort) payload.reasoning_effort = effort;
   for (const field of drop) {
     if (field === "max_tokens" && payload.max_tokens != null) payload.max_completion_tokens = payload.max_tokens;
@@ -186,11 +192,30 @@ export function describeProviderFailure({ status, providerCode, providerType, mo
 }
 
 /**
+ * Какой именно лимит упёрся. Из слов провайдера берутся только вид лимита —
+ * токены или запросы, в минуту или в сутки — и три числа: предел, занято,
+ * запрошено. Сам текст ошибки никуда не идёт: в нём бывает имя организации.
+ * «Вернётся через семь секунд» и «дневной объём вышел» — разные вести
+ * владельцу, а код ошибки у них один и тот же.
+ */
+export function limitScope(message) {
+  const text = String(message ?? "").slice(0, 800);
+  const short = /\b([TR]P[MD])\b/u.exec(text)?.[1] ?? "";
+  const long = short ? null : /(token|request)s?[\s_-]*per[\s_-]*(minute|day)/iu.exec(text);
+  const scope = (short || (long ? `${long[1][0]}p${long[2][0]}` : "")).toLowerCase();
+  const number = (word) => {
+    const found = new RegExp(`\\b${word}:?\\s+(\\d{1,12})\\b`, "iu").exec(text);
+    return found ? Number(found[1]) : null;
+  };
+  return { scope, limit: number("Limit"), used: number("Used"), requested: number("Requested") };
+}
+
+/**
  * Read only the machine-readable part of a provider error. The body itself is
  * never returned, logged or sent to Telegram: it can echo the request.
  */
 async function readProviderError(response) {
-  const empty = { code: "", type: "", param: "", contentType: "" };
+  const empty = { code: "", type: "", param: "", contentType: "", scope: "", limit: null, used: null, requested: null };
   const headers = response?.headers;
   const getHeader = typeof headers?.get === "function" ? (name) => headers.get(name) : null;
   const contentType = getHeader ? safeSnippet(getHeader("content-type"), 80) : "";
@@ -216,11 +241,29 @@ async function readProviderError(response) {
       // Имя поля, которое провайдер не принял: по нему запрос упрощается сам.
       param: safeSnippet(parsed?.error?.param, 48),
       contentType,
+      // Из текста ошибки — только вид лимита и числа, не сам текст.
+      ...limitScope(parsed?.error?.message ?? parsed?.errors?.[0]?.message ?? parsed?.message),
     };
   } catch {
     // Not JSON (an HTML block page, for example): no code to report.
     return { ...empty, contentType };
   }
+}
+
+/**
+ * Почему модель не ответила — одним словом, для владельца: лимит, снята,
+ * ждёт оплаты, ключ не принят, нет связи, сбой, пустой или отфильтрованный ответ.
+ */
+export function stumbleOf(result = {}) {
+  if (result.limited) return "limit";
+  if (result.gone) return "gone";
+  if (result.unpaid) return "payment";
+  if (result.keyRejected) return "key";
+  if (result.code === "provider_network_error") return "network";
+  if (Number(result.status) >= 500) return "down";
+  if (result.code === "empty_response") return "empty";
+  if (result.code === "filtered") return "filtered";
+  return "error";
 }
 
 /**
@@ -708,19 +751,20 @@ export function createAiService({
         const payload = shapePayload(brain, { messages, temperature, max_tokens: maxTokens }, drop);
         const bearer = await bearerFor(brain, doFetch, { force: reauth });
         if (!bearer.ok) {
+          let until = 0;
           if (brains) {
-            if (bearer.code === "provider_network_error") await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" });
-            else if (bearer.limited) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "limit" });
+            if (bearer.code === "provider_network_error") until = await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" });
+            else if (bearer.limited) until = await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "limit" });
           }
-          return { ...bearer, model: brain.model };
+          return { ...bearer, model: brain.model, until: Number(until) || 0 };
         }
         let response;
         try {
           response = await doFetch(providerChatUrl(brain.baseUrl), requestOptionsFor(bearer.token, payload, signalOrUndefined(timeout)));
         } catch (error) {
-          if (brains) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" });
+          const until = brains ? await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" }) : 0;
           const errorName = errorNameOf(error);
-          return { ok: false, code: "provider_network_error", transient: true, errorName, model: brain.model, text: `Нет связи с провайдером (сетевая ошибка: ${errorName}).` };
+          return { ok: false, code: "provider_network_error", transient: true, errorName, model: brain.model, until: Number(until) || 0, text: `Нет связи с провайдером (сетевая ошибка: ${errorName}).` };
         }
         const outcome = responseOutcome(response);
         const limits = readLimits(response?.headers);
@@ -761,17 +805,22 @@ export function createAiService({
           const unpaid = status === 402;
           // Дневной объём исчерпан, а срока провайдер не назвал: до полуночи UTC.
           const quota = status === 429 && limits.retryAfterMs == null && (/quota|free_limit/u.test(reason) || brain.kind === "cloudflare");
+          // До какого часа модель после этого отдыхает: владельцу называется срок, а не «недоступна».
+          let until = 0;
           if (brains) {
-            if (limited) await brains.rest(brain.id, { ms: limits.retryAfterMs ?? (quota ? untilUtcMidnight(now()) : DEFAULT_REST_MS), why: "limit" });
-            else if (gone || denied) await brains.retire(brain.id, { why: "gone" });
-            else if (unpaid) await brains.retire(brain.id, { why: "payment" });
-            else if (status >= 500) await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "down" });
+            if (limited) until = await brains.rest(brain.id, { ms: limits.retryAfterMs ?? (quota ? untilUtcMidnight(now()) : DEFAULT_REST_MS), why: "limit", scope: detail.scope });
+            else if (gone || denied) until = await brains.retire(brain.id, { why: "gone" });
+            else if (unpaid) until = await brains.retire(brain.id, { why: "payment" });
+            else if (status >= 500) until = await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "down" });
           }
           return {
             ok: false, code: "provider_http_error", status, limited, gone: gone || denied, unpaid,
             transient: limited || status >= 500,
             keyRejected: status === 401 || (status === 403 && !denied),
             providerCode: detail.code, providerType: detail.type, contentType: detail.contentType,
+            until: Number(until) || 0,
+            // Какой лимит и его числа — только для владельца: предел, занято, запрошено.
+            limitScope: detail.scope, limitOf: detail.limit, limitUsed: detail.used, limitAsked: detail.requested,
             model: brain.model,
             text: `AI-провайдер вернул ошибку: ${describeProviderFailure({ status, providerCode: detail.code || detail.type, model: brain.model })}`,
           };
@@ -788,6 +837,9 @@ export function createAiService({
         return { ok: true, data, limits };
       };
 
+      // Основная в строю или отдыхает: спрашивается до перестановки «не этой моделью».
+      const primaryId = `main:${wanted}`;
+      const primaryPlanned = pool.some(item => item.id === primaryId);
       if (avoidModel && pool.length > 1) {
         const same = (brain) => String(brain.model ?? "").replace(/^[^/]+\//u, "") === String(avoidModel);
         const other = pool.filter(brain => !same(brain));
@@ -797,6 +849,21 @@ export function createAiService({
       const tried = [];
       const rejected = new Set();
       let last = null;
+      // Кто в этом запросе не ответил и почему: владельцу называется причина, а не «недоступна».
+      const stumbles = [];
+      const failures = [];
+      const stumbled = (brain, result) => {
+        last = result;
+        failures.push(result);
+        stumbles.push({
+          id: brain.id, model: brain.model, provider: brain.provider, primary: brain.id === primaryId,
+          why: stumbleOf(result), until: Number(result.until) || 0,
+          status: Number.isFinite(result.status) ? result.status : null,
+          scope: String(result.limitScope ?? ""), limit: result.limitOf ?? null, used: result.limitUsed ?? null, requested: result.limitAsked ?? null,
+        });
+      };
+      // Наружу — без внутреннего имени записи цепочки.
+      const told = () => stumbles.map(({ id: _id, ...rest }) => rest);
       for (const brain of pool) {
         if (tried.length >= MAX_ATTEMPTS) break;
         // Ключ отвергнут — другая модель того же провайдера не поможет.
@@ -804,7 +871,7 @@ export function createAiService({
         const result = await ask(brain, { timeout: tried.length ? AI_FALLBACK_TIMEOUT_MS : AI_REQUEST_TIMEOUT_MS });
         tried.push(brain.model);
         if (!result.ok) {
-          last = result;
+          stumbled(brain, result);
           if (result.keyRejected) rejected.add(brain.provider);
           continue;
         }
@@ -812,7 +879,7 @@ export function createAiService({
         // Провайдер заменил ответ своей отговоркой (фильтр тем): это не её
         // слова — спросить следующую модель.
         if (choice?.finish_reason === "blacklist") {
-          last = { ok: false, code: "filtered", model: brain.model, text: "Провайдер отфильтровал ответ." };
+          stumbled(brain, { ok: false, code: "filtered", model: brain.model, text: "Провайдер отфильтровал ответ." });
           continue;
         }
         let answer = clampText(stripThinking(choice?.message?.content), MAX_REPLY_CHARS);
@@ -820,7 +887,7 @@ export function createAiService({
         if (choice?.finish_reason === "length") answer = trimToSentence(answer);
         answer = guardAnswer(answer, { confidentialIds, trusted }).text;
         if (!answer) {
-          last = { ok: false, code: "empty_response", model: brain.model, text: "Провайдер вернул пустой ответ." };
+          stumbled(brain, { ok: false, code: "empty_response", model: brain.model, text: "Провайдер вернул пустой ответ." });
           continue;
         }
         const updatedHistory = [...fullHistory, { role: "user", content: userText }, { role: "assistant", content: answer }]
@@ -831,17 +898,58 @@ export function createAiService({
           // The answer remains useful if optional history storage is not available.
         }
         const usage = result.data?.usage ?? {};
+        // Думала не основной моделью: об этом узнаёт владелец, а не собеседник.
+        const switched = tried.length > 1 || brain.id !== pool[0].id || brain.model !== wanted;
+        let cause = null;
+        if (switched) {
+          // Почему не основная: её отказ в этом же запросе; её отдых с прошлого
+          // раза; или так и задумано — перепроверку ведёт другая модель.
+          const own = stumbles.find(item => item.id === primaryId);
+          let row = null;
+          try { row = brains ? (await brains.describe({ apiKey, model: wanted })).find(item => item.id === primaryId) ?? null : null; } catch { row = null; }
+          const blank = { model: wanted, why: "", until: 0, since: 0, status: null, scope: "", limit: null, used: null, requested: null, fails: 0, fresh: false };
+          if (own) cause = { ...blank, why: own.why, status: own.status, scope: own.scope, limit: own.limit, used: own.used, requested: own.requested, until: Number(row?.until) || own.until, since: own.until ? now() : 0, fails: Number(row?.fails) || 0, fresh: true };
+          else if (!primaryPlanned) cause = { ...blank, why: row?.why || "rest", until: Number(row?.until) || 0, since: Number(row?.since) || 0, scope: row?.scope || "", fails: Number(row?.fails) || 0 };
+          else cause = { ...blank, why: "choice" };
+        }
         return {
           ok: true, text: answer, model: brain.model, brain: brain.id, tier,
-          // Думала не основной моделью: об этом узнаёт владелец, а не собеседник.
-          switched: tried.length > 1 || brain.id !== pool[0].id || brain.model !== wanted,
+          switched, ...(cause ? { cause } : {}),
+          // Все, кто в этом запросе не ответил: снятую запасную владелец иначе не увидел бы никогда.
+          ...(stumbles.length ? { stumbles: told() } : {}),
           tried,
-          usage: { prompt: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0, total: Number(usage.total_tokens) || 0 },
+          usage: {
+            prompt: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0, total: Number(usage.total_tokens) || 0,
+            // Начало запроса, которое провайдер узнал и взял из своего кэша: в его лимит такие токены не идут.
+            cached: Number(usage.prompt_tokens_details?.cached_tokens) || 0,
+          },
           remainingRequests: result.limits?.remainingRequests ?? null,
           limitRequests: result.limits?.limitRequests ?? null,
         };
       }
-      return { ...(last ?? { ok: false, code: "empty_response", text: "Провайдер вернул пустой ответ." }), tried, retryAt: brains ? await brains.nextAt({ apiKey, model: wanted }) : 0 };
+      // Ответа нет. Итог — не последний отказ, а то, что из этого следует для человека:
+      // упёрлась в лимит или в связь хоть одна модель — это пройдёт само, вопрос надо
+      // записать и ответить позже. Раньше итогом был последний отказ, и снятая модель в
+      // конце цепочки превращала «лимит вышел» в «поломку», а вопрос человека терялся.
+      let final = failures.find(item => item.limited) ?? failures.find(item => item.transient) ?? null;
+      if (!final && brains) {
+        // В этом запросе отказали только те, кто сам не вернётся (снята, оплата, ключ, пустой
+        // ответ), а остальные уже отдыхали. Отдыхают из-за лимита или связи — это пройдёт.
+        let resting = [];
+        try { resting = (await brains.describe({ apiKey, model: wanted })).filter(item => !item.ok); } catch { resting = []; }
+        const byLimit = resting.some(item => item.why === "limit");
+        if (byLimit || resting.some(item => item.why === "network" || item.why === "down")) {
+          final = {
+            ok: false, code: "brains_exhausted", transient: true, limited: byLimit, model: wanted,
+            text: byLimit ? "Все модели отдыхают: лимит запросов исчерпан." : "Модели недоступны: связь или сбой у провайдера.",
+          };
+        }
+      }
+      return {
+        ...(final ?? last ?? { ok: false, code: "empty_response", text: "Провайдер вернул пустой ответ." }),
+        tried, ...(stumbles.length ? { stumbles: told() } : {}),
+        retryAt: brains ? await brains.nextAt({ apiKey, model: wanted }) : 0,
+      };
     },
   };
 }

@@ -94,10 +94,10 @@ export const says = (content, { finish = "stop", usage = { prompt_tokens: 20, co
   ok: true, status: 200, headers: headersOf(headers),
   json: async () => ({ choices: [{ message: { content }, finish_reason: finish }], usage }),
 });
-/** Отказ провайдера: статус, код ошибки и заголовки. */
-export const refuses = (status, { code = "", param = null, headers = {} } = {}) => ({
+/** Отказ провайдера: статус, код ошибки, заголовки и — если нужно — его слова (`message`). */
+export const refuses = (status, { code = "", param = null, headers = {}, message = "" } = {}) => ({
   ok: false, status, headers: headersOf(headers),
-  text: async () => JSON.stringify({ error: { code, ...(param ? { param } : {}) } }),
+  text: async () => JSON.stringify({ error: { code, ...(param ? { param } : {}), ...(message ? { message } : {}) } }),
 });
 
 /**

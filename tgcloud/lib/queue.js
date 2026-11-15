@@ -88,5 +88,10 @@ export function createQueue({ store = null, now = () => Date.now(), limit = 20, 
     return (await read()).items.filter(entry => now() - Number(entry.at) < ttlMs).length;
   }
 
-  return Object.freeze({ push, take, giveBack, size });
+  /** Сколько вопросов этого человека из этого чата ещё ждут ответа. */
+  async function waiting({ chatId, userId } = {}) {
+    return (await read()).items.filter(entry => now() - Number(entry.at) < ttlMs && String(entry.chatId) === String(chatId) && String(entry.userId) === String(userId)).length;
+  }
+
+  return Object.freeze({ push, take, giveBack, size, waiting });
 }

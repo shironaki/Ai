@@ -38,11 +38,12 @@ const DAY = 86_400_000;
 
 /** Что делать — по компоненту, а не по тексту ошибки. */
 const DEFAULT_HINTS = Object.freeze({
-  provider: "Проверьте секрет AI_PROVIDER_KEY и опубликуйте сердце заново (Heart → deploy).",
+  provider: "Проверьте строку AI_PROVIDER_KEY в файле ~/.heart.env и опубликуйте заново: bash scripts/phone.sh deploy.",
   telegram: "Telegram не принял сообщение: проверьте, что бот не заблокирован.",
   storage: "Хранилище не отвечает — работаю без памяти.",
   bridge: "Мост к сестре: канал, секрет и её бот. Пока она молчит, я отвечаю сама и её не жду.",
-  brains: "Думаю запасными моделями; лимит вернётся сам.",
+  // Совет о моделях зависит от причины и передаётся с вестью; это — на случай, если его не передали.
+  brains: "Подробности — скажите мне «статус»: там причина и срок.",
   handler: "Подробности — скажите мне «статус».",
   health: "Подробности — скажите мне «статус».",
 });
@@ -77,11 +78,23 @@ export function fingerprintOf(component, code) {
   return `${slug(component)}:${slug(code)}`;
 }
 
+/**
+ * Три тона вести. «Сломалось» — не работает; «работает хуже» — работает, но не
+ * так; «к сведению» — не поломка вовсе: всё работает, владельцу просто стоит
+ * знать (дневной лимит основной модели вышел, отвечает запасная). Раньше третьего
+ * тона не было, и такая весть читалась как ошибка, которую надо чинить.
+ */
+const SEVERITIES = Object.freeze(["fault", "degraded", "info"]);
+const severityOf = (value) => (SEVERITIES.includes(value) ? value : "fault");
+const HEADS = Object.freeze({
+  fault: "🚨 Хозяин, у меня это сломалось",
+  degraded: "△ Хозяин, у меня это работает хуже",
+  info: "ℹ️ Хозяин, к сведению — это не поломка",
+});
+
 /** Текст, который владелец увидит в личке. */
 export function incidentText({ title = "", detail = "", count = 1, hint = "", fingerprint = "", severity = "fault" } = {}) {
-  const head = severity === "degraded"
-    ? "△ Хозяин, у меня это работает хуже"
-    : "🚨 Хозяин, у меня это сломалось";
+  const head = HEADS[severityOf(severity)];
   const lines = [head, "━━━━━━━━━━━━━━━━━━━━", `Где: ${title}`, `Что: ${detail || "без подробностей"}`];
   if (count > 1) lines.push(`Повтор: ${count} ${plural(count)} за сутки`);
   if (hint) lines.push(`Что делать: ${hint}`);
@@ -161,7 +174,8 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
   async function report({ component = "bot", code = "error", title = "", detail = "", severity = "fault", hint = "" } = {}) {
     const fingerprint = fingerprintOf(component, code);
     const at = now();
-    const clean = redactDetail(detail);
+    // 240 знаков: причина, две модели и срок в 160 не помещались — обрезался как раз срок.
+    const clean = redactDetail(detail, 240);
     const label = redactDetail(title || component, 48);
 
     let entry = null;
@@ -174,7 +188,7 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
         title: label,
         code: slug(code),
         detail: clean,
-        severity: severity === "degraded" ? "degraded" : "fault",
+        severity: severityOf(severity),
         firstAt: previous?.firstAt ?? at,
         lastAt: at,
         count: Number(previous?.count ?? 0) + 1,
@@ -317,7 +331,7 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
     const items = await list({ limit });
     if (!items.length) return "Сбои: нет — за сутки ничего не ломалось.";
     const lines = items.map(item => {
-      const mark = item.severity === "degraded" ? "△" : "✕";
+      const mark = item.severity === "degraded" ? "△" : item.severity === "info" ? "ℹ️" : "✕";
       const times = Number(item.count ?? 1) > 1 ? ` · ${item.count} ${plural(Number(item.count))}` : "";
       return `${mark} ${item.title}: ${item.detail}${times}`;
     });
