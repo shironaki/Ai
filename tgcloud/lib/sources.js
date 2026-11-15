@@ -10,6 +10,7 @@
  * Все источники бесплатные, без ключей и без регистрации. Каждый может не
  * ответить: тогда возвращается `{ ok: false }` — и это не исключение.
  */
+import { plainText } from "./feeds.js";
 import { CITIES } from "./data/cities.js";
 
 const WIKI = "https://ru.wikipedia.org";
@@ -360,6 +361,148 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return found?.ok ? { ...found, text: cut(found.extract, limit) } : found;
   }
 
+  // ── полки Википедии: советы «что посмотреть, почитать, во что поиграть» ──
+  /**
+   * Полка — статьи Википедии с карточкой нужного вида: [шаблон, из скольких самых
+   * известных выбирать]. «Известность» — число ссылок на статью из других статей.
+   * Проверено 15.11.2026: поиск `hastemplate:` с порядком `incoming_links_desc`
+   * отдаёт «Гладиатора», «Друзей», «Half-Life 2»; `morelikethis:` — похожее.
+   */
+  const SHELF = Object.freeze({
+    film: ["Фильм", 400], series: ["Телесериал", 250], book: ["Литературное произведение", 300], game: ["Компьютерная игра", 300],
+  });
+  /** Названия статей по запросу полки; null — источник молчит. */
+  async function shelfTitles(query, { offset = 0, limit = 10, sorted = true } = {}) {
+    const got = await getJson(`${WIKI}/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srnamespace=0&srlimit=${limit}&sroffset=${offset}&srprop=&format=json&utf8=1${sorted ? "&srsort=incoming_links_desc" : ""}`, { timeout: 6000 });
+    if (!got.ok) return null;
+    const items = got.data?.query?.search;
+    return Array.isArray(items) ? items.map(item => String(item?.title ?? "")).filter(Boolean) : [];
+  }
+  /**
+   * Совет с полки: `{ ok, title, description, text, url, image, seed }`.
+   * `like` — «похожее на …» (`seed` — что нашлось по этому названию); `category` — жанр
+   * категорией Википедии, `word` — он же словом, если категории нет; `skip` — что уже
+   * советовала. Отказы: network, not_found, nothing_like (названное нашлось, похожего нет).
+   */
+  async function advise(shelf, { like = "", category = "", word = "", skip = [], random = Math.random } = {}) {
+    const [template, pool] = SHELF[shelf] ?? [];
+    if (!template) return { ok: false, code: "unsupported" };
+    const base = `hastemplate:"${template}"`;
+    const seen = new Set((Array.isArray(skip) ? skip : []).map(fold));
+    const roll = () => Math.min(0.999999, Math.max(0, Number(random()) || 0));
+    let titles = null, seed = "";
+    if (like) {
+      const found = await shelfTitles(`${base} ${String(like).replace(/["«»]/gu, " ")}`, { limit: 1, sorted: false });
+      if (found == null) return { ok: false, code: "network" };
+      if (!found.length) return { ok: false, code: "not_found" };
+      seed = found[0];
+      titles = await shelfTitles(`${base} morelikethis:"${seed.replace(/"/gu, "")}"`, { limit: 12, sorted: false });
+      if (titles == null) return { ok: false, code: "network" };
+      titles = titles.filter(title => fold(title) !== fold(seed));
+      if (!titles.length) return { ok: false, code: "nothing_like", seed };
+    } else if (category) {
+      titles = await shelfTitles(`${base} deepcat:"${category}"`, { offset: Math.floor(roll() * pool / 20) * 10 });
+      if (titles == null) return { ok: false, code: "network" };
+      if (!titles.length) titles = await shelfTitles(`${base} deepcat:"${category}"`) ?? [];
+      // Категории с таким названием нет — жанр ищется словом.
+      if (!titles.length && word) titles = await shelfTitles(`${base} ${word}`, { offset: Math.floor(roll() * 5) * 10 }) ?? [];
+    } else {
+      titles = await shelfTitles(base, { offset: Math.floor(roll() * pool / 10) * 10 });
+      if (titles == null) return { ok: false, code: "network" };
+    }
+    if (!titles.length) return { ok: false, code: "not_found" };
+    const fresh = titles.filter(title => !seen.has(fold(title)));
+    const order = fresh.length ? fresh : titles;
+    // «Похожее» — самое похожее первым; без него — случайное из найденного десятка.
+    const start = like ? 0 : Math.floor(roll() * order.length);
+    for (let step = 0; step < Math.min(3, order.length); step += 1) {
+      const page = await summary(order[(start + step) % order.length]);
+      if (page.ok) return { ok: true, title: page.title, description: page.description, text: cut(page.extract, 420), url: page.url, image: page.thumb || page.image, seed };
+      if (page.code === "network") return { ok: false, code: "network" };
+    }
+    return { ok: false, code: "not_found" };
+  }
+
+  // ── день в Википедии: «в новостях», «знаете ли вы», «в этот день» ────────
+  const two = (value) => String(value).padStart(2, "0");
+  /**
+   * Избранное дня: `{ ok, news: [{ text, url }], facts: [text] }`. Русская Википедия
+   * отдаёт и «В новостях», и «Знаете ли вы» (проверено 15.11.2026). Ответ большой,
+   * поэтому в запасе лежит только нужное; свежесть — три часа.
+   */
+  async function daily() {
+    const date = new Date(now());
+    const path = `${date.getUTCFullYear()}/${two(date.getUTCMonth() + 1)}/${two(date.getUTCDate())}`;
+    return cached(`heart:src:daily:${path}`, 3 * 3_600_000, async () => {
+      const got = await getJson(`${WIKI}/api/rest_v1/feed/featured/${path}`, { timeout: 9000 });
+      if (!got.ok) return { ok: false, code: got.code === "not_found" ? "not_found" : "network" };
+      const pageOf = (item) => String(item?.links?.[0]?.content_urls?.desktop?.page ?? "");
+      const news = (Array.isArray(got.data?.news) ? got.data.news : [])
+        .map(item => ({ text: cut(plainText(item?.story), 300), url: pageOf(item) })).filter(item => item.text).slice(0, 8);
+      const facts = (Array.isArray(got.data?.dyk) ? got.data.dyk : [])
+        .map(item => cut(plainText(item?.html ?? item?.text), 400)).filter(Boolean).slice(0, 12);
+      if (!news.length && !facts.length) return { ok: false, code: "not_found" };
+      return { ok: true, news, facts };
+    }, { staleMs: 2 * 86_400_000 });
+  }
+  /** «В этот день»: `{ ok, items: [{ year, text }] }` — отобранное редакторами Википедии. */
+  async function onThisDay(month, day) {
+    const mm = two(month), dd = two(day);
+    return cached(`heart:src:onthisday:${mm}${dd}`, 30 * 86_400_000, async () => {
+      const got = await getJson(`${WIKI}/api/rest_v1/feed/onthisday/selected/${mm}/${dd}`, { timeout: 9000 });
+      if (!got.ok) return { ok: false, code: got.code === "not_found" ? "not_found" : "network" };
+      const items = (Array.isArray(got.data?.selected) ? got.data.selected : [])
+        .map(item => ({ year: Number(item?.year) || 0, text: cut(plainText(item?.text), 260) })).filter(item => item.text)
+        .sort((a, b) => b.year - a.year).slice(0, 12);
+      return items.length ? { ok: true, items } : { ok: false, code: "not_found" };
+    }, { staleMs: 400 * 86_400_000 });
+  }
+
+  // ── поиск по Википедии: для вопроса, на который она не знает ответа ─────
+  /** Вступление статьи целиком (до `limit` знаков): в нём больше, чем в первой фразе. */
+  async function intro(title, limit = 2200) {
+    const got = await getJson(`${WIKI}/w/api.php?action=query&prop=extracts&exintro=1&explaintext=1&redirects=1&titles=${encodeURIComponent(title)}&format=json&utf8=1`, { timeout: 6000 });
+    const pages = got.ok ? Object.values(got.data?.query?.pages ?? {}) : [];
+    return cut(String(pages[0]?.extract ?? ""), limit);
+  }
+  /**
+   * Найти по словам: `{ ok, results: [{ title, url, text }] }` — до трёх статей,
+   * у первой вступление целиком. Отказы: network, not_found.
+   */
+  async function lookup(query) {
+    const words = String(query ?? "").replace(/\s+/gu, " ").trim().slice(0, 200);
+    if (!words) return { ok: false, code: "not_found" };
+    const titles = await searchTitles(words, 3);
+    if (titles == null) return { ok: false, code: "network" };
+    const results = [];
+    for (const [index, title] of titles.filter(item => !/\(значения\)/u.test(item)).entries()) {
+      const page = await summary(title, index > 0);
+      if (!page.ok) continue;
+      const text = index === 0 ? await intro(page.title).catch(() => "") : "";
+      results.push({ title: page.title, url: page.url, text: text.length > page.extract.length ? text : cut(page.extract, 900) });
+    }
+    return results.length ? { ok: true, results } : { ok: false, code: "not_found" };
+  }
+
+  // ── запасной переводчик: MyMemory ───────────────────────────────────────
+  /**
+   * Перевод фразы открытым переводчиком MyMemory (без ключа; фраза до 500 байт).
+   * Строка перевода или "" — не справился. Проверено 15.11.2026: «доброе утро»
+   * на татарский — «Хәерле иртә».
+   */
+  async function translate(text, { from = "ru", to = "en" } = {}) {
+    const words = String(text ?? "").replace(/\s+/gu, " ").trim();
+    let bytes = 0;
+    for (const char of words) bytes += char.codePointAt(0) < 0x80 ? 1 : char.codePointAt(0) < 0x800 ? 2 : char.codePointAt(0) < 0x10000 ? 3 : 4;
+    if (!words || bytes > 500 || !from || !to || from === to) return "";
+    const got = await getJson(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(words)}&langpair=${encodeURIComponent(`${from}|${to}`)}`, { timeout: 6000 });
+    if (!got.ok || Number(got.data?.responseStatus) !== 200 || got.data?.quotaFinished === true) return "";
+    const out = plainText(String(got.data?.responseData?.translatedText ?? "")).trim();
+    // Служебные слова переводчика («PLEASE SELECT…», «INVALID LANGUAGE PAIR») — не перевод.
+    if (!out || /^(?:PLEASE SELECT|INVALID |MYMEMORY WARNING|NO QUERY SPECIFIED)/u.test(out)) return "";
+    return out.slice(0, 1000);
+  }
+
   // ── слова: есть ли такое слово (для игр) ────────────────────────────────
   /** true — слово есть в словаре, false — нет, null — проверить не удалось. */
   async function wordExists(word) {
@@ -608,5 +751,5 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok === true, spare: bank.via === "spare" };
   }
 
-  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, rates, convert, animal, gesture, probe, fetchJson: getJson });
+  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, rates, convert, animal, gesture, probe, advise, daily, onThisDay, lookup, translate, fetchJson: getJson });
 }

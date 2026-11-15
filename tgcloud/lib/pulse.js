@@ -99,6 +99,8 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
       c("sourced") ? `ответила из источников: ${number(c("sourced"))}` : "",
       c("games") ? `игр: ${number(c("games"))}` : "",
       c("translated") ? `перевела переводчиком: ${number(c("translated"))}` : "",
+      c("advised") ? `посоветовала из источников: ${number(c("advised"))}` : "",
+      c("searched") ? `искала в сети: ${number(c("searched"))}` : "",
       c("reminders") ? `поставила напоминаний: ${number(c("reminders"))}` : "",
       c("reminded") ? `напомнила: ${number(c("reminded"))}` : "",
       c("heard") ? `выслушала записей: ${number(c("heard"))}` : "",

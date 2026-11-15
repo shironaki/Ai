@@ -31,7 +31,11 @@ test("разбор: язык, направление, текст; деньги, 
     "а как по-немецки слово дом": { to: "de", text: "дом" },
     "как по-русски thank you": { to: "ru", text: "thank you" },
     "переведи на голландский: добрый день": { to: "nl", text: "добрый день" },
-    "переведи на татарский: привет": { unknown: "татарский" },
+    "переведи на татарский: привет": { to: "tt", text: "привет" },
+    "как по-татарски спасибо": { to: "tt", text: "спасибо" },
+    "как на киргизском привет": { to: "ky", text: "привет" },
+    "переведи на латынь: познай себя": { to: "la", text: "познай себя" },
+    "переведи на чеченский: привет": { unknown: "чеченский" },
   };
   for (const [said, want] of Object.entries(cases)) assert.deepEqual(parseTranslate(said), want, said);
   for (const said of ["переведи 100 долларов в рубли", "переведи в текст", "переведи деньги маме", "переведи на карту 500", "переведи часы", "как дела", "как по-твоему, это правда?",
@@ -107,11 +111,43 @@ test("перевод переводчиком: модель разговора �
   for (let index = 0; index < 32; index += 1) await capped.onMessage(message("переведи на английский: доброе утро", { id: OWNER }), KEY);
   assert.equal(asked().length, 62);
 
-  // Без ключа — как раньше: разговор.
+  // Без ключа Cloudflare — запасной переводчик (MyMemory, без ключа); молчит и он — разговор.
   reset();
   const plain = heart({});
   sdk().fetchQueue.push(says("Good morning."));
   await plain.onMessage(message("переведи на английский: доброе утро"), KEY);
   assert.equal(last(), "Good morning.");
-  assert.equal(sourced().length, 0);
+  assert.equal(sourced().length, 1);
+  assert.match(sourced()[0], /^https:\/\/api\.mymemory\.translated\.net\/get\?q=%D0%B4%D0%BE%D0%B1%D1%80%D0%BE%D0%B5%20%D1%83%D1%82%D1%80%D0%BE&langpair=ru%7Cen$/u);
+});
+
+test("запасной переводчик: языки, которых нет у основного, и случай, когда основной молчит", async () => {
+  const memory = (answer) => (url) => ({ responseData: { translatedText: typeof answer === "function" ? answer(decodeURIComponent(url)) : answer }, quotaFinished: false, responseStatus: 200 });
+  // Татарский знает только запасной: основной (Cloudflare) о нём не спрашивают, даже когда ключ есть.
+  reset();
+  source("mymemory.translated.net", memory("Хәерле иртә."));
+  const h = heart(ON);
+  await h.onMessage(message("переведи на татарский: доброе утро"), KEY);
+  assert.equal(last(), "Хәерле иртә.");
+  assert.equal(asked().length, 0, "основной переводчик татарского не знает — его не спрашивали");
+  assert.match(sourced().at(-1), /langpair=ru%7Ctt$/u);
+  await h.onMessage(message("переведи с татарского: хәерле иртә"), KEY);
+  assert.match(sourced().at(-1), /langpair=tt%7Cru$/u);
+  assert.equal(chats().length, 0, "модель разговора не тратится");
+
+  // Основной молчит — переводит запасной; служебный ответ запасного переводом не считается.
+  reset();
+  source("m2m100", translated(""));
+  source("mymemory.translated.net", memory((url) => (url.includes("доброе утро") ? "Good morning" : "PLEASE SELECT TWO DISTINCT LANGUAGES")));
+  const spare = heart(ON);
+  await spare.onMessage(message("переведи на английский: доброе утро"), KEY);
+  assert.equal(last(), "Good morning");
+  sdk().fetchQueue.push(says("Это «спасибо» — от модели."));
+  await spare.onMessage(message("переведи на английский: спасибо"), KEY);
+  assert.equal(last(), "Это «спасибо» — от модели.");
+  // Длинное (больше 500 байт) запасному не уходит: у него такой предел.
+  const before = sourced().filter(url => url.includes("mymemory")).length;
+  sdk().fetchQueue.push(says("Длинный перевод — от модели."));
+  await spare.onMessage(message(`переведи на английский: ${"очень длинная фраза ".repeat(20)}`), KEY);
+  assert.equal(sourced().filter(url => url.includes("mymemory")).length, before);
 });

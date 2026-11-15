@@ -63,11 +63,11 @@ test("ленты называет хозяин; «новости» — всем:
   reset();
   let at = NOON;
   const h = heart({}, { now: () => at });
-  // Лент нет: хозяину — как добавить; остальным — коротко и без слова «хозяин».
+  // Лент нет, и Википедия молчит: хозяину — как добавить; остальным — коротко и без слова «хозяин».
   await h.onMessage(own("новости"), KEY);
-  assert.equal(last(OWNER), "Лент новостей у меня пока нет — читать неоткуда. Добавьте: «добавь ленту https://…» (RSS или Atom, до пяти штук).");
+  assert.equal(last(OWNER), "Лент новостей у меня пока нет, а Википедия сейчас не отвечает — читать неоткуда. Добавьте: «добавь ленту https://…» (RSS или Atom, до пяти штук).");
   await h.onMessage(group("Аи, новости"), KEY);
-  assert.equal(last(-10), "Новостных лент мне пока не дали — читать неоткуда.");
+  assert.equal(last(-10), "Новости сейчас взять неоткуда: источник не отвечает.");
   // Чужое «добавь ленту» — не команда: уходит в разговор.
   sdk().fetchQueue.push(says("Ленты называет не каждый."));
   await h.onMessage(message("добавь ленту https://example.org/rss"), KEY);
@@ -125,4 +125,26 @@ test("ленты называет хозяин; «новости» — всем:
   await h.onMessage(message("новости"), KEY);
   assert.equal(last(), "Ленты сейчас не отвечают. Попробуйте чуть позже.");
   assert.equal(chats().length, 1, "к модели ушло только чужое «добавь ленту»");
+});
+
+test("лент не назвали — «новости» берутся из раздела «В новостях» Википедии", async () => {
+  reset();
+  source("ru.wikipedia.org/api/rest_v1/feed/featured/2026/11/18", {
+    news: [
+      { story: "<!--ноя 15--> Корабль <b><a href=\"./Starship\">Starship</a></b> впервые вернулся на стартовую башню.", links: [{ title: "Starship", content_urls: { desktop: { page: "https://ru.wikipedia.org/wiki/Starship" } } }] },
+      { story: "В Баку завершился <a href=\"./X\">шахматный турнир</a> &laquo;Кубок мира&raquo;.", links: [] },
+    ],
+    dyk: [{ html: "<i>первый</i> микропроцессор вышел в 1971 году", text: "первый микропроцессор вышел в 1971 году" }],
+  });
+  const h = heart({}, { now: () => NOON });
+  await h.onMessage(group("Аи, новости", { id: 21 }), KEY);
+  assert.equal(sent().text, "В новостях — по Википедии:\n• Корабль Starship впервые вернулся на стартовую башню. <a href=\"https://ru.wikipedia.org/wiki/Starship\">→</a>\n• В Баку завершился шахматный турнир «Кубок мира».");
+  assert.equal(sent().parse_mode, "HTML");
+  // Хозяину — ещё и подсказка о своих лентах; «про …» — по слову; запас — три часа.
+  await h.onMessage(own("новости про шахматы"), KEY);
+  assert.equal(sent().text, "В новостях про «шахматы» — по Википедии:\n• В Баку завершился шахматный турнир «Кубок мира».\n\nСвои ленты — «добавь ленту https://…» (RSS или Atom, до пяти): тогда новости будут из них.");
+  await h.onMessage(message("новости про футбол"), KEY);
+  assert.equal(last(), "Про «футбол» в сегодняшнем «В новостях» Википедии ничего нет.");
+  assert.equal(sourced().length, 1, "Википедию спросили один раз");
+  assert.equal(chats().length, 0);
 });

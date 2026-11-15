@@ -211,6 +211,16 @@ export function createMedia({ sources = null } = {}) {
     return outcome(items, [apple, deezer]);
   }
 
+  /** Что слушают сейчас: чарт Deezer (без ключа). Песни в том же виде, что у поиска музыки. */
+  async function chart(limit = 50) {
+    const got = await get(`https://api.deezer.com/chart/0/tracks?limit=${limit}`);
+    const items = (got.ok ? got.data?.data ?? [] : []).filter(item => item?.title && item.explicit_lyrics !== true).map(item => ({
+      artist: String(item.artist?.name ?? ""), title: String(item.title), album: String(item.album?.title ?? ""),
+      page: String(item.link ?? ""), preview: String(item.preview ?? ""), seconds: Number(item.duration) || 0, source: "Deezer",
+    }));
+    return outcome(items, [got]);
+  }
+
   /** Видео: Rutube, затем Dailymotion. Только ссылки; взрослое отсеивается. */
   async function video(query, limit = 3) {
     const rutube = await get(`https://rutube.ru/api/search/video/?query=${q(query)}&client=wdp`);
@@ -224,7 +234,7 @@ export function createMedia({ sources = null } = {}) {
     return outcome(items, [rutube, daily]);
   }
 
-  return Object.freeze({ images, art, anime, similar, music, video });
+  return Object.freeze({ images, art, anime, similar, music, chart, video });
 }
 
 const esc = (value) => String(value ?? "").replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");

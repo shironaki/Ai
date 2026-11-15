@@ -44,22 +44,44 @@ el greek греческий греческого по-гречески
 sr serbian сербский сербского по-сербски
 bg bulgarian болгарский болгарского по-болгарски
 ba bashkir башкирский башкирского по-башкирски
+ro romanian румынский румынского по-румынски
+hu hungarian венгерский венгерского по-венгерски
+da danish датский датского по-датски
+no norwegian норвежский норвежского по-норвежски
+lt lithuanian литовский литовского по-литовски
+lv latvian латышский латышского по-латышски
+et estonian эстонский эстонского по-эстонски
+vi vietnamese вьетнамский вьетнамского по-вьетнамски
+th thai тайский тайского по-тайски
+mn mongolian монгольский монгольского по-монгольски
+tt tatar татарский татарского по-татарски spare
+ky kyrgyz киргизский киргизского по-киргизски spare
+tg tajik таджикский таджикского по-таджикски spare
+tk turkmen туркменский туркменского по-туркменски spare
+la latin латынь латыни на-латыни spare
 `;
+/**
+ * `spare: true` — языка нет у переводчика Cloudflare (m2m100): его переводит только
+ * запасной переводчик MyMemory (открытый, без ключа; фраза до 500 байт).
+ */
 export const LANGUAGES = Object.freeze(ROWS.trim().split("\n").map(line => {
-  const [code, english, to, from, how] = line.trim().split(" ");
-  return Object.freeze({ code, english, to, from, how });
+  const [code, english, to, from, how, spare] = line.trim().split(" ");
+  return Object.freeze({ code, english, to, from, how, spare: spare === "spare" });
 }));
 const BY_TO = new Map(LANGUAGES.map(item => [item.to, item]));
 const BY_FROM = new Map(LANGUAGES.map(item => [item.from, item]));
 const BY_HOW = new Map(LANGUAGES.map(item => [item.how, item]));
 // Как ещё называют: «голландский», «фарси», «инглиш».
-for (const [alias, code] of [["голландский", "nl"], ["фарси", "fa"], ["инглиш", "en"], ["татарский", ""], ["киргизский", ""], ["таджикский", ""], ["чеченский", ""]]) {
+for (const [alias, code] of [["голландский", "nl"], ["фарси", "fa"], ["инглиш", "en"], ["кыргызский", "ky"], ["латинский", "la"]]) {
   if (code) BY_TO.set(alias, LANGUAGES.find(item => item.code === code));
 }
-for (const [alias, code] of [["голландского", "nl"], ["фарси", "fa"]]) BY_FROM.set(alias, LANGUAGES.find(item => item.code === code));
+for (const [alias, code] of [["голландского", "nl"], ["фарси", "fa"], ["кыргызского", "ky"], ["латинского", "la"]]) BY_FROM.set(alias, LANGUAGES.find(item => item.code === code));
+// «На татарском», «на турецком» — предложный падеж прилагательного выводится сам.
+for (const item of LANGUAGES) if (/(?:ский|цкий)$/u.test(item.to) && !BY_HOW.has(`на ${item.to.slice(0, -2)}ом`)) BY_HOW.set(`на ${item.to.slice(0, -2)}ом`, item);
+for (const [alias, code] of [["по-кыргызски", "ky"], ["на латыни", "la"], ["по-латыни", "la"]]) BY_HOW.set(alias, LANGUAGES.find(item => item.code === code));
 for (const [alias, code] of [["по-голландски", "nl"], ["на английском", "en"], ["на русском", "ru"], ["на турецком", "tr"], ["на арабском", "ar"], ["на немецком", "de"], ["на французском", "fr"], ["на испанском", "es"], ["на итальянском", "it"], ["на нидерландском", "nl"], ["на казахском", "kk"], ["на узбекском", "uz"], ["на китайском", "zh"], ["на японском", "ja"], ["на корейском", "ko"], ["на украинском", "uk"], ["на урду", "ur"], ["на хинди", "hi"], ["на иврите", "he"], ["на фарси", "fa"]]) BY_HOW.set(alias, LANGUAGES.find(item => item.code === code));
 /** Языки, которых переводчик не знает: о них она говорит прямо, а не переводит на похожий. */
-const UNKNOWN = /^(?:татарск|киргизск|кыргызск|таджикск|чеченск|аварск|ингушск|осетинск|якутск|туркменск|латынь|латинск|эсперанто)/u;
+const UNKNOWN = /^(?:чеченск|аварск|ингушск|осетинск|якутск|чувашск|удмуртск|марийск|калмыцк|бурятск|эсперанто)/u;
 
 export const languageName = (code) => LANGUAGES.find(item => item.code === code)?.to ?? code;
 
@@ -76,7 +98,10 @@ export function guessLanguage(text) {
   if (/[\u0370-\u03ff]/u.test(value)) return "el";
   if (/[\u0900-\u097f]/u.test(value)) return "hi";
   if (/[а-яё]/iu.test(value)) {
-    if (/[әұүһқңғө]/iu.test(value) && /[әұ]/iu.test(value)) return "kk";
+    // Казахские «ұ» и «і» рядом с «ә» — казахский; «ә» без них — татарский (или башкирский: без «ҙ», «ҫ» не различить).
+    if (/[әөүһң]/iu.test(value) && /[ұқғі]/iu.test(value)) return "kk";
+    if (/[ҙҫ]/iu.test(value)) return "ba";
+    if (/[әөүһңҗ]/iu.test(value)) return "tt";
     if (/[їєґ]/iu.test(value)) return "uk";
     if (/[ўҳқғ]/iu.test(value)) return /і/iu.test(value) ? "be" : "uz";
     return "ru";

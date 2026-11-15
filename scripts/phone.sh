@@ -22,6 +22,7 @@
 #   AI_PROVIDER_KEY=…       ключ модели
 #   OWNER_TG_ID=…           числовой ID владельца
 #   KEY_GIGACHAT=…          ключ запасных мозгов: имя после KEY_ — id провайдера
+#                           (MISTRAL, CEREBRAS, GEMINI, OPENROUTER, NVIDIA, GHMODELS, EXPLABS)
 #   KEY_CLOUDFLARE=ID:токен  рисование и запасной мозг: ID аккаунта, двоеточие, токен
 #   HEART_BRANCH=…          за какой веткой следить (без строки — ветка, с
 #                           которой склонирована папка)
@@ -631,11 +632,20 @@ OWNER_TG_ID=
 HEART_BRANCH=$BRANCH
 
 # По желанию: уберите «#» в начале строки и впишите значение.
-# Запасные мозги:
+# Запасные мозги (как получить каждый ключ — docs/BRAINS.md):
+# KEY_MISTRAL=
+# KEY_CEREBRAS=
+# KEY_GEMINI=
+# KEY_OPENROUTER=
+# KEY_NVIDIA=
+# KEY_GHMODELS=
 # KEY_GIGACHAT=
 # KEY_EXPLABS=
 # Рисование и ещё один запасной мозг (Cloudflare): ID аккаунта, двоеточие, токен
 # KEY_CLOUDFLARE=
+# Поиск в интернете — ключ Tavily или Brave (docs/BRAINS.md); без них ищет по Википедии:
+# KEY_TAVILY=
+# KEY_BRAVE=
 # Минутный будильник — токен любого бота, кроме Аи, и числовой ID канала «Мост»:
 # ALARM_BOT_TOKEN=
 # ALARM_CHAT_ID=
@@ -681,12 +691,17 @@ EOF
       *) echo "✓ ID владельца: есть" ;;
     esac
     extra=""
-    local name
+    local name seek=""
     for name in $(env | sed -n 's/^\(KEY_[A-Za-z0-9_]*\)=..*/\1/p'); do
-      if keylike "${!name}"; then extra="$extra$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') "
-      else echo "✗ $name не похож на ключ (пробелы или русские буквы) — впишите ключ или уберите строку"; bad=1; fi
+      if ! keylike "${!name}"; then echo "✗ $name не похож на ключ (пробелы или русские буквы) — впишите ключ или уберите строку"; bad=1; continue; fi
+      # Ключи поисковиков — не мозги: о них отдельная строка.
+      case "$name" in
+        KEY_TAVILY|KEY_BRAVE) seek="$seek$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') " ;;
+        *) extra="$extra$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') " ;;
+      esac
     done
     [ -n "$extra" ] && echo "✓ запасные мозги: $extra"
+    [ -n "$seek" ] && echo "✓ поиск в интернете: $seek"
     if [ -n "${KEY_CLOUDFLARE:-}" ]; then
       if printf '%s' "$KEY_CLOUDFLARE" | grep -Eq '^[0-9a-fA-F]{32}:[!-~]{20,}$'; then echo "✓ рисование: ключ Cloudflare записан верно"
       else echo "• KEY_CLOUDFLARE записан не так: нужен вид «ID аккаунта:токен» — 32 знака ID, двоеточие, токен, без пробелов. Пока так — рисования не будет"; fi

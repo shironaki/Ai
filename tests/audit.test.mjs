@@ -358,3 +358,23 @@ test("о себе: реакция «записала» не заменяет с�
   assert.deepEqual(reactions(), ["✍"]);
   assert.equal(toChat(5).length, 1);
 });
+
+test("запасные мозги: каждый провайдер из настроек описан в BRAINS.md своим ключом; Cloudflare — последним", async () => {
+  const { CONFIG } = await import("../tgcloud/lib/config.js");
+  const doc = readFileSync(new URL("../docs/BRAINS.md", import.meta.url), "utf8");
+  const phone = readFileSync(new URL("../scripts/phone.sh", import.meta.url), "utf8");
+  const ids = CONFIG.AI_PROVIDERS.map(item => item.id);
+  assert.equal(new Set(ids).size, ids.length, "имена не повторяются");
+  assert.equal(ids.at(-1), "cloudflare", "его объём общий с рисованием — думает им последним");
+  for (const item of CONFIG.AI_PROVIDERS) {
+    assert.match(item.id, /^[a-z0-9]+$/u, item.id);
+    assert.match(item.baseUrl, /^https:\/\/\S+[^/]$/u, `${item.id}: адрес без хвостового «/»`);
+    assert.ok(Array.isArray(item.models) && item.models.length >= 1 && item.models.every(name => typeof name === "string" && name), item.id);
+    assert.ok(!("key" in item), `${item.id}: ключа в настройках нет — он приходит из файла ключей`);
+    const line = `KEY_${item.id.toUpperCase()}`;
+    assert.ok(doc.includes(`\`${line}\``), `${line} описан в BRAINS.md`);
+    assert.ok(doc.includes(`\`${item.id}\``), `${item.id} назван в BRAINS.md`);
+    assert.ok(phone.includes(`# ${line}=`), `${line} есть в образце файла ключей`);
+    for (const name of item.models) if (item.kind !== "cloudflare") assert.ok(doc.includes(`\`${name}\``), `${item.id}: модель ${name} названа в BRAINS.md`);
+  }
+});
