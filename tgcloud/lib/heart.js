@@ -68,6 +68,7 @@ import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCo
 import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
 import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, safeUrl as senseUrl, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
+import { toSticker, parseStickerAsk, stickerSource, packName, PACK_KEY, STICKER_STYLE, STICKER_SOURCE_MAX } from "./sticker.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -3881,7 +3882,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const idle = (Array.isArray(resting) ? resting : []).filter(Boolean);
     return `${shown}${idle.length ? `${shown ? "; " : ""}запасные отдыхают после отказа: ${idle.join(", ")}` : ""}`;
   };
-  async function drawPicture(turn, query) {
+  async function drawPicture(turn, query, { sticker = null } = {}) {
     const lastKey = `heart:drew:${turn.chatId}`;
     // «Открытку Маше на день рождения»: описание для художника — готовое, слова — подписью.
     const card = parsePostcard(query);
@@ -3918,6 +3919,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (subject.look) { const wish = `${await draw.english(subject.text)}, ${subject.look}`; made = { prompt: wish, core: wish, how: "своё" }; }
     else if (subject.prompt) made = { prompt: subject.prompt, core: subject.prompt, how: "своё" };
     else made = await draw.compose(subject.text, { literal: asIs, free, random });
+    // Рисунок сразу пойдёт в стикер: фигура на чистом листе — её вырежет перекодировка.
+    if (sticker && made.prompt) made = { ...made, prompt: `${made.prompt}, ${STICKER_STYLE}`, core: `${made.core ?? made.prompt}, ${STICKER_STYLE}` };
     if (!made.prompt) return say(turn, `Не вышло: переводчик для художника сейчас не отвечает, а по-русски он не понимает.${free && made.said ? ` Его ответ: ${made.said}.` : ""} ${you(turn, "Попробуйте", "Попробуй")} чуть позже — или ${you(turn, "опишите", "опиши")} по-английски.`);
     // Готовое описание — открытка, её собственное (комната, кот) или строка словаря художника —
     // безобидно по построению: после ложного отказа фильтра ему можно к запасным художникам.
@@ -3948,17 +3951,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, "Не вышло: мастерская сейчас не отвечает. Попробуйте чуть позже.");
     }
     if (typeof InputFile !== "function" || !has("sendPhoto")) return say(turn, "Рисунок готов, но отправить файл мне сейчас нечем.");
-    const caption = subject.card ? cardCaption(subject.card) : voiced(turn, book.pick(subject.own === "self" ? "+рисунок:себя" : "+рисунок", voiceCtx(turn)) ?? "Вот.");
-    try {
-      await api.sendPhoto({ chat_id: turn.chatId, photo: new InputFile(got.bytes, "ai.jpg", { type: "image/jpeg" }), caption, ...turn.extra });
-      turn.delivered = true;
-    } catch { return say(turn, "Рисунок готов, но Telegram его не принял. Попросите ещё раз."); }
+    // «Нарисуй стикер»: рисунок уходит стикером. Не вышло — он не пропадает: уходит картинкой, с причиной.
+    const stuck = sticker ? await stickerFrom(turn, got.bytes, sticker) : null;
+    let caption = subject.card ? cardCaption(subject.card) : voiced(turn, book.pick(subject.own === "self" ? "+рисунок:себя" : "+рисунок", voiceCtx(turn)) ?? "Вот.");
+    if (stuck && !stuck.ok) caption = `Стикером не вышло: ${STICKER_WHY[stuck.code] ?? STICKER_WHY.failed} Вот сам рисунок.`;
+    let filed = "";
+    if (!stuck?.ok) {
+      try {
+        const posted = await api.sendPhoto({ chat_id: turn.chatId, photo: new InputFile(got.bytes, "ai.jpg", { type: "image/jpeg" }), caption, ...turn.extra });
+        turn.delivered = true;
+        // Номер файла в Telegram: «сделай стикер» сразу после рисунка возьмёт его отсюда.
+        filed = String(stickerSource(posted)?.file_id ?? "");
+      } catch { return say(turn, "Рисунок готов, но Telegram его не принял. Попросите ещё раз."); }
+    }
     pulse.bump("drawn");
     await store.set(countKey, { n: used + 1 }).catch(() => false);
     // Что и как нарисовано: хозяин спросит «как нарисовано?» — и увидит, что ушло художнику.
     await store.set(lastKey, {
       q: String(query).slice(0, 300), at: now(), how: made.how, ...(made.by ? { writer: made.by } : {}),
       by: got.by, via: got.via || "", sent: String(got.prompt ?? "").slice(0, 700), tries: (got.tries ?? []).slice(-4),
+      ...(filed ? { file: filed } : {}),
     }).catch(() => false);
     await store.set(`heart:credit:${turn.chatId}`, { own: true, title: String(query).slice(0, 120), at: now() }).catch(() => false);
     // Альбом человека: последние десять просьб. Повтор той же просьбы подряд — одна строка.
@@ -3968,7 +3980,172 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const items = (Array.isArray(album?.items) ? album.items : []).filter(item => item?.q && item.q !== wish);
       await store.set(ALBUM_KEY(turn.actorId), { items: [...items, { q: wish, at: now() }].slice(-ALBUM_MAX), at: now() });
     } catch { /* альбом не важнее рисунка */ }
-    return { ok: true, action: "photo", kind: "draw" };
+    return stuck?.ok ? stuck : { ok: true, action: "photo", kind: "draw" };
+  }
+
+  // ── стикер из рисунка ───────────────────────────────────────────────────
+  /**
+   * Картинка → стикер в наборе человека. Перекодировка своя (`sticker.js`): JPEG или PNG
+   * становится PNG 512 точек, ровный фон срезается. Дальше — путь, который Telegram
+   * описывает для PNG: файл загружается (`uploadStickerFile`), кладётся в набор человека
+   * (`createNewStickerSet` / `addStickerToSet`), и уже из набора уходит в чат стикером.
+   * Набор у каждого свой и принадлежит ему: `ai<id>_by_<имя бота>`.
+   *
+   * Набор не собрался (человек не открывал личку с ней, Telegram отказал) — файл-заготовка
+   * уходит документом: его принимает @Stickers. Причина называется словами.
+   */
+  const STICKERS = config.STICKERS !== false;
+  const STICKER_DAILY = Number.isFinite(Number(config.STICKER_DAILY)) ? Math.max(0, Number(config.STICKER_DAILY)) : 10;
+  const PACK_LIMIT = 120;
+  const STICKER_WHY = Object.freeze({
+    bad_image: "эту картинку я разобрать не смогла — умею JPEG и PNG.",
+    too_big: "картинка слишком большая, сторона больше 4096 точек.",
+    no_inflate: "PNG мне здесь распаковать нечем — нужна картинка как фото.",
+    no_file: "отправить файл мне сейчас нечем.",
+    failed: "перекодировать картинку не получилось.",
+  });
+  const tgWhy = (error) => String(error?.description ?? error?.message ?? error ?? "");
+  const STRANGER_ERROR = /PEER_ID_INVALID|USER_ID_INVALID|user not found|chat not found|blocked/iu;
+
+  /** Положить готовый PNG в набор человека. `{ ok, name, part, count, fileId }` или `{ ok: false, code, why }`. */
+  async function addToPack(turn, file, emoji) {
+    const userId = turn.actorId;
+    const self = await whoAmI();
+    if (!self?.username || !has("uploadStickerFile") || !has("createNewStickerSet") || !has("addStickerToSet")) return { ok: false, code: "no_sets" };
+    const saved = await store.get(PACK_KEY(userId)).catch(() => null);
+    let uploaded = null;
+    try { uploaded = await api.uploadStickerFile({ user_id: userId, sticker: file(), sticker_format: "static" }); }
+    catch (error) { return { ok: false, code: STRANGER_ERROR.test(tgWhy(error)) ? "stranger" : "upload", why: tgWhy(error) }; }
+    if (!uploaded?.file_id) return { ok: false, code: "upload", why: "файл загружен, но Telegram не вернул его номер" };
+    const input = { sticker: uploaded.file_id, format: "static", emoji_list: emoji };
+    let part = Math.max(1, Number(saved?.part) || 1);
+    for (let attempt = 0; attempt < 3; attempt += 1, part += 1) {
+      const name = packName(userId, part, self.username);
+      const title = `${NAME}: стикеры${turn.manner?.name ? ` — ${String(turn.manner.name).slice(0, 30)}` : ""}${part > 1 ? ` (${part})` : ""}`.slice(0, 64);
+      const create = () => api.createNewStickerSet({ user_id: userId, name, title, stickers: [input], sticker_type: "regular" });
+      const add = () => api.addStickerToSet({ user_id: userId, name, sticker: input });
+      try {
+        // Набор уже есть — добавить; его удалили у @Stickers — создать заново. И наоборот: записи нет, а набор есть.
+        if (saved?.name === name) { try { await add(); } catch (error) { if (/STICKERSET_INVALID|not found/iu.test(tgWhy(error))) await create(); else throw error; } }
+        else { try { await create(); } catch (error) { if (/occupied|already/iu.test(tgWhy(error))) await add(); else throw error; } }
+      } catch (error) {
+        const why = tgWhy(error);
+        if (/STICKERS_TOO_MUCH|too much/iu.test(why)) continue; // набор полон — следующий
+        return { ok: false, code: STRANGER_ERROR.test(why) ? "stranger" : "refused", why };
+      }
+      // Стикер живёт в наборе под новым номером файла: в чат уходит он, а не загруженный PNG.
+      let fileId = "", count = (saved?.name === name ? Number(saved.n) || 0 : 0) + 1;
+      if (has("getStickerSet")) {
+        try {
+          const set = await api.getStickerSet({ name });
+          const list = Array.isArray(set?.stickers) ? set.stickers : [];
+          // Telegram показывает новый стикер не сразу: если набор ещё прежний — в чат уйдёт только ссылка.
+          if (list.length >= count) { count = list.length; fileId = String(list.at(-1)?.file_id ?? ""); }
+        } catch { /* ссылка на набор важнее самого стикера в чате */ }
+      }
+      return { ok: true, name, part, count, fileId };
+    }
+    return { ok: false, code: "full" };
+  }
+
+  /** Байты картинки → стикер в чат. Возвращает результат отправки или `{ ok: false, code }`. */
+  async function stickerFrom(turn, bytes, { emoji = [] } = {}) {
+    const made = await toSticker(bytes);
+    if (!made.ok) return { ok: false, code: made.code };
+    if (typeof InputFile !== "function") return { ok: false, code: "no_file" };
+    const file = () => new InputFile(made.bytes, "sticker.png", { type: "image/png" });
+    const packed = await addToPack(turn, file, emoji.length ? emoji : ["🎨"]);
+    const key = PACK_KEY(turn.actorId);
+    const day = dayOf(now());
+    const count = async (extra) => {
+      const saved = await store.get(key).catch(() => null);
+      await store.set(key, { ...(saved ?? {}), ...extra, day, used: (saved?.day === day ? Number(saved.used) || 0 : 0) + 1, at: now() }).catch(() => false);
+    };
+    const quiet = { extra: { disable_web_page_preview: true } };
+    if (packed.ok) {
+      await count({ name: packed.name, part: packed.part, n: packed.count, last: packed.fileId || "" });
+      pulse.bump("stickers");
+      if (packed.fileId && has("sendSticker")) {
+        try {
+          await api.sendSticker({ chat_id: turn.chatId, sticker: packed.fileId, ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) });
+          turn.delivered = true;
+        } catch { /* останется ссылка */ }
+      }
+      const tail = packed.count >= PACK_LIMIT ? ` Набор полон (${PACK_LIMIT}) — следующий стикер начнёт новый.` : "";
+      await say(turn, `Готово — стикер в ${you(turn, "вашем", "твоём")} наборе: t.me/addstickers/${packed.name}\nВ нём ${packed.count} ${plural(packed.count, "стикер", "стикера", "стикеров")}. Последний убирается словами «удали последний стикер».${tail}`, quiet);
+      return { ok: true, action: "sticker", kind: "sticker" };
+    }
+    // Набор не собрался: заготовка файлом, причина — словами. Такой PNG принимает @Stickers.
+    const why = packed.code === "stranger"
+      ? `собирать набор я могу только тому, кто открыл со мной личку — ${you(turn, "напишите", "напиши")} мне там «Старт» и ${you(turn, "повторите", "повтори")}`
+      : packed.code === "no_sets" ? "наборы стикеров мне здесь недоступны"
+        : packed.code === "full" ? `все мои наборы для ${you(turn, "вас", "тебя")} полны`
+          : `Telegram набор не принял${owner(turn.actorId) && packed.why ? ` («${String(packed.why).slice(0, 120)}»)` : ""}`;
+    if (has("sendDocument")) {
+      try {
+        await api.sendDocument({ chat_id: turn.chatId, document: file(), caption: `Стикер готов (PNG, ${made.width}×${made.height}), но в набор не лёг: ${why}. Этот файл принимает @Stickers — им набор собирается вручную.`.slice(0, 1000), ...turn.extra });
+        turn.delivered = true;
+        await count({});
+        pulse.bump("stickers");
+        return { ok: true, action: "document", kind: "sticker" };
+      } catch { /* ниже — словами */ }
+    }
+    return { ok: false, code: "no_file" };
+  }
+
+  /** «Сделай стикер», «нарисуй стикер: …», «мои стикеры», «удали последний стикер». */
+  async function stickerWords(turn, prompt) {
+    if (!STICKERS) return null;
+    const asked = parseStickerAsk(prompt);
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как «стикер» — репетиция, ничего не делаю.");
+    const key = PACK_KEY(turn.actorId);
+    const saved = await store.get(key).catch(() => null);
+    if (asked.pack) {
+      if (!saved?.name) return say(turn, `Набора пока нет: стикеров я ${you(turn, "вам", "тебе")} ещё не делала. «Сделай стикер» ответом на картинку — и он появится.`);
+      const n = Number(saved.n) || 0;
+      return say(turn, `${you(turn, "Ваш", "Твой")} набор: t.me/addstickers/${saved.name}\nВ нём ${n} ${plural(n, "стикер", "стикера", "стикеров")}. Набор ${you(turn, "ваш", "твой")}: целиком его удаляет @Stickers.`, { extra: { disable_web_page_preview: true } });
+    }
+    if (asked.drop) {
+      if (!saved?.last) return say(turn, "Последнего стикера я не помню: либо его не было, либо он уже убран.");
+      if (!has("deleteStickerFromSet")) return say(turn, "Убирать стикеры из набора мне здесь нечем. Это умеет @Stickers.");
+      try { await api.deleteStickerFromSet({ sticker: saved.last }); }
+      catch { return say(turn, "Telegram не дал убрать стикер. Это умеет и @Stickers."); }
+      await store.set(key, { ...saved, last: "", n: Math.max(0, (Number(saved.n) || 1) - 1), at: now() }).catch(() => false);
+      return say(turn, "Убрала последний стикер из набора.");
+    }
+    const mine = owner(turn.actorId);
+    const used = saved?.day === dayOf(now()) ? Number(saved.used) || 0 : 0;
+    const capped = !mine && STICKER_DAILY > 0 && used >= STICKER_DAILY;
+    const cap = () => say(turn, `На сегодня стикеров хватит: ${used} за день — мой предел на человека. Завтра продолжим.`);
+    if (asked.draw != null) {
+      if (!asked.draw) return say(turn, "Что нарисовать стикером? Например: «нарисуй стикер: кот в шляпе».");
+      if (!draw.available) return say(turn, `Рисовать я не умею: художника у меня нет. А стикер из готовой картинки сделаю — ${you(turn, "ответьте", "ответь")} на неё словами «сделай стикер».`);
+      if (capped) return cap();
+      return drawPicture(turn, asked.draw, { sticker: { emoji: asked.emoji } });
+    }
+    // Из чего: картинка в этом же сообщении, в том, на которое ответили, или её последний рисунок здесь.
+    const source = stickerSource(turn.message) ?? stickerSource(turn.message?.reply_to_message);
+    if (source?.sticker) return say(turn, "Это уже стикер — делать из него нечего. Нужна картинка.");
+    if (source?.heavy) return say(turn, `Файл слишком тяжёлый для стикера. ${you(turn, "Пришлите", "Пришли")} картинку как фото, а не файлом: Telegram сам её уменьшит.`);
+    if (source?.foreign) return say(turn, `Из такого файла стикер я не сделаю: умею JPEG и PNG. ${you(turn, "Пришлите", "Пришли")} картинку как фото.`);
+    let fileId = String(source?.file_id ?? "");
+    if (!fileId) {
+      const drew = await store.get(`heart:drew:${turn.chatId}`).catch(() => null);
+      if (drew?.file && now() - Number(drew.at) < DAY) fileId = String(drew.file);
+    }
+    if (!fileId) return say(turn, `Из чего? ${you(turn, "Ответьте", "Ответь")} словами «сделай стикер» на картинку — мою или любую — или ${you(turn, "пришлите", "пришли")} картинку с такой подписью. А «нарисуй стикер: кот в шляпе» — нарисую и сразу сделаю.`);
+    if (capped) return cap();
+    if (has("sendChatAction")) { try { await api.sendChatAction({ chat_id: turn.chatId, action: "choose_sticker", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) }); } catch { /* индикатор не важнее стикера */ } }
+    const got = await senses.file(fileId, STICKER_SOURCE_MAX);
+    if (!got.ok) {
+      return say(turn, got.code === "too_big" ? `Картинка слишком тяжёлая для стикера. ${you(turn, "Пришлите", "Пришли")} её как фото, а не файлом.`
+        : got.code === "no_download" ? "Скачать картинку из Telegram мне здесь нечем." : `Скачать картинку из Telegram не вышло. ${you(turn, "Попробуйте", "Попробуй")} ещё раз.`);
+    }
+    const sent = await stickerFrom(turn, got.bytes, { emoji: asked.emoji });
+    if (sent.ok) return sent;
+    const why = STICKER_WHY[sent.code] ?? STICKER_WHY.failed;
+    return say(turn, `Стикер не вышел: ${why}${sent.code === "too_big" ? ` ${you(turn, "Пришлите", "Пришли")} её как фото, а не файлом: Telegram сам уменьшит.` : ""}`);
   }
 
   // ── перевод без модели ──────────────────────────────────────────────────
@@ -4409,8 +4586,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Анкета любимого — тоже его данные: «всё» значит и её (раньше она оставалась).
       tastes.clear(actorId).then(result => result.ok).catch(() => false),
       store.remove(EVENING_KEY(actorId)).catch(() => false),
+      // Альбом рисунков и запись о наборе стикеров — тоже его. Сам набор живёт в Telegram и принадлежит ему.
+      store.remove(ALBUM_KEY(actorId)).catch(() => false),
+      store.remove(PACK_KEY(actorId)).catch(() => false),
     ]);
-    if (turn.isPrivate) await store.remove(`heart:game:${turn.chatId}`).catch(() => false);
+    if (turn.isPrivate) {
+      await store.remove(`heart:game:${turn.chatId}`).catch(() => false);
+      // Сцена в личке — его слова; в группе она общая и кончится сама.
+      await store.remove(SCENE_KEY(turn.chatId)).catch(() => false);
+    }
     // Имя в списке секретаря «этим не отвечай» — тоже данные человека: правило хозяина остаётся, имя стирается.
     await mutateSecretary(cur => (cur.mute.some(item => String(item.id) === String(actorId))
       ? { ...cur, mute: cur.mute.map(item => (String(item.id) === String(actorId) ? { id: item.id, at: item.at } : item)) } : null)).catch(() => false);
@@ -6286,7 +6470,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt))) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -6337,7 +6521,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await adviceWords(turn, prompt) ?? await wikiDayWords(turn, prompt) ?? await searchWords(turn, prompt) ?? await examWords(turn, prompt) ?? await thoughtsWords(turn, prompt) ?? await sceneWords(turn, prompt) ?? await partnerWords(turn, prompt) ?? await newsWords(turn, prompt) ?? await sureWords(turn, prompt, message) ?? await proposeWords(turn, prompt) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await stickerWords(turn, prompt) ?? await translateWords(turn, prompt, message) ?? await adviceWords(turn, prompt) ?? await wikiDayWords(turn, prompt) ?? await searchWords(turn, prompt) ?? await examWords(turn, prompt) ?? await thoughtsWords(turn, prompt) ?? await sceneWords(turn, prompt) ?? await partnerWords(turn, prompt) ?? await newsWords(turn, prompt) ?? await sureWords(turn, prompt, message) ?? await proposeWords(turn, prompt) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки

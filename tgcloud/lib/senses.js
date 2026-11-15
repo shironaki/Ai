@@ -311,7 +311,7 @@ export function createSenses({
     return { ok: true, url: final, source: String(source).slice(0, 1_500_000) };
   }
 
-  return Object.freeze({ hear, look, read, feed, models: Object.freeze({ hearing: hearingModel, vision: visionModel }) });
+  return Object.freeze({ hear, look, read, feed, file: download, models: Object.freeze({ hearing: hearingModel, vision: visionModel }) });
 }
 
 /** Картинка в сообщении: самый крупный снимок в пределах размера или файл-изображение. */
