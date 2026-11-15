@@ -32,7 +32,18 @@ const file = (name, text, { caption = "", id = OWNER, type = "text/plain" } = {}
   update.document = { file_id: `file-${name}`, file_name: name, mime_type: type, file_size: utf8(text).length };
   return update;
 };
-const memory = () => { const map = new Map(); return { available: true, get: async (key) => map.get(key) ?? null, set: async (key, value) => { map.set(key, JSON.parse(JSON.stringify(value))); return true; }, remove: async (key) => map.delete(key) }; };
+const memory = () => {
+  const map = new Map();
+  const copy = (value) => JSON.parse(JSON.stringify(value));
+  return {
+    available: true,
+    get: async (key) => (map.has(key) ? copy(map.get(key)) : null),
+    set: async (key, value) => { map.set(key, copy(value)); return true; },
+    remove: async (key) => map.delete(key),
+    // Как у настоящего хранилища: правка получает свежее значение; null — «править нечего».
+    update: async (key, change) => { const next = change(map.has(key) ? copy(map.get(key)) : null); if (next == null) return false; map.set(key, copy(next)); return true; },
+  };
+};
 
 test("разбор: «выучи» — текст для знаний, а «выучи стих» — просьба к ней самой", () => {
   assert.deepEqual(parseStudy("выучи"), { op: "learn", title: "", text: "", url: "" });
@@ -249,4 +260,54 @@ test("найденное наедине остаётся между ней и ч
   assert.match(last(OWNER), /^В тетради пока пусто/u);
   await h.onMessage(message("статус", { id: OWNER }), KEY);
   assert.match(last(OWNER), /\nЗнания: документов — 0 · узнала сама — 1\n/u, "в счёте она есть, в списке хозяина — нет");
+});
+
+test("прочла страницу или статью энциклопедии — записала, откуда: сайт и адрес, «Википедия»", async () => {
+  reset();
+  const h = heart({}, { now: () => NOON });
+  const html = "<!doctype html><html><head><title>Как растут кедры</title></head><body><article><h1>Как растут кедры</h1>"
+    + "<p>Кедр сибирский растёт медленно: первые шишки появляются на нём через сорок лет после всходов.</p>"
+    + "<p>Дерево живёт до пятисот лет, а в горах поднимается до двух тысяч метров над уровнем моря.</p></article></body></html>";
+  source("example.org/kedr", { ok: true, status: 200, url: "https://example.org/kedr", headers: { get: (name) => (String(name).toLowerCase() === "content-type" ? "text/html; charset=utf-8" : null) }, text: async () => html });
+  sdk().fetchQueue.push(says("Статья о кедрах: растут медленно, первые шишки — через сорок лет, живут до пятисот."));
+  await h.onMessage(group("Аи, перескажи https://example.org/kedr"), KEY);
+  assert.match(last(-10), /^Статья о кедрах/u);
+  source("page/summary/", { type: "standard", title: "Фотосинтез", description: "", extract: "Фотосинтез — сложный химический процесс преобразования энергии света в энергию химических связей органических веществ.", content_urls: { desktop: { page: "https://ru.wikipedia.org/wiki/Фотосинтез" } } });
+  sdk().fetchQueue.push(says("Это когда растение из света, воды и углекислого газа делает себе еду."));
+  await h.onMessage(group("Аи, что такое фотосинтез?"), KEY);
+  assert.match(last(-10), /^Это когда растение/u);
+  const seen = (await h.knowledge.notes({ userId: OWNER, isPrivate: true })).map(({ q, via, url, scope }) => ({ q, via, url, scope }));
+  assert.deepEqual(seen, [
+    { q: "Как растут кедры", via: "example.org", url: "https://example.org/kedr", scope: "all" },
+    { q: "Фотосинтез", via: "Википедия", url: "https://ru.wikipedia.org/wiki/Фотосинтез", scope: "all" },
+  ]);
+  await h.onMessage(message("тетрадь", { id: OWNER }), KEY);
+  assert.equal(last(OWNER), "📓 Что я узнала сама: 2 записи (держу 45 дней)\n1. «Как растут кедры» — example.org, 16.11\n2. «Фотосинтез» — Википедия, 16.11\n\nЗабыть одну — «забудь находку N»; все общие — «очисти тетрадь».");
+});
+
+test("одновременно: два файла альбомом и пять находок разом — ничья запись не затирает чужую", async () => {
+  // Список документов и тетрадь правят события. «Прочитать, а потом записать» теряло одну из двух правок:
+  // оба читали прежнее, второй затирал первого. Так было в первой редакции knowledge.js.
+  reset();
+  const h = heart({}, { now: () => NOON });
+  const other = RULES.replace("Тихая гавань", "Шумный причал").replace("Реклама своих каналов", "Продажа билетов");
+  await Promise.all([
+    h.onMessage(file("гавань.txt", RULES, { caption: "выучи" }), KEY),
+    h.onMessage(file("причал.txt", other, { caption: "выучи" }), KEY),
+  ]);
+  const docs = await h.knowledge.docs();
+  assert.deepEqual(docs.map(doc => doc.title).sort(), ["гавань", "причал"]);
+  assert.deepEqual(docs.map(doc => doc.id).sort(), [1, 2], "номера разные");
+  for (const doc of docs) assert.match((await h.knowledge.doc(doc.id)).parts[0], doc.title === "гавань" ? /Тихая гавань/u : /Шумный причал/u, "у каждого — свой текст");
+
+  const asked = ["кто выиграл чемпионат мира", "сколько весит слон", "высота Эльбруса в метрах", "столица Австралии какая", "когда изобрели телефон"];
+  const saved = await Promise.all(asked.map(q => h.knowledge.note({ q, text: `Ответ на вопрос «${q}»: записано для проверки.`, via: "Tavily", scope: "all" })));
+  assert.ok(saved.every(item => item.ok));
+  assert.deepEqual(saved.map(item => item.id).sort(), [1, 2, 3, 4, 5], "номера не повторяются");
+  assert.deepEqual((await h.knowledge.notes()).map(item => item.q).sort(), [...asked].sort());
+  // И стирание разом с записью ничего лишнего не уносит.
+  await Promise.all([h.knowledge.dropNote(1), h.knowledge.note({ q: "почему небо голубое днём", text: "Воздух рассеивает синий свет сильнее красного.", scope: "all" }), h.knowledge.used([2, 3])]);
+  const left = await h.knowledge.notes();
+  assert.equal(left.length, 5);
+  assert.deepEqual(left.filter(item => item.used).map(item => item.id), [2, 3]);
 });

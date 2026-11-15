@@ -565,9 +565,25 @@ test("«лимит на исходе» и «все модели упёрлись
     "━━━━━━━━━━━━━━━━━━━━",
     "Где: Модели",
     "Что: все модели упёрлись в лимит — вопросы записываю и отвечу сама, примерно после 12:30",
-    "Что делать: Лимит вернётся сам, вопросы не пропадут. Чтобы так не было — ключ ещё одного провайдера в файле ~/.heart.env: список в docs/BRAINS.md.",
+    "Что делать: Лимит вернётся сам, вопросы не пропадут.",
     "Код: brains:exhausted",
   ].join("\n"));
+
+  // Совет — только тот, которому можно последовать. Провайдеры без ключа названы по именам…
+  const advice = async (providers) => {
+    reset();
+    const mine = heart({ AI_MODELS: [], AI_PROVIDERS: providers }, { now: () => NOON });
+    sdk().fetchQueue.push(limit(1800, TPD), limit(1800, TPD));
+    await mine.onMessage(message("сколько планет в Солнечной системе?"), KEY);
+    assert.match(last(), /Вопрос я записала и отвечу сама/u);
+    return toOwner()[0].text.split("\n").at(-2);
+  };
+  const { CONFIG } = await import("../tgcloud/lib/config.js");
+  assert.equal(await advice(CONFIG.AI_PROVIDERS),
+    "Что делать: Лимит вернётся сам, вопросы не пропадут. Чтобы так было реже — ключ ещё одного провайдера в файле ~/.heart.env. Без ключа сейчас: Experiential Labs, GigaChat, Cloudflare Workers AI; как его получить — docs/BRAINS.md.");
+  // …а когда ключи есть у всех, кого она знает, совета «добавьте ключ» нет: он был бы пустым.
+  assert.equal(await advice([{ id: "spare", name: "Запасной", baseUrl: "https://spare.example/v1", models: ["spare-1"], key: "spare-key" }]),
+    "Что делать: Лимит вернётся сам, вопросы не пропадут. Ключи всех запасных провайдеров уже подключены — добавить нечего.");
 });
 
 test("утренняя сводка: день на запасной из-за лимита — это не сбой, и причины названы числами", async () => {

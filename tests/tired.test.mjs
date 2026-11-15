@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { heart, message, reset, sdk, last, chats, says, refuses, toOwner, KEY, OWNER } from "./fixtures/kit.mjs";
+import { heart, message, group, reset, sdk, last, chats, says, refuses, toOwner, toChat, KEY, OWNER } from "./fixtures/kit.mjs";
 import { tire, tiredNow, runningLow, staminaLine, LOW_REST_MS } from "../tgcloud/lib/stamina.js";
 
 const NOON = Date.UTC(2026, 10, 16, 9, 0);   // понедельник, 12:00 по Москве
@@ -146,4 +146,20 @@ test("упёрлись все модели: «выдохлась», вопрос
   assert.match(last(), /^Я выдохлась: мысли на сегодня кончились\. Вопрос я записала и отвечу сама, как только отдохну — примерно после 12:20\.$/u);
   await h.onMessage(message("статус", { id: OWNER }), KEY);
   assert.match(last(OWNER), /\nСилы: выдохлась — у всех моделей вышел лимит; отвечаю из словаря, вопросы записываю · с 12:00, проверю себя в 12:20\n/u);
+});
+
+test("одновременно: два ответа в один чат разом — «устала» звучит один раз, и усталость одна", async () => {
+  // Раньше оба ответа читали «ещё не говорила» и говорили оба; запись об усталости каждый начинал заново.
+  reset();
+  const h = heart(SPARES, { now: () => NOON });
+  sdk().fetchQueue.push(low("Юпитер."), low("Меркурий.", 89));
+  await Promise.all([
+    h.onMessage(group("Аи, какая планета самая большая?"), KEY),
+    h.onMessage(group("Аи, а самая маленькая планета какая?", { id: 9 }), KEY),
+  ]);
+  const said = toChat(-10).map(item => item.text);
+  assert.equal(said.length, 2);
+  assert.equal(said.filter(text => TIRED_LINE.test(text)).length, 1, said.join(" | "));
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /\nСилы: устала — запас основной модели gpt-oss-20b на исходе/u);
 });

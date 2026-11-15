@@ -11,7 +11,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { heart, message, group, reset, sdk, last, chats, says, system, toChat, KEY, OWNER, DAY } from "./fixtures/kit.mjs";
 import { stageOf, STAGES, DAY_STEP } from "../tgcloud/lib/dialogue-policy.js";
-import { feelOf, HURT_MS, GLAD_MS } from "../tgcloud/lib/bond.js";
+import { createBond, feelOf, HURT_MS, GLAD_MS } from "../tgcloud/lib/bond.js";
 import { moodOf, behaviourOf } from "../tgcloud/lib/mood.js";
 
 const NOON = Date.UTC(2026, 10, 16, 9, 0);   // понедельник, 12:00 по Москве
@@ -172,4 +172,26 @@ test("хозяин: ближе некуда, но чувство к нему ж�
   at += HURT_MS + 60_000;
   await h.onMessage(message("как ты ко мне относишься?", { id: OWNER }), KEY);
   assert.match(last(OWNER), /\nСейчас мне с вами спокойно\.\n/u);
+});
+
+test("одновременно: поступки, счёт, день и шутка одного человека разом — на счету всё", async () => {
+  // Два сообщения одного человека приходят разом. «Прочитать и записать» оставляло от семи правок одну:
+  // каждая читала прежнее и затирала чужое. Правка идёт через `store.update`.
+  reset();
+  const h = heart({}, { now: () => NOON });
+  const bond = createBond({ store: h.store, now: () => NOON });
+  await Promise.all([
+    bond.mark(5, "thanks"), bond.mark(5, "praise"), bond.mark(5, "taught"),
+    bond.count(5, "hug"), bond.count(5, "hug"), bond.day(5, "2026-11-16"), bond.addJoke(5, "ёжик в тумане"),
+  ]);
+  const facts = await bond.facts(5);
+  assert.deepEqual(facts.counts, { thanks: 1, praise: 1, taught: 1, hug: 2 });
+  assert.equal(facts.days, 1);
+  assert.deepEqual(await bond.jokes(5), ["ёжик в тумане"]);
+  assert.equal(new Set(Object.values(facts.last)).size, 3, "у каждого поступка свой час: порядок не теряется");
+  // Тот же день дважды — один день; хранилища нет — счёт всё равно отвечает.
+  assert.equal((await bond.day(5, "2026-11-16")).changed, false);
+  const lost = createBond({ store: null });
+  assert.deepEqual(await lost.count(5, "hug"), { n: 1, milestone: false });
+  assert.deepEqual(await lost.addJoke(5, "раз"), { ok: false, code: "storage_unavailable" });
 });

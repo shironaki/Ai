@@ -69,6 +69,9 @@ test("слова о намазе: расписание, один намаз, с�
     "напоминай о намазах вовремя": { remind: 0 }, "включи напоминание о намазе за 5 минут": { remind: 5 }, "напоминай перед каждым намазом за 20 минут": { remind: 20 },
     "не напоминай о намазе": { remind: false }, "выключи напоминания о намазах": { remind: false }, "хватит напоминать о намазе": { remind: false },
     "аср по ханафи": { asr: 2 }, "считай аср по шафии": { asr: 1 }, "как ты считаешь намазы?": { how: true },
+    // Школа — и целиком, теми словами, какими отвечает она сама (до 0.33.0 это уходило к модели).
+    "считай аср по ханафитской школе": { asr: 2 }, "аср по ханафитскому мазхабу": { asr: 2 }, "Аср как ханафиты.": { asr: 2 }, "аср по мазхабу Абу Ханифы": { asr: 2 },
+    "аср по шафиитской школе": { asr: 1 }, "считай аср как у большинства": { asr: 1 },
   };
   for (const [said, want] of Object.entries(cases)) assert.deepEqual(parsePrayer(said), want, said);
   for (const said of ["привет", "напомни через час про намаз", "я читаю намаз", "намаз — это важно", "расскажи про намаз", "иша", "аср", "магриб", "вечерний намаз",
@@ -171,6 +174,15 @@ test("метод целиком — как у библиотеки: минуты
   assert.deepEqual([parsePrayer("убери поправки намазов"), parsePrayer("намазы без поправок")], [{ shift: { clear: true } }, { shift: { clear: true } }]);
   assert.deepEqual(parsePrayer("поправки намазов"), { how: true });
   for (const said of ["поправки", "убери поправки", "поправка магриба", "поправка к уроку 3", "поправь магриб", "поправка на ветер 5"]) assert.equal(parsePrayer(said), null, said);
+  // Поправка речью — как она сама её называет: «магриб — на 3 мин позже расчёта».
+  assert.deepEqual(parsePrayer("магриб на 3 минуты позже"), { shift: { key: "maghrib", minutes: 3 } });
+  assert.deepEqual(parsePrayer("Сдвинь фаджр на 2 минуты раньше."), { shift: { key: "fajr", minutes: -2 } });
+  assert.deepEqual(parsePrayer("иша позже на 5 мин"), { shift: { key: "isha", minutes: 5 } });
+  assert.deepEqual(parsePrayer("поставь зухр на 1 минуту назад"), { shift: { key: "dhuhr", minutes: -1 } });
+  assert.deepEqual(parsePrayer("считай аср на 4 минуты вперёд"), { shift: { key: "asr", minutes: 4 } });
+  assert.deepEqual(parsePrayer("магриб на 45 минут позже"), { shift: { key: "maghrib", tooBig: true } });
+  for (const said of ["магриб на 3 позже", "магриб сегодня на 3 минуты позже", "я приду на магриб на 10 минут позже", "магриб позже", "сдвинь встречу на 5 минут позже",
+    "напомни про магриб на 5 минут раньше", "магриб на час позже", "иша на 2 минуты"]) assert.equal(parsePrayer(said), null, said);
   // Метод целиком — словами о намазах, а не только о фаджре; мазхаб вместо метода — это школа асра.
   assert.deepEqual(parsePrayer("считай намазы по Турции"), { method: "turkey" });
   assert.deepEqual(parsePrayer("Считай намазы по ДУМ."), { method: "russia" });

@@ -69,11 +69,15 @@ test("убрали из чата: настройки и память чата с
   assert.ok(logged(-20) >= 2, "память чата записана — по ключу на сообщение");
   assert.ok(logged(-200) >= 2);
 
+  // В этом чате она успела сказать, что устала: отметка «сказала» — тоже запись под номером чата.
+  sdk().kv.set("heart:tired:told:-20", JSON.stringify({ since: at, at }));
+  sdk().kv.set("heart:tired:told:-200", JSON.stringify({ since: at, at }));
   const before = toOwner().length;
   assert.equal((await h.onMyChatMember(moved("administrator", "kicked"))).action, "left");
   assert.equal(sdk().kv.has("heart:chat:-20"), false, "настройки чата стёрты");
   assert.equal(logged(-20), 0, "и память чата — тоже: все её записи");
-  assert.equal([...sdk().kv.keys()].filter(key => /^heart:[a-z]+:-20(?::|$)/u.test(key)).length, 0, "под номером чата не осталось ничего");
+  assert.deepEqual([...sdk().kv.keys()].filter(key => /^heart:[a-z:]+:-20(?::|$)/u.test(key)), [], "под номером чата не осталось ничего");
+  assert.equal(sdk().kv.has("heart:tired:told:-200"), true);
   assert.ok(logged(-200) >= 2, "соседний чат не тронут");
   assert.equal(kept("heart:chat:-200")?.rp, false);
   assert.deepEqual((await h.reminders.list(21)).map(item => item.chatId), [21], "напоминание в личку осталось");

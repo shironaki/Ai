@@ -2057,9 +2057,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
   async function setTired(change, turn = null) {
     try {
-      const before = await store.get(TIRED_KEY).catch(() => null);
-      const next = tire(before, change, now());
-      if (next && JSON.stringify(next) !== JSON.stringify(before)) await store.set(TIRED_KEY, next);
+      // Об усталости узнают ответы из разных чатов разом — правка поверх свежей записи, иначе
+      // «выдохлась» одного затёрло бы «устала» другого.
+      let next = null, read = false;
+      await store.update(TIRED_KEY, (before) => {
+        read = true;
+        next = tire(before, change, now());
+        return next && JSON.stringify(next) !== JSON.stringify(before) ? next : null;
+      });
+      // Хранилище молчит — на этот ответ она всё равно знает, что устала.
+      if (!read) next = tire(null, change, now());
       if (turn) turn.tired = next;
       return next;
     } catch { return null; }
@@ -2091,10 +2098,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   async function tiredAside(turn) {
     const tired = await tiredState(turn);
     if (!tired) return "";
-    const key = `heart:tired:told:${turn.chatId}`;
-    const told = await store.get(key).catch(() => null);
-    if (Number(told?.since) === Number(tired.since)) return "";
-    await store.set(key, { since: tired.since, at: now() }).catch(() => false);
+    // Раз на чат за одну усталость: из двух ответов, пришедших разом, скажет один.
+    const first = await store.update(`heart:tired:told:${turn.chatId}`, (told) => (Number(told?.since) === Number(tired.since) ? null : { since: tired.since, at: now() })).catch(() => false);
+    if (!first) return "";
     const line = PHRASES ? book.pick(tired.why === "spent" ? "+выдохлась" : "+устала", voiceCtx(turn)) : null;
     return line ?? "Я сегодня утомилась: дальше отвечу короче.";
   }
@@ -2428,6 +2434,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `${head} ${you(turn, following.ask.vy, following.ask.ty)}`);
   }
 
+
+  /**
+   * Запись «писать первой» и правил расчёта намазов и поста. Её правят и слова хозяина
+   * (час, метод, поправки, Рамадан), и будильник (отметки «сказала», город). Каждая
+   * правка ложится поверх свежего значения — иначе отметка будильника стёрла бы
+   * настройку, сказанную в ту же секунду, а настройка — отметку, и привет пришёл бы дважды.
+   * `change` получает запись (пустую, если её нет) и возвращает новую; null — править нечего.
+   */
+  const amendGreet = (change) => store.update(GREET_KEY, (before) => change(before && typeof before === "object" ? before : {}));
+
   /**
    * «Желай доброго утра в 7:30», «не пиши первой», «когда ты пишешь первой?» —
    * только хозяин и только в личке: писать первой она будет ему одному.
@@ -2455,12 +2471,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return [await morningOf(set, kept), set.nightOff ? "перед сном не пишу" : `спокойной ночи — в ${set.night}`].join("; ");
     };
     if (asked.show) return say(turn, `Пишу вам первой так: ${await describe(saved)}. Изменить — «желай доброго утра в 7:30», «желай доброго утра на фаджр», «желай спокойной ночи в 0:30», «не пиши первой».`);
-    const next = { ...saved };
-    if (asked.set && asked.by === "fajr") { next.by = "fajr"; delete next.morning; next.morningOff = false; }
-    else if (asked.set) { next[asked.set] = asked.time; next[`${asked.set}Off`] = false; if (asked.set === "morning") next.by = "clock"; }
-    for (const slot of asked.off === "all" ? ["morning", "night"] : asked.off ? [asked.off] : []) next[`${slot}Off`] = true;
-    for (const slot of asked.on === "all" ? ["morning", "night"] : asked.on ? [asked.on] : []) next[`${slot}Off`] = false;
-    const kept = await store.set(GREET_KEY, { ...next, at: now() }).catch(() => false);
+    const apply = (base) => {
+      const next = { ...base };
+      if (asked.set && asked.by === "fajr") { next.by = "fajr"; delete next.morning; next.morningOff = false; }
+      else if (asked.set) { next[asked.set] = asked.time; next[`${asked.set}Off`] = false; if (asked.set === "morning") next.by = "clock"; }
+      for (const slot of asked.off === "all" ? ["morning", "night"] : asked.off ? [asked.off] : []) next[`${slot}Off`] = true;
+      for (const slot of asked.on === "all" ? ["morning", "night"] : asked.on ? [asked.on] : []) next[`${slot}Off`] = false;
+      return next;
+    };
+    const next = apply(saved);
+    const kept = await amendGreet(before => ({ ...apply(before), at: now() })).catch(() => false);
     if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
     if (asked.off === "all") return say(turn, "Хорошо, хозяин: первой писать не буду. Передумаете — «пиши первой».");
     return say(turn, `Хорошо, хозяин: ${await describe(next)}.`);
@@ -2589,14 +2609,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (asked.angle != null) {
       if (!mine || !turn.isPrivate) return say(turn, "Угол для расчёта выбирает хозяин — и в личке.");
       const got = await timeFor(asked.angle, { state: { ...saved, angle: asked.angle, method: asked.method ?? "" } });
-      const kept = await store.set(GREET_KEY, { ...saved, angle: asked.angle, method: asked.method ?? "", ...(got.spot ? { spot: got.spot } : {}), at: now() }).catch(() => false);
+      const kept = await amendGreet(before => ({ ...before, angle: asked.angle, method: asked.method ?? "", ...(got.spot ? { spot: got.spot } : {}), at: now() })).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       // Названный метод — это не только угол фаджра: с ним приходят иша и минуты метода.
       const whole = asked.method ? ` Остальные намазы — по тому же методу: ${prayerRulesLine(prayerRules({ ...saved, angle: asked.angle, method: asked.method }))}.` : "";
       return say(turn, `Хорошо, хозяин: фаджр считаю по углу ${named(asked.angle)}.${got.spot ? ` ${got.text}` : ""}${whole}`);
     }
     const got = await timeFor(angle, { tomorrow: asked.tomorrow });
-    if (mine && got.spot && saved?.spot?.city !== got.spot.city) await store.set(GREET_KEY, { ...saved, spot: got.spot }).catch(() => false);
+    if (mine && got.spot && saved?.spot?.city !== got.spot.city) await amendGreet(before => (before.spot?.city === got.spot.city ? null : { ...before, spot: got.spot })).catch(() => false);
     return say(turn, got.text);
   }
 
@@ -2664,18 +2684,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const method = FAJR_METHODS.find(item => item.key === asked.method);
       if (!method) return say(turn, `Такого метода я не знаю, а расписания мечети у меня нет: считаю по солнцу. Знаю методы: ${FAJR_METHODS.map(item => item.title).join("; ")}. Сказать — «считай намазы по ДУМ»; свой угол — «угол фаджра 16»; подогнать под расписание мечети — «поправка магриба +3».`);
       const next = { ...saved, angle: method.angle, method: method.key, at: now() };
-      const kept = await store.set(GREET_KEY, next).catch(() => false);
+      const kept = await amendGreet(before => ({ ...before, angle: method.angle, method: method.key, at: now() })).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, `Хорошо, хозяин: намазы считаю по методу «${method.title}»: ${prayerRulesLine(prayerRules(next))}. Посмотреть — «намазы на сегодня»; подогнать под расписание мечети — «поправка магриба +3».`);
     }
     if (asked.shift) {
       if (!mine || !turn.isPrivate) return say(turn, "Поправки к расчёту задаёт хозяин — и в личке.");
       if (asked.shift.tooBig) return say(turn, `Поправка — не больше ${SHIFT_MAX} минут в любую сторону: больше — это уже другой метод («считай намазы по …»).`);
+      const shifted = (base) => {
+        const out = asked.shift.clear ? {} : { ...ownShift(base), [asked.shift.key]: asked.shift.minutes };
+        if (!asked.shift.clear && !asked.shift.minutes) delete out[asked.shift.key];
+        return out;
+      };
       const own = ownShift(saved);
-      const next = asked.shift.clear ? {} : { ...own, [asked.shift.key]: asked.shift.minutes };
-      if (!asked.shift.clear && !asked.shift.minutes) delete next[asked.shift.key];
+      const next = shifted(saved);
       if (asked.shift.clear && !Object.keys(own).length) return say(turn, "Своих поправок у вас и нет: считаю как есть.");
-      const kept = await store.set(GREET_KEY, { ...saved, shift: next, at: now() }).catch(() => false);
+      const kept = await amendGreet(before => ({ ...before, shift: shifted(before), at: now() })).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       const after = prayerRules({ ...saved, shift: next });
       const tail = `Расчёт теперь: ${prayerRulesLine(after)}. Посмотреть — «намазы на сегодня».`;
@@ -2686,7 +2710,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     if (asked.asr) {
       if (!mine || !turn.isPrivate) return say(turn, "Школу для расчёта асра выбирает хозяин — и в личке.");
-      const kept = await store.set(GREET_KEY, { ...saved, asr: asked.asr, at: now() }).catch(() => false);
+      const kept = await amendGreet(before => ({ ...before, asr: asked.asr, at: now() })).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, asked.asr === 2 ? "Хорошо, хозяин: аср считаю по ханафитской школе — когда тень длиннее полуденной на две высоты предмета." : "Хорошо, хозяин: аср считаю, как большинство школ, — когда тень длиннее полуденной на одну высоту предмета.");
     }
@@ -2703,7 +2727,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     const spot = await spotOf(turn.manner?.settings, mine ? saved : null);
     if (!spot) return say(turn, `Чтобы посчитать, мне нужен ${you(turn, "ваш", "твой")} город. ${you(turn, "Скажите", "Скажи")}: «я живу в Казани».`);
-    if (mine && saved?.spot?.city !== spot.city) await store.set(GREET_KEY, { ...saved, spot }).catch(() => false);
+    if (mine && saved?.spot?.city !== spot.city) await amendGreet(before => (before.spot?.city === spot.city ? null : { ...before, spot })).catch(() => false);
     const zone = zoneOf(turn);
     const today = prayerDay(spot, zone, rules, 0);
     if (!today) return say(turn, `${spot.city}: в этот день там нет восхода или заката — по солнцу время намаза не посчитать.`);
@@ -2911,7 +2935,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       }
       const clean = next.shift === 0 && next.days == null;
       const { ramadan: _old, ...rest } = saved;
-      const kept = await store.set(GREET_KEY, { ...rest, ...(clean ? {} : { ramadan: next }), at: now() }).catch(() => false);
+      const kept = await amendGreet(before => {
+        const { ramadan: _was, ...others } = before;
+        return { ...others, ...(clean ? {} : { ramadan: next }), at: now() };
+      }).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       const after = nearestRamadan(today, clean ? rest : { ...rest, ramadan: next });
       const table = after.shift || after.days !== after.table.days ? ` По таблице было: с ${dateText(after.table.first)}, ${after.table.days} ${plural(after.table.days, "день", "дня", "дней")}.` : "";
@@ -2921,7 +2948,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const fast = fastDay(today, saved);
     const spotFor = async () => {
       const spot = await spotOf(turn.manner?.settings, mine ? saved : null);
-      if (spot && mine && saved?.spot?.city !== spot.city) await store.set(GREET_KEY, { ...saved, spot }).catch(() => false);
+      if (spot && mine && saved?.spot?.city !== spot.city) await amendGreet(before => (before.spot?.city === spot.city ? null : { ...before, spot })).catch(() => false);
       return spot;
     };
     /** «Сухур — до 05:12, ифтар — в 17:43 (Казань).» — по часам сейчас: что прошло, сказано в прошедшем. */
@@ -3073,7 +3100,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (set.byFajr && !set.morningOff) {
       const spot = await spotOf(manner?.settings, saved);
       if (spot) {
-        if (saved?.spot?.city !== spot.city) { saved.spot = spot; await store.set(GREET_KEY, { ...saved, at: Number(saved.at) || at }).catch(() => false); }
+        if (saved?.spot?.city !== spot.city) { saved.spot = spot; await amendGreet(before => (before.spot?.city === spot.city ? null : { ...before, spot, at: Number(before.at) || at })).catch(() => false); }
         const before = localParts(at - DAY, zone);
         dawn = [parts, before].map(day => fajrOn({ y: day.y, m: day.m, d: day.d, latitude: spot.lat, longitude: spot.lon, angle: set.angle ?? FAJR_ANGLE })?.fajr ?? null);
         if (dawn.some(moment => moment == null)) dawn = null;
@@ -3090,8 +3117,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (due == null) continue;
       const key = calendarDate(due, zone);
       if (set[mark] === key) continue;
-      const fresh = (await store.get(GREET_KEY).catch(() => null)) ?? {};
-      await store.set(GREET_KEY, { ...fresh, [mark]: key, at });
+      // Отметка «сегодня сказала» — заявкой: будильник может ударить дважды, и привет уйдёт только от того удара, чья отметка легла.
+      let claimed = false;
+      const landed = await amendGreet(before => { claimed = before[mark] !== key; return claimed ? { ...before, [mark]: key, at } : null; }).catch(() => false);
+      if (!landed || !claimed) continue;
       // Сам уже сказал это — или с утра уже разговаривали: повторять незачем.
       if (at - (Number(saved[said]) || 0) < 12 * 3_600_000) continue;
       if (slot === "morning") {
@@ -3375,7 +3404,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Хозяин сам сказал «доброе утро» или «спокойной ночи» — первой сегодня писать уже незачем.
     if (sent.ok && GREET && owner(turn.actorId) && turn.isPrivate) {
       const mark = names.includes("доброе утро") ? "mAt" : names.includes("спокойной ночи") ? "nAt" : "";
-      if (mark) await store.get(GREET_KEY).then(saved => store.set(GREET_KEY, { ...(saved ?? {}), [mark]: now() })).catch(() => false);
+      if (mark) await amendGreet(before => ({ ...before, [mark]: now() })).catch(() => false);
     }
     if (sent.ok) await keepThread(turn, prompt, text);
     return { ...sent, action: "phrase", topics: names };
@@ -5462,10 +5491,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Упёрлись все модели: она выдохлась — до часа, когда вернётся первая.
       if (limited) await setTired({ why: "spent", until: Number(answer.retryAt) || 0, model: short }, turn);
       if (limited) {
+        // Совет — только тот, которому можно последовать: провайдеры, чьего ключа у неё нет, названы по именам.
+        const known = (Array.isArray(config.AI_PROVIDERS) ? config.AI_PROVIDERS : []).filter(item => item?.id);
+        const asleep = known.filter(item => !(item.key ?? extraKeys[item.id])).map(item => providerName(item.id));
         await notices.report({
           component: "brains", code: "exhausted", title: "Модели", severity: "degraded",
           detail: `все модели упёрлись в лимит — вопросы записываю и отвечу сама${answer.retryAt > now() ? `, примерно после ${clock(answer.retryAt)}` : ", как только лимит вернётся"}`,
-          hint: "Лимит вернётся сам, вопросы не пропадут. Чтобы так не было — ключ ещё одного провайдера в файле ~/.heart.env: список в docs/BRAINS.md.",
+          hint: `Лимит вернётся сам, вопросы не пропадут.${asleep.length
+            ? ` Чтобы так было реже — ключ ещё одного провайдера в файле ~/.heart.env. Без ключа сейчас: ${asleep.join(", ")}; как его получить — docs/BRAINS.md.`
+            : known.length ? " Ключи всех запасных провайдеров уже подключены — добавить нечего." : ""}`,
         });
       } else if (!named && answer.code !== "brains_exhausted" && PROVIDER_REASONS[answer.code]) {
         await notices.report({
@@ -5902,7 +5936,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const first = ref.kind === "search" ? ref.sources?.[0] : null;
     const saved = await knowledge.note({
       q: ref.title, text, scope,
-      via: ref.kind === "search" ? [ref.via, first?.host].filter(Boolean).join(", ") : ref.host,
+      via: ref.kind === "search" ? [ref.via, first?.host].filter(Boolean).join(", ") : ref.kind === "page" ? ref.host : "Википедия",
       url: first?.url ?? ref.url ?? "",
     });
     if (saved.ok) pulse.bump("learned");
@@ -6000,7 +6034,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     if (asked.op === "dropDoc") {
       const done = await knowledge.dropDoc(asked.id);
-      return say(turn, done.ok ? `Забыла документ «${done.title}».` : `Документа №${asked.id} у меня нет. Список — «документы».`);
+      return say(turn, done.ok ? `Забыла документ «${done.title}».` : done.code === "storage_unavailable" ? "Не вышло: хранилище сейчас не отвечает. Документ остался на месте." : `Документа №${asked.id} у меня нет. Список — «документы».`);
     }
     const viewer = { userId: turn.actorId, isPrivate: true };
     if (asked.op === "notes") {
@@ -6012,11 +6046,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     if (asked.op === "dropNote") {
       const done = await knowledge.dropNote(asked.id, viewer);
-      return say(turn, done.ok ? `Забыла находку: «${done.q}».` : `Находки №${asked.id} у меня нет. Список — «тетрадь».`);
+      return say(turn, done.ok ? `Забыла находку: «${done.q}».` : done.code === "storage_unavailable" ? "Не вышло: хранилище сейчас не отвечает. Находка осталась на месте." : `Находки №${asked.id} у меня нет. Список — «тетрадь».`);
     }
     if (asked.op === "clearNotes") {
       const done = await knowledge.clearNotes();
       const own = await knowledge.forget(turn.actorId);
+      if (!done.ok) return say(turn, "Не вышло: хранилище сейчас не отвечает. Тетрадь осталась как была.");
       return say(turn, done.removed + own ? `Стёрла из тетради: ${done.removed + own}.` : "Тетрадь и так пуста.");
     }
     // «Чему ты научилась?» — всё сразу: уроки, фразы, документы, находки.
@@ -6153,7 +6188,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, page.code === "http" ? `Страница не открылась: сайт ответил ошибкой${page.status ? ` ${page.status}` : ""}.` : LINK_FAIL[page.code] ?? LINK_FAIL.network);
     }
     pulse.bump("read");
-    turn.reference = { kind: "page", host: page.host, title: page.title || page.host, text: page.text || page.description, description: page.description };
+    turn.reference = { kind: "page", host: page.host, url: asked.url, title: page.title || page.host, text: page.text || page.description, description: page.description };
     return answerByModel(turn, asked.ask ? prompt : "О чём эта страница? Перескажи коротко.");
   }
 
@@ -7678,7 +7713,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // (память чата — по сообщению, следы и намеренное молчание — по человеку, столы игр —
   // по сообщению). Вторые убираются семейством; двоеточие после номера обязательно,
   // иначе чат -10 унёс бы с собой и чат -100.
-  const CHAT_KEYS = ["heart:chat:", "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:daysum:", "heart:game:", "heart:advised:", "heart:factseen:", "heart:scene:"];
+  const CHAT_KEYS = ["heart:chat:", "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:daysum:", "heart:game:", "heart:advised:", "heart:factseen:", "heart:scene:", "heart:tired:told:"];
   const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:", "heart:knows:"];
   async function forgetChat(chatId) {
     for (const prefix of CHAT_KEYS) await store.remove(`${prefix}${chatId}`).catch(() => false);

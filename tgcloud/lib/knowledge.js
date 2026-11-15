@@ -163,15 +163,13 @@ export function textFile(document) {
 
 export function createKnowledge({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const readIndex = async () => {
-    const saved = usable() ? await store.get(KNOW_INDEX).catch(() => null) : null;
-    return { seq: Number(saved?.seq) || 0, docs: Array.isArray(saved?.docs) ? saved.docs : [] };
-  };
-  const readNotes = async () => {
-    const saved = usable() ? await store.get(KNOW_NOTES).catch(() => null) : null;
-    const items = (Array.isArray(saved?.items) ? saved.items : []).filter(item => now() - Number(item.at) < NOTE_TTL_MS);
-    return { seq: Number(saved?.seq) || 0, items };
-  };
+  const indexOf = (saved) => ({ seq: Number(saved?.seq) || 0, docs: Array.isArray(saved?.docs) ? saved.docs : [] });
+  const notesOf = (saved) => ({ seq: Number(saved?.seq) || 0, items: (Array.isArray(saved?.items) ? saved.items : []).filter(item => now() - Number(item.at) < NOTE_TTL_MS) });
+  const readIndex = async () => indexOf(usable() ? await store.get(KNOW_INDEX).catch(() => null) : null);
+  const readNotes = async () => notesOf(usable() ? await store.get(KNOW_NOTES).catch(() => null) : null);
+  // Список документов и тетрадь правят события: два файла альбомом, два ответа с поиском в разных чатах.
+  // Поэтому каждая правка — `store.update` поверх свежего значения; «прочитать и записать» теряло бы одну из двух.
+  const amend = async (key, change) => (usable() ? store.update(key, change).catch(() => false) : false);
 
   /**
    * Выучить документ. `{ ok, id, title, parts, chars, cut, replaced }` или `{ ok: false, code }`:
@@ -185,14 +183,26 @@ export function createKnowledge({ store = null, now = () => Date.now() } = {}) {
     const body = whole.slice(0, DOC_MAX_CHARS);
     const parts = split(body);
     const heading = titleOf({ title, name, text: body });
-    const index = await readIndex();
-    const same = index.docs.find(doc => doc.title.toLowerCase() === heading.toLowerCase());
-    if (!same && index.docs.length >= DOCS_MAX) return { ok: false, code: "too_many", total: index.docs.length };
-    const id = same?.id ?? index.seq + 1;
-    if (!await store.set(KNOW_DOC(id), { id, title: heading, parts }).catch(() => false)) return { ok: false, code: "storage_unavailable" };
-    const entry = { id, title: heading, chars: body.length, parts: parts.length, at: now(), via: oneLine(via, 80), author: author == null ? "" : String(author), keys: [...keys(`${heading} ${body}`)].join(" ") };
-    const docs = same ? index.docs.map(doc => (doc.id === id ? entry : doc)) : [...index.docs, entry];
-    if (!await store.set(KNOW_INDEX, { seq: Math.max(index.seq, id), docs }).catch(() => false)) return { ok: false, code: "storage_unavailable" };
+    const about = { title: heading, chars: body.length, parts: parts.length, at: now(), via: oneLine(via, 80), author: author == null ? "" : String(author), keys: [...keys(`${heading} ${body}`)].join(" ") };
+    // Сначала место в списке (номер выдаётся там же, одной правкой), потом сам текст.
+    let id = 0, same = null, full = 0;
+    const placed = await amend(KNOW_INDEX, (saved) => {
+      const index = indexOf(saved);
+      same = index.docs.find(doc => doc.title.toLowerCase() === heading.toLowerCase()) ?? null;
+      full = !same && index.docs.length >= DOCS_MAX ? index.docs.length : 0;
+      if (full) return null;
+      id = same?.id ?? index.seq + 1;
+      const entry = { id, ...about };
+      return { seq: Math.max(index.seq, id), docs: same ? index.docs.map(doc => (doc.id === id ? entry : doc)) : [...index.docs, entry] };
+    });
+    if (full) return { ok: false, code: "too_many", total: full };
+    if (!placed) return { ok: false, code: "storage_unavailable" };
+    if (!await store.set(KNOW_DOC(id), { id, title: heading, parts }).catch(() => false)) {
+      // Текст не лёг — строка в списке обещала бы то, чего нет: вернуть как было.
+      const before = same;
+      await amend(KNOW_INDEX, (saved) => { const index = indexOf(saved); return { seq: index.seq, docs: before ? index.docs.map(doc => (doc.id === id ? before : doc)) : index.docs.filter(doc => doc.id !== id) }; });
+      return { ok: false, code: "storage_unavailable" };
+    }
     return { ok: true, id, title: heading, parts: parts.length, chars: body.length, cut: whole.length > body.length ? whole.length : 0, replaced: Boolean(same) };
   }
 
@@ -204,10 +214,15 @@ export function createKnowledge({ store = null, now = () => Date.now() } = {}) {
     return { id: entry.id, title: entry.title, at: entry.at, via: entry.via, chars: entry.chars, parts: Array.isArray(saved?.parts) ? saved.parts : [] };
   }
   async function dropDoc(id) {
-    const index = await readIndex();
-    const entry = index.docs.find(item => item.id === Number(id));
-    if (!entry) return { ok: false, code: "not_found", total: index.docs.length };
-    await store.set(KNOW_INDEX, { seq: index.seq, docs: index.docs.filter(item => item.id !== entry.id) }).catch(() => false);
+    let entry = null, total = 0;
+    const done = await amend(KNOW_INDEX, (saved) => {
+      const index = indexOf(saved);
+      total = index.docs.length;
+      entry = index.docs.find(item => item.id === Number(id)) ?? null;
+      return entry ? { seq: index.seq, docs: index.docs.filter(item => item.id !== entry.id) } : null;
+    });
+    if (!entry) return { ok: false, code: "not_found", total };
+    if (!done) return { ok: false, code: "storage_unavailable", total };
     await store.remove(KNOW_DOC(entry.id)).catch(() => false);
     return { ok: true, title: entry.title };
   }
@@ -221,45 +236,53 @@ export function createKnowledge({ store = null, now = () => Date.now() } = {}) {
     const question = oneLine(q, 160), answer = oneLine(text, NOTE_TEXT);
     const mine = [...keys(question)];
     if (!mine.length || answer.length < 20) return { ok: false, code: "empty" };
-    const state = await readNotes();
     const alike = (item) => {
       if (item.scope !== scope) return false;
       const theirs = String(item.keys ?? "").split(" ").filter(Boolean);
       const common = mine.filter(key => theirs.includes(key)).length;
       return common >= Math.ceil(0.8 * Math.max(mine.length, theirs.length));
     };
-    const kept = state.items.filter(item => !alike(item));
-    const item = { id: state.seq + 1, q: question, text: answer, via: oneLine(via, 60), url: oneLine(url, 200), scope, at: now(), used: 0, keys: mine.join(" ") };
-    // Место кончилось — уходят те, что не пригодились ни разу, затем самые старые.
-    let items = [...kept, item];
-    if (items.length > NOTES_MAX) items = items.sort((a, b) => (Number(a.used) > 0) - (Number(b.used) > 0) || a.at - b.at).slice(items.length - NOTES_MAX).sort((a, b) => a.id - b.id);
-    if (!await store.set(KNOW_NOTES, { seq: item.id, items }).catch(() => false)) return { ok: false, code: "storage_unavailable" };
-    return { ok: true, id: item.id, replaced: kept.length < state.items.length };
+    let done = null;
+    const written = await amend(KNOW_NOTES, (saved) => {
+      const state = notesOf(saved);
+      const kept = state.items.filter(item => !alike(item));
+      const item = { id: state.seq + 1, q: question, text: answer, via: oneLine(via, 60), url: oneLine(url, 200), scope, at: now(), used: 0, keys: mine.join(" ") };
+      // Место кончилось — уходят те, что не пригодились ни разу, затем самые старые.
+      let items = [...kept, item];
+      if (items.length > NOTES_MAX) items = items.sort((a, b) => (Number(a.used) > 0) - (Number(b.used) > 0) || a.at - b.at).slice(items.length - NOTES_MAX).sort((a, b) => a.id - b.id);
+      done = { ok: true, id: item.id, replaced: kept.length < state.items.length };
+      return { seq: item.id, items };
+    });
+    return written && done ? done : { ok: false, code: "storage_unavailable" };
   }
   const visible = (item, { userId = null, isPrivate = false } = {}) => item.scope === "all" || (isPrivate && item.scope === `user:${userId}`);
   /** Тетрадь, как её видит этот человек: общее — всем, своё личное — только ему и только наедине. */
   async function notes(viewer = {}) { return (await readNotes()).items.filter(item => visible(item, viewer)).map(({ keys: _keys, ...item }) => item); }
   async function dropNote(id, viewer = {}) {
-    const state = await readNotes();
-    const item = state.items.find(entry => entry.id === Number(id) && visible(entry, viewer));
+    let item = null;
+    const done = await amend(KNOW_NOTES, (saved) => {
+      const state = notesOf(saved);
+      item = state.items.find(entry => entry.id === Number(id) && visible(entry, viewer)) ?? null;
+      return item ? { seq: state.seq, items: state.items.filter(entry => entry.id !== item.id) } : null;
+    });
     if (!item) return { ok: false, code: "not_found" };
-    await store.set(KNOW_NOTES, { seq: state.seq, items: state.items.filter(entry => entry.id !== item.id) }).catch(() => false);
-    return { ok: true, q: item.q };
+    return done ? { ok: true, q: item.q } : { ok: false, code: "storage_unavailable" };
+  }
+  /** Убрать из тетради всё, что подходит под условие; сколько убрано. Не убрано ничего — записи нет. */
+  async function sweepNotes(gone) {
+    let removed = 0;
+    const done = await amend(KNOW_NOTES, (saved) => {
+      const state = notesOf(saved);
+      const kept = state.items.filter(item => !gone(item));
+      removed = state.items.length - kept.length;
+      return removed ? { seq: state.seq, items: kept } : null;
+    });
+    return removed && !done ? { ok: false, removed: 0 } : { ok: true, removed };
   }
   /** Стереть общие находки. Чужие личные остаются: хозяин их не видит и не трогает. */
-  async function clearNotes() {
-    const state = await readNotes();
-    const kept = state.items.filter(item => item.scope !== "all");
-    await store.set(KNOW_NOTES, { seq: state.seq, items: kept }).catch(() => false);
-    return { ok: true, removed: state.items.length - kept.length };
-  }
+  async function clearNotes() { return sweepNotes(item => item.scope === "all"); }
   /** «Удали всё обо мне»: её личные находки из разговоров с этим человеком. */
-  async function forget(userId) {
-    const state = await readNotes();
-    const kept = state.items.filter(item => item.scope !== `user:${userId}`);
-    if (kept.length !== state.items.length) await store.set(KNOW_NOTES, { seq: state.seq, items: kept }).catch(() => false);
-    return state.items.length - kept.length;
-  }
+  async function forget(userId) { return (await sweepNotes(item => item.scope === `user:${userId}`)).removed; }
 
   /**
    * Что из выученного подходит к этим словам. `{ parts: [{ title, n, of, text }], notes: [{ id, q, text, via, at }] }`.
@@ -307,10 +330,11 @@ export function createKnowledge({ store = null, now = () => Date.now() } = {}) {
   /** Находка пригодилась: её не выкинут первой, когда место кончится. */
   async function used(ids = []) {
     if (!ids.length || !usable()) return;
-    const state = await readNotes();
-    let changed = false;
-    for (const item of state.items) if (ids.includes(item.id)) { item.used = (Number(item.used) || 0) + 1; changed = true; }
-    if (changed) await store.set(KNOW_NOTES, state).catch(() => false);
+    await amend(KNOW_NOTES, (saved) => {
+      const state = notesOf(saved);
+      if (!state.items.some(item => ids.includes(item.id))) return null;
+      return { seq: state.seq, items: state.items.map(item => (ids.includes(item.id) ? { ...item, used: (Number(item.used) || 0) + 1 } : item)) };
+    });
   }
 
   async function stats() {

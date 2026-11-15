@@ -422,3 +422,30 @@ test("игривая поддразнит вдогонку — не всегда
   assert.match(grave, /112/u);
   assert.ok(!tails.some(tail => grave.endsWith(` ${tail}`)), "к серьёзному — ничего вдогонку");
 });
+
+test("одновременно: будильник ударил дважды — привет один; настройка хозяина и отметка будильника не стирают друг друга", async () => {
+  // Запись «писать первой» правят и слова хозяина, и будильник. Раньше каждый писал поверх того,
+  // что прочёл сам: два удара будильника здоровались оба, а отметка могла стереть настройку.
+  reset();
+  let now = at("2026-11-18T03:05:00Z"); // 06:05 по Москве: час утреннего привета
+  const h = heart(ON, { now: () => now });
+  await Promise.all([h.tick({}), h.tick({})]);
+  assert.equal(toOwner().length, 1, "два удара будильника — одно «доброе утро»");
+
+  // Настройки хозяина разом — и удар будильника в вечерний час: легло всё.
+  now = at("2026-11-18T20:10:00Z"); // 23:10
+  await Promise.all([
+    h.tick({}),
+    h.onMessage(own("считай аср по ханафитской школе"), KEY),
+    h.onMessage(own("Рамадан на день позже"), KEY),
+    h.onMessage(own("магриб на 3 минуты позже"), KEY),
+    h.tick({}),
+  ]);
+  const kept = JSON.parse(sdk().kv.get(GREET_KEY));
+  assert.equal(kept.asr, 2, "школа асра");
+  assert.equal(kept.ramadan?.shift, 1, "поправка Рамадана");
+  assert.deepEqual(kept.shift, { maghrib: 3 }, "поправка магриба");
+  assert.equal(kept.m, "2026-11-18", "утренняя отметка цела");
+  assert.equal(kept.n, "2026-11-18", "вечерняя отметка легла");
+  assert.equal(toOwner().filter(item => NIGHT.includes(item.text)).length, 1, "и «спокойной ночи» — одно");
+});

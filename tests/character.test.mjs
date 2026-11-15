@@ -50,7 +50,11 @@ test("своё с каждым: счёт с круглыми числами и �
   assert.deepEqual(parseJoke("забудь все шутки"), { drop: "all" });
   for (const said of ["расскажи шутку", "шутка", "наша шутка", "это шутка: да?", ""]) assert.equal(parseJoke(said), said === "это шутка: да?" ? null : null, said);
   const kv = new Map();
-  const store = { available: true, get: async (key) => kv.get(key) ?? null, set: async (key, value) => { kv.set(key, value); return true; } };
+  const store = {
+    available: true, get: async (key) => kv.get(key) ?? null, set: async (key, value) => { kv.set(key, value); return true; },
+    // Как у настоящего хранилища: правка получает свежее значение; null — «править нечего».
+    update: async (key, change) => { const next = change(kv.has(key) ? JSON.parse(JSON.stringify(kv.get(key))) : null); if (next == null) return false; kv.set(key, next); return true; },
+  };
   const bond = createBond({ store });
   const seen = [];
   for (let index = 1; index <= 26; index += 1) { const got = await bond.count(5, "hug"); if (got.milestone) seen.push(got.n); }
