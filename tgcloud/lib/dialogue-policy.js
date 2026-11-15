@@ -3,9 +3,11 @@ import { PERSONAS, disposition } from "./ai-character.js";
 const DAY = 86_400_000;
 export const AFFINITY_COOLING = Object.freeze({ graceDays: 7, pointsPerDay: 1 });
 const bounded = x => Math.max(-100, Math.min(100, Number(x) || 0));
-/** Что меняет поступок. Числа малы намеренно: близость — это месяцы, а не вечер. */
+/** Что меняет поступок. Числа малы намеренно: близость — это недели, а не вечер. */
 export const DEEDS = Object.freeze({
   thanks: { sympathy: 1 },
+  // Доброе слово о ней самой: «молодец», «умница», «ты лучшая».
+  praise: { sympathy: 1 },
   taught: { respect: 2, trust: 1 },
   apology: { sympathy: 1 },
   rude: { sympathy: -3, respect: -2 },
@@ -13,6 +15,30 @@ export const DEEDS = Object.freeze({
   caress: { sympathy: 1 },
   shove: { sympathy: -1 },
 });
+/**
+ * Шаг за день знакомства. Был один: до первой перемены выходило двадцать пять дней подряд,
+ * и владелец (16.11.2026) перемен не увидел вовсе — «нужно, чтоб реально менялось».
+ */
+export const DAY_STEP = 2;
+/**
+ * Ступени — та же симпатия, но словами и мельче четырёх тонов: перемену должно быть видно
+ * через дни. Тон для модели и пометки словаря остаются прежними (холодно, знакомство,
+ * тепло, близко): «знакомые» звучат как знакомство, «друзья» — как тепло.
+ */
+export const STAGES = Object.freeze([["cold", -100], ["first", -25], ["known", 10], ["warm", 25], ["friend", 50], ["close", 75]]);
+export function stageOf(score) {
+  const value = bounded(score);
+  let out = "cold";
+  for (const [key, from] of STAGES) if (value >= from) out = key;
+  return out;
+}
+const stageRank = (key) => STAGES.findIndex(([name]) => name === key);
+/** Перешла ли симпатия на другую ступень: `{ stage: { from, to, up }, path }` или null. Путь — последние восемь переходов. */
+function stepOf(row, fromScore, toScore, at) {
+  const from = stageOf(fromScore), to = stageOf(toScore);
+  if (from === to) return null;
+  return { stage: { from, to, up: stageRank(to) > stageRank(from) }, path: [...(Array.isArray(row?.path) ? row.path : []), [to, at]].slice(-8) };
+}
 /** Pure projection: no retroactive cooling for legacy rows without an anchor. */
 export function currentSympathy(row = {}, at = Date.now()) {
   const score = bounded(row.sympathy ?? row.score);
@@ -51,7 +77,11 @@ export function createDialoguePolicy({ store, ownerId, random = Math.random, now
     async state(userId, { initialize = true } = {}) {
       const row = isOwner(userId) ? { score: 100, sympathy: 100, trust: 100, respect: 100 } : await (initialize ? readAffinity(`ai:relationship:${userId}`) : read(`ai:relationship:${userId}`)) ?? {};
       const score = isOwner(userId) ? 100 : currentSympathy(row, now());
-      return { score, sympathy: score, trust: bounded(row.trust), respect: bounded(row.respect), blocked: !isOwner(userId) && (Boolean(row.blocked) || score <= -75), free: score >= 75 };
+      return {
+        score, sympathy: score, trust: bounded(row.trust), respect: bounded(row.respect), blocked: !isOwner(userId) && (Boolean(row.blocked) || score <= -75), free: score >= 75,
+        // Ступень словами и путь к ней: когда стали знакомыми, приятелями, друзьями.
+        stage: stageOf(score), path: Array.isArray(row.path) ? row.path : [],
+      };
     },
     async localState(userId, chatId, options = {}) {
       if (String(userId) === String(chatId)) return this.state(userId, options);
@@ -109,13 +139,14 @@ export function createDialoguePolicy({ store, ownerId, random = Math.random, now
         const at = now();
         const score = currentSympathy(before ?? {}, at);
         const days = (Number(before?.days) || 0) + 1;
-        const sympathy = bounded(score + (score < 0 ? 0 : 1));
+        const sympathy = bounded(score + (score < 0 ? 0 : DAY_STEP));
         // Доверие — про надёжность, поэтому растёт медленнее: шаг в три дня.
         const trust = bounded((before?.trust ?? 0) + (score >= 0 && days % 3 === 0 ? 1 : 0));
-        const next = { ...before, sympathy, score: sympathy, trust, respect: bounded(before?.respect ?? 0), affinityAt: at, day, days };
+        const step = stepOf(before, score, sympathy, at);
+        const next = { ...before, sympathy, score: sympathy, trust, respect: bounded(before?.respect ?? 0), affinityAt: at, day, days, ...(step ? { path: step.path } : {}) };
         if (await (before == null ? store.setIfAbsent(key, next) : store.compareSet(key, before, next))) {
           try { await onRelationshipChange({ userId, chatId: null }); } catch { /* перепроверка статуса — не причина терять шаг */ }
-          return { ok: true, changed: true, days, score: sympathy };
+          return { ok: true, changed: true, days, score: sympathy, stage: step?.stage ?? null };
         }
       }
       return { ok: false, changed: false };
@@ -136,16 +167,18 @@ export function createDialoguePolicy({ store, ownerId, random = Math.random, now
         const marks = row.deeds && typeof row.deeds === "object" ? row.deeds : {};
         if (Number.isFinite(marks[kind]) && at - marks[kind] < (kind === "rude" ? 3600_000 : DAY)) return { ok: true, changed: false };
         if (kind === "apology" && !(Number.isFinite(marks.rude) && at - marks.rude < 7 * DAY)) return { ok: true, changed: false };
-        const sympathy = bounded(currentSympathy(row, at) + (deed.sympathy ?? 0));
+        const was = currentSympathy(row, at);
+        const sympathy = bounded(was + (deed.sympathy ?? 0));
+        const step = stepOf(row, was, sympathy, at);
         const next = {
           ...row, sympathy, score: sympathy,
           trust: bounded((row.trust ?? 0) + (deed.trust ?? 0)),
           respect: bounded((row.respect ?? 0) + (deed.respect ?? 0)),
-          affinityAt: at, deeds: { ...marks, [kind]: at },
+          affinityAt: at, deeds: { ...marks, [kind]: at }, ...(step ? { path: step.path } : {}),
         };
         if (await (before == null ? store.setIfAbsent(key, next) : store.compareSet(key, before, next))) {
           try { await onRelationshipChange({ userId, chatId: null }); } catch { /* см. выше */ }
-          return { ok: true, changed: true, score: sympathy };
+          return { ok: true, changed: true, score: sympathy, stage: step?.stage ?? null };
         }
       }
       return { ok: false, changed: false };

@@ -432,6 +432,8 @@ export function createFun({
     const sent = await show(turn, reaction.gif, esc(text), { reply: true, gifs });
     if (sent === "text") await ownSticker(turn, reaction.mood);
     if (reaction.deed && policy) { try { await policy.recordDeed({ userId: turn.actorId, kind: reaction.deed }); } catch { /* шаг отношений подождёт */ } }
+    // Ласка — тоже доброе слово: она снимает обиду и радует (bond.js, `feelOf`).
+    if (reaction.deed === "caress" && bond?.mark) await bond.mark(turn.actorId, "caress").catch(() => null);
     return sent ? { ok: true, action: "rp", kind: action.key, via: sent, level: reaction.level } : { ok: false, code: "send_failed" };
   }
 

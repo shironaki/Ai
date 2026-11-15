@@ -17,25 +17,25 @@ test("аудит 1: отношения двигаются — день знак�
   let at = Date.UTC(2026, 10, 11, 9);
   const h = heart({}, { now: () => at });
   for (let i = 0; i < 30; i++) await h.onMessage(message(`сообщение номер ${i}`), KEY);
-  assert.equal((await h.policy.state(5)).score, 1, "один день — один шаг");
+  assert.equal((await h.policy.state(5)).score, 2, "один день — один шаг (шаг дня — два)");
   assert.ok(sdk().kv.has("ai:relationship:5"), "запись об отношениях появилась");
 
   at += DAY;
   await h.onMessage(message("я снова здесь"), KEY);
-  assert.equal((await h.policy.state(5)).score, 2, "новый день — ещё шаг");
+  assert.equal((await h.policy.state(5)).score, 4, "новый день — ещё шаг");
 
   // Поступок считается раз в сутки: вторая благодарность ничего не покупает.
   await h.onMessage(message("спасибо, это помогло разобраться"), KEY);
   await h.onMessage(message("спасибо ещё раз за помощь тогда"), KEY);
-  assert.equal((await h.policy.state(5)).score, 3);
+  assert.equal((await h.policy.state(5)).score, 5);
 
   // Грубость остужает, извинение лечит только недавнюю рану и не целиком.
   await h.onMessage(message("да ты тупая просто"), KEY);
   const hurt = await h.policy.state(5);
-  assert.equal(hurt.score, 0);
+  assert.equal(hurt.score, 2);
   assert.equal(hurt.respect, -2);
   await h.onMessage(message("прости, зря я так сказал"), KEY);
-  assert.equal((await h.policy.state(5)).score, 1);
+  assert.equal((await h.policy.state(5)).score, 3);
 });
 
 test("аудит 2: в группе хозяин — участник, а сказанное в личке при всех не звучит", async () => {

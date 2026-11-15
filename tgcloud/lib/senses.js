@@ -265,7 +265,7 @@ export function createSenses({
   }
 
   /** Открыть страницу и взять из неё текст. `{ ok, url, host, title, description, text }`. */
-  async function read(url) {
+  async function read(url, { limit = PAGE_LIMIT } = {}) {
     const target = safeUrl(url);
     if (!target) return { ok: false, code: "bad_url" };
     const fetcher = doFetch();
@@ -284,7 +284,7 @@ export function createSenses({
     if (Number(header("content-length")) > 3_000_000) return { ok: false, code: "too_big" };
     let source = "";
     try { source = await response.text(); } catch { return { ok: false, code: "network" }; }
-    const page = pageText(String(source).slice(0, 1_500_000), { plain: /text\/plain/u.test(type) });
+    const page = pageText(String(source).slice(0, 1_500_000), { plain: /text\/plain/u.test(type), limit });
     if (!page.text && !page.description && !page.title) return { ok: false, code: "empty" };
     return { ok: true, url: final, host: final.replace(/^https?:\/\//u, "").replace(/[/:?#].*$/u, ""), ...page };
   }

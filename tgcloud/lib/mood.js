@@ -38,17 +38,20 @@ const hashOf = (text) => { let hash = 2166136261; for (const char of String(text
  *   mood   — «сонное», «игривое»: прилагательное к слову «настроение»;
  *   reason — ключ причины для словаря: «ночь», «пятница», «давно не виделись».
  */
-export function moodOf({ now = Date.now(), timeZone = "UTC", userId = "", gapDays = 0, talks = 0, limited = false } = {}) {
+export function moodOf({ now = Date.now(), timeZone = "UTC", userId = "", gapDays = 0, talks = 0, limited = false, hurt = false, glad = false } = {}) {
   const local = localParts(now, timeZone);
   const { hour, weekday, month, day, clock } = local;
   const seed = hashOf(`${userId}:${month}.${day}:${Math.floor(hour / 3)}`);
   const out = (mood, reason) => ({ mood, reason, clock, hour });
 
   if (limited) return out("уставшее", "лимит");
+  // Поступки этого человека важнее часа и календаря: нагрубил — задета, сказал доброе слово — довольна.
+  if (hurt) return out("обиженное", "обида");
   const special = DATES.find(([m, d]) => m === month && d === day);
   if (special) return out(special[3], special[2]);
   if (weekday === 5 && day === 13) return out("суеверное", "пятница 13");
   if (gapDays >= 3) return out("радостное", "давно не виделись");
+  if (glad) return out("довольное", "похвала");
   if (hour < 5 || hour >= 23) return out(seed % 2 ? "сонное" : "мечтательное", "ночь");
 
   // Остальное — из того, что сейчас правда; выбор между правдами — по зерну.
@@ -72,6 +75,8 @@ export function moodOf({ now = Date.now(), timeZone = "UTC", userId = "", gapDay
  *   soft    — мягче и неторопливее (мечтательное, задумчивое, уютное…);
  *   chatty  — говорит чуть больше и спрашивает в ответ (разговорчивое, бодрое);
  *   plain   — как обычно.
+ * Два настроения — от поступков человека: «обиженное» (short, со своей подсказкой) и
+ * «довольное» (playful).
  * `hint` — та же мысль для модели, чтобы слова из словаря и её ответы совпадали.
  */
 const WAYS = Object.freeze({
@@ -80,7 +85,12 @@ const WAYS = Object.freeze({
   soft: [["мечтательное", "задумчивое", "уютное", "романтичное", "таинственное", "весеннее", "суеверное"], "Сейчас говори мягче и неторопливо; уместна одна образная деталь."],
   chatty: [["разговорчивое", "бодрое"], "Сейчас можно сказать чуть больше обычного и задать встречный вопрос."],
 });
+/** Задета грубостью: коротко и сдержанно — но просьбу выполняет и не мстит. */
+const HURT_HINT = "Собеседник недавно был с тобой груб, и ты задета. Отвечай коротко и сдержанно, без шуток, нежностей и заигрывания; просьбу выполни как обычно. Не мсти, не язви и не поминай обиду в каждом ответе: об обиде говори, только если спросят. Извинится или скажет доброе слово — оттай.";
+const GLAD_HINT = "Собеседник недавно сказал тебе доброе слово, и ты довольна. Отвечай теплее и живее обычного; можно пошутить.";
 export function behaviourOf(mood) {
+  if (String(mood) === "обиженное") return { kind: "short", hint: HURT_HINT };
+  if (String(mood) === "довольное") return { kind: "playful", hint: GLAD_HINT };
   for (const [kind, [moods, hint]] of Object.entries(WAYS)) if (moods.includes(String(mood))) return { kind, hint };
   return { kind: "plain", hint: "" };
 }
