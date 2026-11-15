@@ -88,7 +88,7 @@ import { toSticker, parseStickerAsk, stickerSource, packName, PACK_KEY, STICKER_
  * роль, уровень, ID, VIP, варны. Модель не должна отвечать на них даже при
  * пустом мосте — она не знает и выдумает.
  */
-export const FACT_QUESTION = /^(?:(?:покажи|открой|скажи|что|какой|какая|каково|сколько)\s+)*(?:(?:у\s+меня|мне|мой|моя|мою|мои)\s+)*(?:профил[ья]?|карточк[ауи]|роль|уровень|варны|предупреждени[яй]|vip|id|ид)(?:[\s,.!?;:]|$)/iu;
+export const FACT_QUESTION = /^(?:(?:покажи|открой|скажи|что|какой|какая|каково|сколько)\s+)*(?:(?:у\s+меня|мне|мой|моя|мою|мои)\s+)*(?:профил[ья]?|карточк[ауи]|роль|уровень|варны|предупреждени[яй]|vip|id|ид(?!\s+(?:мубарак|саид|аль|уль|эль|фитр|адха)))(?:[\s,.!?;:]|$)/iu;
 
 export function pauseFor({ facts = null, config = CONFIG } = {}) {
   const base = Number(config.AI_MIN_INTERVAL_MS) || 0;
@@ -7300,7 +7300,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt)) || parseSkillAsk(prompt, SKILLS)) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    // Фраза, выписанная в словаре целиком, важнее догадки: «погода хорошая» — не город «Хорошая», «покажи ушки» —
+    // не картинка из энциклопедии. Источник и поиск картинки «на всякий случай» о ней не спрашивают, а если её
+    // не взяло ни одно умение, отвечает словарь, а не модель. Точные умения («что нового», «станцуй») остаются первыми.
+    const spoken = PHRASES && !dry ? book.match(prompt) : null;
+    // Знание наизусть («знание: …») — сильнее и умений: «сколько градусов в прямом углу» — не погода,
+    // «сколько до Луны» — не счёт дней.
+    const byHeart = Boolean(spoken?.some(name => /^!?знание:/u.test(name)));
+    const request = !byHeart && Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt)) || parseSkillAsk(prompt, SKILLS)) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseFast(prompt) || parseQibla(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -7402,12 +7409,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
     // Счёт, погода, курс, часы, энциклопедия: факт берётся у источника, а не
     // у модели — она бы его придумала. Картинки и жесты — туда же.
-    const viaSource = await fromSource(turn, prompt);
+    const viaSource = spoken ? null : await fromSource(turn, prompt);
     if (viaSource) return ruled({ ok: true, action: "source" });
     const viaPicture = await showPicture(turn, prompt);
     if (viaPicture) return ruled({ ok: true, action: "picture" });
     // Профиль и роль — не предмет для поиска картинки: о них ниже.
-    const viaMedia = FACT_QUESTION.test(prompt) ? null : await whence(turn, prompt) ?? await findMedia(turn, prompt);
+    const viaMedia = FACT_QUESTION.test(prompt) ? null : await whence(turn, prompt) ?? (spoken && parseMedia(prompt)?.loose ? null : await findMedia(turn, prompt));
     if (viaMedia) return ruled(viaMedia);
 
     // Профиль, роль, уровень, VIP и варны — это факты из базы, а не тема для
@@ -7445,7 +7452,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
 
     // Словарь: «привет», «как дела», вкусы, пасхалки. Модель на это не тратится.
-    if (!request) {
+    // Похоже на просьбу, но умения её не взяли, а словарь знает целиком («не молчи» в личке) — тоже словарь.
+    if (!request || spoken) {
       const phrased = await smallTalk(turn, prompt);
       if (phrased) return ruled(phrased);
     }
