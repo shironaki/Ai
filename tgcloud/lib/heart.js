@@ -262,11 +262,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     timeouts: Number.isFinite(bridgeWait) && bridgeWait > 0 ? { call: bridgeWait, catalogue: bridgeWait, context: bridgeWait } : {},
     // Сестра промолчала: владелец узнаёт об этом сам и один раз, а не из
     // того, что каждый ответ стал приходить через полминуты.
-    onSilence: async ({ until }) => {
+    onSilence: async ({ until, failures }) => {
       pulse.bump("bridge_missed");
+      // Один раз на молчание: пока её бота нет, повторять это каждые сутки незачем.
+      if (Number(failures) > 1) return;
       await notices.report({
-        component: "bridge", code: "silent", severity: "degraded",
-        detail: `${SISTER} не ответила на мосту. Отвечаю сама и не жду её до ${clock(until)}`,
+        component: "bridge", code: "silent", title: "Мост", severity: "info",
+        detail: `${SISTER} не ответила на мосту — отвечаю сама, её не жду; спрошу снова после ${clock(until)}`,
+        hint: `Пока бота ${SISTER} нет или он выключен, так и должно быть: на мои ответы это не влияет. Повторять не буду — скажу, когда она ответит и замолчит снова.`,
       });
     },
     // Часы двух ботов разошлись больше допуска: владелец узнаёт причину словами.
@@ -1002,6 +1005,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // "Не ответила" and "её здесь нет" are different facts. Saying the second
     // when the first happened sends the owner to look for a bot that is already
     // standing right there.
+    // Не дождалась или она молчит — без кода ошибки и без «попробуйте ещё раз»: от человека тут ничего не зависит.
+    if (!listed.ok && /^bridge_(?:timeout|waiting|silent|no_answer)$/u.test(String(listed.code))) return say(turn, `${NAME}: это умение ${SISTER}, а она сейчас не отвечает. Без неё я его не выполню.`);
     if (!listed.ok) return say(turn, `${NAME}: ${SISTER} не ответила на запрос умений (${listed.code}). ${you(turn, "Попробуйте", "Попробуй")} ещё раз.`);
     if (!listed.tools.some(item => item.name === tool)) return said("not_in_chat");
 
@@ -3522,7 +3527,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try {
       if (Number((await draw.state())?.until) > now()) return null;
       // Описание своё и заведомо безобидное: после ложного отказа фильтра можно звать запасных художников.
-      const got = await draw.paint(postcardPrompt(occasion, title), { seed: Math.floor(random() * 1_000_000), free: true });
+      const got = await draw.paint(postcardPrompt(occasion, title), { free: true });
       return got.ok ? got.bytes : null;
     } catch { return null; }
   }
@@ -3971,7 +3976,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // безобидно по построению: после ложного отказа фильтра ему можно к запасным художникам.
     // Чужие слова («себя в шляпе») готовым описанием не считаются.
     const ready = Boolean(subject.card) || (!subject.look && (made.how === "словарь" || made.how === "своё"));
-    const got = await draw.paint(made.prompt, { seed: Math.floor(random() * 1_000_000), free: free || ready, asIs, core: made.core });
+    const got = await draw.paint(made.prompt, { free: free || ready, asIs, core: made.core });
     if (!got.ok) {
       if (got.code === "resting" || got.code === "limit" || got.code === "auth") {
         const why = got.code === "resting" ? got.why : got.code;
@@ -4377,7 +4382,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const fresh = GUESSABLE.filter(row => !seen.includes(row.title));
     const row = (fresh.length ? fresh : GUESSABLE)[Math.min((fresh.length || GUESSABLE.length) - 1, Math.floor(random() * (fresh.length || GUESSABLE.length)))];
     if (has("sendChatAction")) { try { await api.sendChatAction({ chat_id: turn.chatId, action: "upload_photo", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) }); } catch { /* индикатор не важнее рисунка */ } }
-    const got = await draw.paint(row.prompt, { seed: Math.floor(random() * 1_000_000), free: true, core: row.prompt });
+    const got = await draw.paint(row.prompt, { free: true, core: row.prompt });
     if (!got.ok) {
       if (got.code === "resting" || got.code === "limit") return say(turn, `Краски на сегодня кончились — загадаю, когда вернутся: в ${clock(got.until)}.`);
       return say(turn, "Загадка не вышла: мастерская сейчас не рисует. Попробуйте чуть позже.");
@@ -6515,6 +6520,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const called = vocative(mentioned ? stripMention(prompt, self?.username) : prompt, [NAME.toLowerCase()]);
       turn.addressed = command?.name === "ai" || turn.replyToMe || mentioned || called.addressed;
       if (!turn.addressed) {
+        // Чат, где она слышит разговор, — тоже её чат: в списке он должен быть и тогда, когда к ней
+        // ещё не обращались (статус владельца 16.11.2026: «список чатов пока пуст» при живых чатах).
+        // Один взгляд в базу на чат за жизнь изолята.
+        if (!dry && !knownChats.has(String(chat.id))) await noteChat(chat).catch(() => false);
         // Не к ней — но «обнять» ответом на чужое сообщение она разыграет.
         const acted = await fun.roleplay(turn, prompt, { self, addressed: false });
         return acted ?? { ignored: true };

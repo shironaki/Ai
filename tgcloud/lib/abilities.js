@@ -1,4 +1,5 @@
 import { createBridge } from "./bridge.js";
+import { hasTimers, later, cancel } from "./timers.js";
 
 /**
  * The abilities port: how the heart asks another bot to do something.
@@ -76,6 +77,15 @@ export const STALE_OK_MS = 24 * 3600_000;
  * От повтора защищает не срок, а одноразовый `id`: его помнят сутки.
  */
 export const CLOCK_SLACK_MS = 600_000;
+/**
+ * На платформе таймеров нет: дождаться ответа сестры в том же обращении почти
+ * никогда не выйдет — он приходит отдельным обновлением через секунду-другую.
+ * Тогда вопрос считается «в пути»: столько ждём опоздавший ответ, прежде чем
+ * назвать это молчанием, и столько же не задаём новых вопросов.
+ */
+export const LATE_OK_MS = 15_000;
+/** Сколько раз заглянуть в базу за ответом там, где ждать нечем. */
+export const POLLS_WITHOUT_TIMERS = 40;
 
 export function createAbilities({ secret = "", channelId = "", api = null, send = null, now = () => Date.now(), ttl = CLOCK_SLACK_MS, store = null, name = "Аи", sister = "Юи", timeouts = {}, onSilence = null, onClock = null, tidy = true } = {}) {
   const bridge = createBridge({ secret, capabilities: { call: async () => ({ ok: false }) }, now, slack: CLOCK_SLACK_MS });
@@ -93,14 +103,15 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
    */
   let health = null;
   let healthAt = 0;
-  async function readHealth() {
-    if (health && (health.until > now() || now() - healthAt < 60_000)) return health;
+  async function readHealth({ fresh = false } = {}) {
+    if (!fresh && health && (health.until > now() || now() - healthAt < 60_000)) return health;
     let saved = null;
     try { saved = store && typeof store.get === "function" ? await store.get(BRIDGE_HEALTH_KEY) : null; } catch { saved = null; }
     // Нет записи в базе — остаётся то, что помнит изолят: счёт пропусков не
     // должен обнуляться только потому, что базы нет или она не ответила.
-    if (saved && typeof saved === "object") health = { until: Number(saved.until) || 0, failures: Number(saved.failures) || 0, since: Number(saved.since) || 0 };
-    else health ??= { until: 0, failures: 0, since: 0 };
+    // `waiting` — час, когда ушёл вопрос, ответа на который ещё ждут (там, где нет таймеров).
+    if (saved && typeof saved === "object") health = { until: Number(saved.until) || 0, failures: Number(saved.failures) || 0, since: Number(saved.since) || 0, waiting: Number(saved.waiting) || 0 };
+    else health ??= { until: 0, failures: 0, since: 0, waiting: 0 };
     healthAt = now();
     return health;
   }
@@ -110,6 +121,7 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   async function missed() {
     const state = await readHealth();
     state.failures += 1;
+    state.waiting = 0;
     if (!state.since) state.since = now();
     state.until = now() + Math.min(30, 2 ** Math.min(state.failures, 5)) * 60_000;
     await writeHealth();
@@ -119,8 +131,8 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   }
   async function answered() {
     const state = await readHealth();
-    if (!state.failures && !state.until) return;
-    state.failures = 0; state.until = 0; state.since = 0;
+    if (!state.failures && !state.until && !state.waiting) return;
+    state.failures = 0; state.until = 0; state.since = 0; state.waiting = 0;
     await writeHealth();
   }
   /** Мост настроен, но сестра сейчас не отвечает: спрашивать бессмысленно. */
@@ -158,10 +170,45 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     try { await onClock({ seconds: Math.round(Math.abs(Number(seconds) || 0)), who }); } catch { /* отчёт не должен ломать ответ */ }
   }
 
+  /**
+   * Ждать ответа там, где таймеров нет: заглядывать в базу, пока не выйдет срок
+   * или число попыток. Каждый запрос к базе — настоящий ввод-вывод, на нём
+   * обращение и «стоит»; пустого цикла здесь нет.
+   */
+  async function pollAnswer(id, timeout, here) {
+    const deadline = now() + timeout;
+    for (let attempt = 0; attempt < POLLS_WITHOUT_TIMERS && canStore; attempt++) {
+      const got = here();
+      if (got) return got;
+      let saved = null;
+      try { saved = await store.get(ANSWER_PREFIX + id); } catch { saved = null; }
+      if (saved?.result) {
+        try { await store.remove(ANSWER_PREFIX + id); } catch { /* сметёт уборка */ }
+        return saved.result;
+      }
+      if (now() >= deadline) break;
+    }
+    const got = here();
+    if (got) return got;
+    throw Object.assign(Error("bridge_timeout"), { code: "bridge_timeout" });
+  }
+
   /** Seal one call, post it, and wait for the signed answer. */
   async function call(tool, { actor = null, chat = null, chatType = null, args = {}, timeout = wait.call, lateKey = "" } = {}) {
     if (!open()) return { ok: false, code: "bridge_not_configured", text: "" };
     if (await silent()) return { ok: false, code: "bridge_silent", text: "" };
+    // Таймеров нет (так на платформе): ответ придёт отдельным обновлением, позже.
+    // Пока прошлый вопрос «в пути», новых не задаём; не пришёл за срок — это молчание.
+    const timed = hasTimers();
+    if (!timed) {
+      const state = await readHealth({ fresh: true });
+      if (state.until > now()) return { ok: false, code: "bridge_silent", text: "" };
+      if (state.waiting) {
+        if (now() - state.waiting < LATE_OK_MS) return { ok: false, code: "bridge_waiting", text: "" };
+        await missed();
+        return { ok: false, code: "bridge_silent", text: "" };
+      }
+    }
     const sealed = await bridge.seal({ tool, args, actor, chat, chatType, ttl });
     if (!sealed.ok) return { ok: false, code: sealed.code, text: "" };
     const id = String(sealed.envelope.id);
@@ -169,12 +216,16 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     let settled = false;
     let poll = null;
     let timer = null;
+    // Ответ, который пришёл в этот же изолят, пока обращение опрашивает базу.
+    let arrived = null;
     const answer = new Promise((resolve, reject) => {
-      timer = setTimeout(() => {
-        settled = true; clearTimeout(poll); pending.delete(id);
-        reject(Object.assign(Error("bridge_timeout"), { code: "bridge_timeout" }));
-      }, timeout);
-      pending.set(id, { resolve: (value) => { if (settled) return; settled = true; clearTimeout(timer); clearTimeout(poll); resolve(value); } });
+      pending.set(id, { resolve: (value) => { if (settled) return; settled = true; cancel(timer); cancel(poll); arrived = value; resolve(value); } });
+      if (timed) {
+        timer = later(() => {
+          settled = true; cancel(poll); pending.delete(id);
+          reject(Object.assign(Error("bridge_timeout"), { code: "bridge_timeout" }));
+        }, timeout);
+      }
     });
 
     const label = TOOL_NOTE[tool] ?? String(tool ?? "").slice(0, 32);
@@ -183,16 +234,16 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     try { asked = await post(encodeEnvelope(sealed.envelope, note)); }
     catch {
       // Вопрос не ушёл: ждать нечего, и таймер не должен сработать впустую.
-      settled = true; clearTimeout(timer); clearTimeout(poll); pending.delete(id);
+      settled = true; cancel(timer); cancel(poll); pending.delete(id);
       return { ok: false, code: "bridge_send_failed", text: "" };
     }
 
     // Ответ мог прийти обработчику канала в другом изоляте: он положил его в
     // базу. Заглядываем туда всё реже, пока ждём.
-    if (canStore) {
+    if (timed && canStore) {
       let delay = 200;
       const look = () => {
-        poll = setTimeout(async () => {
+        poll = later(async () => {
           if (settled) return;
           let saved = null;
           try { saved = await store.get(ANSWER_PREFIX + id); } catch { saved = null; }
@@ -212,14 +263,23 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
     }
 
     try {
-      const result = await answer;
+      const result = timed ? await answer : await pollAnswer(id, timeout, () => arrived);
+      pending.delete(id);
       await answered();
       // Сестра ответила, но отказом «срок вышел»: её часы и время в вопросе разошлись больше допуска.
       if (result?.ok === false && result.code === "expired") await clockTrouble(((Number(result.ts) || now()) - Number(sealed.envelope.ts)) / 1000, "sister");
       return result;
     } catch (error) {
-      // Молчание — это факт о сестре, а не о вопросе: запоминаем его.
-      await missed();
+      pending.delete(id);
+      if (timed) {
+        // Молчание — это факт о сестре, а не о вопросе: запоминаем его.
+        await missed();
+      } else {
+        // Ждать было нечем: вопрос «в пути». Молчанием это станет, если ответ не придёт и позже.
+        const state = await readHealth();
+        state.waiting = now();
+        await writeHealth();
+      }
       if (lateKey && canStore) await adoptLater(id, lateKey);
       return { ok: false, code: error.code ?? "bridge_timeout", text: "" };
     } finally {
@@ -286,6 +346,8 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
         return true;
       }
       await store.set(ANSWER_PREFIX + id, { result, at: now() });
+      // Подписанный ответ пришёл — сестра жива, даже если спросивший его уже не ждёт.
+      await answered();
       return true;
     } catch { return false; }
   }
@@ -392,7 +454,7 @@ export function createAbilities({ secret = "", channelId = "", api = null, send 
   /** Здоровье моста одной записью: для /status и для отчёта владельцу. */
   async function healthState() {
     const state = await readHealth();
-    return { silent: state.until > now(), until: state.until, since: state.since, failures: state.failures };
+    return { silent: state.until > now(), until: state.until, since: state.since, failures: state.failures, waiting: state.waiting > 0 && now() - state.waiting < LATE_OK_MS, timers: hasTimers() };
   }
 
   return Object.freeze({ open, call, onPost, catalog, catalogue, context, verify, silent, ping, sweep, clean, health: healthState, decode: decodeEnvelope, bridge });

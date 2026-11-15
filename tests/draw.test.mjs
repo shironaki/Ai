@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { heart, message, group, reset, last, calls, chats, says, refuses, sdk, source, sourced, toOwner, OWNER, KEY, toChat } from "./fixtures/kit.mjs";
 
-const { splitKey, fromBase64, refusal, subjectOf, createDraw, briefOf } = await import("../tgcloud/lib/draw.js");
+const { splitKey, fromBase64, refusal, subjectOf, createDraw, briefOf, unknownFields } = await import("../tgcloud/lib/draw.js");
 const { subjectFor, placesIn, SUBJECTS, GUESSABLE } = await import("../tgcloud/lib/data/subjects.js");
 const CAT_WORDS = subjectFor("кота").prompt;
 const { CONFIG } = await import("../tgcloud/lib/config.js");
@@ -213,8 +213,8 @@ test("«нарисуй кота»: отказ мастерской не прин
   let h = heart(ON, { now: () => NOON });
   await h.onMessage(message("нарисуй кота", { id: OWNER }), KEY);
   assert.equal(photos().length, 1, "хозяин получил кота");
-  const seed = asked("flux-1-schnell")[0].seed;
-  assert.deepEqual(asked("flux-1-schnell"), [{ prompt: CAT_WORDS, steps: 8, seed }, { prompt: `${CAT_WORDS}, illustration, safe for work`, steps: 8, seed }]);
+  // Поля `seed` в запросе нет: вживую основной художник его не принял, и каждый рисунок начинался с отказа.
+  assert.deepEqual(asked("flux-1-schnell"), [{ prompt: CAT_WORDS, steps: 8 }, { prompt: `${CAT_WORDS}, illustration, safe for work`, steps: 8 }]);
   assert.equal(asked("m2m100").length, 0, "своё описание не переводится");
   // «Как нарисовано?» — хозяину: чем собрано, что ушло, с какой попытки.
   await h.onMessage(message("как нарисовано?", { id: OWNER }), KEY);
@@ -228,12 +228,28 @@ test("«нарисуй кота»: отказ мастерской не прин
   assert.match(last(OWNER), /Рисование: краски есть.* · заминка в \d\d:\d\d \(нарисовал FLUX schnell\): FLUX schnell — 400 «Input prompt contains NSFW content\.» \(код 3030\)/u);
 
   // 2. Не фильтр: мастерской не понравилось поле. Раньше «not allowed» читалось как фильтр.
+  // Слова — те, что пришли вживую 15.11.2026 (тогда о поле `seed`). Названное поле убирается
+  // и запоминается: следующий рисунок с отказа уже не начинается.
   reset();
-  source("flux-1-schnell", (url, options) => ("seed" in JSON.parse(options.body) ? cfError(400, 5006, "Bad input: Additional properties are not allowed ('seed' was unexpected)") : image()));
+  source("flux-1-schnell", (url, options) => ("steps" in JSON.parse(options.body) ? cfError(400, 5006, "AiError: Bad input: Error: Additional or unevaluated properties '/steps' at '/' not allowed (5924aed7-7242-4440-a36a-32bca5ff5001)") : image()));
   h = heart(ON, { now: () => NOON });
   await h.onMessage(message("нарисуй кота"), KEY);
   assert.equal(photos().length, 1);
-  assert.deepEqual(asked("flux-1-schnell").at(-1), { prompt: CAT_WORDS }, "второй раз — только описание");
+  assert.deepEqual(asked("flux-1-schnell"), [{ prompt: CAT_WORDS, steps: 8 }, { prompt: CAT_WORDS }], "второй раз — без названного поля");
+  await h.onMessage(message("нарисуй кота", { id: 9 }), KEY);
+  assert.equal(photos().length, 2);
+  assert.deepEqual(asked("flux-1-schnell").slice(2), [{ prompt: CAT_WORDS }], "урок усвоен: одна попытка, а не две");
+  // Поле не названо — как раньше: то же самое без необязательных полей.
+  reset();
+  source("flux-1-schnell", (url, options) => ("steps" in JSON.parse(options.body) ? cfError(400, 5006, "Bad input") : image()));
+  h = heart(ON, { now: () => NOON });
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(photos().length, 1);
+  assert.deepEqual(asked("flux-1-schnell").at(-1), { prompt: CAT_WORDS });
+  assert.deepEqual(unknownFields("AiError: Bad input: Error: Additional or unevaluated properties '/seed' at '/' not allowed (5924aed7)"), ["seed"]);
+  assert.deepEqual(unknownFields("Bad input: Additional properties are not allowed ('seed' was unexpected)"), ["seed"]);
+  assert.deepEqual(unknownFields("properties '/prompt', '/steps' not allowed"), ["steps"], "описание лишним не бывает");
+  assert.deepEqual(unknownFields("Input prompt contains NSFW content."), []);
 
   // 3. Основной художник запрос не принимает вовсе: рисует запасной, картинка приходит файлом.
   reset();

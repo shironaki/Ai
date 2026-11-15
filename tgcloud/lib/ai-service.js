@@ -1,3 +1,4 @@
+import { sleep } from "./timers.js";
 import { CHARACTER_PROMPT, CORE_PROMPT } from "./ai-character.js";
 import { readLimits, DEFAULT_REST_MS } from "./brains.js";
 
@@ -65,11 +66,8 @@ const untilUtcMidnight = (at) => Math.max(5 * 60_000, 86_400_000 - (at % 86_400_
 /** От чего отказалась модель: список полей; прежняя отметка `plain` — это «без усилия». */
 const dropsOf = (brain) => (Array.isArray(brain.drop) && brain.drop.length ? brain.drop : brain.plain ? ["reasoning_effort"] : []);
 
-/** Подождать. В изоляте без таймеров ожидание пропускается, а не падает. */
-export function sleep(ms) {
-  if (typeof setTimeout !== "function" || !(ms > 0)) return Promise.resolve();
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+/** Подождать. В изоляте без таймеров ожидание пропускается, а не падает (`timers.js`). */
+export { sleep };
 
 /**
  * AbortSignal.timeout is a web API, not ECMAScript. The Telegram Serverless

@@ -6,6 +6,8 @@
  * expects, so the heart can be moved to another database by replacing this file
  * alone.
  */
+import { sleep } from "./timers.js";
+
 export function createHeartStore({ db, now = () => Date.now() } = {}) {
   const has = db && typeof db.get === "function" && typeof db.run === "function";
 
@@ -115,8 +117,8 @@ export function createHeartStore({ db, now = () => Date.now() } = {}) {
 
   const compareSetGuarded = (key, before, next) => compareSet(key, before, next);
 
-  /** Пауза в миллисекундах; где таймеров нет — без паузы. */
-  const pause = (ms) => (typeof setTimeout === "function" && ms > 0 ? new Promise(resolve => setTimeout(resolve, ms)) : Promise.resolve());
+  /** Пауза в миллисекундах; где таймеров нет (так на платформе) — без паузы. */
+  const pause = sleep;
 
   /**
    * Правка поверх самого свежего значения. `change(value)` получает то, что

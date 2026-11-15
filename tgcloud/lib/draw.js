@@ -91,6 +91,19 @@ export const SPARE_REST_MS = 6 * 3_600_000;
 export const SPARES_KEY = "heart:draw:spares";
 /** Последняя неудача рисования: что ответила мастерская. Для статуса. */
 export const DRAW_LAST_KEY = "heart:draw:last";
+/** Поля запроса, которые основной художник назвал лишними: впредь их ему не шлют. */
+export const DRAW_DROP_KEY = "heart:draw:drop";
+/**
+ * Имена полей из отказа «Additional or unevaluated properties '/seed' at '/' not allowed»
+ * (так ответил FLUX schnell вживую 15.11.2026) и из прежней формы «('seed' was unexpected)».
+ * Описание (`prompt`) лишним не бывает.
+ */
+export function unknownFields(words) {
+  const text = String(words ?? "");
+  if (!/not\s+allowed|unexpected|unevaluated/iu.test(text)) return [];
+  const names = [...text.matchAll(/'\/?([a-z_]{2,24})'/giu)].map(found => found[1].toLowerCase());
+  return [...new Set(names)].filter(name => name !== "prompt");
+}
 /** Слова мастерской о своём фильтре. Только они — «blocked»; остальное 400 — не фильтр. */
 const FLAGGED = /nsfw|not\s+safe\s+for\s+work|safety\s+(?:checker|filter|system)|content\s+(?:policy|filter)|flagged\s+as/u;
 /**
@@ -252,7 +265,7 @@ export function subjectOf(query) {
 export function createDraw({ fetchImpl = null, key = "", store = null, now = () => Date.now(), steps = STEPS, directors = [] } = {}) {
   const parts = splitKey(key);
   const available = Boolean(parts && typeof fetchImpl === "function");
-  const memory = { until: 0, why: "", words: { off: {}, why: {}, translator: null }, spares: {} };
+  const memory = { until: 0, why: "", words: { off: {}, why: {}, translator: null }, spares: {}, drop: [] };
   const writers = (Array.isArray(directors) ? directors : []).map(item => String(item ?? "").trim()).filter(item => item.startsWith("@")).slice(0, 2);
 
   async function state() {
@@ -283,6 +296,18 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
       if (row && Number(row.until) > now()) out[painter.id] = { title: painter.title, until: Number(row.until), status: Number(row.status) || 0, said: String(row.said ?? "") };
     }
     return out;
+  }
+  /** Поля, от которых основной художник уже отказался. */
+  async function forgone() {
+    let saved = null;
+    try { saved = store && typeof store.get === "function" ? await store.get(DRAW_DROP_KEY) : null; } catch { saved = null; }
+    const list = Array.isArray(saved?.fields) ? saved.fields : memory.drop;
+    return list.map(String).filter(name => /^[a-z_]{2,24}$/u.test(name)).slice(0, 8);
+  }
+  async function forgo(names) {
+    const next = [...new Set([...(await forgone()), ...names])].slice(0, 8);
+    memory.drop = next;
+    try { if (store && typeof store.set === "function") await store.set(DRAW_DROP_KEY, { fields: next, at: now() }); } catch { /* останется в памяти изолята */ }
   }
   async function restSpare(painter, { status = 0, said = "" } = {}) {
     const resting = await spares();
@@ -509,14 +534,17 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
    * `prompt` — готовое английское описание: его собирает `compose`.
    * К удаче приложено `via` — какой по счёту и какой попыткой вышло.
    */
-  async function paint(prompt, { seed = null, free = false, asIs = false, core = "" } = {}) {
+  async function paint(prompt, { free = false, asIs = false, core = "" } = {}) {
     if (!available) return { ok: false, code: "off" };
     const idle = await state();
     if (idle.until > now()) return { ok: false, code: "resting", why: idle.why, until: idle.until };
     const started = now();
     const words = String(prompt).slice(0, 2000);
+    // Поля `seed` здесь больше нет: основной художник его не принимает («Additional or unevaluated
+    // properties '/seed'», статус владельца 16.11.2026), и каждый рисунок начинался с отказа.
     const full = { prompt: words, steps: Math.min(8, Math.max(1, Math.trunc(Number(steps)) || STEPS)) };
-    if (Number.isFinite(Number(seed)) && seed != null) full.seed = Number(seed);
+    // От чего он отказался раньше — не шлём с первой попытки.
+    for (const name of await forgone()) delete full[name];
     const tries = [];
     // Кого из запасных не спрашивали: они отдыхают после своего отказа. В отказе и в статусе — по именам.
     const resting = [];
@@ -562,9 +590,17 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
 
     let got = await attempt(main, full);
     if (settled(got)) return got;
-    // Не фильтр, а «запрос не принят»: то же самое без необязательных полей.
+    // Не фильтр, а «запрос не принят». Назвал лишние поля — убрать их и запомнить; не назвал —
+    // то же самое без необязательных полей.
     if (!flagged && tries[0].status >= 400 && tries[0].status < 500) {
-      got = await attempt(main, { prompt: words }, "без необязательных полей");
+      const extra = unknownFields(tries[0].said).filter(name => name in full);
+      if (extra.length) {
+        await forgo(extra);
+        for (const name of extra) delete full[name];
+      }
+      got = extra.length && Object.keys(full).length > 1
+        ? await attempt(main, { ...full }, `без ${extra.length > 1 ? "полей" : "поля"} ${extra.join(", ")}: он ${extra.length > 1 ? "их" : "его"} не принимает`)
+        : await attempt(main, { prompt: words }, "без необязательных полей");
       if (settled(got)) return got;
     }
     if (flagged && !asIs) {

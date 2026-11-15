@@ -101,6 +101,14 @@ test("чат, где с ней говорят, попадает в список 
   await h.onMessage({ ...group("Аи, привет", { id: 21, name: "Вася", chat: -30 }), chat: { id: -30, type: "supergroup", title: "Двор" } }, KEY);
   await h.onMessage(message("твои чаты", { id: OWNER }), KEY);
   assert.equal(last(OWNER), "Я в 1 чате:\n1. Двор — чат");
+  // Чат, где она только слышит разговор (к ней не обращались), — тоже в списке: статус владельца
+  // 16.11.2026 показывал «список чатов пока пуст» при живых чатах.
+  const before = chats().length;
+  await h.onMessage({ ...group("кто сегодня дежурит?", { id: 22, name: "Петя", chat: -31 }), chat: { id: -31, type: "supergroup", title: "Подъезд" } }, KEY);
+  assert.equal(chats().length, before, "ей не писали — она молчит");
+  await h.onMessage(message("твои чаты", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /^Я в 2 чатах:\n/u);
+  for (const title of ["Двор — чат", "Подъезд — чат"]) assert.ok(last(OWNER).includes(title), title);
 
   await h.onMessage(message("напомни через час про чай", { id: 31 }), KEY);
   await h.onMessage(message("напоминай каждый день в 9:00 зарядка", { id: 31 }), KEY);
