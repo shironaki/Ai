@@ -38,6 +38,7 @@ import { fajrOn, parseFajr, prayersOn, ishaRule, methodExtras, DAY_TIMES, SHIFT_
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
 import { parsePostcard, postcardPrompt, parseHoliday, holidaysOf, holidayDate, OCCASIONS, HOLIDAYS_KEY, HOLIDAYS_MAX } from "./postcard.js";
 import { parseTranslate, guessLanguage, LANGUAGES } from "./translate.js";
+import { parseNews, parseFeed, mergeNews, newsAbout, FEEDS_KEY, NEWS_CACHE_KEY, FEEDS_MAX, NEWS_SHOWN, NEWS_FRESH_MS } from "./feeds.js";
 import { parseCards, cardsOf, sameCard, dueCards, rightAnswer, graded, dueWords, CARDS_KEY, CARDS_ASK_KEY, CARDS_MAX, ASK_TTL_MS as CARDS_ASK_TTL_MS } from "./cards.js";
 import { parseFeast, feastsFor, feastLine, publicDays, islamicDays, islamicByTitle, hijriOf, hijriText, countryCodeOf, countryWords, dayText as feastDay, ISLAMIC, HIJRI_MONTHS } from "./feasts.js";
 import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
@@ -58,7 +59,7 @@ import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
 import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
-import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
+import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, safeUrl as senseUrl, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
 /**
  * Сколько ждать между двумя запросами к провайдеру.
@@ -3074,6 +3075,115 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `Пересказать своими словами сейчас нечем, так что по фактам. ${digest(rows, { plural })}`);
   }
 
+  // ── новости из лент ─────────────────────────────────────────────────────
+  /**
+   * «Новости», «новости про космос» — свежие заголовки со ссылками из лент,
+   * которые назвал хозяин («добавь ленту https://…»). Без модели: заголовок — как у
+   * источника. Своих лент у неё нет: что считать новостями — решает хозяин.
+   */
+  const NEWS = config.NEWS !== false;
+  const FEED_FAIL = Object.freeze({ bad_url: "такой адрес я не открываю", network: "сайт не ответил", not_text: "там не лента, а файл другого вида", too_big: "она слишком большая", no_fetch: "выходить в сеть мне сейчас нечем" });
+  const feedsOf = async () => {
+    const saved = await store.get(FEEDS_KEY).catch(() => null);
+    return (Array.isArray(saved?.items) ? saved.items : []).filter(item => item && typeof item.url === "string" && senseUrl(item.url)).slice(0, FEEDS_MAX);
+  };
+  async function newsWords(turn, prompt) {
+    if (!NEWS) return null;
+    const asked = parseNews(prompt);
+    if (!asked) return null;
+    const mine = owner(turn.actorId) && turn.isPrivate;
+    // Ленты называет только хозяин и только в личке: чужие слова о лентах — обычный разговор.
+    if (!asked.show && !mine) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как слова о новостях из лент — репетиция, в сеть не хожу.");
+    if (!store.available) return say(turn, "С новостями сейчас никак: хранилище не отвечает.");
+    const feeds = await feedsOf();
+    if (asked.list) {
+      if (!feeds.length) return say(turn, "Лент новостей у меня пока нет. Добавить — «добавь ленту https://…»: подойдёт любая RSS- или Atom-лента, до пяти штук.");
+      return say(turn, `Ленты новостей (${feeds.length}):\n${feeds.map((item, index) => `${index + 1}. ${item.title || "без названия"} — ${item.url}`).join("\n")}\nУбрать — «убери ленту 2». Свежее — «новости».`, { extra: { disable_web_page_preview: true } });
+    }
+    if (asked.add) {
+      const url = senseUrl(asked.add);
+      if (!url) return say(turn, "Такой адрес я не открываю. Нужна обычная ссылка на ленту: https://сайт/rss.");
+      if (feeds.some(item => item.url === url)) return say(turn, "Эта лента у меня уже есть. Список — «мои ленты».");
+      if (feeds.length >= FEEDS_MAX) return say(turn, `Лент уже ${FEEDS_MAX} — больше не держу. Убрать лишнюю — «убери ленту 2».`);
+      await typing(turn);
+      const got = await senses.feed(url);
+      if (!got.ok) return say(turn, `Лента не открылась: ${got.code === "http" ? `сайт ответил ошибкой${got.status ? ` ${got.status}` : ""}` : FEED_FAIL[got.code] ?? FEED_FAIL.network}.`);
+      const feed = parseFeed(got.source, { safe: senseUrl });
+      if (!feed.items.length) return say(turn, "Это не похоже на ленту новостей: записей в ней не нашлось. Нужен адрес RSS или Atom — обычно он кончается на /rss, /feed или .xml.");
+      const title = feed.title || url.replace(/^https?:\/\//u, "").replace(/[/?#].*$/u, "");
+      if (!await store.set(FEEDS_KEY, { items: [...feeds, { url, title }], at: now() }).catch(() => false)) return say(turn, "Не запомнилось: хранилище не отвечает.");
+      await store.remove(NEWS_CACHE_KEY).catch(() => false);
+      return say(turn, `Подключила ленту «${title}»: в ней сейчас ${feed.items.length} ${plural(feed.items.length, "запись", "записи", "записей")}. Свежее — «новости»; список лент — «мои ленты».`);
+    }
+    if (asked.drop != null) {
+      const at = typeof asked.drop === "number" ? asked.drop - 1 : feeds.findIndex(item => item.url === senseUrl(asked.drop));
+      if (!feeds[at]) return say(turn, "Такой ленты в списке нет. Список — «мои ленты».");
+      if (!await store.set(FEEDS_KEY, { items: feeds.filter((item, index) => index !== at), at: now() }).catch(() => false)) return say(turn, "Не убралось: хранилище не отвечает.");
+      await store.remove(NEWS_CACHE_KEY).catch(() => false);
+      return say(turn, `Убрала ленту «${feeds[at].title || feeds[at].url}». Осталось лент: ${feeds.length - 1}.`);
+    }
+    // «Новости»: лент нет — хозяину подсказка, остальным — коротко (слово «хозяин» при людях не звучит).
+    if (!feeds.length) return say(turn, mine ? "Лент новостей у меня пока нет — читать неоткуда. Добавьте: «добавь ленту https://…» (RSS или Atom, до пяти штук)." : "Новостных лент мне пока не дали — читать неоткуда.");
+    let cached = await store.get(NEWS_CACHE_KEY).catch(() => null);
+    if (!Array.isArray(cached?.items) || now() - Number(cached.at) > NEWS_FRESH_MS) {
+      await typing(turn);
+      const loaded = await Promise.all(feeds.map(async (item) => {
+        const got = await senses.feed(item.url).catch(() => ({ ok: false }));
+        return got.ok ? { title: item.title, items: parseFeed(got.source, { safe: senseUrl }).items } : null;
+      }));
+      const items = mergeNews(loaded.filter(Boolean));
+      // Ни одна лента не ответила — старое (до суток) лучше, чем ничего; свежее запоминается на четверть часа.
+      if (items.length) { cached = { items, at: now() }; await store.set(NEWS_CACHE_KEY, cached).catch(() => false); }
+      else if (!(Array.isArray(cached?.items) && cached.items.length && now() - Number(cached.at) < DAY)) return say(turn, "Ленты сейчас не отвечают. Попробуйте чуть позже.");
+    }
+    const found = asked.about ? newsAbout(cached.items, asked.about) : cached.items;
+    if (!found.length) return say(turn, `Про «${asked.about}» в свежих записях лент ничего нет.`);
+    const stale = now() - Number(cached.at) > NEWS_FRESH_MS ? ` (ленты не ответили — это записи на ${clock(cached.at)})` : "";
+    const quote = (value) => web(value).replace(/"/gu, "&quot;");
+    const lines = found.slice(0, NEWS_SHOWN).map(item => `• <a href="${quote(item.l)}">${web(item.t)}</a>${feeds.length > 1 && item.f ? ` — ${web(item.f)}` : ""}`);
+    pulse.bump("sourced");
+    return say(turn, `Свежее из лент${asked.about ? ` про «${web(asked.about)}»` : ""}${stale}:\n${lines.join("\n")}`, { extra: { ...HTML, disable_web_page_preview: true } });
+  }
+
+  // ── «ты уверена?» ────────────────────────────────────────────────────────
+  /**
+   * Перепроверка прошлого ответа другой моделью (идея 67): «ты уверена?»,
+   * «перепроверь» — сразу после её ответа моделью или ответом на него. Спрашивается
+   * не та модель, что отвечала; другой нет — та же, и об этом сказано. Одна
+   * модель на вопрос — только по просьбе человека.
+   */
+  const SURE_ASK = /^(?:а\s+)?(?:ты\s+)?(?:точно\s+|в\s+этом\s+)?уверена(?:\s+в\s+этом)?$|^перепроверь(?:те)?(?:\s+(?:это|себя|ответ|свой\s+ответ|еще\s+раз))?$|^проверь(?:те)?\s+(?:себя|свой\s+ответ)$|^(?:а\s+)?(?:ты\s+)?не\s+ошиба(?:ешься|етесь)$|^это\s+точно$/u;
+  const parseSure = (text) => SURE_ASK.test(String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim());
+  const SURE_FRESH_MS = 15 * 60_000;
+  async function sureWords(turn, prompt, message) {
+    if (!parseSure(prompt)) return null;
+    const traceKey = `heart:trace:${turn.chatId}:${turn.actorId}`;
+    const trace = await store.get(traceKey).catch(() => null);
+    const fresh = trace?.at && now() - Number(trace.at) < SURE_FRESH_MS;
+    const quoted = turn.replyToMe ? String(message?.reply_to_message?.text ?? "").replace(/\s+/gu, " ").trim().slice(0, 900) : "";
+    // Проверять нечего: прошлый ответ был не от модели, и цитаты нет — пусть идёт разговор.
+    if (!fresh && !quoted) return null;
+    if (turn.dry) return say(turn, "Перепроверила бы прошлый ответ другой моделью — репетиция, модель не трачу.");
+    // Дневная норма вышла — об этом уже сказано (или молча отмечено): второй раз не говорим.
+    const capped = await overQuota(turn);
+    if (capped) return capped;
+    const asked = fresh && trace.q ? ` Вопрос был: «${String(trace.q).slice(0, 160)}».` : "";
+    const { answer } = await talk(turn, `Собеседник усомнился в твоём ответе и просит перепроверить.${asked}${quoted ? ` Твой ответ: «${quoted}».` : ""} Проверь его по существу — так, как проверяла бы чужой текст. Нашла ошибку — исправь и прямо скажи, что было неверно. Ответ верен — подтверди одной фразой и назови, на чём основана уверенность. Проверить нельзя — так и скажи. Без извинений и общих слов, 2–4 фразы.`, { plain: true, avoid: fresh ? String(trace.model ?? "") : "" });
+    if (!answer.ok || answer.testRun) return null;
+    const short = String(answer.model ?? "").replace(/^[^/]+\//u, "");
+    const other = Boolean(fresh && trace.model && short && short !== trace.model);
+    // Имя модели — только хозяину наедине; остальным — сам факт: другая или та же.
+    const mine = owner(turn.actorId) && turn.isPrivate;
+    const tail = other ? `Перепроверила другой моделью${mine ? `: ${short}` : ""}.` : fresh && trace.model ? `Другой модели сейчас нет: перепроверяла та же${mine && short ? ` (${short})` : ""}.` : "";
+    pulse.bump("replies");
+    pulse.bump("tokens", answer.usage?.total ?? 0);
+    if (short) pulse.bump(`model:${short}`);
+    // Следующее «ты уверена?» спросит уже третью — или вернётся к первой.
+    if (fresh) await store.set(traceKey, { ...trace, at: now(), model: short || trace.model }).catch(() => false);
+    return say(turn, `${String(answer.text).trim()}${tail ? `\n\n${tail}` : ""}`);
+  }
+
   // ── «кто прав?» ──────────────────────────────────────────────────────────
   /**
    * Рассудить спор в группе: модель читает не одну реплику, а последние полчаса
@@ -3092,6 +3202,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       .filter(row => Number(row.at) > now() - JUDGE_WINDOW_MS && (turn.message?.message_id == null || row.id < Number(turn.message.message_id)));
     // Спор — это хотя бы двое и хотя бы четыре реплики: иначе судить нечего.
     if (rows.length < 4 || new Set(rows.map(row => row.u)).size < 2) return say(turn, "Спора я не вижу: за последние полчаса тут почти ничего не сказано. Ответьте словами «кто прав?» на сообщение, о котором речь, — или расскажите, в чём спор.");
+    // Дневная норма вышла — об этом уже сказано (или молча отмечено): второй раз не говорим.
+    const capped = await overQuota(turn);
+    if (capped) return capped;
     await typing(turn);
     const quoted = String(turn.message?.reply_to_message?.text ?? "").replace(/\s+/gu, " ").trim().slice(0, 300);
     const answer = await compose(turn, `Ниже — последние сообщения группового чата: люди спорят, и тебя просят рассудить. Первой строкой назови, о чём спор. Затем — кто прав по фактам и почему: 2–4 фразы. Если это дело вкуса или фактов для решения не хватает — так и скажи и победителя не назначай. Суди доводы, а не людей: без оценок и насмешек. Не выдумывай того, чего в сообщениях нет.${quoted ? `\n\nСпрашивают ответом на сообщение: «${quoted}».` : ""}\n\n${transcript(rows, 2400)}`).catch(() => null);
@@ -4451,7 +4564,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /** Разговор: всё, что не команда, не настройка, не умение и не намерение. */
-  async function talk(turn, prompt, { lateMs = 0, deferred = false, plain = false } = {}) {
+  async function talk(turn, prompt, { lateMs = 0, deferred = false, plain = false, avoid = "" } = {}) {
     const { chatId, actorId, ctx, dry } = turn;
     if (!deferred) await typing(turn);
     const context = dry ? { note: "", lessons: [] } : await contextFor(turn, prompt, { lateMs });
@@ -4490,6 +4603,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         isPrivate: turn.isPrivate,
         note: context.note,
         deferred,
+        ...(avoid ? { avoidModel: avoid } : {}),
       });
     } finally { inflight.delete(key); }
     return { answer, context, facts: shared.facts };
@@ -5543,7 +5657,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -5594,7 +5708,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await proposeWords(turn, prompt) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await newsWords(turn, prompt) ?? await sureWords(turn, prompt, message) ?? await proposeWords(turn, prompt) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки

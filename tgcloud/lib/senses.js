@@ -289,7 +289,29 @@ export function createSenses({
     return { ok: true, url: final, host: final.replace(/^https?:\/\//u, "").replace(/[/:?#].*$/u, ""), ...page };
   }
 
-  return Object.freeze({ hear, look, read, models: Object.freeze({ hearing: hearingModel, vision: visionModel }) });
+  /** Лента новостей как есть: текст XML. Те же предосторожности, что у страницы. `{ ok, url, source }`. */
+  async function feed(url) {
+    const target = safeUrl(url);
+    if (!target) return { ok: false, code: "bad_url" };
+    const fetcher = doFetch();
+    if (!fetcher) return { ok: false, code: "no_fetch" };
+    let response = null;
+    try {
+      response = await fetcher(target, withSignal({ headers: { Accept: "application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.9,*/*;q=0.5", "Accept-Language": "ru,en;q=0.7", "User-Agent": "Mozilla/5.0 (compatible; AiHeart/1.0; +https://telegram.org)" } }, 8000));
+    } catch { return { ok: false, code: "network" }; }
+    if (!response?.ok) return { ok: false, code: "http", status: response?.status ?? 0 };
+    const final = response.url ? safeUrl(response.url) : target;
+    if (!final) return { ok: false, code: "bad_url" };
+    const header = (name) => { try { return String(response.headers?.get?.(name) ?? ""); } catch { return ""; } };
+    const type = header("content-type").toLowerCase();
+    if (type && !/xml|rss|atom|text\/plain|text\/html/u.test(type)) return { ok: false, code: "not_text" };
+    if (Number(header("content-length")) > 3_000_000) return { ok: false, code: "too_big" };
+    let source = "";
+    try { source = await response.text(); } catch { return { ok: false, code: "network" }; }
+    return { ok: true, url: final, source: String(source).slice(0, 1_500_000) };
+  }
+
+  return Object.freeze({ hear, look, read, feed, models: Object.freeze({ hearing: hearingModel, vision: visionModel }) });
 }
 
 /** Картинка в сообщении: самый крупный снимок в пределах размера или файл-изображение. */

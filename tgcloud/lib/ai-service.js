@@ -597,6 +597,8 @@ export function createAiService({
     async generateReply({
       userId, chatId, prompt, role = "Пользователь", verifiedContext = "", ctx = {},
       apiKey: explicitKey = null, model: modelOverride = null,
+      // «Ты уверена?» — перепроверка другой моделью: названная (коротким именем) спрашивается последней.
+      avoidModel = "",
       // Личка или группа: от этого зависят и характер, и то, какие факты можно
       // произносить. Раньше сюда ничего не передавалось, и группа получала
       // подсказку лички — вместе с личными фактами.
@@ -783,6 +785,12 @@ export function createAiService({
         return { ok: true, data, limits };
       };
 
+      if (avoidModel && pool.length > 1) {
+        const same = (brain) => String(brain.model ?? "").replace(/^[^/]+\//u, "") === String(avoidModel);
+        const other = pool.filter(brain => !same(brain));
+        // Другой модели нет — перепроверит та же: об этом скажет сердце по имени в ответе.
+        if (other.length) pool = [...other, ...pool.filter(same)];
+      }
       const tried = [];
       const rejected = new Set();
       let last = null;
