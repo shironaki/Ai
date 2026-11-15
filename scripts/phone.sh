@@ -633,19 +633,14 @@ HEART_BRANCH=$BRANCH
 
 # По желанию: уберите «#» в начале строки и впишите значение.
 # Запасные мозги (как получить каждый ключ — docs/BRAINS.md):
-# KEY_MISTRAL=
-# KEY_CEREBRAS=
-# KEY_GEMINI=
-# KEY_OPENROUTER=
-# KEY_NVIDIA=
-# KEY_GHMODELS=
 # KEY_GIGACHAT=
 # KEY_EXPLABS=
 # Рисование и ещё один запасной мозг (Cloudflare): ID аккаунта, двоеточие, токен
 # KEY_CLOUDFLARE=
-# Поиск в интернете — ключ Tavily или Brave (docs/BRAINS.md); без них ищет по Википедии:
+# Поиск в интернете — ключи Tavily, Exa, You (docs/BRAINS.md); без них ищет по Википедии:
 # KEY_TAVILY=
-# KEY_BRAVE=
+# KEY_EXA=
+# KEY_YOU=
 # Минутный будильник — токен любого бота, кроме Аи, и числовой ID канала «Мост»:
 # ALARM_BOT_TOKEN=
 # ALARM_CHAT_ID=
@@ -696,7 +691,7 @@ EOF
       if ! keylike "${!name}"; then echo "✗ $name не похож на ключ (пробелы или русские буквы) — впишите ключ или уберите строку"; bad=1; continue; fi
       # Ключи поисковиков — не мозги: о них отдельная строка.
       case "$name" in
-        KEY_TAVILY|KEY_BRAVE) seek="$seek$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') " ;;
+        KEY_TAVILY|KEY_EXA|KEY_YOU) seek="$seek$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') " ;;
         *) extra="$extra$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') " ;;
       esac
     done

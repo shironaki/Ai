@@ -213,12 +213,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const games = createGames({ store, sources, random, now });
   // Поиск картинок, аниме, музыки и видео: открытые источники, без модели.
   const media = createMedia({ sources });
-  // Поиск: по ключам Tavily и Brave, если они есть, иначе — по Википедии.
+  // Поиск: по ключам Tavily, Exa и You, если они есть, иначе — по Википедии.
   const SEARCH = config.SEARCH !== false;
-  const search = createSearch({ fetchImpl, keys: config.SEARCH_KEYS ?? { tavily: AI_EXTRA_KEYS?.tavily, brave: AI_EXTRA_KEYS?.brave }, sources });
-  // Бесплатный ключ поисковика — около тысячи запросов в месяц: на день их SEARCH_DAILY,
-  // сверх того ищет по Википедии. Хозяину — без счёта.
-  const SEARCH_DAILY = Number.isFinite(config.SEARCH_DAILY) ? Math.max(0, config.SEARCH_DAILY) : 30;
+  const SEARCH_KEYS = config.SEARCH_KEYS ?? { tavily: AI_EXTRA_KEYS?.tavily, exa: AI_EXTRA_KEYS?.exa, you: AI_EXTRA_KEYS?.you };
+  const search = createSearch({ fetchImpl, keys: SEARCH_KEYS, sources });
+  // Бесплатный запас поисковика — около тысячи запросов в месяц: на день их 30 на каждый
+  // поисковик, у которого запас возвращается сам (Tavily, Exa); у You он разовый и в счёт
+  // не идёт. Сверх того ищет по Википедии. Хозяину — без счёта.
+  const SEARCH_DAILY = Number.isFinite(config.SEARCH_DAILY)
+    ? Math.max(0, config.SEARCH_DAILY)
+    : 30 * Math.max(1, ["tavily", "exa"].filter(id => String(SEARCH_KEYS?.[id] ?? "").trim()).length);
   const SEARCHES_PREFIX = "heart:searches:";
   // Списки, цели и дневник: строки человека, которые возвращаются дословно.
   const notes = createNotes({ store, now, dayOf });
@@ -5178,7 +5182,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!SEARCH) return "выключен настройкой";
     const names = search.providers();
     if (!names.length) return "искать нечем";
-    if (!search.keyed()) return `${names.join(" → ")} (ключа поисковика нет: «KEY_TAVILY» в файле ключей)`;
+    if (!search.keyed()) return `${names.join(" → ")} (ключа поисковика нет: «KEY_TAVILY», «KEY_EXA» или «KEY_YOU» в файле ключей)`;
     const used = Number((await store.get(`${SEARCHES_PREFIX}${dayOf(now())}`).catch(() => null))?.n) || 0;
     return `${names.join(" → ")} · сегодня по ключу ${used} из ${SEARCH_DAILY}`;
   }

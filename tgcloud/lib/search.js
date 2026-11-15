@@ -4,9 +4,12 @@
  * соответствовать слову «интеллект»).
  *
  * Чем ищет, по порядку:
- *   1. Tavily — если в файле ключей есть `KEY_TAVILY`: настоящий поиск по сети;
- *   2. Brave Search — если есть `KEY_BRAVE`;
- *   3. Википедия — без ключа, всегда: до трёх статей, у первой вступление целиком.
+ *   1. Tavily — если в файле ключей есть `KEY_TAVILY`: бесплатный запас у него
+ *      возвращается каждый месяц, поэтому он первый;
+ *   2. Exa — `KEY_EXA`; 3. You — `KEY_YOU`: у обоих бесплатный запас выдаётся
+ *      один раз, поэтому они — на случай, когда Tavily не ответил или пуст;
+ *   4. Википедия — без ключа, всегда: до трёх статей, у первой вступление целиком.
+ * Ключи этих трёх владелец получил сам (16.11.2026); Brave убран — ключа к нему нет.
  * Поисковиков без ключа здесь нет намеренно: DuckDuckGo и Bing ботам не отвечают
  * или прямо запрещают такое использование (проверено 15.11.2026).
  *
@@ -73,18 +76,36 @@ export function createSearch({ fetchImpl = null, keys = {}, sources = null, time
     });
     return shaped(data?.results, item => ({ title: item?.title, url: item?.url, text: item?.content }));
   }
-  async function brave(query) {
-    const data = await ask(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=4`, {
-      method: "GET", headers: { Accept: "application/json", "X-Subscription-Token": key("brave") },
+  /** Exa: «выдержки» — куски страницы, которые отвечают на запрос (формы — по документации 16.11.2026). */
+  async function exa(query) {
+    const data = await ask("https://api.exa.ai/search", {
+      method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key("exa") },
+      body: JSON.stringify({ query, type: "auto", numResults: 4, contents: { highlights: true } }),
     });
-    return shaped(data?.web?.results, item => ({ title: item?.title, url: item?.url, text: String(item?.description ?? "").replace(/<[^>]*>/gu, " ") }));
+    return shaped(data?.results, item => ({
+      title: item?.title, url: item?.url,
+      text: Array.isArray(item?.highlights) && item.highlights.length ? item.highlights.join(" … ") : (item?.summary || item?.text),
+    }));
   }
+  /** You: обычный поиск с короткими выдержками; язык выдачи — русский. */
+  async function you(query) {
+    const data = await ask("https://ydc-index.io/v1/search", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": key("you") },
+      body: JSON.stringify({ query, count: 4, language: "RU" }),
+    });
+    return shaped(data?.results?.web, item => ({
+      title: item?.title, url: item?.url,
+      text: Array.isArray(item?.snippets) && item.snippets.length ? item.snippets.join(" … ") : item?.description,
+    }));
+  }
+  /** Поисковики с ключом — в том порядке, в каком их спрашивают. */
+  const ENGINES = [["tavily", "Tavily", tavily], ["exa", "Exa", exa], ["you", "You", you]];
 
   /** Чем она сейчас может искать — словами, для статуса. */
-  const providers = () => [key("tavily") ? "Tavily" : "", key("brave") ? "Brave" : "", sources?.available?.() !== false && typeof sources?.lookup === "function" ? "Википедия" : ""].filter(Boolean);
+  const providers = () => [...ENGINES.filter(([id]) => key(id)).map(([, title]) => title), sources?.available?.() !== false && typeof sources?.lookup === "function" ? "Википедия" : ""].filter(Boolean);
 
   /** Есть ли ключ настоящего поисковика: такие запросы считаны, Википедия — нет. */
-  const keyed = () => Boolean(key("tavily") || key("brave"));
+  const keyed = () => ENGINES.some(([id]) => Boolean(key(id)));
 
   /**
    * Найти: `{ ok, via, results: [{ title, url, text }] }`. Отказы: network — никто
@@ -95,8 +116,13 @@ export function createSearch({ fetchImpl = null, keys = {}, sources = null, time
     const words = squash(query, 200);
     if (!words) return { ok: false, code: "not_found" };
     if (!providers().length) return { ok: false, code: "off" };
-    if (paid && key("tavily")) { const results = await tavily(words); if (results.length) return { ok: true, via: "Tavily", results }; }
-    if (paid && key("brave")) { const results = await brave(words); if (results.length) return { ok: true, via: "Brave", results }; }
+    if (paid) {
+      for (const [id, title, engine] of ENGINES) {
+        if (!key(id)) continue;
+        const results = await engine(words);
+        if (results.length) return { ok: true, via: title, results };
+      }
+    }
     if (typeof sources?.lookup !== "function") return { ok: false, code: "not_found" };
     const wiki = await sources.lookup(words).catch(() => ({ ok: false, code: "network" }));
     return wiki.ok ? { ok: true, via: "Википедия", results: wiki.results.slice(0, 3) } : { ok: false, code: wiki.code === "network" ? "network" : "not_found" };

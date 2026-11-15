@@ -31,7 +31,7 @@ export const CONFIG = Object.freeze({
   // когда кончились все модели основного. Ключа здесь нет: он приходит из
   // строки KEY_<ИМЯ> в ~/.heart.env на телефоне (или из GitHub-секрета
   // AI_EXTRA_KEYS, {"имя": "ключ"}) только на время публикации.
-  // Пример записи: { id: "cerebras", baseUrl: "https://api.cerebras.ai/v1", models: ["llama-3.3-70b"] }
+  // Пример записи: { id: "имя", name: "Как назвать владельцу", baseUrl: "https://…/v1", models: ["модель"] }
   AI_PROVIDERS: [
     // Experiential Labs: шлюз с OpenAI-совместимым API. В бесплатном плане две
     // разговорные модели делят миллион токенов в сутки (сброс в 00:00 UTC) и
@@ -64,38 +64,10 @@ export const CONFIG = Object.freeze({
       scope: "GIGACHAT_API_PERS",
       models: ["GigaChat-3-Ultra", "GigaChat-2-Max", "GigaChat-2-Pro", "GigaChat-2"],
     },
-    // ── Провайдеры из статьи «Бесплатные API для 150+ ИИ-моделей» (Хабр, 23.07.2026),
-    // добавлены по слову владельца 15.11.2026. Адреса и имена моделей сверены в тот
-    // же день по документации провайдеров; лимиты — по статье и документации.
-    // Каждая запись спит, пока в ~/.heart.env нет строки KEY_<ИМЯ>. Имена моделей у
-    // провайдеров меняются: модель, которой уже нет, сердце пропускает на сутки и
-    // думает следующей; «проверь мозги» покажет, кто жив. Подробно — docs/BRAINS.md.
-
-    // Mistral (La Plateforme), бесплатный план: запрос в секунду, 500 тыс. токенов
-    // в минуту, миллиард токенов в месяц. Нужен телефон для проверки; на бесплатном
-    // плане запросы могут использоваться для обучения моделей.
-    { id: "mistral", name: "Mistral", baseUrl: "https://api.mistral.ai/v1", models: ["mistral-small-latest", "mistral-large-latest"] },
-    // Cerebras: самые быстрые ответы; на бесплатном плане две модели.
-    { id: "cerebras", name: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", models: ["gpt-oss-120b", "qwen-3.8-27b"], effort: "low" },
-    // Google AI Studio (Gemini) через OpenAI-совместимый вход. Лимит считается на
-    // проект, а не на ключ, и у каждой модели свой; бесплатный план есть не во всех
-    // странах, а запросы на нём могут читать люди Google. Модели рассуждают — усилие малое.
-    {
-      id: "gemini", name: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-      models: ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"], effort: "low",
-    },
-    // OpenRouter: 20 запросов в минуту и 50 в день на все бесплатные модели вместе
-    // (1000 в день — если счёт хоть раз пополнен на $10). Последняя запись — их
-    // собственный выбор из бесплатных моделей: на случай, когда названные сняты.
-    {
-      id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1",
-      models: ["google/gemma-4-31b-it:free", "openai/gpt-oss-20b:free", "openrouter/free"],
-    },
-    // NVIDIA NIM: 40 запросов в минуту; при регистрации просят телефон.
-    { id: "nvidia", name: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1", models: ["openai/gpt-oss-120b", "meta/llama-3.3-70b-instruct"], effort: "low" },
-    // GitHub Models: ключ — токен GitHub с правом «Models: read». Пределы жёсткие
-    // (десятки запросов в день и короткие ответы), поэтому он почти последний.
-    { id: "ghmodels", name: "GitHub Models", baseUrl: "https://models.github.ai/inference", models: ["openai/gpt-4.1-mini", "openai/gpt-4o-mini"] },
+    // 16.11.2026: шесть провайдеров из статьи Хабра (Mistral, Cerebras, Gemini,
+    // OpenRouter, NVIDIA, GitHub Models) убраны по слову владельца: он прошёл их
+    // сам — «все не рабочие, либо требуют карту». Записи остались в истории git
+    // (сборка 0.32.0); вернуть любую — четыре поля, как в примере выше.
     // Cloudflare Workers AI: бесплатно 10 000 «нейронов» в сутки, без карты
     // (сброс в 00:00 UTC). Тем же ключом Аи рисует («нарисуй …»), поэтому как
     // мозг он стоит последним: думает им, только когда кончились остальные.

@@ -72,7 +72,7 @@ test("«найди в интернете»: без ключа — Википед
   assert.match(sent().text, /^Своими словами сейчас не выйдет — думать нечем\. Вот что нашлось:\n\nБурдж-Халифа: Бурдж-Халифа — небоскрёб высотой 828 метров[\s\S]*\n\nИсточники \(Википедия\):\n• Бурдж-Халифа — /u);
 });
 
-test("с ключом — настоящий поисковик: Tavily, за ним Brave, за ними Википедия", async () => {
+test("с ключом — настоящий поисковик: Tavily, за ним Exa, за ним You, за ними Википедия", async () => {
   reset();
   source("api.tavily.com/search", (url, options) => {
     const body = JSON.parse(options.body);
@@ -80,24 +80,58 @@ test("с ключом — настоящий поисковик: Tavily, за н
     assert.deepEqual(body, { query: "курс биткоина", max_results: 4, search_depth: "basic" });
     return { results: [{ title: "Биткоин сегодня", url: "https://www.example.org/btc", content: "Биткоин стоит 100 000 долларов." }, { title: "Без текста", url: "https://example.org/empty", content: "" }] };
   });
-  const h = heart({ SEARCH_KEYS: { tavily: "tvly-key", brave: "brave-key" } }, { now: () => NOON });
+  const h = heart({ SEARCH_KEYS: { tavily: "tvly-key", exa: "exa-key", you: "you-key" } }, { now: () => NOON });
   sdk().fetchQueue.push(says("Около ста тысяч долларов."));
   await h.onMessage(message("найди в интернете курс биткоина"), KEY);
   assert.equal(sent().text, "Около ста тысяч долларов.\n\nИсточники (Tavily):\n• Биткоин сегодня — https://www.example.org/btc");
   assert.equal(sourced().length, 1, "первый ответил — остальных не спрашивали");
 
-  // Tavily молчит — Brave; его ключ уходит заголовком, а не в адресе.
+  // Tavily молчит — Exa: ключ уходит заголовком, в ответе — выдержки страницы.
   reset();
-  source("search.brave.com/res/v1/web/search", (url, options) => {
-    assert.equal(options.headers["X-Subscription-Token"], "brave-key");
-    assert.ok(!url.includes("brave-key"));
-    return { web: { results: [{ title: "Курс", url: "https://example.org/rate", description: "Курс <strong>биткоина</strong> — 100 000." }] } };
+  source("api.exa.ai/search", (url, options) => {
+    assert.equal(options.headers["x-api-key"], "exa-key");
+    assert.deepEqual(JSON.parse(options.body), { query: "курс биткоина", type: "auto", numResults: 4, contents: { highlights: true } });
+    return { results: [{ title: "Курс", url: "https://example.org/rate", highlights: ["Курс биткоина — 100 000.", "Вчера был ниже."] }, { title: "Пусто", url: "https://example.org/none", highlights: [] }] };
   });
-  const second = heart({ SEARCH_KEYS: { tavily: "tvly-key", brave: "brave-key" } }, { now: () => NOON });
+  const second = heart({ SEARCH_KEYS: { tavily: "tvly-key", exa: "exa-key", you: "you-key" } }, { now: () => NOON });
   sdk().fetchQueue.push(says("Сто тысяч."));
   await second.onMessage(message("загугли курс биткоина"), KEY);
-  assert.equal(sent().text, "Сто тысяч.\n\nИсточники (Brave):\n• Курс — https://example.org/rate");
-  assert.match(asksModel(), /\[1\] Курс: Курс биткоина — 100 000\./u, "разметка поисковика в справку не идёт");
+  assert.equal(sent().text, "Сто тысяч.\n\nИсточники (Exa):\n• Курс — https://example.org/rate");
+  assert.match(asksModel(), /\[1\] Курс: Курс биткоина — 100 000\. … Вчера был ниже\./u);
+  assert.deepEqual(sourced().map(url => new URL(url).host), ["api.tavily.com", "api.exa.ai"], "спрошены по порядку, третий не понадобился");
+
+  // Молчат оба — You: русская выдача, короткие выдержки; нет выдержек — описание.
+  reset();
+  source("ydc-index.io/v1/search", (url, options) => {
+    assert.equal(options.headers["X-API-Key"], "you-key");
+    assert.ok(!url.includes("you-key"));
+    assert.deepEqual(JSON.parse(options.body), { query: "курс биткоина", count: 4, language: "RU" });
+    return { results: { web: [{ title: "Биржа", url: "https://example.org/you", description: "Описание страницы.", snippets: ["Биткоин — 100 000."] }, { title: "Ещё", url: "https://example.org/more", description: "Только описание." }] } };
+  });
+  const third = heart({ SEARCH_KEYS: { tavily: "tvly-key", exa: "exa-key", you: "you-key" } }, { now: () => NOON });
+  sdk().fetchQueue.push(says("Сто тысяч, по данным биржи."));
+  await third.onMessage(message("загугли курс биткоина"), KEY);
+  assert.equal(sent().text, "Сто тысяч, по данным биржи.\n\nИсточники (You):\n• Биржа — https://example.org/you\n• Ещё — https://example.org/more");
+  assert.match(asksModel(), /\[1\] Биржа: Биткоин — 100 000\.\\n\[2\] Ещё: Только описание\./u);
+  // Ключ есть только у You — остальных не спрашивают.
+  reset();
+  source("ydc-index.io/v1/search", { results: { web: [{ title: "Биржа", url: "https://example.org/you", snippets: ["Биткоин — 100 000."] }] } });
+  const only = heart({ SEARCH_KEYS: { you: "you-key" } }, { now: () => NOON });
+  sdk().fetchQueue.push(says("Сто тысяч."), says("Статус."));
+  await only.onMessage(message("загугли курс биткоина"), KEY);
+  assert.deepEqual(sourced().map(url => new URL(url).host), ["ydc-index.io"]);
+  await only.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /\nПоиск: You → Википедия · сегодня по ключу 1 из 30\n/u);
+  // Запас на день — по 30 на поисковик с возвращаемым запасом: Tavily и Exa вместе — 60; You в счёт не идёт.
+  reset();
+  const both = heart({ SEARCH_KEYS: { tavily: "t", exa: "e", you: "y" } }, { now: () => NOON });
+  await both.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /\nПоиск: Tavily → Exa → You → Википедия · сегодня по ключу 0 из 60\n/u);
+  // Ключей нет вовсе — статус называет, какие строки вписать.
+  reset();
+  const bare = heart({}, { now: () => NOON });
+  await bare.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /\nПоиск: Википедия \(ключа поисковика нет: «KEY_TAVILY», «KEY_EXA» или «KEY_YOU» в файле ключей\)\n/u);
 
   // Запас на день: у бесплатного ключа около тысячи запросов в месяц. Вышел — Википедия; хозяину — без счёта.
   reset();
@@ -117,6 +151,7 @@ test("с ключом — настоящий поисковик: Tavily, за н
   // Сам модуль: без ключей и без Википедии искать нечем.
   assert.deepEqual(await createSearch({}).find("что-нибудь"), { ok: false, code: "off" });
   assert.deepEqual(createSearch({ keys: { tavily: "k" }, sources: { lookup: async () => ({ ok: false }) } }).providers(), ["Tavily", "Википедия"]);
+  assert.deepEqual(createSearch({ keys: { you: "k", exa: "k", tavily: "k", brave: "k" } }).providers(), ["Tavily", "Exa", "You"], "порядок — свой, а ключ Brave больше ничего не значит");
 });
 
 test("сама сказала «не знаю» на вопрос о мире — ищет и отвечает ещё раз; о личном — не ищет", async () => {

@@ -370,7 +370,7 @@ Telegram. Поэтому срок вопроса — десять минут (`C
 Выключатели (все по умолчанию включены, `false` — выключить): `ADVICE`,
 `SEARCH`, `EXAM`, `REFLECT`, `SCENES`, `PARTNER`, `STICKERS`. Пределы:
 `SEARCH_DAILY` (30), `STICKER_DAILY` (10). Ключи поиска — `SEARCH_KEYS`
-(`KEY_TAVILY`, `KEY_BRAVE` в `~/.heart.env`).
+(`KEY_TAVILY`, `KEY_EXA`, `KEY_YOU` в `~/.heart.env`).
 
 Новые модули: `lib/sticker.js` (картинка → PNG-стикер и слова о стикерах),
 `lib/mind.js` (экзамен, ночная мысль, сцена, практика), `lib/search.js`,
