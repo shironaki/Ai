@@ -28,8 +28,10 @@ test("разбор открытки: случай, кому, название п
     "открытку маме на 8 марта": { occasion: "march8", to: "маме", title: "" },
     "открытку к новому году": { occasion: "newyear", to: "", title: "" },
     "открытку для Али с днём рождения": { occasion: "birthday", to: "Али", title: "" },
-    "открытку к празднику Ураза-байрам": { occasion: "faith", to: "", title: "Ураза-байрам" },
-    "открытку на Курбан-байрам брату": { occasion: "faith", to: "брату", title: "Курбан-байрам" },
+    "открытку к празднику Ураза-байрам": { occasion: "eid", to: "", title: "Ураза-байрам" },
+    "открытку на Курбан-байрам брату": { occasion: "eid", to: "брату", title: "Курбан-байрам" },
+    "открытку к празднику Рамадан": { occasion: "ramadan", to: "", title: "Рамадан" },
+    "открытку к празднику Мавлид": { occasion: "faith", to: "", title: "Мавлид" },
     "открытку папе на 23 февраля": { occasion: "feb23", to: "папе", title: "" },
     "открытку с любовью жене": { occasion: "love", to: "жене", title: "" },
     "открытку другу выздоравливай": { occasion: "getwell", to: "другу", title: "" },
@@ -39,11 +41,15 @@ test("разбор открытки: случай, кому, название п
   };
   for (const [said, want] of Object.entries(cases)) assert.deepEqual(parsePostcard(said), want, said);
   for (const said of ["кота", "кота в шляпе", "открытку 123", "открытый космос", "себя", "ещё"]) assert.equal(parsePostcard(said), null, said);
-  // Описания — готовые, английские, без надписей; у праздников веры — без людей.
+  // Описания — готовые, английские. Отрицаний в них нет: художник их не понимает, и «no text»
+  // надписи скорее вызывает; нет и слова «card» — оно тянет за собой буквы.
   for (const item of Object.values(OCCASIONS)) assert.match(item.prompt, /^[\x20-\x7e]+$/u);
-  for (const item of Object.values(OCCASIONS)) assert.match(item.prompt, /no text, no letters/u);
-  assert.match(postcardPrompt("faith"), /crescent moon.*no people/u);
-  assert.equal(postcardPrompt("holiday", "Ураза-байрам"), postcardPrompt("faith"));
+  for (const [key, item] of Object.entries(OCCASIONS)) assert.doesNotMatch(item.prompt, /\b(?:no|not|without|card|text|letters?)\b/iu, key);
+  // У праздников веры — без людей: полумесяц, фонари, пустой двор.
+  for (const key of ["faith", "ramadan", "eid"]) assert.match(postcardPrompt(key), /crescent moon.*empty courtyard/u, key);
+  assert.equal(postcardPrompt("holiday", "Ураза-байрам"), OCCASIONS.eid.prompt);
+  assert.equal(postcardPrompt("holiday", "Начало Рамадана"), OCCASIONS.ramadan.prompt);
+  assert.equal(postcardPrompt("holiday", "День Ашура"), OCCASIONS.faith.prompt);
   assert.equal(postcardPrompt("чужое"), OCCASIONS.holiday.prompt);
   // Каждому случаю — свой запас слов в словаре.
   for (const [key, item] of Object.entries(OCCASIONS)) assert.ok(pool(item.pool).length >= 2, `${key}: ${item.pool}`);
@@ -61,8 +67,8 @@ test("открытка по просьбе: описание без перево
   assert.ok(pool("+открытка:день рождения").map(line => `Маше — ${lower(line)}`).includes(photos()[0].caption), photos()[0].caption);
 
   await h.onMessage(message("нарисуй открытку к празднику Ураза-байрам"), KEY);
-  assert.equal(prompts().at(-1), OCCASIONS.faith.prompt);
-  assert.ok(pool("+открытка:праздник").map(line => `Ураза-байрам. ${line}`).includes(photos().at(-1).caption), photos().at(-1).caption);
+  assert.equal(prompts().at(-1), OCCASIONS.eid.prompt);
+  assert.ok(pool("+открытка:ид").map(line => `Ураза-байрам. ${line}`).includes(photos().at(-1).caption), photos().at(-1).caption);
   await h.onMessage(message("нарисуй открытку"), KEY);
   assert.ok(pool("+открытка:праздник").includes(photos().at(-1).caption));
   // «Ещё» — та же открытка заново; в альбоме — просьба словами.
@@ -126,23 +132,27 @@ test("день рождения: к поздравлению — открытк�
   assert.equal(photos().length, 0);
 });
 
-test("праздники хозяина: список словами; в сам день после девяти — открытка, один раз; выключается словом", async () => {
+test("свои праздники хозяина: добавить словами; в сам день после девяти — открытка, один раз; выключается словом", async () => {
   assert.deepEqual(parseHoliday("праздники"), { list: true });
-  assert.deepEqual(parseHoliday("добавь праздник Ураза-байрам 20 марта 2027"), { add: { d: 20, m: 3, y: 2027, title: "Ураза-байрам" } });
+  assert.deepEqual(parseHoliday("какие праздники ты знаешь?"), { list: true });
+  assert.deepEqual(parseHoliday("добавь праздник Ураза-байрам 10 марта 2027"), { add: { d: 10, m: 3, y: 2027, title: "Ураза-байрам" } });
   assert.deepEqual(parseHoliday("добавь праздник: День рождения мамы — 5.06"), { add: { d: 5, m: 6, title: "День рождения мамы" } });
   assert.deepEqual(parseHoliday("добавь праздник без даты"), { add: null });
   assert.deepEqual(parseHoliday("добавь праздник Чудо 35 марта"), { add: null });
   assert.deepEqual([parseHoliday("убери праздник 2"), parseHoliday("убери праздник Навруз")], [{ drop: 2 }, { drop: "навруз" }]);
   assert.deepEqual([parseHoliday("не присылай открытки"), parseHoliday("присылай открытки")], [{ cards: false }, { cards: true }]);
-  for (const said of ["скоро праздники", "люблю праздники", "с праздником", "какой сегодня праздник", "добавь соли", "убери за собой"]) assert.equal(parseHoliday(said), null, said);
-  assert.deepEqual(holidaysOf(null), [], "сама она праздников не назначает");
+  assert.deepEqual(parseHoliday("верни праздники"), { restore: true });
+  for (const said of ["скоро праздники", "люблю праздники", "с праздником", "какой сегодня праздник", "добавь соли", "убери за собой", "верни книгу"]) assert.equal(parseHoliday(said), null, said);
+  assert.deepEqual(holidaysOf(null), [], "своих праздников нет, пока хозяин не назвал");
 
+  // Здесь — только свои: сама она праздники не ищет (`FEASTS: false`). Найденные — в feasts.test.mjs.
   reset();
   source("flux-1-schnell", image());
   let at = Date.parse("2026-11-18T09:00:00Z");
-  const h = heart({ ...ON, GREET: true, TIME_ZONE: "Europe/Moscow" }, { now: () => at });
+  const OWN = { ...ON, GREET: true, TIME_ZONE: "Europe/Moscow", FEASTS: false };
+  const h = heart(OWN, { now: () => at });
   await h.onMessage(own("праздники"), KEY);
-  assert.match(last(OWNER), /^Праздников в моём списке нет: какие дни для вас праздник, знаете только вы, и сама я их не назначаю\./u);
+  assert.match(last(OWNER), /^Праздников в моём списке нет\.\n\nСама я праздники сейчас не ищу — в списке только названные вами\./u);
   // Пустой список — в Новый год она сама ничего не шлёт.
   at = Date.parse("2026-01-01T07:00:00Z");
   await h.tick({});
@@ -150,11 +160,11 @@ test("праздники хозяина: список словами; в сам 
   at = Date.parse("2026-11-18T09:00:00Z");
   await h.onMessage(own("добавь праздник Новый год 1 января"), KEY);
   assert.equal(last(OWNER), "Запомнила, хозяин: Новый год — 1 января, каждый год. В этот день пришлю открытку.");
-  await h.onMessage(own("добавь праздник Ураза-байрам 20 марта 2027"), KEY);
-  assert.equal(last(OWNER), "Запомнила, хозяин: Ураза-байрам — 20 марта 2027, один раз. В этот день пришлю открытку.");
+  await h.onMessage(own("добавь праздник Годовщина 20 марта 2027"), KEY);
+  assert.equal(last(OWNER), "Запомнила, хозяин: Годовщина — 20 марта 2027, один раз. В этот день пришлю открытку.");
   await h.onMessage(own("добавь праздник Навруз 21 марта"), KEY);
   await h.onMessage(own("праздники"), KEY);
-  assert.match(last(OWNER), /1\. Новый год — 1 января, каждый год\n2\. Ураза-байрам — 20 марта 2027 \(один раз\)\n3\. Навруз — 21 марта, каждый год\n/u);
+  assert.match(last(OWNER), /\n1\. Новый год — 1 января 2027 · ваш, каждый год · открытка\n2\. Годовщина — 20 марта 2027 · ваш, один раз · открытка\n3\. Навруз — 21 марта 2027 · ваш, каждый год · открытка\n/u);
   await h.onMessage(message("добавь праздник Навруз 21 марта"), KEY);
   assert.equal(last(), "Праздники я отмечаю для хозяина, и список их ведёт он — в личке.");
 
@@ -169,17 +179,17 @@ test("праздники хозяина: список словами; в сам 
   assert.equal(prompts().at(-1), OCCASIONS.newyear.prompt);
   assert.ok(pool("+открытка:новый год").includes(cards()[0].caption), cards()[0].caption);
   await h.tick({});
-  await heart({ ...ON, GREET: true, TIME_ZONE: "Europe/Moscow" }, { now: () => at }).tick({});
+  await heart(OWN, { now: () => at }).tick({});
   at = Date.parse("2027-01-01T12:00:00Z");
   await h.tick({});
   assert.equal(cards().length, 1, "второй раз в тот же день не поздравляет");
 
-  // Праздник веры — без людей на картинке, с названием в подписи; с годом — только в тот год.
+  // Свой праздник — с названием в подписи; с годом — только в тот год.
   at = Date.parse("2027-03-20T07:00:00Z");
   await h.tick({});
   assert.equal(cards().length, 2);
-  assert.equal(prompts().at(-1), OCCASIONS.faith.prompt);
-  assert.ok(pool("+открытка:праздник").map(line => `Ураза-байрам. ${line}`).includes(cards()[1].caption), cards()[1].caption);
+  assert.equal(prompts().at(-1), OCCASIONS.holiday.prompt);
+  assert.ok(pool("+открытка:праздник").map(line => `Годовщина. ${line}`).includes(cards()[1].caption), cards()[1].caption);
   at = Date.parse("2028-03-20T07:00:00Z");
   await h.tick({});
   assert.equal(cards().length, 2, "праздник с годом через год не повторяется");

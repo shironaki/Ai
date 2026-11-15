@@ -37,6 +37,7 @@ import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.j
 import { fajrOn, parseFajr, prayersOn, ishaRule, methodExtras, DAY_TIMES, SHIFT_MAX, FAJR_METHODS, FAJR_ANGLE } from "./fajr.js";
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
 import { parsePostcard, postcardPrompt, parseHoliday, holidaysOf, holidayDate, OCCASIONS, HOLIDAYS_KEY, HOLIDAYS_MAX } from "./postcard.js";
+import { parseFeast, feastsFor, feastLine, publicDays, islamicDays, islamicByTitle, hijriOf, hijriText, countryCodeOf, countryWords, dayText as feastDay, ISLAMIC, HIJRI_MONTHS } from "./feasts.js";
 import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
 import { parseAsked, askedItems, ASKED_KEY, ASKED_MAX } from "./asked.js";
 import {
@@ -882,6 +883,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Рисование: ${await drawLine(today)}`,
       `Будильник: ${await clockLine()}`,
       `Чаты и намазы: ${await roundsLine()}`,
+      `Праздники: ${await feastStatus()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
       `Сегодня: ${pulse.lines(today).join("; ")}${waiting ? `; в очереди: ${waiting}` : ""}`,
@@ -2589,6 +2591,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const more = [
           sky?.ok && sky.today && !sky.stale ? sky.today : "",
           milestoneLine(await daysKnown(OWNER, zone)),
+          // Что сегодня за день: выходной, памятная дата — то, с чем открытки не будет.
+          ...(await feastMorning(zone)),
         ].filter(Boolean);
         if (more.length) text = `${text}\n${more.join("\n")}`;
       }
@@ -3030,12 +3034,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     love: "С любовью. Просто так — потому что хочется сказать.", thanks: "Спасибо! От души.", getwell: "Выздоравливай! Пусть силы вернутся скорее.",
     wedding: "С днём свадьбы! Мира, тепла и долгих лет вместе.", faith: "С праздником! Мира, добра и благополучия.",
     holiday: "С праздником! Пусть этот день будет светлым.", known: "Спасибо, что вы есть.",
+    ramadan: "Рамадан мубарак! Лёгкого поста и принятых молитв.", eid: "Ид мубарак! Пусть праздник будет светлым, а молитвы — принятыми.",
   });
   /** Подпись открытки: слова по случаю; названо, кому, — «Маше — с днём рождения!». */
   function cardCaption({ occasion, to = "", title = "" } = {}) {
     const key = OCCASIONS[occasion] ? occasion : "holiday";
     const line = (PHRASES ? book.pick(OCCASIONS[key].pool, { formal: true, owner: false }) : null) ?? CARD_WORDS[key];
-    const named = title && (key === "holiday" || key === "faith") ? `${title[0].toUpperCase()}${title.slice(1)}. ${line}` : line;
+    const named = title && (key === "holiday" || key === "faith" || key === "eid") ? `${title[0].toUpperCase()}${title.slice(1)}. ${line}` : line;
     if (!to) return named;
     return `${to[0].toUpperCase()}${to.slice(1)} — ${named[0].toLowerCase()}${named.slice(1)}`;
   }
@@ -3060,28 +3065,155 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     } catch { return false; }
   }
 
+  // ── праздники: свои и найденные ─────────────────────────────────────────
+  /**
+   * Праздники. Раньше список был пуст, пока хозяин не назовёт каждый день сам.
+   * Теперь она находит их сама: исламские считает по лунному календарю,
+   * государственные берёт из открытого справочника — для страны, где город
+   * хозяина, или для названной им. Свои он по-прежнему добавляет словами.
+   * Что из найденного ему не нужно, он убирает — и оно не возвращается.
+   */
+  const FEASTS = config.FEASTS !== false;
+  const HOLIDAY_FROM = 9, HOLIDAY_TILL = 22, FEAST_AHEAD = 366, FEAST_COUNTRIES_MAX = 3;
+  const ymdOf = (parts) => ({ y: parts.y, m: parts.m, d: parts.d });
+  const dayMark = (parts) => `${parts.y}-${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}`;
+  const dayStamp = (item) => Date.UTC(item.y, item.m - 1, item.d);
+  const sameDay = (a, b) => a.y === b.y && a.m === b.m && a.d === b.d;
+  const WEEKDAYS_AT = ["в воскресенье", "в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу"];
+  const inDays = (count) => (count === 0 ? "сегодня" : count === 1 ? "завтра" : count === 2 ? "послезавтра" : `через ${count} ${plural(count, "день", "дня", "дней")}`);
+
+  /**
+   * Чьи праздники искать: страны, названные хозяином, иначе — страна его города.
+   * Страна города узнаётся один раз и лежит рядом со списком: будильник в
+   * справочник городов не ходит. Не узналась — раз в неделю она спросит снова.
+   */
+  async function feastCountries(saved, settings = null) {
+    if (Array.isArray(saved?.countries)) return { codes: saved.countries.map(String).filter(code => /^[A-Z]{2}$/u.test(code)).slice(0, FEAST_COUNTRIES_MAX), by: "owner" };
+    const mine = settings == null;
+    const city = String((settings ?? (await personal.settings(OWNER).catch(() => null)) ?? {}).city ?? "").trim();
+    if (!city) return { codes: [], by: "nocity" };
+    const kept = mine ? saved?.where : null;
+    if (kept?.city === city && (kept.cc || now() - (Number(kept.at) || 0) < 7 * DAY)) return kept.cc ? { codes: [kept.cc], by: "city", city } : { codes: [], by: "unknown", city };
+    if (!sources.available()) return { codes: [], by: "nosource", city };
+    const got = await sources.countryOf(city).catch(() => null);
+    // Справочник городов не назвал код — страна узнаётся по её русскому имени.
+    const code = got?.ok ? got.cc : countryCodeOf(got?.country ?? "");
+    // Нет связи — не ответ: запоминать нечего, спросит в следующий раз.
+    if (mine && store.available && (code || (got && got.code !== "network"))) {
+      await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), where: { city, cc: code || "", at: now() } })).catch(() => false);
+    }
+    return code ? { codes: [code], by: "city", city } : { codes: [], by: "unknown", city };
+  }
+
+  /**
+   * Праздники на `days` дней вперёд, начиная с `from`: свои, исламские,
+   * государственные. `{ list, codes, by, city, failed, auto }`; `failed` —
+   * страны, по которым справочник не ответил. `person` — не хозяин: без его
+   * списка и его правок, страна — по городу спросившего.
+   */
+  async function feastsAhead(saved, from, { days = FEAST_AHEAD, person = null } = {}) {
+    const own = person ? [] : holidaysOf(saved);
+    if (!FEASTS || (!person && saved?.auto === false)) return { list: feastsFor({ own, islam: false, publics: [], from, days }), codes: [], by: "off", failed: [], unknown: [], auto: false };
+    const where = await feastCountries(person ? null : saved, person ? person.settings ?? {} : null);
+    const last = new Date(dayStamp(from) + (days - 1) * DAY).getUTCFullYear();
+    const publics = [], failed = [], unknown = [];
+    let down = false;
+    for (const code of where.codes) {
+      for (const year of last === from.y ? [from.y] : [from.y, last]) {
+        // Справочник не ответил — второй раз подряд его не ждём: человек (или будильник) не должен стоять из-за праздников.
+        const got = down ? null : await sources.publicHolidays(code, year).catch(() => null);
+        if (got?.ok && got.unknown) { if (!unknown.includes(code)) unknown.push(code); break; }
+        if (got?.ok) { publics.push(...publicDays(got.rows, code)); continue; }
+        down = true;
+        if (!failed.includes(code)) failed.push(code);
+        break;
+      }
+    }
+    // Название, которого нет в её таблице, переводится один раз и запоминается.
+    const names = person ? {} : (saved?.names && typeof saved.names === "object" ? saved.names : {});
+    for (const item of publics) if (!item.known && names[item.name]) item.title = names[item.name];
+    const islam = person ? true : saved?.islam !== false;
+    return { list: feastsFor({ own, islam, publics, removed: person ? [] : saved?.removed, from, days }), codes: where.codes, by: where.by, city: where.city, failed, unknown, auto: true, islam };
+  }
+
+  /** Незнакомые названия праздников — перевести переводчиком художника и запомнить (не больше шести за раз). */
+  async function feastNames(list, saved) {
+    if (!draw.available) return null;
+    const known = saved?.names && typeof saved.names === "object" ? saved.names : {};
+    const fresh = {};
+    for (const item of list) {
+      if (item.known !== false || !item.name || known[item.name] || fresh[item.name] || Object.keys(fresh).length >= 6) continue;
+      const got = String(await draw.translate(item.name, { from: "en", to: "ru" }).catch(() => "")).replace(/[.!]+$/u, "").trim();
+      if (got && /[а-яё]/iu.test(got) && got.length <= 60) fresh[item.name] = `${got[0].toUpperCase()}${got.slice(1)}`;
+    }
+    return Object.keys(fresh).length ? fresh : null;
+  }
+
+  /** Что сказать о дне, с которым она не поздравляет: выходной, памятный день, ночь. */
+  function feastNote(item) {
+    if (item.kind === "women") return "Сегодня Международный женский день. Открытку близким нарисую по слову: «нарисуй открытку маме на 8 марта».";
+    if (item.kind === "islam") return item.night ? `Сегодня вечером начинается ${item.title[0].toLowerCase()}${item.title.slice(1)}${item.some ? " (её отмечают не все)" : ""}.` : `Сегодня — ${item.title}${item.some ? " (его отмечают не все)" : ""}.`;
+    if (item.off && item.country) return `Сегодня в ${countryWords(item.country).at} выходной: ${item.title}.`;
+    return `Сегодня — ${item.title}.`;
+  }
+  /** Случай для открытки: исламскому празднику — свой рисунок и свои слова. */
+  const feastOccasion = (item) => (item.known ? "known"
+    : item.key === "islam:ramadan" || islamicByTitle(item.title)?.id === "ramadan" ? "ramadan"
+      : item.key === "islam:fitr" || item.key === "islam:adha" || ["fitr", "adha"].includes(islamicByTitle(item.title)?.id) ? "eid"
+        : item.kind === "islam" || islamicByTitle(item.title) ? "faith"
+          : /нов\S*\s+год/iu.test(item.title) ? "newyear" : /8\s+марта|женский\s+день/iu.test(item.title) ? "march8" : /23\s+февраля|защитника\s+отечества/iu.test(item.title) ? "feb23" : /рождени/iu.test(item.title) ? "birthday" : "holiday");
+
+  /**
+   * Что сегодня за день для хозяина — раз в сутки: будильник звонит каждую
+   * минуту, и ходить в справочник каждый раз незачем. План лежит рядом со
+   * списком; хозяин что-то поменял — план сбрасывается. Справочник не ответил —
+   * план временный, через два часа она спросит снова.
+   */
+  async function feastPlan(saved, today) {
+    const mark = dayMark(today);
+    const kept = saved?.day;
+    if (kept?.mark === mark && (!kept.partial || now() - (Number(kept.at) || 0) < 2 * 3_600_000)) return kept;
+    const ahead = await feastsAhead(saved, ymdOf(today), { days: 4 });
+    const pick = (item) => ({ key: item.key, y: item.y, m: item.m, d: item.d, title: item.title, kind: item.kind, card: Boolean(item.card), ...(item.night ? { night: true } : {}), ...(item.some ? { some: true } : {}), ...(item.off ? { off: true } : {}), ...(item.country ? { country: item.country } : {}), ...(item.hijri ? { hijri: item.hijri } : {}) });
+    const plan = {
+      mark, at: now(), ...(ahead.failed.length ? { partial: true } : {}),
+      // Ночь начинается накануне вечером: о ней говорится за день до её числа.
+      due: ahead.list.filter(item => (item.night ? dayStamp(item) - dayStamp(today) === DAY : sameDay(item, today))).map(pick),
+      // Расчётный исламский праздник послезавтра: день объявляют по луне — она спросит заранее.
+      soon: ahead.list.filter(item => item.kind === "islam" && item.card && item.hijri && dayStamp(item) - dayStamp(today) === 2 * DAY).map(pick),
+    };
+    await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), day: plan })).catch(() => false);
+    return plan;
+  }
+
+  /** Строки о сегодняшнем дне для «доброго утра»: то, с чем она не поздравит открыткой. */
+  async function feastMorning(zone) {
+    if (!store.available) return [];
+    try {
+      const saved = await store.get(HOLIDAYS_KEY).catch(() => null);
+      const plan = await feastPlan(saved, localParts(now(), zone));
+      // Открытки включены — поздравление придёт после девяти (рисунком или словами): утром о нём молчит.
+      const cards = saved?.cards !== false;
+      return plan.due.filter(item => !(item.card && cards)).slice(0, 3).map(item => (item.card ? `Сегодня — ${item.title}. С праздником!` : feastNote(item)));
+    } catch { return []; }
+  }
+
   /**
    * Праздники хозяина: в сам день, после девяти утра по его часам, — открытка
-   * и слова. Список — его: «добавь праздник Ураза-байрам 20 марта 2027». Дат,
-   * которые каждый год другие, она не вычисляет. Отмечено до отправки: два
+   * и слова. За два дня до расчётного исламского праздника — одно слово: день
+   * объявляют по луне, и хозяин может его поправить. Отмечено до отправки: два
    * пробуждения разом не поздравят дважды.
    */
-  const HOLIDAY_FROM = 9, HOLIDAY_TILL = 22;
   async function holidayCards() {
     if (!GREET || OWNER == null || !store.available) return 0;
     const saved = await store.get(HOLIDAYS_KEY).catch(() => null);
-    if (saved?.cards === false) return 0;
     const zone = await ownerZone();
     const today = localParts(now(), zone);
     if (today.hh < HOLIDAY_FROM || today.hh >= HOLIDAY_TILL) return 0;
-    const mark = `${today.y}-${String(today.m).padStart(2, "0")}-${String(today.d).padStart(2, "0")}`;
-    const due = holidaysOf(saved).filter(item => item.d === today.d && item.m === today.m && (!item.y || item.y === today.y));
-    // Круглый день знакомства — тоже повод: та же строка, что в «добром утре», и открытка к ней.
-    const known = milestoneLine(await daysKnown(OWNER, zone).catch(() => 0));
-    if (known) due.push({ d: today.d, m: today.m, title: "знакомство", known });
-    let sent = 0;
-    for (const item of due) {
-      const id = `${item.m}-${item.d}:${item.title.toLowerCase()}`;
+    const mark = dayMark(today);
+    const plan = await feastPlan(saved, today).catch(() => ({ due: [], soon: [] }));
+    /** Занять отметку: `true` — это пробуждение говорит первым. */
+    const claim = async (id) => {
       let claimed = false;
       const landed = await store.update(HOLIDAYS_KEY, (before) => {
         const base = before && typeof before === "object" ? before : {};
@@ -3091,10 +3223,25 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const kept = Object.fromEntries(Object.entries(base.sent ?? {}).filter(([, value]) => value === mark));
         return { ...base, sent: { ...kept, [id]: mark }, at: now() };
       }).catch(() => false);
-      if (!landed || !claimed) continue;
-      const occasion = item.known ? "known" : /нов\S*\s+год/iu.test(item.title) ? "newyear" : /8\s+марта/iu.test(item.title) ? "march8" : /23\s+февраля/iu.test(item.title) ? "feb23" : /рождени/iu.test(item.title) ? "birthday" : "holiday";
+      return Boolean(landed && claimed);
+    };
+    let sent = 0;
+    for (const item of plan.soon ?? []) {
+      if (!(await claim(`soon:${item.key}`))) continue;
+      const other = new Date(dayStamp(item) + DAY);
+      const text = `Хозяин, послезавтра, ${feastDay(item)}, по расчёту — ${item.title}. Точный день объявляют по луне, и он бывает на сутки позже. Если у вас назовут другой — скажите мне: «добавь праздник ${item.title} ${other.getUTCDate()} ${feastDay({ d: 1, m: other.getUTCMonth() + 1 }).split(" ")[1]} ${other.getUTCFullYear()}», и поздравлю в тот день.`;
+      try { await api.sendMessage({ chat_id: OWNER, text }); sent += 1; } catch { /* не дошло — не беда: открытка придёт по расчёту */ }
+    }
+    if (saved?.cards === false) return sent;
+    const due = (plan.due ?? []).filter(item => item.card);
+    // Круглый день знакомства — тоже повод: та же строка, что в «добром утре», и открытка к ней.
+    const known = milestoneLine(await daysKnown(OWNER, zone).catch(() => 0));
+    if (known) due.push({ d: today.d, m: today.m, title: "знакомство", known });
+    for (const item of due) {
+      if (!(await claim(`${item.m}-${item.d}:${item.title.toLowerCase()}`))) continue;
+      const occasion = feastOccasion(item);
       const address = String(((await personal.settings(OWNER).catch(() => null)) ?? {}).address ?? "").trim();
-      const words = item.known ? `${item.known} ${cardCaption({ occasion })}` : cardCaption({ occasion, title: occasion === "holiday" ? item.title : "" });
+      const words = item.known ? `${item.known} ${cardCaption({ occasion })}` : cardCaption({ occasion, title: ["holiday", "faith", "eid"].includes(occasion) ? item.title : "" });
       const text = `${words}${address && !item.known ? ` Это вам, ${address}.` : ""}`;
       const photo = await ownCard(occasion, item.title);
       try {
@@ -3105,7 +3252,135 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return sent;
   }
 
-  /** «Праздники», «добавь праздник …», «убери праздник …», «не присылай открытки» — хозяину, в личке. */
+  /** Праздники в «статус»: ищет ли сама, чьи, что со справочником. Только по записям — в сеть не ходит. */
+  async function feastStatus() {
+    if (!FEASTS) return "сама не ищу — выключено настройкой";
+    const saved = await store.get(HOLIDAYS_KEY).catch(() => null);
+    const mine = holidaysOf(saved).length;
+    const own = mine ? ` · ваших — ${mine}` : "";
+    if (saved?.auto === false) return `сама не ищу — так просил хозяин${own}`;
+    const codes = Array.isArray(saved?.countries) ? saved.countries : saved?.where?.cc ? [saved.where.cc] : [];
+    const land = codes.length ? `государственные — ${codes.map(code => countryWords(code).name).join(", ")}${Array.isArray(saved?.countries) ? "" : " (по городу)"}`
+      : Array.isArray(saved?.countries) ? "государственные убраны" : saved?.where ? "государственных нет: страну по городу не узнала" : "государственных пока нет: город не назван или страна ещё не выяснена";
+    return `ищу сама · ${saved?.islam === false ? "исламские выключены" : "исламские — по лунному календарю"} · ${land}${saved?.day?.partial ? " · справочник сегодня не ответил" : ""}${own}${saved?.cards === false ? " · открытки выключены" : ""}`;
+  }
+
+  /** Откуда список: одной строкой для «праздники» и «откуда праздники». */
+  function feastSources(ahead, saved) {
+    if (!ahead.auto) return "Сама я праздники сейчас не ищу — в списке только названные вами. Вернуть — «ищи праздники сама».";
+    const lines = [];
+    lines.push(ahead.islam ? "Исламские дни считаю сама, по лунному календарю Умм аль-Кура: это расчёт, а точный день объявляют по луне — он бывает на сутки позже. Если у вас иначе, назовите день сами: «добавь праздник Ураза-байрам 10 марта 2027» — ваш заменит расчётный."
+      : "Исламские праздники не показываю — вы так просили. Вернуть — «отмечай исламские праздники».");
+    const named = ahead.codes.map(code => countryWords(code).of).join(", ");
+    if (ahead.codes.length) lines.push(`Государственные — ${named}, из открытого справочника Nager.Date${ahead.by === "city" ? ` (страна — по вашему городу, ${ahead.city})` : ""}. Другая страна — «праздники России»; ещё одна — «добавь праздники Казахстана».`);
+    else if (ahead.by === "nocity") lines.push("Государственных нет: я не знаю, где вы живёте. Назовите город («мой город Казань») или страну — «праздники России».");
+    else if (ahead.by === "owner") lines.push("Государственных нет: страны вы убрали. Вернуть — «праздники России».");
+    else if (ahead.by === "nosource") lines.push("Государственных нет: справочники сейчас выключены.");
+    else lines.push(`Государственных нет: по городу «${ahead.city ?? ""}» я не узнала страну. Назовите её: «праздники России».`);
+    if (ahead.unknown.length) lines.push(`Страны «${ahead.unknown.map(code => countryWords(code).name).join(", ")}» справочник не знает: её праздники можно назвать самому — «добавь праздник Навруз 21 марта».`);
+    if (ahead.failed.length) lines.push(`Справочник сейчас не ответил по стране: ${ahead.failed.map(code => countryWords(code).name).join(", ")}. Спрошу ещё раз позже.`);
+    const gone = Array.isArray(saved?.removed) ? saved.removed.length : 0;
+    if (gone) lines.push(`Убрано вами: ${gone}. Вернуть всё — «верни праздники».`);
+    return lines.join("\n");
+  }
+
+  /**
+   * «Какой сегодня праздник», «когда Ураза-байрам», «какое число по хиджре» —
+   * всем; «праздники России», «не ищи праздники сама», «обнови праздники» —
+   * хозяину, в личке.
+   */
+  async function feastWords(turn, prompt) {
+    const asked = parseFeast(prompt);
+    if (!asked) return null;
+    const mine = owner(turn.actorId);
+    const settings = asked.country || asked.auto != null || asked.islam != null || asked.refresh || asked.countries;
+    if (settings && !(mine && turn.isPrivate)) return asked.countries ? null : say(turn, "Праздники я ищу для хозяина, и настраивает их он — в личке.");
+    if (!FEASTS && !settings) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как вопрос о праздниках — репетиция.");
+    const zone = zoneOf(turn);
+    const today = localParts(now(), zone);
+    const saved = await store.get(HOLIDAYS_KEY).catch(() => null);
+    const person = mine ? null : { settings: turn.manner?.settings ?? {} };
+
+    if (asked.hijri) {
+      const date = hijriOf(today.y, today.m, today.d);
+      if (!date) return say(turn, "Так далеко мой лунный календарь не расписан — не скажу.");
+      return say(turn, `Сегодня ${hijriText(date)} — по расчётному календарю Умм аль-Кура. День по хиджре начинается с заходом солнца, а начало месяца в разных странах объявляют по луне: число может отличаться на единицу.`);
+    }
+    if (asked.when) {
+      const day = ISLAMIC.find(item => item.id === asked.when);
+      const ahead = await feastsAhead(saved, ymdOf(today), { days: 380, person });
+      // Свой день хозяина с тем же названием важнее расчётного.
+      const hit = ahead.list.find(item => item.key === `islam:${day.id}`) ?? ahead.list.find(item => item.kind === "own" && islamicByTitle(item.title)?.id === day.id);
+      const computed = islamicDays(ymdOf(today), 380).find(item => item.key === `islam:${day.id}`);
+      const item = hit ?? computed;
+      if (!item) return say(turn, "Так далеко мой лунный календарь не расписан — не скажу.");
+      const left = Math.round((dayStamp(item) - dayStamp(today)) / DAY);
+      const weekday = WEEKDAYS_AT[new Date(dayStamp(item)).getUTCDay()];
+      if (item.kind === "own") return say(turn, `${item.title} — ${feastDay(item)} ${item.y} года, ${weekday}: ${inDays(left)}. Этот день назвали вы сами.`);
+      const night = item.night ? ` Это ночь: она начинается накануне вечером, ${feastDay(ymdOf(localParts(dayStamp(item) - DAY, "UTC")))}.` : "";
+      const fast = day.id === "ramadan" ? ` Первый день поста — ${feastDay(item)}; первый таравих — накануне вечером.` : "";
+      return say(turn, `${item.title} — ${item.night ? "в ночь на " : ""}${feastDay(item)} ${item.y} года, ${weekday}: ${inDays(left)}.${night}${fast} Это расчёт по календарю Умм аль-Кура; точный день объявляют по луне, и он бывает на сутки позже.${item.some ? " Отмечают этот день не все общины." : ""}`);
+    }
+    if (asked.today || asked.tomorrow) {
+      const from = asked.tomorrow ? ymdOf(localParts(now() + DAY, zone)) : ymdOf(today);
+      const ahead = await feastsAhead(saved, from, { days: 120, person });
+      const due = ahead.list.filter(item => (item.night ? dayStamp(item) - dayStamp(from) === DAY : sameDay(item, from) || (item.till && dayStamp(item) <= dayStamp(from) && dayStamp(item.till) >= dayStamp(from))));
+      const word = asked.tomorrow ? "Завтра" : "Сегодня";
+      const next = ahead.list.find(item => dayStamp(item) > dayStamp(from) && !due.includes(item) && (item.card || item.off));
+      const then = next ? ` Ближайший — ${next.title}, ${feastDay(next)} (${inDays(Math.round((dayStamp(next) - dayStamp(ymdOf(today))) / DAY))}).` : "";
+      const hijri = mine || ahead.islam ? hijriOf(from.y, from.m, from.d) : null;
+      const moon = hijri ? ` По хиджре — ${hijri.hd} ${HIJRI_MONTHS[hijri.hm - 1]} ${hijri.hy}.` : "";
+      if (!due.length) return say(turn, `${word}, ${feastDay(from)}, праздников ${mine ? "в моём списке " : ""}нет.${then}${moon}`);
+      const lines = due.map(item => (item.night ? `вечером начинается ${item.title[0].toLowerCase()}${item.title.slice(1)}` : item.till ? `${item.title} (${feastLine(item).split(" — ")[1].split(" · ")[0]})` : item.title)
+        + (item.off && item.country ? ` — выходной в ${countryWords(item.country).at}` : "") + (item.some ? " (отмечают не все)" : "") + (item.kind === "islam" && item.hijri ? " (по расчёту)" : ""));
+      return say(turn, `${word}, ${feastDay(from)}: ${lines.join("; ")}.${then}${moon}`);
+    }
+
+    // ── настройки: хозяин, личка ──
+    const patch = async (change) => store.update(HOLIDAYS_KEY, (before) => {
+      const base = before && typeof before === "object" ? before : {};
+      return { ...base, ...change(base), day: null, at: now() };
+    }).catch(() => false);
+    if (asked.countries) {
+      const ahead = await feastsAhead(saved, ymdOf(today), { days: FEAST_AHEAD });
+      return say(turn, feastSources(ahead, saved));
+    }
+    if (asked.auto != null) {
+      if (!(await patch(() => ({ auto: asked.auto })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, asked.auto ? "Хорошо, хозяин: праздники снова ищу сама — исламские по лунному календарю, государственные по справочнику. Список — «праздники»." : "Хорошо, хозяин: сама праздники не ищу. В списке остаются только названные вами. Вернуть — «ищи праздники сама».");
+    }
+    if (asked.islam != null) {
+      if (!(await patch(() => ({ islam: asked.islam })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, asked.islam ? "Хорошо, хозяин: исламские праздники снова в списке — Ураза-байрам, Курбан-байрам, начало Рамадана и памятные дни." : "Хорошо, хозяин: исламские праздники не показываю и с ними не поздравляю. Вернуть — «отмечай исламские праздники».");
+    }
+    if (asked.refresh) {
+      if (!(await patch(() => ({})))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      const ahead = await feastsAhead({ ...(saved ?? {}), day: null }, ymdOf(today), { days: FEAST_AHEAD });
+      return say(turn, `Перечитала. На год вперёд в списке ${ahead.list.length} ${plural(ahead.list.length, "день", "дня", "дней")}.${ahead.failed.length ? ` Справочник не ответил по стране: ${ahead.failed.map(code => countryWords(code).name).join(", ")}.` : ""} Показать — «праздники».`);
+    }
+    if (asked.country) {
+      const words = countryWords(asked.country);
+      const current = (await feastCountries(saved)).codes;
+      if (asked.mode === "drop") {
+        if (!current.includes(asked.country)) return say(turn, `Праздников ${words.of} в моём списке и так нет.`);
+        if (!(await patch(() => ({ countries: current.filter(code => code !== asked.country) })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+        return say(turn, `Убрала праздники ${words.of}. Вернуть — «праздники ${words.of}».`);
+      }
+      const next = asked.mode === "add" ? [...new Set([...current, asked.country])] : [asked.country];
+      if (next.length > FEAST_COUNTRIES_MAX) return say(turn, `Больше ${FEAST_COUNTRIES_MAX} стран сразу я не веду. Лишнюю можно убрать: «убери праздники ${countryWords(current[0]).of}».`);
+      // Сначала — есть ли такая страна в справочнике: обещать нечего, если он её не знает.
+      const got = sources.available() ? await sources.publicHolidays(asked.country, today.y).catch(() => null) : null;
+      if (!got?.ok) return say(turn, "Справочник праздников сейчас не отвечает. Попробуйте чуть позже.");
+      if (got.unknown) return say(turn, `Страны «${words.name}» справочник праздников не знает. Её праздники можно назвать самому: «добавь праздник Навруз 21 марта».`);
+      if (!(await patch(() => ({ countries: next })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      const count = publicDays(got.rows, asked.country).length;
+      return say(turn, `Хорошо, хозяин: ${asked.mode === "add" ? "добавила" : "теперь ищу"} праздники ${words.of} — в этом году их ${count}.${next.length > 1 ? ` Всего стран: ${next.map(code => countryWords(code).name).join(", ")}.` : ""} Список — «праздники».`);
+    }
+    return null;
+  }
+
+  /** «Праздники», «добавь праздник …», «убери праздник …», «верни праздники», «не присылай открытки» — хозяину, в личке. */
   async function holidayWords(turn, prompt) {
     const asked = parseHoliday(prompt);
     if (!asked) return null;
@@ -3113,32 +3388,59 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (turn.dry) return say(turn, "Разобрала бы это как просьбу о праздниках — репетиция.");
     const saved = await store.get(HOLIDAYS_KEY).catch(() => null);
     const items = holidaysOf(saved);
-    const listed = (list) => list.map((item, index) => `${index + 1}. ${item.title} — ${holidayDate(item)}${item.y ? " (один раз)" : ", каждый год"}`).join("\n");
+    const today = ymdOf(localParts(now(), zoneOf(turn)));
+    const patch = async (change) => store.update(HOLIDAYS_KEY, (before) => {
+      const base = before && typeof before === "object" ? before : {};
+      return { ...base, ...change(base), day: null, at: now() };
+    }).catch(() => false);
     if (asked.list) {
+      let ahead = await feastsAhead(saved, today);
+      // Незнакомые названия — перевести и запомнить: в следующий раз они уже по-русски.
+      const fresh = await feastNames(ahead.list, saved).catch(() => null);
+      if (fresh) { await patch((base) => ({ names: { ...(base.names ?? {}), ...fresh } })); ahead = await feastsAhead({ ...(saved ?? {}), names: { ...(saved?.names ?? {}), ...fresh } }, today); }
       const off = saved?.cards === false ? "\n\nОткрытки сейчас выключены: «присылай открытки» — вернуть." : "";
-      if (!items.length) return say(turn, `Праздников в моём списке нет: какие дни для вас праздник, знаете только вы, и сама я их не назначаю. Назовите — и в этот день пришлю открытку: «добавь праздник Ураза-байрам 20 марта 2027» (с годом — один раз) или «добавь праздник Навруз 21 марта» (каждый год). День рождения и круглые дни нашего знакомства я помню сама.${off}`);
-      return say(turn, `В эти дни я пришлю вам открытку — после девяти утра:\n${listed(items)}\n\nДобавить — «добавь праздник Ураза-байрам 20 марта 2027» (с годом — один раз, без года — каждый год). Убрать — «убери праздник 2». День рождения и круглые дни нашего знакомства я помню сама.${off}`);
+      const about = feastSources(ahead, saved);
+      if (!ahead.list.length) return say(turn, `Праздников в моём списке нет.\n\n${about}\n\nСвой — «добавь праздник Навруз 21 марта».${off}`);
+      // Что показано под каким номером, запоминается: «убери праздник 3» — про этот список.
+      await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), shown: { at: now(), keys: ahead.list.map(item => `${item.key}@${dayMark(item)}`) } })).catch(() => false);
+      const rows = ahead.list.map((item, index) => `${index + 1}. ${feastLine(item, { year: item.y !== today.y })}`).join("\n");
+      return say(turn, `Праздники на год вперёд. Где стоит «открытка» — поздравлю сама, после девяти утра; об остальных скажу в «добром утре».\n${rows}\n\n${about}\n\nСвой — «добавь праздник Навруз 21 марта» (с годом — один раз, без года — каждый год). Лишний — «убери праздник 3».${off}`);
+    }
+    if (asked.restore) {
+      const gone = Array.isArray(saved?.removed) ? saved.removed.length : 0;
+      if (!gone) return say(turn, "Убранных праздников нет: возвращать нечего.");
+      if (!(await patch(() => ({ removed: [] })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, `Вернула: ${gone} ${plural(gone, "праздник", "праздника", "праздников")} снова в списке.`);
     }
     if (asked.cards != null) {
       const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), cards: asked.cards, at: now() })).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, asked.cards ? "Хорошо, хозяин: в праздники снова пришлю открытку." : "Хорошо, хозяин: сама открыток к праздникам не присылаю. По просьбе — «нарисуй открытку» — всегда.");
     }
-    if (asked.add === null) return say(turn, "Не разобрала дату. Так: «добавь праздник Навруз 21 марта» или «добавь праздник Ураза-байрам 20.03.2027».");
+    if (asked.add === null) return say(turn, "Не разобрала дату. Так: «добавь праздник Навруз 21 марта» или «добавь праздник Ураза-байрам 10.03.2027».");
     if (asked.add) {
       const same = (item) => item.title.toLowerCase() === asked.add.title.toLowerCase();
-      if (!items.some(same) && items.length >= HOLIDAYS_MAX) return say(turn, `В списке уже ${items.length} праздников — это предел. Лишний можно убрать: «убери праздник 3».`);
+      if (!items.some(same) && items.length >= HOLIDAYS_MAX) return say(turn, `В списке уже ${items.length} ваших праздников — это предел. Лишний можно убрать: «убери праздник 3».`);
       const next = [...items.filter(item => !same(item)), asked.add].sort((a, b) => a.m - b.m || a.d - b.d);
-      const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: next, at: now() })).catch(() => false);
-      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
-      return say(turn, `Запомнила, хозяин: ${asked.add.title} — ${holidayDate(asked.add)}${asked.add.y ? ", один раз" : ", каждый год"}. В этот день пришлю открытку.`);
+      if (!(await patch(() => ({ items: next })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      // Название совпало с расчётным исламским днём — хозяин уточнил день: расчётный уступает.
+      const twin = FEASTS && saved?.auto !== false && saved?.islam !== false ? islamicByTitle(asked.add.title) : null;
+      return say(turn, `Запомнила, хозяин: ${asked.add.title} — ${holidayDate(asked.add)}${asked.add.y ? ", один раз" : ", каждый год"}. В этот день пришлю открытку.${twin ? " Расчётный день этого праздника я убрала: ваш вернее." : ""}`);
     }
-    const index = typeof asked.drop === "number" ? asked.drop - 1 : items.findIndex(item => item.title.toLowerCase().replace(/ё/gu, "е") === asked.drop);
-    const gone = items[index];
-    if (!gone) return say(turn, `Такого праздника в списке нет.${items.length ? `\n${listed(items)}` : ""}`);
-    const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: items.filter((_, at) => at !== index), at: now() })).catch(() => false);
-    if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
-    return say(turn, `Убрала: ${gone.title} (${holidayDate(gone)}).`);
+    // «Убери праздник 3» — номер из последнего показанного списка; «убери праздник Пасха» — по названию.
+    const ahead = await feastsAhead(saved, today);
+    const fresh = saved?.shown && now() - (Number(saved.shown.at) || 0) < 6 * 3_600_000 ? saved.shown.keys : null;
+    const wanted = String(asked.drop).toLowerCase().replace(/ё/gu, "е");
+    const gone = typeof asked.drop === "number"
+      ? (fresh ? ahead.list.find(item => `${item.key}@${dayMark(item)}` === fresh[asked.drop - 1]) : ahead.list[asked.drop - 1])
+      : ahead.list.find(item => item.title.toLowerCase().replace(/ё/gu, "е") === wanted) ?? items.map(item => ({ ...item, kind: "own", key: `own:${item.title.toLowerCase()}` })).find(item => item.title.toLowerCase().replace(/ё/gu, "е") === wanted);
+    if (!gone) return say(turn, `Такого праздника в списке нет. Список с номерами — «праздники».`);
+    if (gone.kind === "own") {
+      if (!(await patch(() => ({ items: items.filter(item => item.title.toLowerCase() !== gone.title.toLowerCase()) })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, `Убрала: ${gone.title} (${feastDay(gone)}).`);
+    }
+    if (!(await patch((base) => ({ removed: [...new Set([...(Array.isArray(base.removed) ? base.removed : []), gone.key])].slice(-80) })))) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+    return say(turn, `Убрала: ${gone.title} (${feastDay(gone)}). Этот праздник я больше не покажу и с ним не поздравлю — ни в этом году, ни в следующих. Вернуть убранное — «верни праздники».`);
   }
 
   /** Ответы мастерской одной строкой: «FLUX schnell — 400 «…»; SDXL — 404 «…»». */
@@ -4851,7 +5153,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки

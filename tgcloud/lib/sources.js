@@ -19,6 +19,9 @@ const METEO = "https://api.open-meteo.com/v1/forecast";
 const CBR = "https://www.cbr-xml-daily.ru/daily_json.js";
 const RATES_SPARE = "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/rub.min.json";
 const RATES_LAST = "https://open.er-api.com/v6/latest/USD";
+// Государственные праздники стран: открытый справочник Nager.Date, без ключа.
+// Адрес четвёртой версии — код страны перед годом; третья версия закрывается 31.01.2027.
+const FEASTS = "https://nagerholidays.com/api/v4/Holidays";
 const AGENT = "AiHeart/1.0 (Telegram companion bot; no tracking)";
 
 /** К виду для сравнения: регистр, «ё», лишние пробелы. */
@@ -399,11 +402,57 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
           return {
             ok: true, name: String(hit.name), country: String(hit.country ?? ""), region: String(hit.admin1 ?? ""),
             latitude: Number(hit.latitude), longitude: Number(hit.longitude), timezone: String(hit.timezone ?? ""),
+            // Двухбуквенный код страны: по нему ищутся её праздники.
+            cc: /^[a-z]{2}$/iu.test(String(hit.country_code ?? "")) ? String(hit.country_code).toUpperCase() : "",
           };
         }
       }
       return { ok: false, code: failed ? "network" : "unknown_place" };
     });
+  }
+
+  /**
+   * В какой стране город: `{ ok, cc, country }`. Запись о городе могла лечь в
+   * запас до того, как понадобился код страны, — тогда справочник спрашивается
+   * ещё раз, мимо запаса, и ответ хранится полгода.
+   */
+  async function countryOf(text) {
+    const place = await findPlace(text, { tries: 1 });
+    if (!place?.ok) return { ok: false, code: place?.code ?? "unknown_place" };
+    if (place.cc) return { ok: true, cc: place.cc, country: place.country };
+    return cached(`heart:src:cc:${cityKey(place.name).slice(0, 60)}`, 180 * 86_400_000, async () => {
+      const results = await geocode(place.name);
+      if (results == null) return { ok: false, code: "network", country: place.country };
+      const wanted = cityKey(place.name);
+      const hit = results.find(item => cityKey(item?.name) === wanted && Math.abs(Number(item?.latitude) - place.latitude) < 1 && Math.abs(Number(item?.longitude) - place.longitude) < 1);
+      const cc = String(hit?.country_code ?? "").toUpperCase();
+      return /^[A-Z]{2}$/u.test(cc) ? { ok: true, cc, country: String(hit.country ?? place.country) } : { ok: false, code: "unknown_place", country: place.country };
+    });
+  }
+
+  /**
+   * Государственные праздники страны за год: `{ ok, cc, year, rows }`, где
+   * `rows` — как отдал справочник (`date`, `name`, `nationalHoliday`,
+   * `holidayTypes`). Свежий ответ живёт месяц; справочник молчит — годится
+   * прошлый, до четырёхсот дней: праздники года не меняются. Страны справочник
+   * не знает — `rows` пуст и `unknown: true`.
+   */
+  async function publicHolidays(code, year) {
+    const cc = String(code ?? "").toUpperCase();
+    const y = Math.trunc(Number(year));
+    if (!/^[A-Z]{2}$/u.test(cc) || !(y >= 2000 && y <= 2100)) return { ok: false, code: "bad_request" };
+    return cached(`heart:src:hol:${cc}:${y}`, 30 * 86_400_000, async () => {
+      const got = await getJson(`${FEASTS}/${cc}/${y}`, { timeout: 4000 });
+      // «Такой страны нет» — тоже ответ, и он запоминается: иначе справочник спрашивался бы каждый час.
+      if (!got.ok && (got.status === 404 || got.status === 400)) return { ok: true, cc, year: y, rows: [], unknown: true };
+      if (!got.ok) return { ok: false, code: got.code, status: got.status ?? 0 };
+      if (!Array.isArray(got.data)) return { ok: false, code: "invalid" };
+      const rows = got.data.filter(row => row && typeof row === "object" && row.date && row.name).slice(0, 120).map(row => ({
+        date: String(row.date).slice(0, 10), name: String(row.name).slice(0, 80), nationalHoliday: row.nationalHoliday !== false,
+        holidayTypes: (Array.isArray(row.holidayTypes) ? row.holidayTypes : []).map(String).slice(0, 6),
+      }));
+      return { ok: true, cc, year: y, rows, ...(rows.length ? {} : { unknown: true }) };
+    }, { staleMs: 400 * 86_400_000 });
   }
 
   /** Есть ли такой город: свой список, затем справочник. null — проверить не удалось. */
@@ -559,5 +608,5 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok === true, spare: bank.via === "spare" };
   }
 
-  return Object.freeze({ available, wiki, wordExists, findPlace, cityExists, weather, rates, convert, animal, gesture, probe, fetchJson: getJson });
+  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, rates, convert, animal, gesture, probe, fetchJson: getJson });
 }
