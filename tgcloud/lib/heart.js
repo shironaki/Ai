@@ -38,6 +38,7 @@ import { fajrOn, parseFajr, prayersOn, ishaRule, methodExtras, DAY_TIMES, SHIFT_
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
 import { parsePostcard, postcardPrompt, parseHoliday, holidaysOf, holidayDate, OCCASIONS, HOLIDAYS_KEY, HOLIDAYS_MAX } from "./postcard.js";
 import { parseTranslate, guessLanguage, LANGUAGES } from "./translate.js";
+import { parseCards, cardsOf, sameCard, dueCards, rightAnswer, graded, dueWords, CARDS_KEY, CARDS_ASK_KEY, CARDS_MAX, ASK_TTL_MS as CARDS_ASK_TTL_MS } from "./cards.js";
 import { parseFeast, feastsFor, feastLine, publicDays, islamicDays, islamicByTitle, hijriOf, hijriText, countryCodeOf, countryWords, dayText as feastDay, ISLAMIC, HIJRI_MONTHS } from "./feasts.js";
 import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
 import { parseAsked, askedItems, ASKED_KEY, ASKED_MAX } from "./asked.js";
@@ -2653,6 +2654,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           milestoneLine(await daysKnown(OWNER, zone)),
           // Что сегодня за день: выходной, памятная дата — то, с чем открытки не будет.
           ...(await feastMorning(zone)),
+          await cardsMorning().catch(() => ""),
         ].filter(Boolean);
         if (more.length) text = `${text}\n${more.join("\n")}`;
       }
@@ -3661,6 +3663,108 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, out);
   }
 
+  // ── слова с повторением ─────────────────────────────────────────────────
+  /**
+   * «Запомни слово apple — яблоко», «мои слова», «спроси слова». Она спрашивает
+   * по расписанию (день, три, неделя, две, месяц, три месяца); ошибка возвращает
+   * слово в начало. Без модели; перевод к слову без пары находит переводчик.
+   * Только в личке: список личный.
+   */
+  const CARDS = config.CARDS !== false;
+  const cardQuestion = (state) => `${state.i + 1} из ${state.fronts.length}. Как переводится «${state.fronts[state.i]}»?`;
+  async function cardsWords(turn, prompt) {
+    if (!CARDS) return null;
+    const asked = parseCards(prompt);
+    if (!asked || asked.stop) return null;
+    if (!turn.isPrivate) return say(turn, "Слова для повторения — личный список: это в личке.");
+    if (turn.dry) return say(turn, "Разобрала бы это как просьбу о словах для повторения — репетиция, ничего не записываю.");
+    if (!store.available) return say(turn, "Со словами сейчас никак: хранилище не отвечает.");
+    const key = CARDS_KEY(turn.actorId);
+    const items = cardsOf(await store.get(key).catch(() => null));
+    const hint = "Добавить — «запомни слово apple — яблоко».";
+    if (asked.add) {
+      let { front, back = "" } = asked.add;
+      if (!back) {
+        // Пары нет — перевод находит переводчик: кириллица → на английский, остальное → на русский.
+        const from = guessLanguage(front);
+        const to = from === "ru" ? "en" : "ru";
+        if (draw.available && TRANSLATE) back = String(await draw.translate(front, { from, to, names: LANGUAGE_NAMES }).catch(() => "")).trim().replace(/[.!]+$/u, "").slice(0, 80);
+        if (!back || back.toLowerCase() === front.toLowerCase()) return say(turn, `Перевода к «${front}» я не нашла. ${you(turn, "Напишите", "Напиши")} с переводом: «запомни слово ${front} — …».`);
+      }
+      const before = items.find(item => sameCard(item, front));
+      if (!before && items.length >= CARDS_MAX) return say(turn, `Слов уже ${CARDS_MAX} — больше не держу. Убрать лишнее — «убери слово 3».`);
+      const next = [...items.filter(item => !sameCard(item, front)), { f: front, b: back, s: 0, due: now(), n: 0, ok: 0 }];
+      if (!await store.set(key, { items: next, at: now() }).catch(() => false)) return say(turn, "Не записалось: хранилище не отвечает.");
+      return say(turn, `${before ? "Поправила" : "Запомнила"}: ${front} — ${back}.${asked.add.back ? "" : " Перевод нашла сама — если не тот, скажите с переводом."} Слов: ${next.length}. Спросить — «спроси слова».`);
+    }
+    if (asked.list) {
+      if (!items.length) return say(turn, `Слов пока нет. ${hint}`);
+      const shown = items.slice(0, 50).map((item, index) => `${index + 1}. ${item.f} — ${item.b} · ${dueWords(item.due, now())}`);
+      const due = items.filter(item => item.due <= now()).length;
+      return say(turn, [`${you(turn, "Ваши", "Твои")} слова (${items.length}), к повторению сейчас: ${due}.`, ...shown, items.length > 50 ? `…и ещё ${items.length - 50}.` : "", "Спросить — «спроси слова»; убрать — «убери слово 3»."].filter(Boolean).join("\n"));
+    }
+    if (asked.clear) {
+      if (!items.length) return say(turn, "Слов и так нет.");
+      await store.remove(CARDS_ASK_KEY(turn.actorId)).catch(() => false);
+      return say(turn, await store.remove(key).catch(() => false) ? `Стёрла все слова: их было ${items.length}.` : "Не стёрлось: хранилище не отвечает.");
+    }
+    if (asked.drop != null) {
+      const at = typeof asked.drop === "number" ? asked.drop - 1 : items.findIndex(item => sameCard(item, asked.drop));
+      if (!items[at]) return say(turn, `Такого слова в списке нет. Список — «мои слова».`);
+      const next = items.filter((item, index) => index !== at);
+      if (!await store.set(key, { items: next, at: now() }).catch(() => false)) return say(turn, "Не убралось: хранилище не отвечает.");
+      return say(turn, `Убрала: ${items[at].f} — ${items[at].b}. Осталось слов: ${next.length}.`);
+    }
+    // «Спроси слова»: что пора — самые давние первыми, не больше десяти за раз.
+    if (!items.length) return say(turn, `Спрашивать пока нечего. ${hint}`);
+    const due = dueCards(items, now(), { all: asked.all === true });
+    if (!due.length) {
+      const soon = Math.min(...items.map(item => item.due));
+      return say(turn, `Сейчас повторять нечего: ближайшее слово — ${dueWords(soon, now())}. Слов всего: ${items.length}. Всё равно хочется — «спроси все слова».`);
+    }
+    const state = { fronts: due.map(item => item.f), i: 0, right: 0, at: now() };
+    if (!await store.set(CARDS_ASK_KEY(turn.actorId), state).catch(() => false)) return say(turn, "Не получилось начать: хранилище не отвечает.");
+    return say(turn, `Слов к повторению: ${due.length}. ${you(turn, "Отвечайте", "Отвечай")} переводом; «стоп» — закончить.\n\n${cardQuestion(state)}`);
+  }
+  /** Ответ на её вопрос о слове — следующее сообщение в личке. null — опроса нет. */
+  async function cardAnswer(turn, prompt) {
+    if (!CARDS || !turn.isPrivate || !store.available) return null;
+    const askKey = CARDS_ASK_KEY(turn.actorId);
+    const state = await store.get(askKey).catch(() => null);
+    if (!Array.isArray(state?.fronts) || state.fronts[state.i] == null) return null;
+    if (now() - Number(state.at) > CARDS_ASK_TTL_MS) { await store.remove(askKey).catch(() => false); return null; }
+    const total = state.fronts.length;
+    if (parseCards(prompt)?.stop) {
+      await store.remove(askKey).catch(() => false);
+      return say(turn, `Хорошо, остановились: верно ${state.right} из ${state.i}. Продолжить — «спроси слова».`);
+    }
+    const key = CARDS_KEY(turn.actorId);
+    const items = cardsOf(await store.get(key).catch(() => null));
+    const at = items.findIndex(item => sameCard(item, state.fronts[state.i]));
+    // Слово убрали посреди опроса — просто идём дальше.
+    const right = at >= 0 && rightAnswer(prompt, items[at].b);
+    let lead = "";
+    if (at >= 0) {
+      items[at] = graded(items[at], right, now());
+      await store.set(key, { items, at: now() }).catch(() => false);
+      lead = right ? `Верно. Спрошу ${dueWords(items[at].due, now())}.` : `Нет: ${items[at].f} — ${items[at].b}. Спрошу ещё раз в следующий заход.`;
+    }
+    const next = { ...state, i: state.i + 1, right: state.right + (right ? 1 : 0), at: now() };
+    if (next.i < total) {
+      await store.set(askKey, next).catch(() => false);
+      return say(turn, `${lead}\n\n${cardQuestion(next)}`.trim());
+    }
+    await store.remove(askKey).catch(() => false);
+    pulse.bump("games");
+    return say(turn, `${lead}\n\nИтог: ${next.right} из ${total}. ${next.right === total ? "Всё верно." : "Ошибки вернутся в следующий раз."} Ещё — «спроси слова», список — «мои слова».`.trim());
+  }
+  /** Строка для утреннего привета хозяину: сколько слов пора повторить. Нечего — без строки. */
+  async function cardsMorning() {
+    if (!CARDS || !store.available) return "";
+    const due = cardsOf(await store.get(CARDS_KEY(OWNER)).catch(() => null)).filter(item => item.due <= now()).length;
+    return due ? `Слов к повторению: ${due} — «спроси слова».` : "";
+  }
+
   // ── «угадай рисунок» ────────────────────────────────────────────────────
   /**
    * Она рисует слово из своего словаря художника, а компания угадывает — ответом
@@ -3833,7 +3937,24 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, got.ok ? "Рисунок нашёлся, но Telegram его не принял. Попросите ещё раз — выпадет другой." : "Коллекция рисунков сейчас не отвечает. Попробуйте чуть позже.");
     }
     if (asked.kind === "anime") {
-      const got = await media.anime(asked);
+      // Совет по любимому (идея 120): названо «похожее на …» или любимое аниме есть в анкете —
+      // ищется похожее по данным каталога. В группе берётся только названное при всех.
+      const liked = asked.like || (asked.random && LIKES ? await tastes.get(turn.actorId, "anime", { inGroup: turn.inGroup }).catch(() => "") : "");
+      if (liked) {
+        const near = await media.similar(liked);
+        if (near.ok) {
+          const item = near.items[Math.min(near.items.length - 1, Math.floor(random() * near.items.length))];
+          const lead = asked.like ? `Похожее на «${web(near.seed.title)}» — по данным каталога:` : `Раз ${you(turn, "вам", "тебе")} нравится «${web(near.seed.title)}» — вот похожее, по данным каталога:`;
+          const caption = `${lead}\n${captions.anime(item)}`;
+          pulse.bump("sourced");
+          await credit(turn, creditOf(item));
+          if (await sendMedia(turn, "sendPhoto", "photo", item.url, caption, HTML)) return { ok: true, action: "photo", kind: "anime", like: near.seed.title };
+          return say(turn, caption, page);
+        }
+        // Названное не нашлось или похожего нет: о просьбе «похожее на …» говорится прямо; совет по анкете — обычный, случайный.
+        if (asked.like) return say(turn, quiet(near, "Каталог аниме") || (near.seed ? `Похожего на «${near.seed.title}» в каталоге не нашлось. Могу выбрать случайное с высокой оценкой — «посоветуй аниме».` : `Не нашла аниме «${asked.like}». Проверьте название — можно по-японски или по-английски.`));
+      }
+      const got = await media.anime(asked.like ? { random: true } : asked);
       if (!got.ok) return say(turn, quiet(got, "Каталог аниме") || (asked.random ? "Каталог аниме ничего не выдал. Попробуйте ещё раз." : `Не нашла аниме «${asked.query}». Проверьте название — можно по-японски латиницей.`));
       const item = got.items[0];
       const caption = `${asked.random ? "Вот что выпало — оценка у зрителей высокая:\n" : ""}${captions.anime(item)}`;
@@ -3922,6 +4043,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       store.remove(OFFER_KEY(actorId)).catch(() => false),
       store.remove(`heart:trace:${turn.chatId}:${actorId}`).catch(() => false),
       store.remove(`heart:wipe:${actorId}`).catch(() => false),
+      store.remove(CARDS_KEY(actorId)).catch(() => false),
+      store.remove(CARDS_ASK_KEY(actorId)).catch(() => false),
+      // Анкета любимого — тоже его данные: «всё» значит и её (раньше она оставалась).
+      tastes.clear(actorId).then(result => result.ok).catch(() => false),
+      store.remove(EVENING_KEY(actorId)).catch(() => false),
     ]);
     if (turn.isPrivate) await store.remove(`heart:game:${turn.chatId}`).catch(() => false);
     for (const item of await lessons.list({ viewer: actorId }).catch(() => [])) {
@@ -5334,7 +5460,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -5385,7 +5511,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
@@ -5408,6 +5534,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (waitingFor && !request) {
       const answered = await tasteAnswer(turn, prompt, waitingFor);
       if (answered) return ruled(answered);
+    }
+    // Идёт опрос слов — сообщение в личке и есть ответ. Просьба посреди опроса остаётся просьбой.
+    if (!dry && !request && turn.isPrivate) {
+      const carded = await cardAnswer(turn, prompt);
+      if (carded) return ruled(carded);
     }
 
     // Идёт игра — фраза может быть ходом. Судит код; не ход — идёт дальше,

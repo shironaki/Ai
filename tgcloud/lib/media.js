@@ -70,6 +70,12 @@ export function parseMedia(value) {
     if (hit && !PLAIN.has(word)) return { kind: "art", category: hit[0], word: ART_WORD[hit[0]] };
   }
 
+  // Аниме, похожее на названное: «посоветуй аниме, похожее на Наруто», «что похоже на Наруто», «аниме как Наруто».
+  match = text.match(/^(?:(?:посоветуй|порекомендуй|подскажи|предложи|найди|дай)(?:те)?\s+)?(?:мне\s+|нам\s+)?(?:аниме|что-нибудь|что-то|что)?,?\s*(?:похоже[ег]?о?|вроде|типа|в\s+духе)\s+(?:на\s+)?(?:аниме\s+)?(.{2,80})$/u)
+    ?? text.match(/^(?:(?:посоветуй|порекомендуй|найди)(?:те)?\s+)?(?:мне\s+)?аниме\s+как\s+(.{2,80})$/u);
+  // Только со словом «аниме»: «что похоже на грозу» и «посоветуй что-нибудь вроде Гарри Поттера» — не к каталогу аниме.
+  if (match && topic(match[1]) && /аниме/u.test(text) && !/^(?:на\s+)?(?:меня|тебя|него|нее|нас|вас|них|это|правду|то)$/u.test(match[1].trim())) return { kind: "anime", like: topic(said(match)) };
+
   // Аниме: случайное по просьбе совета и поиск по названию.
   if (/^(?:посоветуй|порекомендуй|подскажи|предложи|выбери|дай)(?:те)?\s+(?:мне\s+|нам\s+)?(?:(?:какое-нибудь|какое-то|хорошее|случайное|годное|интересное|новое)\s+)*аниме(?:шку)?(?:\s+(?:на\s+вечер|посмотреть|на\s+выходные|глянуть))*$/u.test(text)
     || /^(?:что|какое\s+аниме)\s+(?:мне\s+|нам\s+)?(?:по)?(?:смотреть|глянуть)(?:\s+из\s+аниме)?$/u.test(text) && /аниме/u.test(text)
@@ -141,6 +147,35 @@ export function createMedia({ sources = null } = {}) {
     return item?.url ? { ok: true, items: [{ url: item.url, page: item.source_url ?? "", credit: item.artist_name ?? "", source: "nekos.best" }] } : outcome([], [got]);
   }
 
+  const shaped = (item, origin) => {
+    const poster = String(item.image?.original ?? "");
+    return {
+      id: Number(item.id) || 0, title: String(item.russian || item.name), original: String(item.name), kind: ANIME_KIND[item.kind] ?? "",
+      year: String(item.aired_on ?? "").slice(0, 4), episodes: Number(item.episodes) || 0, score: Number(item.score) || 0,
+      ongoing: item.status === "ongoing",
+      url: poster && !poster.includes("missing_") ? `${origin}${poster}` : "", page: item.url ? `${origin}${item.url}` : "", source: "Shikimori",
+    };
+  };
+  /**
+   * Похожее на названное аниме — по данным каталога, без модели. Три запроса:
+   * само аниме, его «похожие», и те же номера через фильтр «без взрослого»:
+   * список похожих его не знает. `seed` — что нашлось по названию.
+   */
+  async function similar(query, limit = 12) {
+    const base = "https://shikimori.one";
+    const found = await get(`${base}/api/animes?search=${q(query)}&limit=1&censored=true`);
+    const first = found.ok && Array.isArray(found.data) ? found.data[0] : null;
+    if (!first?.id) return { ...outcome([], [found]), seed: null };
+    const origin = String(found.url ?? "").match(/^https?:\/\/[^/]+/u)?.[0] ?? base;
+    const seed = shaped(first, origin);
+    const near = await get(`${origin}/api/animes/${first.id}/similar`);
+    const ids = (near.ok && Array.isArray(near.data) ? near.data : []).map(item => Number(item?.id)).filter(id => id > 0 && id !== seed.id).slice(0, 30);
+    if (!ids.length) return { ok: false, code: near.ok ? "not_found" : "network", items: [], seed };
+    const clean = await get(`${origin}/api/animes?ids=${ids.join(",")}&limit=${Math.min(50, ids.length)}&censored=true&order=ranked`);
+    const items = (clean.ok && Array.isArray(clean.data) ? clean.data : []).filter(item => item?.name && ids.includes(Number(item.id)) && Number(item.score) >= 7).slice(0, limit).map(item => shaped(item, origin));
+    return items.length ? { ok: true, items, seed } : { ok: false, code: clean.ok ? "not_found" : "network", items: [], seed };
+  }
+
   /** Аниме по названию или случайное с высокой оценкой. */
   async function anime({ query = "", random = false } = {}) {
     const base = "https://shikimori.one";
@@ -189,7 +224,7 @@ export function createMedia({ sources = null } = {}) {
     return outcome(items, [rutube, daily]);
   }
 
-  return Object.freeze({ images, art, anime, music, video });
+  return Object.freeze({ images, art, anime, similar, music, video });
 }
 
 const esc = (value) => String(value ?? "").replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");

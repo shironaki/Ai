@@ -175,3 +175,44 @@ test("видео: адрес спрятан под названием, взро�
   assert.match(sent().text, /^🎬 «[^»]+»:\n\n1\. <a href=/u);
   assert.doesNotMatch(sent().text, /Dailymotion|Rutube|нашла на/u, "источник не называется");
 });
+
+test("совет по любимому (идея 120): похожее на названное или на любимое из анкеты — из каталога, без модели", async () => {
+  for (const [said, want] of Object.entries({
+    "посоветуй аниме похожее на наруто": "наруто", "аниме как наруто": "наруто", "посоветуй аниме, похожее на «Атаку титанов»": "Атаку титанов",
+    "аниме вроде ван писа": "ван писа", "аниме в духе стального алхимика": "стального алхимика",
+  })) assert.deepEqual(parseMedia(said), { kind: "anime", like: want }, said);
+  for (const said of ["что похоже на грозу", "что-нибудь вроде Гарри Поттера", "похожее на меня", "это похоже на правду", "на кого я похож"]) assert.notEqual(parseMedia(said)?.kind, "anime", said);
+
+  reset();
+  const h = heart({}, { random: () => 0 });
+  const row = (id, name, russian, score) => ({ id, name, russian, image: { original: `/system/animes/original/${id}.jpg` }, url: `/animes/${id}`, kind: "tv", score, status: "released", episodes: 24, aired_on: "2011-04-03" });
+  source("shikimori.one/api/animes?search=", (url) => (decodeURIComponent(url).includes("Наруто") ? [row(20, "Naruto", "Наруто", "8.01")] : []));
+  source("shikimori.one/api/animes/20/similar", [row(21, "One Piece", "Ван-Пис", "8.7"), row(269, "Bleach", "Блич", "7.9"), row(666, "Adult", "Взрослое", "8.0")]);
+  // Фильтр «без взрослого» вернул не всё: номер 666 в совет не попадёт.
+  source("shikimori.one/api/animes?ids=", [row(21, "One Piece", "Ван-Пис", "8.7"), row(269, "Bleach", "Блич", "7.9")]);
+  await h.onMessage(message("посоветуй аниме, похожее на Наруто"), KEY);
+  assert.deepEqual(photos().at(-1), {
+    chat_id: 5, photo: "https://shikimori.one/system/animes/original/21.jpg", parse_mode: "HTML",
+    caption: "Похожее на «Наруто» — по данным каталога:\n<b>Ван-Пис</b>\nOne Piece\nсериал · 2011 · 24 серии · оценка 8,7",
+  });
+  assert.match(sourced().at(-1), /animes\?ids=21,269,666&limit=3&censored=true/u);
+  // Названного нет в каталоге — так и говорит.
+  await h.onMessage(message("аниме как Такого Нет"), KEY);
+  assert.equal(last(), "Не нашла аниме «Такого Нет». Проверьте название — можно по-японски или по-английски.");
+
+  // Любимое аниме в анкете — «посоветуй аниме» ищет похожее на него; нет любимого — случайное, как раньше.
+  source("shikimori.one/api/animes?order=random", [row(457, "Mushishi", "", "8.65")]);
+  await h.onMessage(message("посоветуй аниме"), KEY);
+  assert.match(photos().at(-1).caption, /^Вот что выпало — оценка у зрителей высокая:\n<b>Mushishi<\/b>/u);
+  await h.onMessage(message("моё любимое аниме — Наруто"), KEY);
+  await h.onMessage(message("посоветуй аниме"), KEY);
+  assert.match(photos().at(-1).caption, /^Раз вам нравится «Наруто» — вот похожее, по данным каталога:\n<b>Ван-Пис<\/b>/u);
+  // Похожего у любимого нет — совет остаётся: случайное.
+  sdk().sourceReplies.length = 0;
+  source("shikimori.one/api/animes?search=", [row(20, "Naruto", "Наруто", "8.01")]);
+  source("shikimori.one/api/animes/20/similar", []);
+  source("shikimori.one/api/animes?order=random", [row(457, "Mushishi", "", "8.65")]);
+  await h.onMessage(message("посоветуй аниме"), KEY);
+  assert.match(photos().at(-1).caption, /^Вот что выпало/u);
+  assert.equal(chats().length, 0, "советы — из каталога, модель не тратится");
+});
