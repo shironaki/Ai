@@ -69,12 +69,13 @@ export function parseSkills(text) {
     if (!section.short) errors.push(`раздел «${section.name}»: нет строки «коротко:»`);
     if (!section.lines.length) errors.push(`раздел «${section.name}»: пуст`);
   }
-  // Одно слово — один раздел: иначе «что ты умеешь: игры» открыло бы не то.
+  // Одно слово — один раздел (и в любом падеже): иначе «что ты умеешь: игры» открыло бы не то.
   const taken = new Map();
   for (const section of sections) {
     for (const word of [fold(section.name), ...section.words]) {
-      if (taken.has(word) && taken.get(word) !== section.name) errors.push(`слово «${word}» — и у раздела «${taken.get(word)}», и у «${section.name}»`);
-      taken.set(word, section.name);
+      const key = word.endsWith("*") || /\s/u.test(word) ? word : stemOf(word);
+      if (taken.has(key) && taken.get(key).name !== section.name) errors.push(`слово «${word}» — и у раздела «${taken.get(key).name}», и у «${section.name}»`);
+      if (!taken.has(key)) taken.set(key, { name: section.name });
     }
   }
   return { build, service, sections, errors };
@@ -89,20 +90,34 @@ export function shown(tags, flags = {}) {
   return true;
 }
 
-/** Раздел по слову человека: название, слово из списка или начало слова («игр*»). */
+const ENDINGS = /(?:ями|ами|ыми|ях|ах|ых|ей|ой|ою|ею|ью|ем|ом|ам|ям|ым|ов|ев|ые|а|я|ы|и|у|ю|е|о|ь|й)$/u;
+/** Падеж и число: «по напоминаниям», «со стикерами», «в группах» — те же разделы. Короткое слово не режется. */
+export const stemOf = (word) => {
+  const cut = String(word).replace(ENDINGS, "");
+  return cut.length >= 4 ? cut : String(word);
+};
+
+/** Раздел по слову человека: название, слово из списка, начало слова («игр*») или то же слово в другом падеже. */
 export function findSkill(sections, word) {
   const asked = fold(word).replace(/[.!?…]+$/u, "").trim();
   if (!asked) return null;
   const fits = (item) => (item.endsWith("*") ? asked.startsWith(item.slice(0, -1)) : asked === item);
-  return sections.find(section => fold(section.name) === asked) ?? sections.find(section => section.words.some(fits)) ?? null;
+  const exact = sections.find(section => fold(section.name) === asked) ?? sections.find(section => section.words.some(fits));
+  if (exact) return exact;
+  if (/\s/u.test(asked)) return null;
+  const stem = stemOf(asked);
+  return sections.find(section => [fold(section.name), ...section.words].some(item => !item.endsWith("*") && !/\s/u.test(item) && stemOf(item) === stem)) ?? null;
 }
 
-const OPENER = "(?:что\\s+(?:ты|вы)\\s+(?:еще\\s+)?(?:умеешь|можешь|умеете|можете)|что\\s+умеешь|твои\\s+(?:умения|возможности)|умения|возможности|помощь|справка)";
+const GAP = "\\s*(?:[:—–-]\\s*|\\s+)";
+const ASKS = "(?:что\\s+(?:ты|вы)\\s+(?:еще\\s+)?(?:умеешь|можешь|умеете|можете)|что\\s+умеешь|твои\\s+(?:умения|возможности)|умения|возможности)";
+// «Помощь с уроками», «справка о браке», «помощь в игре» — просьбы о деле, а не о разделе: после этих двух слов годится только «по» и «про».
+const SKILL_ASK = new RegExp(`^(?:а\\s+)?(?:${ASKS}${GAP}(?:(?:про|о|об|в|во|по|с|со|для|насчет)\\s+)?|(?:помощь|справка)${GAP}(?:(?:по|про|насчет)\\s+)?)(.{2,40})$`, "u");
 /** «Что ты умеешь: игры», «помощь по напоминаниям», «справка игры» → название раздела, иначе null. */
 export function parseSkillAsk(value, sections) {
   const text = fold(value).replace(/[.!?…]+$/u, "").trim();
   if (!text || text.length > 80) return null;
-  const found = text.match(new RegExp(`^(?:а\\s+)?${OPENER}\\s*(?:[:—–-]\\s*|\\s+)(?:(?:про|о|об|в|во|по|с|со|для|насчет)\\s+)?(.{2,40})$`, "u"));
+  const found = text.match(SKILL_ASK);
   if (!found) return null;
   return findSkill(sections, found[1])?.name ?? null;
 }
