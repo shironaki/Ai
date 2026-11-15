@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, copyFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { heart, message, group, reset, last, calls, chats, says, refuses, sdk, source, sourced, toOwner, OWNER, KEY } from "./fixtures/kit.mjs";
+import { heart, message, group, reset, last, calls, chats, says, refuses, sdk, source, sourced, toOwner, OWNER, KEY, toChat } from "./fixtures/kit.mjs";
 
 const { splitKey, fromBase64, refusal, subjectOf, createDraw, briefOf } = await import("../tgcloud/lib/draw.js");
 const { subjectFor, placesIn, SUBJECTS, GUESSABLE } = await import("../tgcloud/lib/data/subjects.js");
@@ -477,7 +477,7 @@ test("словарь художника: частые просьбы описа�
     assert.doesNotMatch(row.prompt, /\b(?:no|not|without|never)\b/iu, `отрицание в описании «${row.forms[0]}»`);
     assert.ok(row.prompt.split(/\s+/u).length >= 9, `описание «${row.forms[0]}» слишком короткое: на короткое фильтр мастерской срабатывает зря`);
   }
-  assert.ok(SUBJECTS.length >= 200 && GUESSABLE.length >= 100);
+  assert.ok(SUBJECTS.length >= 200);
   assert.match(subjectFor("Кота").prompt, /cat .*both eyes open/u);
   assert.equal(subjectFor("мне котика, пожалуйста"), subjectFor("кот"));
   assert.equal(subjectFor("кота в шляпе"), null, "словарь отвечает только на просьбу целиком");
@@ -631,4 +631,66 @@ test("Аллаха и пророков она не рисует; мечеть П
   await h.onMessage(message("нарисуй мечеть Пророка"), KEY);
   assert.match(asked("flux-1-schnell")[0].prompt, /^the Prophet's Mosque in Medina/u);
   assert.equal(photos().length, 1);
+});
+
+test("«угадай рисунок»: рисует слово из своего словаря, отгадка — ответом на картинку; подсказка, «сдаюсь», один победитель", async () => {
+  // Загадываются только слова, которые на картинке ни с чем не спутать: без пейзажей и без пар «кот — котёнок».
+  assert.ok(GUESSABLE.length >= 90);
+  for (const row of GUESSABLE) assert.ok(!row.title.includes(" ") && row.forms.includes(row.title.toLowerCase().replace(/ё/gu, "е")), row.title);
+  for (const skip of ["котёнок", "щенок", "закат", "море", "лодка", "Мекка"]) assert.ok(!GUESSABLE.some(row => row.title === skip), skip);
+  const picture = (id, caption = "Что я нарисовала?") => ({ message_id: id, from: { id: 999, is_bot: true, username: "ai_heart_bot" }, photo: [{ file_id: "p" }], caption });
+
+  reset();
+  source("flux-1-schnell", image());
+  let serial = 700;
+  sdk().apiReplies.sendPhoto = () => ({ message_id: ++serial });
+  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  await h.onMessage(group("Аи, угадай рисунок", { id: 21, name: "Вася" }), KEY);
+  assert.equal(photos().length, 1);
+  assert.equal(asked("flux-1-schnell")[0].prompt, CAT_WORDS, "описание — из словаря художника: ни модели, ни перевода");
+  assert.equal(photos()[0].caption, "Что я нарисовала? Ответьте на эту картинку одним словом. «Подсказка» и «сдаюсь» — тоже ответом на неё.");
+  assert.doesNotMatch(photos()[0].caption, /кот/iu, "ответа в подписи нет");
+  // Мимо — «🤔», без слов; подсказка — по слову; пятый промах — подсказка сама.
+  await h.onMessage(group("собака", { id: 22, name: "Маша", reply: picture(701) }), KEY);
+  assert.equal(toChat(-10).length, 0);
+  assert.ok(calls("setMessageReaction").length >= 1);
+  await h.onMessage(group("подсказка", { id: 22, name: "Маша", reply: picture(701) }), KEY);
+  assert.equal(last(-10), "Подсказка: 3 буквы, первая — «К».");
+  await h.onMessage(group("ещё подсказку", { id: 22, name: "Маша", reply: picture(701) }), KEY);
+  assert.equal(last(-10), "Подсказка: 3 буквы, первая — «К», последняя — «т».");
+  // Верно — словом в любой форме и внутри фразы; загадка закрыта.
+  await h.onMessage(group("наверное, это котик!", { id: 22, name: "Маша", reply: picture(701) }), KEY);
+  assert.equal(last(-10), "Верно, Маша: это «кот». Ещё одну — «угадай рисунок».");
+  await h.onMessage(group("кот", { id: 23, name: "Петя", reply: picture(701) }), KEY);
+  assert.equal(last(-10), "Эта загадка уже разгадана: это «кот». Ещё одну — «угадай рисунок».", "второй победителем не становится — и модель на него не тратится");
+
+  // Следующая загадка — другое слово (не из десяти последних); «сдаюсь» открывает ответ.
+  await h.onMessage(group("Аи, нарисуй загадку", { id: 21, name: "Вася" }), KEY);
+  assert.equal(photos().length, 2);
+  const second = asked("flux-1-schnell")[1].prompt;
+  assert.notEqual(second, CAT_WORDS);
+  const word = SUBJECTS.find(row => row.prompt === second).title;
+  for (let index = 0; index < 5; index += 1) await h.onMessage(group("телевизор", { id: 22, name: "Маша", reply: picture(702) }), KEY);
+  assert.match(last(-10), /^Пока мимо\. Подсказка: \d+ (?:буква|буквы|букв), первая — «.»\.$/u, "после пятого промаха подсказывает сама");
+  await h.onMessage(group("сдаюсь", { id: 22, name: "Маша", reply: picture(702) }), KEY);
+  assert.equal(last(-10), `Это «${word}». Ещё одну — «угадай рисунок».`);
+  // Ответ на обычную картинку — не отгадка: разговор идёт своим путём.
+  assert.equal(chats().length, 0, "игра без модели");
+
+  // В личке — так же; картинка — из дневной нормы того, кто попросил.
+  for (let index = 0; index < 5; index += 1) await h.onMessage(message("загадай рисунок", { id: 31 }), KEY);
+  await h.onMessage(message("угадай рисунок", { id: 31 }), KEY);
+  assert.match(last(31), /^На сегодня я вам уже нарисовала 5 картинок/u);
+  // Платформа не вернула номер картинки — отгадки ждёт последняя загадка чата.
+  delete sdk().apiReplies.sendPhoto;
+  await h.onMessage(message("угадай рисунок", { id: OWNER }), KEY);
+  const hidden = SUBJECTS.find(row => row.prompt === asked("flux-1-schnell").at(-1).prompt);
+  await h.onMessage(message(hidden.forms.at(-1), { id: OWNER, reply: picture(999) }), KEY);
+  assert.equal(last(OWNER), `Верно, Тест: это «${hidden.title}». Ещё одну — «угадай рисунок».`);
+
+  // Красок нет — честно; не игра — мимо.
+  reset();
+  const plain = heart({}, { now: () => NOON });
+  await plain.onMessage(message("угадай рисунок"), KEY);
+  assert.match(last(), /^Загадку рисунком я загадать не могу: рисовать мне нечем\./u);
 });

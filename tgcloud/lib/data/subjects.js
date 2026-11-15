@@ -19,7 +19,7 @@
 const TABLE = `
 # звери
 кот|кота|котик|котика|кошка|кошку|кошечка|кошечку|котейка|котейку => a photo of a fluffy domestic cat sitting upright on a wooden floor, both eyes open and looking at the camera, whiskers, soft daylight from a window, sharp focus, detailed fur
-котенок|котенка|котята|котят => a photo of a small fluffy kitten sitting on a soft blanket, both eyes open, curious look at the camera, warm soft light, detailed fur
+котёнок|котенка|котята|котят => a photo of a small fluffy kitten sitting on a soft blanket, both eyes open, curious look at the camera, warm soft light, detailed fur
 собака|собаку|пес|пса|песик|песика|собачка|собачку => a photo of a friendly dog sitting on green grass in a park, both eyes open, looking at the camera, sunny day, sharp focus, detailed fur
 щенок|щенка|щенки|щенят => a photo of a cute puppy sitting on green grass, both eyes open, looking at the camera, soft sunlight, detailed fur
 лиса|лису|лисица|лисицу|лисичка|лисичку|лис => a photo of a red fox standing in a snowy forest, both eyes open, looking at the camera, soft winter light, detailed fur
@@ -27,7 +27,7 @@ const TABLE = `
 медведь|медведя|мишка|мишку => a photo of a brown bear standing in a green forest meadow near a river, both eyes open, soft daylight, detailed fur
 заяц|зайца|зайчик|зайчика|кролик|кролика => a photo of a fluffy rabbit sitting in green grass with small flowers, both eyes open, long ears up, soft daylight
 белка|белку|белочка|белочку => a photo of a red squirrel sitting on a tree branch and holding a nut, fluffy tail, both eyes open, autumn forest, soft light
-еж|ежа|ежик|ежика => a photo of a small hedgehog walking on autumn leaves in a forest, cute face, both eyes open, soft light, blurred background
+ёж|ежа|ежик|ежика => a photo of a small hedgehog walking on autumn leaves in a forest, cute face, both eyes open, soft light, blurred background
 лошадь|лошадку|конь|коня|скакун|скакуна => a photo of a beautiful horse galloping across a green field, mane flowing in the wind, mountains in the distance, golden evening light
 тигр|тигра => a photo of a Bengal tiger walking through a green jungle, orange fur with black stripes, both eyes open, looking at the camera, soft light
 лев|льва => a photo of a male lion with a full mane lying on a rock in the savanna, both eyes open, calm proud look, golden sunset light
@@ -38,7 +38,7 @@ const TABLE = `
 олень|оленя => a photo of a deer with large antlers standing in a misty autumn forest at dawn, both eyes open, soft golden light
 верблюд|верблюда => a photo of a camel walking across golden sand dunes in the desert at sunset, long shadows, warm light
 сова|сову|совенок|совенка => a photo of an owl sitting on a tree branch in a forest at dusk, big round yellow eyes both open, detailed feathers, soft light
-орел|орла => a photo of an eagle soaring over snowy mountain peaks, wings spread wide, clear blue sky, sharp detail
+орёл|орла => a photo of an eagle soaring over snowy mountain peaks, wings spread wide, clear blue sky, sharp detail
 сокол|сокола => a photo of a falcon perched on a leather glove in the desert, sharp eyes both open, detailed feathers, warm evening light
 птица|птицу|птичка|птичку => a photo of a small colorful songbird sitting on a blossoming branch, detailed feathers, soft spring light, blurred green background
 попугай|попугая => a photo of a bright macaw parrot with red, blue and yellow feathers sitting on a branch in a tropical forest, both eyes open, soft daylight
@@ -78,7 +78,7 @@ const TABLE = `
 лето => a landscape photo of a summer meadow with wild flowers and green grass under a bright blue sky with white clouds, warm sunlight
 дождь => a cinematic photo of rain falling on a city street in the evening, wet pavement reflecting warm street lamps, umbrellas in the distance
 радуга|радугу => a wide landscape photo of a bright rainbow arching over green hills after rain, dramatic clouds parting, sunlight
-звезды|звездное небо|ночное небо => a long exposure photo of a night sky full of stars with the Milky Way above dark mountain silhouettes and a calm lake reflecting the stars
+звёзды|звездное небо|ночное небо => a long exposure photo of a night sky full of stars with the Milky Way above dark mountain silhouettes and a calm lake reflecting the stars
 космос|галактика|галактику|вселенная|вселенную => deep space with a spiral galaxy, colorful nebula clouds and countless stars, highly detailed space art
 луна|луну|полная луна|полную луну => a photo of a large full moon rising over a calm sea at night, a moonlight path on the water, stars, a few thin clouds
 солнце|солнышко => a photo of the bright sun shining in a clear blue sky over a field of golden wheat, sun rays, warm summer light
@@ -118,7 +118,7 @@ const TABLE = `
 мотоцикл => a photo of a classic motorcycle parked on an empty mountain road at sunset, chrome details, warm light
 корабль|парусник => a photo of a tall sailing ship with white sails on the open sea, waves, dramatic sunset sky
 лодка|лодку => a photo of a small wooden boat on a calm lake at dawn, light mist, reflections in the water, soft pastel sky
-самолет => a photo of a passenger airplane flying above white clouds at sunset, golden light on the wings
+самолёт => a photo of a passenger airplane flying above white clouds at sunset, golden light on the wings
 ракета|ракету => a dramatic photo of a space rocket lifting off from a launch pad with bright flames and clouds of smoke, blue sky
 поезд => a photo of a red train crossing a stone viaduct among green mountains, steam of morning mist in the valley, sunlight
 велосипед => a photo of a vintage bicycle with a basket of flowers leaning against an old brick wall, soft morning light
@@ -147,7 +147,7 @@ const TABLE = `
 часы => a photo of a vintage pocket watch with an open cover lying on an old map, warm light, fine detail
 меч => a medieval sword with an ornate hilt stuck into a stone in a misty forest, a beam of light, fantasy digital painting
 корона|корону => a photo of a golden royal crown with red and blue gems on a dark velvet cushion, soft spotlight
-елка|елку|новогодняя елка|новогоднюю елку => a photo of a decorated New Year fir tree with garlands, golden balls and a star on top, gifts underneath, a cozy room with warm lights, snow outside the window
+ёлка|елку|новогодняя елка|новогоднюю елку => a photo of a decorated New Year fir tree with garlands, golden balls and a star on top, gifts underneath, a cozy room with warm lights, snow outside the window
 снеговик|снеговика => a cheerful snowman with a carrot nose, a red scarf and a bucket hat in a snowy yard, falling snow, soft winter light, illustration
 подарок|подарки => a photo of gift boxes wrapped in bright paper with ribbons and bows on a wooden table, small lights, warm festive mood
 шарики|воздушные шары|воздушный шар => a photo of colorful hot air balloons floating over green hills at sunrise, soft golden light
@@ -242,7 +242,7 @@ const TABLE = `
 export const foldSubject = (text) => String(text ?? "").toLowerCase().replace(/ё/gu, "е")
   .replace(/[«»"“”„()!?…]+/gu, " ").replace(/[.,;:]+(?=\s|$)/gu, " ").replace(/\s+/gu, " ").trim();
 
-/** Строки словаря: `{ forms, prompt, place, group }`. */
+/** Строки словаря: `{ title, forms, prompt, place, group }`; `title` — первая форма, как она пишется. */
 export const SUBJECTS = Object.freeze((() => {
   const rows = [];
   let group = "";
@@ -252,8 +252,9 @@ export const SUBJECTS = Object.freeze((() => {
     if (line.startsWith("#")) { group = line.slice(1).trim(); continue; }
     const at = line.indexOf(" => ");
     if (at < 0) continue;
-    const forms = line.slice(0, at).split("|").map(item => foldSubject(item)).filter(Boolean);
-    rows.push(Object.freeze({ forms: Object.freeze(forms), prompt: line.slice(at + 4).trim(), place: group === "места", group }));
+    const written = line.slice(0, at).split("|").map(item => item.trim()).filter(Boolean);
+    const forms = written.map(item => foldSubject(item)).filter(Boolean);
+    rows.push(Object.freeze({ title: written[0], forms: Object.freeze(forms), prompt: line.slice(at + 4).trim(), place: group === "места", group }));
   }
   return rows;
 })());
@@ -284,6 +285,13 @@ export function placesIn(text, limit = 2) {
   return [...found.entries()].sort((a, b) => a[1] - b[1]).slice(0, limit).map(([row]) => row);
 }
 
-/** Слова, которые можно загадать рисунком: звери, вещи, природа — одним словом, без мест и чувств. */
-export const GUESSABLE = Object.freeze(SUBJECTS.filter(row => ["звери", "природа", "вещи и сцены", "герои"].includes(row.group) && !row.forms[0].includes(" ")
-  && !["аниме", "ночь", "город", "небо", "облака", "комната", "кухня", "девушка", "парень", "бабушка", "дедушка", "поле", "лето", "весна", "осень", "зима", "земля", "космос", "туман", "сад"].includes(row.forms[0])));
+/**
+ * Что можно загадать рисунком («угадай рисунок»): один предмет, зверь или герой,
+ * который на картинке ни с чем не спутать. Пейзажи не годятся: закат над морем —
+ * это «закат» или «море»? Из пар «кот — котёнок», «собака — щенок», «корабль —
+ * лодка», «орёл — сокол» оставлено по одному: иначе верный ответ был бы «неверным».
+ */
+const RIDDLE_NATURE = new Set(["радуга", "луна", "водопад", "вулкан", "роза", "тюльпан", "ромашка", "подсолнух", "пальма", "остров", "пещера", "дерево"]);
+const RIDDLE_SKIP = new Set(["котенок", "щенок", "птица", "сокол", "лодка", "мышь", "комната", "кухня", "город", "деревня", "сад", "аниме", "девушка", "парень", "бабушка", "дедушка", "привидение", "сердце", "звезда", "чай", "кофе", "фрукты"]);
+export const GUESSABLE = Object.freeze(SUBJECTS.filter(row => !row.forms[0].includes(" ") && !RIDDLE_SKIP.has(row.forms[0])
+  && (row.group === "звери" || row.group === "вещи и сцены" || row.group === "герои" || (row.group === "природа" && RIDDLE_NATURE.has(row.forms[0])))));

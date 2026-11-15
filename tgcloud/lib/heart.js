@@ -37,6 +37,7 @@ import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.j
 import { fajrOn, parseFajr, prayersOn, ishaRule, methodExtras, DAY_TIMES, SHIFT_MAX, FAJR_METHODS, FAJR_ANGLE } from "./fajr.js";
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
 import { parsePostcard, postcardPrompt, parseHoliday, holidaysOf, holidayDate, OCCASIONS, HOLIDAYS_KEY, HOLIDAYS_MAX } from "./postcard.js";
+import { parseTranslate, guessLanguage, LANGUAGES } from "./translate.js";
 import { parseFeast, feastsFor, feastLine, publicDays, islamicDays, islamicByTitle, hijriOf, hijriText, countryCodeOf, countryWords, dayText as feastDay, ISLAMIC, HIJRI_MONTHS } from "./feasts.js";
 import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
 import { parseAsked, askedItems, ASKED_KEY, ASKED_MAX } from "./asked.js";
@@ -1243,7 +1244,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         return say(turn, "Передала — слово в слово. Если хозяин ответит, принесу ответ в личку.");
       }
       case "play": {
-        if (!parsed.arg) return say(turn, games.menu({ sister: abilities.open() ? SISTER : "", party: party.menu({ inGroup }), inGroup }));
+        if (!parsed.arg) return say(turn, `${games.menu({ sister: abilities.open() ? SISTER : "", party: party.menu({ inGroup }), inGroup })}${draw.available ? "\n\nИ рисунком: «угадай рисунок» — я рисую слово, а отгадку жду ответом на картинку." : ""}`);
         const started = await games.start(turn.chatId, parsed.arg.game, { formal: turn.manner?.formal !== false, from: parsed.arg.from, to: parsed.arg.to });
         if (!started) return null;
         pulse.bump("games");
@@ -3534,6 +3535,140 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return { ok: true, action: "photo", kind: "draw" };
   }
 
+  // ── перевод без модели ──────────────────────────────────────────────────
+  /**
+   * «Переведи на английский: доброе утро», «как по-турецки спасибо», «переведи»
+   * ответом на сообщение. Переводит переводчик художника (тот же ключ): фраза
+   * стоит доли нейрона, модель разговора не тратится. Нет ключа, язык ему
+   * незнаком, текст длинный или переводчик молчит — просьба уходит в разговор,
+   * как раньше: хуже не станет.
+   */
+  const TRANSLATE = config.TRANSLATE !== false;
+  const TRANSLATE_DAILY = 30, TRANSLATE_MAX = 1000;
+  const LANGUAGE_NAMES = Object.fromEntries(LANGUAGES.map(item => [item.code, item.english]));
+  async function translateWords(turn, prompt, message) {
+    if (!TRANSLATE || !draw.available) return null;
+    const asked = parseTranslate(prompt);
+    if (!asked || asked.unknown) return null;
+    let text = asked.text;
+    if (!text) {
+      const quoted = message?.reply_to_message;
+      // «Переведи» ответом на голосовое — это «в текст»: расшифровка, не перевод.
+      if (quoted?.voice || quoted?.audio || quoted?.video_note) return null;
+      text = String(quoted?.text ?? quoted?.caption ?? "").trim();
+      if (!text) return quoted ? null : say(turn, `Что перевести? ${you(turn, "Напишите", "Напиши")} так: «переведи на английский: доброе утро» — или ${you(turn, "ответьте", "ответь")} словом «переведи» на нужное сообщение.`);
+    }
+    if (text.length > TRANSLATE_MAX) return null;
+    const from = asked.from || guessLanguage(text);
+    const to = asked.to || (from === "ru" ? "en" : "ru");
+    if (from === to) return say(turn, `Это уже ${LANGUAGES.find(item => item.code === to)?.how ?? "на этом языке"}. Скажите, на какой перевести: «переведи на английский».`);
+    if (turn.dry) return say(turn, "Перевела бы переводчиком, без модели, — репетиция.");
+    // Переводчик — на тех же красках: один человек не должен истратить их на всех.
+    const mine = owner(turn.actorId);
+    const countKey = `heart:translated:${dayOf(now())}:${turn.actorId}`;
+    const used = mine ? 0 : Number((await store.get(countKey).catch(() => null))?.n) || 0;
+    if (!mine && used >= TRANSLATE_DAILY) return null;
+    await typing(turn);
+    const out = String(await draw.translate(text, { from, to, names: LANGUAGE_NAMES }).catch(() => "")).trim();
+    // Пусто или то же самое, что на входе, — переводчик не справился: пусть ответит разговор.
+    if (!out || out.toLowerCase() === text.toLowerCase()) return null;
+    if (!mine) await store.set(countKey, { n: used + 1 }).catch(() => false);
+    pulse.bump("translated");
+    return say(turn, out);
+  }
+
+  // ── «угадай рисунок» ────────────────────────────────────────────────────
+  /**
+   * Она рисует слово из своего словаря художника, а компания угадывает — ответом
+   * на картинку. Без модели: слово выбирает жребий, описание готовое, отгадка
+   * сверяется по формам слова. Картинка — из дневной нормы того, кто попросил.
+   * «Подсказка» и «сдаюсь» — тоже ответом на картинку.
+   */
+  const RIDDLE_KEY = (chatId, messageId) => `heart:riddle:${chatId}:${messageId}`;
+  const RIDDLE_TTL_MS = 6 * 3_600_000;
+  const RIDDLE_ASK = /^(?:(?:а\s+|ну\s+)?(?:давай(?:те)?\s+)?(?:сыграем|поиграем|играем|сыграть|поиграть)\s+в\s+)?(?:угадай\s+(?:рисунок|картинку|по\s+рисунку|по\s+картинке)|(?:я\s+)?угадаю\s+(?:рисунок|картинку)|рисунок[-\s]загадк[ауи]|загадк[ауи]\s+(?:рисунком|в\s+картинке)|загадай\s+(?:мне\s+|нам\s+)?(?:рисунок|рисунком|картинку|картинкой)|нарисуй\s+(?:мне\s+|нам\s+)?загадку)$/u;
+  const parseRiddle = (text) => RIDDLE_ASK.test(String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/[«»"]/gu, "").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim());
+  const riddleHint = (title, deep = false) => {
+    const letters = [...title];
+    return `Подсказка: ${letters.length} ${plural(letters.length, "буква", "буквы", "букв")}, первая — «${letters[0].toUpperCase()}»${deep && letters.length > 2 ? `, последняя — «${letters.at(-1)}»` : ""}.`;
+  };
+  async function drawRiddle(turn) {
+    if (!draw.available) return say(turn, "Загадку рисунком я загадать не могу: рисовать мне нечем. Зато есть «загадай животное» — там угадывают по вопросам.");
+    if (turn.dry) return say(turn, "Нарисовала бы загадку — репетиция, краски не трачу.");
+    if (typeof InputFile !== "function" || !has("sendPhoto") || !store.available) return say(turn, "Загадку рисунком сейчас не загадать: отправить картинку мне нечем.");
+    const mine = owner(turn.actorId);
+    const countKey = `${DRAWN_PREFIX}${dayOf(now())}:${turn.actorId}`;
+    const used = Number((await store.get(countKey).catch(() => null))?.n) || 0;
+    if (!mine && DRAW_DAILY > 0 && used >= DRAW_DAILY) return say(turn, `На сегодня я ${you(turn, "вам", "тебе")} уже нарисовала ${used} ${plural(used, "картинку", "картинки", "картинок")} — краски не бесконечные, и они нужны всем. Завтра загадаю.`);
+    // Слово — жребием, но не из десяти последних в этом чате: подряд одно и то же не выпадает.
+    const seenKey = `heart:riddle:${turn.chatId}:seen`;
+    const seen = ((await store.get(seenKey).catch(() => null))?.items ?? []).map(String);
+    const fresh = GUESSABLE.filter(row => !seen.includes(row.title));
+    const row = (fresh.length ? fresh : GUESSABLE)[Math.min((fresh.length || GUESSABLE.length) - 1, Math.floor(random() * (fresh.length || GUESSABLE.length)))];
+    if (has("sendChatAction")) { try { await api.sendChatAction({ chat_id: turn.chatId, action: "upload_photo", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) }); } catch { /* индикатор не важнее рисунка */ } }
+    const got = await draw.paint(row.prompt, { seed: Math.floor(random() * 1_000_000), free: true, core: row.prompt });
+    if (!got.ok) {
+      if (got.code === "resting" || got.code === "limit") return say(turn, `Краски на сегодня кончились — загадаю, когда вернутся: в ${clock(got.until)}.`);
+      return say(turn, "Загадка не вышла: мастерская сейчас не рисует. Попробуйте чуть позже.");
+    }
+    const caption = `Что я нарисовала? ${you(turn, "Ответьте", "Ответь")} на эту картинку одним словом. «Подсказка» и «сдаюсь» — тоже ответом на неё.`;
+    let sent = null;
+    try { sent = await api.sendPhoto({ chat_id: turn.chatId, photo: new InputFile(got.bytes, "riddle.jpg", { type: "image/jpeg" }), caption, ...turn.extra }); }
+    catch { return say(turn, "Загадка готова, но Telegram её не принял. Попросите ещё раз."); }
+    turn.delivered = true;
+    pulse.bump("drawn"); pulse.bump("games");
+    await store.set(countKey, { n: used + 1 }).catch(() => false);
+    // Номер картинки известен — отгадки ждёт она; платформа номера не вернула — ждёт последняя загадка чата.
+    const record = { title: row.title, forms: row.forms, by: turn.actorId, at: now(), wrong: 0, hints: 0 };
+    await store.set(RIDDLE_KEY(turn.chatId, sent?.message_id ?? "last"), record).catch(() => false);
+    await store.set(seenKey, { items: [...seen, row.title].slice(-10), at: now() }).catch(() => false);
+    return { ok: true, action: "photo", kind: "riddle" };
+  }
+  /** Ответ на картинку-загадку: отгадка, «подсказка», «сдаюсь». null — это не загадка. */
+  async function riddleGuess(turn, text, messageId) {
+    if (!store.available || messageId == null) return null;
+    let key = RIDDLE_KEY(turn.chatId, messageId);
+    let record = await store.get(key).catch(() => null);
+    if (!record) { key = RIDDLE_KEY(turn.chatId, "last"); record = await store.get(key).catch(() => null); }
+    if (!record?.title || !Array.isArray(record.forms)) return null;
+    if (now() - Number(record.at) > RIDDLE_TTL_MS) { await store.remove(key).catch(() => false); return null; }
+    const said = String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/[^\p{L}\s-]+/gu, " ").replace(/\s+/gu, " ").trim();
+    if (!said) return null;
+    const who = safeName(turn.name) || "";
+    // Загадка разгадана, а на картинку ещё отвечают: коротко, без модели.
+    if (record.done) return say(turn, `Эта загадка уже разгадана: это «${record.title}». Ещё одну — «угадай рисунок».`);
+    // Закрыть: картинка с номером помнит ответ до конца срока; без номера — запись убирается,
+    // иначе «последняя загадка чата» отвечала бы на любые слова.
+    const close = async () => (key.endsWith(":last") ? store.remove(key) : store.set(key, { title: record.title, forms: record.forms, done: true, at: record.at })).catch(() => false);
+    if (/^(?:сдаюсь|сдаемся|не знаю|не знаем|покажи ответ|скажи ответ|ответ|что это)$/u.test(said)) {
+      await close();
+      return say(turn, `Это «${record.title}». Ещё одну — «угадай рисунок».`);
+    }
+    if (/^(?:подсказка|подсказку|подскажи|намекни|дай подсказку|еще подсказку|еще подсказка)$/u.test(said)) {
+      const hints = (Number(record.hints) || 0) + 1;
+      await store.set(key, { ...record, hints }).catch(() => false);
+      return say(turn, riddleHint(record.title, hints > 1));
+    }
+    // Верно — слово целиком или одно из слов ответа: «это кот», «наверное, котик».
+    const words = said.split(" ");
+    const right = record.forms.some(form => form === said || (!form.includes(" ") && words.includes(form)));
+    if (right) {
+      // Первый верный ответ закрывает загадку: отметка ставится до слов, и второй «верно» не услышит.
+      let first = false;
+      const landed = await store.update(key, (before) => { first = Boolean(before?.title && !before.won); return first ? { ...before, won: turn.actorId } : null; }).catch(() => false);
+      if (!landed || !first) return say(turn, `Эта загадка уже разгадана: это «${record.title}».`);
+      await close();
+      pulse.bump("games");
+      return say(turn, `Верно${who ? `, ${who}` : ""}: это «${record.title}». Ещё одну — «угадай рисунок».`);
+    }
+    const wrong = (Number(record.wrong) || 0) + 1;
+    await store.set(key, { ...record, wrong }).catch(() => false);
+    // Мимо — молча, с «🤔»; после пятого промаха — подсказка сама, один раз.
+    if (wrong === 5 && !(Number(record.hints) > 0)) return say(turn, `Пока мимо. ${riddleHint(record.title)}`);
+    await react(turn, "🤔");
+    return { ok: true, action: "riddle", miss: true };
+  }
+
   /**
    * «Как нарисовано?» — хозяину: чем собрано описание последнего рисунка в этом
    * чате, что ушло художнику и с какой попытки вышло. По этим словам видно,
@@ -3599,6 +3734,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как поиск — репетиция, ничего не ищу.");
     if (asked.kind === "draw") {
+      // «Нарисуй загадку» — игра «угадай рисунок», а не рисунок слова «загадка».
+      if (parseRiddle(`нарисуй ${asked.query}`)) return drawRiddle(turn);
       if (!draw.available) return say(turn, `Рисовать я не умею: художника у меня нет, и выдавать чужое за своё не стану. Могу найти готовую картинку — «найди картинку ${asked.query}».`);
       return drawPicture(turn, asked.query);
     }
@@ -5115,7 +5252,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const noted = parseNote(prompt);
     const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
-      || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
+      || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
@@ -5126,6 +5263,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (guessed.miss) await react(turn, "🤔");
         if (guessed.won) pulse.bump("games");
         return ruled(guessed);
+      }
+      // Ответ на картинку-загадку («угадай рисунок»). Просьба («нарисуй ещё», «статус») — не отгадка.
+      if (!request && (message.reply_to_message.photo || message.reply_to_message.caption != null)) {
+        const riddle = await riddleGuess(turn, prompt, message.reply_to_message.message_id);
+        if (riddle) return ruled(riddle);
       }
     }
 
@@ -5154,7 +5296,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
@@ -5462,7 +5604,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // по сообщению). Вторые убираются семейством; двоеточие после номера обязательно,
   // иначе чат -10 унёс бы с собой и чат -100.
   const CHAT_KEYS = ["heart:chat:", "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:daysum:", "heart:game:"];
-  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX];
+  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:"];
   async function forgetChat(chatId) {
     for (const prefix of CHAT_KEYS) await store.remove(`${prefix}${chatId}`).catch(() => false);
     // Отрицательный срок — «всё, что есть», включая записанное в эту же секунду.

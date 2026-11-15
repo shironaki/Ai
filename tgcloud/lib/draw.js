@@ -309,11 +309,14 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     return { ok, status, data, text, bytes };
   }
 
-  /** Текст с одного языка на другой: перевод или пустая строка — переводчик не ответил. */
-  async function translate(text, { from = "ru", to = "en" } = {}) {
+  /**
+   * Текст с одного языка на другой: перевод или пустая строка — переводчик не ответил.
+   * `names` — английские названия языков (`{ tr: "turkish" }`): запасное написание.
+   */
+  async function translate(text, { from = "ru", to = "en", names: extra = null } = {}) {
     if (!available) return "";
-    // Языки называются кодом; старое написание словом — запасное, для русского и английского.
-    const names = { ru: "russian", en: "english" };
+    // Языки называются кодом; написание словом — запасное.
+    const names = { ru: "russian", en: "english", ...(extra && typeof extra === "object" ? extra : {}) };
     const pairs = [[from, to]];
     if (names[from] && names[to]) pairs.push([names[from], names[to]]);
     let trouble = null;
