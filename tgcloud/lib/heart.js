@@ -36,6 +36,8 @@ import { moodOf as feelingNow, behaviourOf } from "./mood.js";
 import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.js";
 import { fajrOn, parseFajr, prayersOn, ishaRule, FAJR_METHODS, FAJR_ANGLE } from "./fajr.js";
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
+import { parsePostcard, postcardPrompt, parseHoliday, holidaysOf, holidayDate, OCCASIONS, HOLIDAYS_KEY, HOLIDAYS_MAX } from "./postcard.js";
+import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
 import {
   parseSecretary, canReply, langOf, noticeEnglish, noticeRussian, stateOf as secretaryStateOf, notePerson, toldKey,
   isUrgent, isRelay, quoteOf, ackRussian, ackEnglish, urgentKey, ACKS_MAX, URGENT_EXCERPT,
@@ -1345,6 +1347,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (late > 6 * 3_600_000) return null;
       const today = calendarDate(now(), zone);
       if (item.text === "card") return cardText(cardFor(item.userId, today));
+      if (item.text === "summary") {
+        // Чат перестали запоминать или день был пустой — молчит: «итогов нет» каждый вечер никому не нужно.
+        if (!CHAT_MEMORY || (await fun.chatSettings(item.chatId)).log === false) return null;
+        const sum = await daySumOf(item.chatId, zone, { keep: true });
+        return sum.text || null;
+      }
       return { text: await fun.questionFor(item.chatId, { day: today }), extra: { reply_markup: MORE_QUESTION } };
     }
     if (item.kind === "habit") {
@@ -1359,7 +1367,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (item.kind === "birthday") {
       if (late > 18 * 3_600_000) return null;
       const settings = (await personal.settings(item.userId).catch(() => ({}))) ?? {};
-      return `🎂 С днём рождения${settings.address ? `, ${settings.address}` : ""}! Пусть этот год будет добрым — а я буду рядом.`;
+      const text = `🎂 С днём рождения${settings.address ? `, ${settings.address}` : ""}! Пусть этот год будет добрым — а я буду рядом.`;
+      // К словам — открытка, если краски есть; нет — поздравление остаётся словами.
+      const photo = await ownCard("birthday");
+      return photo ? { text, photo } : text;
     }
     const head = `⏰ Напоминаю${lateNote}`;
     return item.text ? `${head}: ${item.text}` : `${head}, как договаривались.`;
@@ -1519,7 +1530,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const out = await ringText(item);
         const text = typeof out === "string" ? out : out?.text;
         if (text) {
-          await api.sendMessage({ chat_id: item.chatId, text, ...(typeof out === "object" && out?.extra ? out.extra : {}), ...extra });
+          // С картинкой — одним сообщением; Telegram её не принял — слова уходят всё равно.
+          const pictured = out?.photo ? await sendCard(item.chatId, out.photo, text, extra) : false;
+          if (!pictured) await api.sendMessage({ chat_id: item.chatId, text, ...(typeof out === "object" && out?.extra ? out.extra : {}), ...extra });
           pulse.bump("reminded");
         }
         delivered = true;
@@ -2666,6 +2679,61 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `Пересказать своими словами сейчас нечем, так что по фактам. ${digest(rows, { plural })}`);
   }
 
+  // ── итоги дня в группе ───────────────────────────────────────────────────
+  const DAYSUM_KEY = (chatId) => `heart:daysum:${chatId}`;
+  /**
+   * Итоги дня по памяти чата: за сегодня (с полуночи по часам `zone`) или за
+   * вчера. `keep` — запомнить счёт дня: завтрашние итоги сравнят с ним.
+   */
+  async function daySumOf(chatId, zone, { yesterday = false, keep = false } = {}) {
+    const rows = await chatlog.recent(chatId, DAYSUM_ROWS);
+    const startOf = (at) => { const parts = localParts(at, zone); return { at: zonedEpoch({ y: parts.y, m: parts.m, d: parts.d }, zone), mark: `${parts.y}-${String(parts.m).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}` }; };
+    const today = startOf(now());
+    const day = yesterday ? startOf(today.at - 3_600_000) : today;
+    const till = yesterday ? today.at : now() + 1;
+    const prior = startOf(day.at - 3_600_000);
+    const saved = await store.get(DAYSUM_KEY(chatId)).catch(() => null);
+    const capped = rows.length >= DAYSUM_ROWS && Number(rows[0]?.at) >= day.at;
+    const sum = daySummary(rows, {
+      from: day.at, till, plural, capped,
+      hourOf: (at) => localParts(at, zone).hh, clock: (at) => localClock(at, zone),
+      label: `Итоги дня, ${day.mark.slice(8, 10)}.${day.mark.slice(5, 7)}`,
+      before: saved?.day === prior.mark ? Number(saved.count) : null,
+    });
+    if (keep && sum.count && !capped) await store.set(DAYSUM_KEY(chatId), { day: day.mark, count: sum.count, at: now() }).catch(() => false);
+    return sum;
+  }
+
+  /** «Подводи итоги дня» (админ), «итоги дня», «кто сегодня самый активный» — в группе, без модели. */
+  async function daySumWords(turn, prompt) {
+    const asked = CHAT_MEMORY ? parseDaySum(prompt) : null;
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Подвела бы итоги дня — репетиция.");
+    if (!turn.inGroup) return say(turn, "Итоги дня — для группы: там я считаю, кто сколько написал. В личке считать нечего.");
+    const settings = await fun.chatSettings(turn.chatId);
+    if (asked.on != null) {
+      if (!(await fun.canManage(turn))) return say(turn, "Итоги дня в чате включают и выключают его админы.");
+      const gone = await reminders.dropWhere(item => item.kind === "daily" && String(item.chatId) === String(turn.chatId) && item.text === "summary");
+      if (!asked.on) return say(turn, gone.removed.length ? `Хорошо, сама итоги дня больше не подвожу. По просьбе — «${NAME}, итоги дня».` : `Я их сама и не подводила. По просьбе — «${NAME}, итоги дня».`);
+      if (settings.log === false) return say(turn, `Итоги я считаю по памяти чата, а её здесь выключили. Сначала — «${NAME}, запоминай чат».`);
+      const zone = zoneOf(turn);
+      const clockText = `${String(asked.hour).padStart(2, "0")}:${String(asked.minute).padStart(2, "0")}`;
+      const parsed = parseReminder(`напоминай каждый день в ${clockText} рассылка`, { now: now(), timeZone: zone });
+      if (!parsed?.ok) return say(turn, "Не получилось поставить итоги на это время.");
+      const added = await reminders.add({
+        userId: turn.actorId, chatId: turn.chatId, at: parsed.at, text: "summary", threadId: turn.extra.message_thread_id ?? null,
+        inGroup: true, repeat: parsed.repeat, kind: "daily", zone,
+      });
+      if (!added.ok) return say(turn, added.code === "too_many" ? `У ${you(turn, "вас", "тебя")} уже двадцать напоминаний — это мой предел. Лишнее можно отменить: «мои напоминания».` : "Не получилось запомнить: хранилище не отвечает.");
+      return say(turn, `Хорошо: итоги дня — каждый день в ${clockText}, в этом чате: сколько написали и кто был активнее. Считаю сообщения с текстом; стикеры и картинки без подписи — нет. Отменить — «${NAME}, не подводи итоги дня».`);
+    }
+    if (settings.log === false) return say(turn, `Этот чат я не запоминаю: так решили админы, и считать мне нечего. Включить — «${NAME}, запоминай чат».`);
+    const sum = await daySumOf(turn.chatId, zoneOf(turn), { yesterday: asked.yesterday });
+    if (!sum.text) return say(turn, asked.yesterday ? "За вчера считать нечего: либо было тихо, либо я ещё не запоминала этот чат." : "Сегодня здесь пока тихо: считать нечего.");
+    pulse.bump("ruled");
+    return say(turn, sum.text);
+  }
+
   /** Запомнить, откуда последняя вещь в чате: подпись об этом молчит, а спросить можно. */
   async function credit(turn, item) {
     if (turn.dry || !item?.page) return;
@@ -2693,18 +2761,135 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     gore: "Такое я рисовать не буду: жестокость — не моя тема.",
     hate: "Такое я рисовать не буду.",
   });
+  // ── открытки ─────────────────────────────────────────────────────────────
+  const CARD_WORDS = Object.freeze({
+    birthday: "С днём рождения! Пусть этот год будет добрым.", newyear: "С Новым годом! Пусть он будет добрым и спокойным.",
+    march8: "С 8 Марта! Весны, тепла и радости.", feb23: "С 23 февраля! Сил, спокойствия и крепкого здоровья.",
+    love: "С любовью. Просто так — потому что хочется сказать.", thanks: "Спасибо! От души.", getwell: "Выздоравливай! Пусть силы вернутся скорее.",
+    wedding: "С днём свадьбы! Мира, тепла и долгих лет вместе.", faith: "С праздником! Мира, добра и благополучия.",
+    holiday: "С праздником! Пусть этот день будет светлым.", known: "Нашему знакомству сегодня круглая дата. Спасибо, что вы есть.",
+  });
+  /** Подпись открытки: слова по случаю; названо, кому, — «Маше — с днём рождения!». */
+  function cardCaption({ occasion, to = "", title = "" } = {}) {
+    const key = OCCASIONS[occasion] ? occasion : "holiday";
+    const line = (PHRASES ? book.pick(OCCASIONS[key].pool, { formal: true, owner: false }) : null) ?? CARD_WORDS[key];
+    const named = title && (key === "holiday" || key === "faith") ? `${title[0].toUpperCase()}${title.slice(1)}. ${line}` : line;
+    if (!to) return named;
+    return `${to[0].toUpperCase()}${to.slice(1)} — ${named[0].toLowerCase()}${named.slice(1)}`;
+  }
+  /**
+   * Открытка по её собственному почину: день рождения, праздник. Рисует, только
+   * когда краски есть и не отдыхают; не вышло — null, и поздравление уходит словами.
+   */
+  async function ownCard(occasion, title = "") {
+    if (!draw.available || typeof InputFile !== "function" || !has("sendPhoto")) return null;
+    try {
+      if (Number((await draw.state())?.until) > now()) return null;
+      const got = await draw.paint(postcardPrompt(occasion, title), { translate: false, seed: Math.floor(random() * 1_000_000), free: false });
+      return got.ok ? got.bytes : null;
+    } catch { return null; }
+  }
+  async function sendCard(chatId, bytes, caption, extra = {}) {
+    try {
+      await api.sendPhoto({ chat_id: chatId, photo: new InputFile(bytes, "card.jpg", { type: "image/jpeg" }), caption: String(caption).slice(0, 1000), ...extra });
+      pulse.bump("drawn");
+      return true;
+    } catch { return false; }
+  }
+
+  /**
+   * Праздники хозяина: в сам день, после девяти утра по его часам, — открытка
+   * и слова. Список — его: «добавь праздник Ураза-байрам 20 марта 2027». Дат,
+   * которые каждый год другие, она не вычисляет. Отмечено до отправки: два
+   * пробуждения разом не поздравят дважды.
+   */
+  const HOLIDAY_FROM = 9, HOLIDAY_TILL = 22;
+  async function holidayCards() {
+    if (!GREET || OWNER == null || !store.available) return 0;
+    const saved = await store.get(HOLIDAYS_KEY).catch(() => null);
+    if (saved?.cards === false) return 0;
+    const zone = await ownerZone();
+    const today = localParts(now(), zone);
+    if (today.hh < HOLIDAY_FROM || today.hh >= HOLIDAY_TILL) return 0;
+    const mark = `${today.y}-${String(today.m).padStart(2, "0")}-${String(today.d).padStart(2, "0")}`;
+    const due = holidaysOf(saved).filter(item => item.d === today.d && item.m === today.m && (!item.y || item.y === today.y));
+    let sent = 0;
+    for (const item of due) {
+      const id = `${item.m}-${item.d}:${item.title.toLowerCase()}`;
+      let claimed = false;
+      await store.update(HOLIDAYS_KEY, (before) => {
+        const base = before && typeof before === "object" ? before : {};
+        claimed = base.sent?.[id] !== mark;
+        if (!claimed) return before;
+        // Прошлогодние отметки не копятся: остаются только сегодняшние.
+        const kept = Object.fromEntries(Object.entries(base.sent ?? {}).filter(([, value]) => value === mark));
+        return { ...base, sent: { ...kept, [id]: mark }, at: now() };
+      }).catch(() => { claimed = false; });
+      if (!claimed) continue;
+      const occasion = /нов\S*\s+год/iu.test(item.title) ? "newyear" : /8\s+марта/iu.test(item.title) ? "march8" : /23\s+февраля/iu.test(item.title) ? "feb23" : /рождени/iu.test(item.title) ? "birthday" : "holiday";
+      const address = String(((await personal.settings(OWNER).catch(() => null)) ?? {}).address ?? "").trim();
+      const words = cardCaption({ occasion, title: occasion === "holiday" ? item.title : "" });
+      const text = `${words}${address ? ` Это вам, ${address}.` : ""}`;
+      const photo = await ownCard(occasion, item.title);
+      try {
+        if (!(photo && await sendCard(OWNER, photo, text))) await api.sendMessage({ chat_id: OWNER, text });
+        sent += 1;
+      } catch { /* не дошло — в этот день уже не повторит: поздравление не спам */ }
+    }
+    return sent;
+  }
+
+  /** «Праздники», «добавь праздник …», «убери праздник …», «не присылай открытки» — хозяину, в личке. */
+  async function holidayWords(turn, prompt) {
+    const asked = parseHoliday(prompt);
+    if (!asked) return null;
+    if (!owner(turn.actorId) || !turn.isPrivate) return asked.list ? null : say(turn, "Праздники я отмечаю для хозяина, и список их ведёт он — в личке.");
+    if (turn.dry) return say(turn, "Разобрала бы это как просьбу о праздниках — репетиция.");
+    const saved = await store.get(HOLIDAYS_KEY).catch(() => null);
+    const items = holidaysOf(saved);
+    const listed = (list) => list.map((item, index) => `${index + 1}. ${item.title} — ${holidayDate(item)}${item.y ? " (один раз)" : ", каждый год"}`).join("\n");
+    if (asked.list) {
+      const off = saved?.cards === false ? "\n\nОткрытки сейчас выключены: «присылай открытки» — вернуть." : "";
+      if (!items.length) return say(turn, `Праздников в моём списке нет. Добавить — «добавь праздник Навруз 21 марта».${off}`);
+      return say(turn, `В эти дни я пришлю вам открытку — после девяти утра:\n${listed(items)}\n\nДобавить — «добавь праздник Ураза-байрам 20 марта 2027» (с годом — один раз, без года — каждый год). Убрать — «убери праздник 2». День рождения я помню отдельно.${off}`);
+    }
+    if (asked.cards != null) {
+      const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), cards: asked.cards, at: now() })).then(() => true).catch(() => false);
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, asked.cards ? "Хорошо, хозяин: в праздники снова пришлю открытку." : "Хорошо, хозяин: сама открыток к праздникам не присылаю. По просьбе — «нарисуй открытку» — всегда.");
+    }
+    if (asked.add === null) return say(turn, "Не разобрала дату. Так: «добавь праздник Навруз 21 марта» или «добавь праздник Ураза-байрам 20.03.2027».");
+    if (asked.add) {
+      const same = (item) => item.title.toLowerCase() === asked.add.title.toLowerCase();
+      if (!items.some(same) && items.length >= HOLIDAYS_MAX) return say(turn, `В списке уже ${items.length} праздников — это предел. Лишний можно убрать: «убери праздник 3».`);
+      const next = [...items.filter(item => !same(item)), asked.add].sort((a, b) => a.m - b.m || a.d - b.d);
+      const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: next, at: now() })).then(() => true).catch(() => false);
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, `Запомнила, хозяин: ${asked.add.title} — ${holidayDate(asked.add)}${asked.add.y ? ", один раз" : ", каждый год"}. В этот день пришлю открытку.`);
+    }
+    const index = typeof asked.drop === "number" ? asked.drop - 1 : items.findIndex(item => item.title.toLowerCase().replace(/ё/gu, "е") === asked.drop);
+    const gone = items[index];
+    if (!gone) return say(turn, `Такого праздника в списке нет.${items.length ? `\n${listed(items)}` : ""}`);
+    const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: items.filter((_, at) => at !== index), at: now() })).then(() => true).catch(() => false);
+    if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+    return say(turn, `Убрала: ${gone.title} (${holidayDate(gone)}).`);
+  }
+
   /** Ответы мастерской одной строкой: «FLUX schnell — 400 «…»; SDXL — 404 «…»». */
   const drawTries = (tries) => (Array.isArray(tries) ? tries : []).slice(-4)
     .map(item => `${item.by} — ${item.status || "нет связи"}${item.said ? ` «${item.said}»` : ""}${item.codes ? ` (код ${item.codes})` : ""}`).join("; ");
   async function drawPicture(turn, query) {
     const lastKey = `heart:drew:${turn.chatId}`;
-    let subject = subjectOf(query);
+    // «Открытку Маше на день рождения»: описание для художника — готовое, слова — подписью.
+    const card = parsePostcard(query);
+    let subject = card ? { text: "открытка", prompt: postcardPrompt(card.occasion, card.title), card } : subjectOf(query);
     if (!subject) return say(turn, "Что нарисовать? Скажите словами: «нарисуй кота в шляпе».");
     if (subject.me) return say(turn, `Я не знаю, как ${you(turn, "вы выглядите", "ты выглядишь")}. ${you(turn, "Опишите", "Опиши")} словами — нарисую: «нарисуй девушку с рыжими волосами у окна».`);
     if (subject.again) {
       const before = await store.get(lastKey).catch(() => null);
       if (!before?.q) return say(turn, "Ещё — это что? Я пока ничего здесь не рисовала. «Нарисуй кота в шляпе» — и начнём.");
-      subject = subjectOf(before.q) ?? { text: before.q };
+      const same = parsePostcard(before.q);
+      subject = same ? { text: "открытка", prompt: postcardPrompt(same.occasion, same.title), card: same } : subjectOf(before.q) ?? { text: before.q };
       query = before.q;
     }
     const mine = owner(turn.actorId);
@@ -2750,7 +2935,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, "Не вышло: мастерская сейчас не отвечает. Попробуйте чуть позже.");
     }
     if (typeof InputFile !== "function" || !has("sendPhoto")) return say(turn, "Рисунок готов, но отправить файл мне сейчас нечем.");
-    const caption = voiced(turn, book.pick(subject.own === "self" ? "+рисунок:себя" : "+рисунок", voiceCtx(turn)) ?? "Вот.");
+    const caption = subject.card ? cardCaption(subject.card) : voiced(turn, book.pick(subject.own === "self" ? "+рисунок:себя" : "+рисунок", voiceCtx(turn)) ?? "Вот.");
     try {
       await api.sendPhoto({ chat_id: turn.chatId, photo: new InputFile(got.bytes, "ai.jpg", { type: "image/jpeg" }), caption, ...turn.extra });
       turn.delivered = true;
@@ -3394,6 +3579,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try { await ring(); } catch { /* следующее пробуждение повторит */ }
     try { await greetOwner(); } catch { /* доброе утро подождёт до завтра */ }
     try { await prayerBell(); } catch { /* следующее пробуждение посчитает заново */ }
+    try { await holidayCards(); } catch { /* праздник не важнее остального */ }
     if (!selfReports) return;
     if (now() - digestCheckedAt > 10 * 60_000) {
       digestCheckedAt = now();
@@ -4319,6 +4505,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const noted = parseNote(prompt);
     const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
+      || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (CHAT_MEMORY && parseDaySum(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
@@ -4352,7 +4539,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
