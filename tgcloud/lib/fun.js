@@ -22,8 +22,11 @@ export const CHAT_KEY = (chatId) => `heart:chat:${chatId}`;
 const DEFAULTS = Object.freeze({ rp: true, gifs: true, welcome: true, welcomeText: "", quietUntil: 0, tone: "" });
 
 const MINUTE = 60_000;
-const QUIET = /^(?:помолчи|замолчи|молчи|тихо|тише|цыц|не\s+(?:пиши|отвечай|говори|шуми)|отдохни)(?:те)?(?:\s+(?:пожалуйста|тут|здесь|пока|немного|чуть-чуть|в\s+(?:этом\s+)?чате))*(?:\s+(?:на\s+)?(полчаса|сутки|день|(\d{1,3})?\s*(минут[уы]?|мин|час(?:а|ов)?|ч)))?$/u;
-const SPEAK = /^(?:можешь\s+говорить|можно\s+говорить|говори|отомри|вернись|хватит\s+молчать|не\s+молчи|просыпайся)$/u;
+const QUIET = /^(?:помолчи|замолчи|молчи|тихо|тише|цыц|не\s+(?:пиши|отвечай|говори|шуми)|отдохни|тихий\s+час|объяви\s+тихий\s+час)(?:те)?(?:\s+(?:пожалуйста|тут|здесь|пока|немного|чуть-чуть|в\s+(?:этом\s+)?чате))*(?:\s+(?:на\s+)?(полчаса|сутки|день|(\d{1,3})?\s*(минут[уы]?|мин|час(?:а|ов)?|ч)))?$/u;
+const SPEAK = /^(?:можешь\s+говорить|можно\s+говорить|говори|отомри|вернись|хватит\s+молчать|не\s+молчи|просыпайся|тихий\s+час\s+(?:окончен|закончен|закончился|кончился)|(?:отмени|сними|закончи|хватит)\s+тих(?:ий|ого)\s+час(?:а)?|конец\s+тихого\s+часа)$/u;
+/** «…до 8:00», «…до 8 утра», «…до утра»: тишина до часа на часах, а не на срок. */
+const QUIET_UNTIL = /^(.+?)\s+до\s+(?:(\d{1,2})(?:[:.](\d{2}))?(?:\s*(?:часов|часа|ч))?(?:\s+(утра|вечера|ночи|дня))?|(утра|вечера|полуночи|обеда))$/u;
+const QUIET_WORD_HOURS = Object.freeze({ "утра": 8, "вечера": 18, "полуночи": 0, "обеда": 13 });
 const QUESTION = /^(?:(?:задай|подкинь|дай|предложи)(?:те)?\s+(?:нам\s+|мне\s+|чату\s+)?(?:вопрос(?:\s+дня)?|тему(?:\s+для\s+(?:разговора|обсуждения|беседы))?)|вопрос\s+дня|тема\s+дня|(?:о\s+чем|про\s+что)\s+(?:бы\s+)?(?:нам\s+)?поговорить)$/u;
 const QUESTION_MORE = /^(?:(?:еще|другой|следующий)\s+вопрос|(?:еще|другую|следующую)\s+тему|другой\s+вопрос\s+дня)$/u;
 
@@ -31,6 +34,16 @@ const QUESTION_MORE = /^(?:(?:еще|другой|следующий)\s+вопр
 export function parseQuiet(text) {
   const value = fold(text).replace(/[.!…]+$/u, "");
   if (SPEAK.test(value)) return { speak: true };
+  // «Помолчи до 8:00» — тихий час до времени на часах: ближайшие 8:00, сегодня или завтра.
+  const clocked = value.match(QUIET_UNTIL);
+  if (clocked && QUIET.test(clocked[1])) {
+    if (clocked[5]) return { at: { hh: QUIET_WORD_HOURS[clocked[5]], mm: 0 } };
+    let hh = Number(clocked[2]);
+    const mm = Number(clocked[3] ?? 0);
+    if ((clocked[4] === "вечера" || clocked[4] === "дня") && hh < 12) hh += 12;
+    if (clocked[4] === "ночи" && hh === 12) hh = 0;
+    return hh <= 23 && mm <= 59 ? { at: { hh, mm } } : null;
+  }
   const match = value.match(QUIET);
   if (!match) return null;
   const [, span, count, unit] = match;
@@ -122,6 +135,8 @@ export function createFun({
   name = "Аи", say = async () => ({ ok: false }), react = async () => false, compose = async () => null,
   book = null, bond = null, voice = (turn, text) => text, likes = async () => true, bookCtx = () => ({}),
   isMinor = async () => false,
+  // «До 8:00» по часам того, кто просит: ближайший такой час → { until, clock } (от сердца).
+  untilClock = null,
 } = {}) {
   const ACTION_TITLE = (key) => RP_ACTIONS.find(item => item.key === key)?.title ?? key;
   const pick = (list) => list[Math.min(list.length - 1, Math.floor(random() * list.length))];
@@ -215,6 +230,12 @@ export function createFun({
       return say(turn, "Я снова здесь.");
     }
     if (!(await canManage(turn))) return say(turn, "Замолчать меня просят админы чата. Но я постараюсь не мешать.");
+    if (asked.at) {
+      const moment = typeof untilClock === "function" ? untilClock(turn, asked.at) : null;
+      if (!moment?.until) return say(turn, "До часа на часах молчать не умею: скажите срок — «помолчи час».");
+      const kept = await saveChat(turn.chatId, { quietUntil: moment.until });
+      return say(turn, kept ? `Тихий час: молчу до ${moment.clock}. Раньше — «Аи, можешь говорить».` : "Не запомнилось: хранилище не отвечает.");
+    }
     const saved = await saveChat(turn.chatId, { quietUntil: now() + asked.ms });
     return say(turn, saved ? `Молчу ${span(asked.ms)}. Раньше — «Аи, можешь говорить».` : "Не запомнилось: хранилище не отвечает.");
   }
@@ -338,7 +359,7 @@ export function createFun({
     const emote = !named && (!parsed || (!parsed.asked && !parsed.mention)) && (starred || !turn.message?.reply_to_message) ? parseEmote(prompt) : null;
     if (emote && turn.inGroup && !turn.dry) {
       const chat = await chatSettings(turn.chatId);
-      if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
+      if (!chat.rp && !owner(turn.actorId)) return addressed ? null : { ignored: true, reason: "rp_off" };
       if (!addressed && Number(chat.quietUntil) > now()) return { ignored: true, reason: "quiet" };
       if (!(await underFlood(turn))) return { ignored: true, reason: "rp_flood" };
       pulse?.bump("rp");
@@ -355,7 +376,7 @@ export function createFun({
     const ownGifs = chat.gifs ? chat.ownGifs?.[gifKeyOf(parsed.action)] : null;
     // Её попросили помолчать — молчит и в чужих действиях.
     if (!addressed && Number(chat.quietUntil) > now()) return { ignored: true, reason: "quiet" };
-    if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
+    if (!chat.rp && !owner(turn.actorId)) return addressed ? null : { ignored: true, reason: "rp_off" };
     const actor = esc(turn.name || "Кто-то");
     const { action, tail } = parsed;
 
@@ -428,7 +449,7 @@ export function createFun({
     const chat = turn.chat ?? await chatSettings(turn.chatId);
     const parsed = matchOwn(text, chat.acts);
     if (!parsed) return null;
-    if (!chat.rp) return addressed ? null : { ignored: true, reason: "rp_off" };
+    if (!chat.rp && !owner(turn.actorId)) return addressed ? null : { ignored: true, reason: "rp_off" };
     if (!addressed && Number(chat.quietUntil) > now()) return { ignored: true, reason: "quiet" };
     const target = targetOf(turn, parsed, self);
     if (!target) return null;

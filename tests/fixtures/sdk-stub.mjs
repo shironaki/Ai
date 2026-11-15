@@ -77,9 +77,10 @@ export async function fetch(url, options = {}) {
     const hit = state.sourceReplies.find(item => (typeof item.match === "string" ? address.includes(item.match) : item.match.test(address)));
     // Источник, о котором тест ничего не сказал, не отвечает: 404.
     if (!hit) return { ok: false, status: 404, json: async () => ({}) };
-    const reply = typeof hit.reply === "function" ? hit.reply(address) : hit.reply;
+    const reply = typeof hit.reply === "function" ? hit.reply(address, options) : hit.reply;
     if (reply instanceof Error) throw reply;
-    if (reply && typeof reply === "object" && typeof reply.status === "number" && (typeof reply.json === "function" || typeof reply.text === "function")) return reply;
+    // Готовый ответ: JSON, текст или поток байт (как отдаёт файлы платформа: `for await (… of res.body)`).
+    if (reply && typeof reply === "object" && typeof reply.status === "number" && (typeof reply.json === "function" || typeof reply.text === "function" || reply.body != null)) return reply;
     return { ok: true, status: 200, json: async () => reply };
   }
   state.fetches.push({ url, options });

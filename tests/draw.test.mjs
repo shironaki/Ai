@@ -181,10 +181,84 @@ test("чего она не рисует: отказ до запроса, и от
   source("flux-1-schnell", cfError(400, 3030, "Input prompt contains NSFW content."));
   const strict = heart(ON, { now: () => NOON });
   await strict.onMessage(message("нарисуй странную сцену"), KEY);
-  assert.match(last(), /Такое я рисовать не буду/u);
-  // Хозяину — честно: отказалась мастерская, а не она.
+  assert.equal(last(), "Мастерская такой запрос не пропустила: это её фильтр. Попробуйте описать иначе.");
+  // Человеку фильтр мастерской — последнее слово: после второго «нет» запасным художникам запрос не уходит.
+  assert.deepEqual(asked("flux-1-schnell").map(body => body.prompt), ["something", "something, illustration, safe for work"]);
+  assert.equal(sourced().filter(url => /stable-diffusion|dreamshaper/u.test(url)).length, 0);
+  // Хозяину — честно: отказалась мастерская, а не она, и её слова — дословно.
   await strict.onMessage(message("нарисуй странную сцену", { id: OWNER }), KEY);
-  assert.match(last(OWNER), /Я бы нарисовала, но мастерская такой запрос не пропустила: это её фильтр, не мой/u);
+  assert.match(last(OWNER), /^Не вышло: мастерская этот запрос не пропустила — это её фильтр, не мой\. Запрос ушёл так: «something»\. Её ответы: FLUX schnell — 400 «Input prompt contains NSFW content\.» \(код 3030\)/u);
+  assert.match(last(OWNER), /SDXL Lightning — 404/u, "хозяину наедине пробуются и запасные художники");
+});
+
+/** Картинка файлом, как её отдают запасные художники: поток байт и заголовок типа. */
+const png = () => ({
+  ok: true, status: 200, headers: { get: (name) => (String(name).toLowerCase() === "content-type" ? "image/png" : null) },
+  body: (async function* chunks() { yield PIXELS.subarray(0, 250); yield PIXELS.subarray(250); })(),
+});
+
+test("«нарисуй кота»: отказ мастерской не принимается на веру — приписка, тело попроще, запасные художники", async () => {
+  // 1. Фильтр ошибся на безобидном: вторая попытка тем же художником с припиской — и рисунок есть.
+  reset();
+  source("m2m100", translated("cat"));
+  source("flux-1-schnell", (url, options) => (/safe for work/u.test(JSON.parse(options.body).prompt) ? image() : cfError(400, 3030, "Input prompt contains NSFW content.")));
+  let h = heart(ON, { now: () => NOON });
+  await h.onMessage(message("нарисуй кота", { id: OWNER }), KEY);
+  assert.equal(photos().length, 1, "хозяин получил кота");
+  assert.deepEqual(asked("flux-1-schnell"), [{ prompt: "cat", steps: 4, seed: asked("flux-1-schnell")[0].seed }, { prompt: "cat, illustration, safe for work" }]);
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(photos().length, 2, "и не хозяин — тоже");
+  // Что мешало, видно в статусе: слова мастерской, а не догадка.
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /Рисование: краски есть.* · заминка в \d\d:\d\d \(нарисовал FLUX schnell\): FLUX schnell — 400 «Input prompt contains NSFW content\.» \(код 3030\)/u);
+
+  // 2. Не фильтр: мастерской не понравилось поле. Раньше «not allowed» читалось как фильтр.
+  reset();
+  source("m2m100", translated("cat"));
+  source("flux-1-schnell", (url, options) => ("seed" in JSON.parse(options.body) ? cfError(400, 5006, "Bad input: Additional properties are not allowed ('seed' was unexpected)") : image()));
+  h = heart(ON, { now: () => NOON });
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(photos().length, 1);
+  assert.deepEqual(asked("flux-1-schnell").at(-1), { prompt: "cat" }, "второй раз — только описание");
+
+  // 3. Основной художник запрос не принимает вовсе: рисует запасной, картинка приходит файлом.
+  reset();
+  source("m2m100", translated("cat"));
+  source("flux-1-schnell", cfError(400, 5007, "No such model"));
+  source("stable-diffusion-xl-lightning", () => png());
+  h = heart(ON, { now: () => NOON });
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(photos().length, 1);
+  assert.equal(photos()[0].photo.bytes.length, PIXELS.length, "поток собран целиком");
+  assert.deepEqual(asked("stable-diffusion-xl-lightning"), [{ prompt: "cat" }], "запасному — только описание");
+
+  // 4. Не принял никто. Человеку — коротко, хозяину — весть с ответами; хозяину наедине — ответы в лицо.
+  reset();
+  source("m2m100", translated("cat"));
+  source("flux-1-schnell", cfError(400, 5006, `Bad input for account ${ACCOUNT}: prompt is odd`));
+  h = heart(ON, { now: () => NOON });
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(last(), "Не вышло: мастерская запрос не приняла. Хозяин об этом узнает.");
+  assert.equal(photos().length, 0);
+  assert.equal(sourced().filter(url => !url.includes("m2m100")).length, 5, "основной дважды и три запасных");
+  await h.onMessage(message("нарисуй кота", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /^Не вышло: мастерская запрос не приняла, и дело не в фильтре\. Запрос ушёл так: «cat»\. Её ответы: .*DreamShaper — 404; SDXL — 404\. По этим словам видно, что чинить\.$/u);
+  const all = toOwner().map(item => item.text).join("\n");
+  assert.match(all, /мастерская не приняла запрос на рисунок: /u, "о чужой неудаче хозяин узнаёт вестью");
+  assert.ok(!all.includes(ACCOUNT) && !all.includes("cf-token"), "ни ключа, ни ID аккаунта в словах нет");
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /Рисование: краски есть.* · неудача в \d\d:\d\d: /u);
+
+  // 5. Хозяин наедине и откровенное: приписки нет, после фильтра запрос идёт запасным как есть.
+  reset();
+  source("m2m100", translated("a nude woman"));
+  source("flux-1-schnell", cfError(400, 3030, "Input prompt contains NSFW content."));
+  source("stable-diffusion-xl-lightning", () => png());
+  h = heart(ON, { now: () => NOON });
+  await h.onMessage(message("нарисуй голую девушку", { id: OWNER }), KEY);
+  assert.equal(photos().length, 1);
+  assert.equal(asked("flux-1-schnell").length, 1, "без «safe for work»: он просил не это");
+  assert.deepEqual(asked("stable-diffusion-xl-lightning"), [{ prompt: "a nude woman" }]);
 });
 
 test("предел на человека: пять в день; хозяину — сколько угодно; на завтра — снова можно", async () => {

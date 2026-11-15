@@ -151,6 +151,52 @@ test("тишина: «помолчи час» в группе просит ад�
   assert.match(last(7), /В личке я пишу только в ответ/u);
 });
 
+test("тихий час: «помолчи до 8:00» — до часа на часах; хозяину она отвечает и в тишине, и при выключенных действиях", async () => {
+  assert.deepEqual(parseQuiet("помолчи до 8:00"), { at: { hh: 8, mm: 0 } });
+  assert.deepEqual(parseQuiet("тихий час до 7.30"), { at: { hh: 7, mm: 30 } });
+  assert.deepEqual(parseQuiet("помолчи до 9 вечера"), { at: { hh: 21, mm: 0 } });
+  assert.deepEqual(parseQuiet("тихо до утра"), { at: { hh: 8, mm: 0 } });
+  assert.deepEqual(parseQuiet("тихий час"), { ms: 3_600_000 });
+  assert.deepEqual(parseQuiet("тихий час на 2 часа"), { ms: 7_200_000 });
+  for (const text of ["отмени тихий час", "тихий час окончен", "конец тихого часа"]) assert.deepEqual(parseQuiet(text), { speak: true }, text);
+  for (const text of ["помолчи до пятницы", "молчи до 25:00", "тихий час у детей до 3", "доживём до 8:00", "до 8:00"]) assert.equal(parseQuiet(text), null, text);
+
+  reset();
+  let at = Date.parse("2026-11-18T19:00:00Z");
+  const h = heart({ TIME_ZONE: "Europe/Moscow" }, { now: () => at });
+  sdk().apiReplies.getChatMember = ({ user_id }) => ({ status: user_id === 51 ? "administrator" : "member" });
+  await h.onMessage(group("Аи, помолчи до 8:00", { id: 52, name: "Гость" }), KEY);
+  assert.match(toChat(-10).at(-1).text, /просят админы чата/u);
+  await h.onMessage(group("Аи, помолчи до 8:00", { id: 51, name: "Админ" }), KEY);
+  assert.equal(toChat(-10).at(-1).text, "Тихий час: молчу до 08:00. Раньше — «Аи, можешь говорить».");
+
+  // Остальным — тишина; хозяину — ответ, как всегда: к нему нет ограничений.
+  const before = toChat(-10).length;
+  assert.equal((await h.onMessage(group("Аи, как дела?", { id: 52, name: "Гость" }), KEY)).reason, "quiet");
+  assert.equal(toChat(-10).length, before);
+  await h.onMessage(group("Аи, расскажи про дождь", { id: 7, name: "Хозяин" }), KEY);
+  assert.equal(toChat(-10).length, before + 1, "хозяину она ответила и в тихий час");
+  assert.equal(chats().length, 1);
+  // Тишина для остальных от этого не кончилась.
+  assert.equal((await h.onMessage(group("Аи, как дела?", { id: 52, name: "Гость" }), KEY)).reason, "quiet");
+
+  // 22:00 по Москве → до 8:00 завтра: в 7:59 ещё тихо, в 8:01 — уже нет.
+  at = Date.parse("2026-11-19T04:59:00Z");
+  assert.equal((await h.onMessage(group("Аи, как дела?", { id: 52, name: "Гость" }), KEY)).reason, "quiet");
+  at = Date.parse("2026-11-19T05:01:00Z");
+  await h.onMessage(group("Аи, настройки чата", { id: 52, name: "Гость" }), KEY);
+  assert.match(toChat(-10).at(-1).text, /Настройки этого чата/u);
+
+  // Ролевые действия выключены настройкой чата — хозяину они остаются.
+  await h.onMessage(group("Аи, выключи рп", { id: 51, name: "Админ" }), KEY);
+  const masha = { message_id: 70, from: { id: 22, first_name: "Маша", is_bot: false }, text: "привет" };
+  assert.equal((await h.onMessage(group("обнять", { id: 52, name: "Гость", reply: masha }), KEY)).reason, "rp_off");
+  const count = toChat(-10).length;
+  await h.onMessage(group("обнять", { id: 7, name: "Хозяин", reply: masha }), KEY);
+  assert.equal(toChat(-10).length, count + 1);
+  assert.match(toChat(-10).at(-1).text, /обнимает/u);
+});
+
 test("вопрос дня: один на день и чат, «ещё вопрос» — следующий; назавтра — новый", async () => {
   assert.deepEqual(["вопрос дня", "задай вопрос", "подкинь тему для разговора", "о чём поговорить?"].map(text => parseQuestion(text)?.more), [false, false, false, false]);
   assert.equal(parseQuestion("ещё вопрос").more, true);

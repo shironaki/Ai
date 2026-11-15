@@ -481,6 +481,7 @@ main() {
       && { [ ! -f "$REPO/tgcloud/handlers/callback_query.js" ] || step "репетиция: кнопка" tg run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'; } \
       && { [ ! -f "$REPO/tgcloud/handlers/business_connection.js" ] || step "репетиция: подключение секретаря" tg run handlers/business_connection '{ id: "x", user: { id: 1 }, user_chat_id: 1, is_enabled: true }' --ctx '{ testRun: true }'; } \
       && { [ ! -f "$REPO/tgcloud/handlers/business_message.js" ] || step "репетиция: письмо секретарю" tg run handlers/business_message '{ business_connection_id: "x", chat: { id: 1, type: "private" }, from: { id: 1 }, text: "hi" }' --ctx '{ testRun: true }'; } \
+      && { [ ! -f "$REPO/tgcloud/handlers/my_chat_member.js" ] || step "репетиция: её добавили в чат" tg run handlers/my_chat_member '{ chat: { id: -1, type: "supergroup", title: "x" }, from: { id: 1 }, old_chat_member: { status: "left" }, new_chat_member: { status: "member" } }' --ctx '{ testRun: true }'; } \
       && step "состояние облака" tg fetch \
       || { restore; log "✗ Не прошло: $WHY — публикации нет, бот на прежней сборке.$(hint) Подробности: $DEPLOY_LOG"; return 1; }
     if ! step "публикация" tg push handlers lib schema; then

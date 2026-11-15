@@ -12,6 +12,13 @@
  * говорит об этом честно, как раньше.
  *
  * Судит код, а не модель: что рисовать нельзя, решается здесь, до запроса.
+ *
+ * Отказ мастерской разбирается, а не принимается на веру. Раньше любой ответ
+ * 400 со словами вроде «not allowed» считался её фильтром, и на «нарисуй кота»
+ * человек слышал про фильтр, хотя причина могла быть в самом запросе. Теперь:
+ * фильтр — это только слова о NSFW в ответе; всё остальное 400 — «запрос не
+ * принят», и тогда пробуется тело попроще и запасные художники. Что ответила
+ * мастерская, запоминается дословно: хозяин видит это в ответе и в статусе.
  */
 
 export const DRAW_STATE_KEY = "heart:draw:v1";
@@ -42,6 +49,25 @@ export function parseAlbum(text) {
 const API = "https://api.cloudflare.com/client/v4/accounts";
 const PAINTER = "@cf/black-forest-labs/flux-1-schnell";
 const TRANSLATOR = "@cf/meta/m2m100-1.2b";
+/**
+ * Художники по порядку. Первый — основной; остальные пробуются, когда он
+ * запрос не принял. Запасные отдают картинку файлом, а не строкой base64, и
+ * понимают только `prompt`: лишних полей им не посылается.
+ */
+export const PAINTERS = Object.freeze([
+  { id: PAINTER, title: "FLUX schnell" },
+  { id: "@cf/bytedance/stable-diffusion-xl-lightning", title: "SDXL Lightning" },
+  { id: "@cf/lykon/dreamshaper-8-lcm", title: "DreamShaper" },
+  { id: "@cf/stabilityai/stable-diffusion-xl-base-1.0", title: "SDXL" },
+]);
+/** Последняя неудача рисования: что ответила мастерская. Для статуса. */
+export const DRAW_LAST_KEY = "heart:draw:last";
+/** Слова мастерской о своём фильтре. Только они — «blocked»; остальное 400 — не фильтр. */
+const FLAGGED = /nsfw|not\s+safe\s+for\s+work|safety\s+(?:checker|filter|system)|content\s+(?:policy|filter)|flagged\s+as/u;
+/** На весь рисунок — не дольше: человек ждёт ответа, а не четвёртой попытки. */
+const PAINT_BUDGET_MS = 40_000;
+const CALL_TIMEOUT_MS = 25_000;
+const IMAGE_MAX_BYTES = 12 * 1024 * 1024;
 const DAY = 86_400_000;
 const untilUtcMidnight = (at) => Math.max(5 * 60_000, DAY - (at % DAY));
 
@@ -161,23 +187,54 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     try { if (store && typeof store.set === "function") await store.set(DRAW_STATE_KEY, { until: 0, why: "", at: now() }); } catch { /* не страшно */ }
   }
 
-  /** Один запрос к мастерской: `{ ok, status, data, text }`; сеть упала — status 0. */
+  /** Чужие слова — без ключа и без ID аккаунта, одной короткой строкой. */
+  const tidy = (text) => String(text ?? "").split(parts.token).join("…").split(parts.account).join("…").replace(/\s+/gu, " ").trim().slice(0, 160);
+  const timeout = (ms) => { try { return typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(ms) : undefined; } catch { return undefined; } };
+
+  /** Тело ответа — байтами: платформа отдаёт его потоком, обычный fetch — `arrayBuffer()`. */
+  async function bytesOf(response) {
+    if (typeof response?.arrayBuffer === "function") return new Uint8Array(await response.arrayBuffer());
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      const piece = chunk instanceof Uint8Array ? chunk : chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : ArrayBuffer.isView(chunk) ? new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) : null;
+      if (!piece) continue;
+      size += piece.length;
+      if (size > IMAGE_MAX_BYTES) throw new Error("image too big");
+      chunks.push(piece);
+    }
+    const out = new Uint8Array(size);
+    let at = 0;
+    for (const piece of chunks) { out.set(piece, at); at += piece.length; }
+    return out;
+  }
+
+  /**
+   * Один запрос к мастерской: `{ ok, status, data, text, bytes }`; сеть упала — status 0.
+   * `bytes` — когда в ответ пришёл сам файл картинки, а не JSON.
+   */
   async function call(model, body) {
     let response;
     try {
+      const signal = timeout(CALL_TIMEOUT_MS);
       response = await fetchImpl(`${API}/${parts.account}/ai/run/${model}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${parts.token}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
       });
-    } catch { return { ok: false, status: 0, data: null, text: "" }; }
+    } catch { return { ok: false, status: 0, data: null, text: "", bytes: null }; }
     const status = Number(response?.status) || 0;
-    let data = null, text = "";
+    const ok = response?.ok !== false && status >= 200 && status < 300;
+    let type = "";
+    try { type = String(response?.headers?.get?.("content-type") ?? "").toLowerCase(); } catch { type = ""; }
+    let data = null, text = "", bytes = null;
     try {
-      if (response?.ok === false && typeof response?.text === "function") { text = String(await response.text()).slice(0, 2000); try { data = JSON.parse(text); } catch { data = null; } }
+      if (ok && /^(?:image\/|application\/octet-stream)/u.test(type)) bytes = await bytesOf(response);
+      else if (!ok && typeof response?.text === "function") { text = String(await response.text()).slice(0, 2000); try { data = JSON.parse(text); } catch { data = null; } }
       else data = await response.json();
     } catch { data = null; }
-    return { ok: response?.ok !== false && status >= 200 && status < 300, status, data, text };
+    return { ok, status, data, text, bytes };
   }
 
   /** Русское описание → английское. Не вышло — остаётся как было: модель поймёт хуже, но поймёт. */
@@ -193,33 +250,105 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     return text;
   }
 
+  /** Что мастерская сказала об отказе: её слова, без служебной обёртки. */
+  function saidBy(got) {
+    const errors = Array.isArray(got.data?.errors) ? got.data.errors : [];
+    const words = errors.map(item => String(item?.message ?? "").trim()).filter(Boolean).join("; ");
+    const codes = errors.map(item => item?.code).filter(code => code != null).join(", ");
+    const text = words || (got.data?.error ? String(got.data.error?.message ?? got.data.error) : "") || got.text;
+    return { words: tidy(text), codes, low: `${text} ${got.text}`.toLowerCase() };
+  }
+
+  async function keep(record) {
+    try { if (store && typeof store.set === "function") await store.set(DRAW_LAST_KEY, record); } catch { /* статус обойдётся */ }
+  }
+  /** Последняя неудача: `{ at, code, tries }` или null. */
+  async function lastFailure() {
+    try {
+      const saved = store && typeof store.get === "function" ? await store.get(DRAW_LAST_KEY) : null;
+      return saved && typeof saved === "object" && Array.isArray(saved.tries) && saved.tries.length ? saved : null;
+    } catch { return null; }
+  }
+
   /**
-   * Нарисовать. `{ ok: true, bytes, prompt }` или `{ ok: false, code, until }`:
+   * Нарисовать. `{ ok: true, bytes, prompt, by }` или `{ ok: false, code, … }`:
    *   off — ключа нет; resting — отдыхает до `until` (why: limit | auth);
    *   limit — норма на сегодня вышла; auth — ключ не принят;
-   *   blocked — мастерская отказалась от запроса; network — нет связи; bad — ответ без картинки.
+   *   blocked — сработал фильтр самой мастерской (в ответе — слова о NSFW);
+   *   refused — мастерская запрос не приняла, и дело не в фильтре;
+   *   network — нет связи; bad — ответ без картинки.
+   * К отказу приложены `tries`: кто что ответил (`{ by, status, said, codes }`) и
+   * `prompt` — каким запрос ушёл.
+   *
+   * Фильтр мастерской ошибается и на безобидном, поэтому после её «нет» запрос
+   * пробуется ещё раз тем же художником с припиской «без откровенного»: решает
+   * по-прежнему её фильтр. `asIs` — приписку не делать (хозяин наедине просит
+   * откровенное). `free` — просит хозяин наедине: после фильтра его запрос идёт
+   * запасным художникам как есть. Остальным фильтр мастерской — последнее слово.
    */
-  async function paint(prompt, { translate = true, seed = null } = {}) {
+  async function paint(prompt, { translate = true, seed = null, free = false, asIs = false } = {}) {
     if (!available) return { ok: false, code: "off" };
     const idle = await state();
     if (idle.until > now()) return { ok: false, code: "resting", why: idle.why, until: idle.until };
-    const words = translate ? await english(String(prompt)) : String(prompt);
-    const body = { prompt: words.slice(0, 2000), steps: Math.min(8, Math.max(1, Number(steps) || 4)) };
-    if (Number.isFinite(Number(seed)) && seed != null) body.seed = Number(seed);
-    const got = await call(PAINTER, body);
-    if (!got.ok) {
-      const said = `${got.text} ${JSON.stringify(got.data?.errors ?? "")}`.toLowerCase();
-      if (got.status === 401 || got.status === 403) return { ok: false, code: "auth", until: await rest(30 * 60_000, "auth") };
-      if (got.status === 429) return { ok: false, code: "limit", until: await rest(/minute|per\s+min|rate\s+limit/u.test(said) && !/daily|neuron|allocation/u.test(said) ? 60_000 : untilUtcMidnight(now()), "limit") };
-      if (got.status === 400 && /nsfw|safety|not\s+allowed|prohibited|flagged|inappropriate/u.test(said)) return { ok: false, code: "blocked" };
-      return { ok: false, code: got.status === 0 || got.status >= 500 ? "network" : "bad", status: got.status };
+    const started = now();
+    const words = (translate ? await english(String(prompt)) : String(prompt)).slice(0, 2000);
+    const full = { prompt: words, steps: Math.min(8, Math.max(1, Number(steps) || 4)) };
+    if (Number.isFinite(Number(seed)) && seed != null) full.seed = Number(seed);
+    const tries = [];
+    let flagged = false, down = 0;
+    const fail = async (code, more = {}) => {
+      await keep({ at: now(), code, tries: tries.slice(-6) });
+      return { ok: false, code, tries, prompt: words, ...more };
+    };
+    /** Одна попытка: картинка, окончательный отказ (`code`) или null — пробовать дальше. */
+    const attempt = async (painter, body) => {
+      const got = await call(painter.id, body);
+      if (got.ok) {
+        const packed = got.data?.result?.image ?? got.data?.image ?? "";
+        const image = got.bytes ?? (packed ? fromBase64(packed) : new Uint8Array(0));
+        if (image.length >= 100) {
+          await wake();
+          // Вышло не с первого раза: что этому мешало, остаётся в статусе.
+          if (tries.length) await keep({ at: now(), code: "recovered", by: painter.title, tries: tries.slice(-6) });
+          return { ok: true, bytes: image, prompt: body.prompt, by: painter.title };
+        }
+        tries.push({ by: painter.title, status: got.status, said: "ответ без картинки", codes: "" });
+        return null;
+      }
+      const said = saidBy(got);
+      tries.push({ by: painter.title, status: got.status, said: said.words, codes: said.codes });
+      if (got.status === 401 || (got.status === 403 && painter.id === PAINTER)) return fail("auth", { until: await rest(30 * 60_000, "auth") });
+      if (got.status === 429) return fail("limit", { until: await rest(/minute|per\s+min|rate\s+limit/u.test(said.low) && !/daily|neuron|allocation/u.test(said.low) ? 60_000 : untilUtcMidnight(now()), "limit") });
+      if (got.status === 0) return fail("network");
+      if (got.status >= 500) down += 1;
+      else if (FLAGGED.test(said.low)) flagged = true;
+      return null;
+    };
+    const settled = (got) => Boolean(got?.ok || got?.code);
+    const main = PAINTERS[0];
+
+    let got = await attempt(main, full);
+    if (settled(got)) return got;
+    // Не фильтр, а «запрос не принят»: то же самое без необязательных полей.
+    if (!flagged && tries[0].status >= 400 && tries[0].status < 500) {
+      got = await attempt(main, { prompt: words });
+      if (settled(got)) return got;
     }
-    const image = got.data?.result?.image ?? got.data?.image ?? "";
-    const bytes = image ? fromBase64(image) : new Uint8Array(0);
-    if (bytes.length < 100) return { ok: false, code: "bad", status: got.status };
-    await wake();
-    return { ok: true, bytes, prompt: words };
+    if (flagged && !asIs) {
+      got = await attempt(main, { prompt: `${words}, illustration, safe for work`.slice(0, 2000) });
+      if (settled(got)) return got;
+    }
+    if (flagged && !free) return fail("blocked");
+    for (const spare of PAINTERS.slice(1)) {
+      if (now() - started > PAINT_BUDGET_MS) break;
+      got = await attempt(spare, { prompt: words });
+      if (settled(got)) return got;
+      if (flagged && !free) return fail("blocked");
+    }
+    if (flagged) return fail("blocked");
+    if (tries.every(item => item.said === "ответ без картинки")) return fail("bad", { status: tries[0].status });
+    return fail(down === tries.length ? "network" : "refused", { status: tries.at(-1)?.status ?? 0 });
   }
 
-  return Object.freeze({ available, paint, english, state });
+  return Object.freeze({ available, paint, english, state, lastFailure });
 }

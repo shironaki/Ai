@@ -431,6 +431,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     bookCtx: (turn, vars) => voiceCtx(turn, vars),
     say: (turn, text, options) => say(turn, text, options),
     react: (turn, emoji) => react(turn, emoji),
+    // «Помолчи до 8:00»: ближайшие 8:00 по часам того, кто просит.
+    untilClock: (turn, { hh, mm }) => {
+      const zone = zoneOf(turn);
+      const day = localParts(now(), zone);
+      let until = zonedEpoch({ y: day.y, m: day.m, d: day.d, hh, mm }, zone);
+      if (!(until > now() + 60_000)) until += DAY;
+      return { until, clock: localClock(until, zone) };
+    },
     // «Придумай опрос про …»: одна реплика модели, без записи в переписку.
     compose: (turn, text) => compose(turn, text),
   });
@@ -766,7 +774,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const idle = await draw.state();
     const count = today ? ` · сегодня нарисовано: ${Number(today.drawn) || 0}` : "";
     if (idle.until > now()) return idle.why === "auth" ? `ключ не принят — проверьте KEY_CLOUDFLARE${count}` : `краски кончились до ${clock(idle.until)}${count}`;
-    return `краски есть${count}${DRAW_DAILY > 0 ? ` · на человека в день — ${DRAW_DAILY}` : ""}`;
+    // Что мастерская отвечала в последний раз, когда рисунок не вышел или вышел не сразу: сутки.
+    const failed = await draw.lastFailure();
+    const trouble = failed && now() - (Number(failed.at) || 0) < DAY
+      ? ` · ${failed.code === "recovered" ? `заминка в ${clock(failed.at)} (нарисовал ${failed.by})` : `неудача в ${clock(failed.at)}`}: ${drawTries(failed.tries)}`
+      : "";
+    return `краски есть${count}${DRAW_DAILY > 0 ? ` · на человека в день — ${DRAW_DAILY}` : ""}${trouble}`;
   }
 
   async function clockLine() {
@@ -1679,7 +1692,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       try { await api.answerCallbackQuery({ callback_query_id: query?.id, ...(text ? { text } : {}) }); } catch { /* ответ на нажатие не важнее самого ответа */ }
     };
     if (chatId == null || query?.from?.id == null) { await answer(); return { ignored: true }; }
-    if (await fun.quiet(chatId)) { await answer("Меня попросили помолчать."); return { ok: true, action: "again", quiet: true }; }
+    // Тишина чата — для всех, кроме хозяина: к нему ограничений нет.
+    if (!owner(query.from.id) && await fun.quiet(chatId)) { await answer("Меня попросили помолчать."); return { ok: true, action: "again", quiet: true }; }
     const gate = `heart:again:${chatId}`;
     if (now() - (Number((await store.get(gate).catch(() => null))?.at) || 0) < 2000) { await answer("Не так быстро."); return { ok: true, action: "again", throttled: true }; }
     await store.set(gate, { at: now() }).catch(() => false);
@@ -2495,6 +2509,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     gore: "Такое я рисовать не буду: жестокость — не моя тема.",
     hate: "Такое я рисовать не буду.",
   });
+  /** Ответы мастерской одной строкой: «FLUX schnell — 400 «…»; SDXL — 404 «…»». */
+  const drawTries = (tries) => (Array.isArray(tries) ? tries : []).slice(-4)
+    .map(item => `${item.by} — ${item.status || "нет связи"}${item.said ? ` «${item.said}»` : ""}${item.codes ? ` (код ${item.codes})` : ""}`).join("; ");
   async function drawPicture(turn, query) {
     const lastKey = `heart:drew:${turn.chatId}`;
     let subject = subjectOf(query);
@@ -2521,7 +2538,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (has("sendChatAction")) { try { await api.sendChatAction({ chat_id: turn.chatId, action: "upload_photo", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) }); } catch { /* индикатор не важнее рисунка */ } }
     // «Себя в шляпе»: просьба переводится отдельно и встаёт перед её приметами.
     const wish = subject.look ? `${await draw.english(subject.text)}, ${subject.look}` : subject.prompt ?? subject.text;
-    const got = await draw.paint(wish, { translate: !subject.prompt && !subject.look, seed: Math.floor(random() * 1_000_000) });
+    // Хозяин наедине просит откровенное — запрос идёт как есть; безобидному после отказа
+    // мастерской можно дать вторую попытку с припиской «без откровенного».
+    const asIs = free && Boolean(subject.text && drawRefusal(subject.text, { free: false }));
+    const got = await draw.paint(wish, { translate: !subject.prompt && !subject.look, seed: Math.floor(random() * 1_000_000), free, asIs });
     if (!got.ok) {
       if (got.code === "resting" || got.code === "limit" || got.code === "auth") {
         const why = got.code === "resting" ? got.why : got.code;
@@ -2531,8 +2551,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         }
         return say(turn, `Краски на сегодня кончились: рисую я не больше, чем позволяет дневная норма. Вернутся в ${clock(got.until)}.`);
       }
-      // Отказалась мастерская, а не она: хозяину так и говорится.
-      if (got.code === "blocked") return say(turn, free ? "Я бы нарисовала, но мастерская такой запрос не пропустила: это её фильтр, не мой. Попробуйте описать иначе." : DRAW_NO.minor);
+      // Отказалась мастерская, а не она. Хозяину наедине — её слова дословно: по ним видно, что чинить.
+      const told = drawTries(got.tries);
+      const sent = String(got.prompt ?? "").slice(0, 200);
+      if (got.code === "blocked") {
+        if (free) return say(turn, `Не вышло: мастерская этот запрос не пропустила — это её фильтр, не мой.${sent ? ` Запрос ушёл так: «${sent}».` : ""}${told ? ` Её ответы: ${told}.` : ""} Попробуйте описать иначе.`);
+        return say(turn, "Мастерская такой запрос не пропустила: это её фильтр. Попробуйте описать иначе.");
+      }
+      if (got.code === "refused" || got.code === "bad") {
+        if (free) return say(turn, `Не вышло: мастерская запрос не приняла, и дело не в фильтре.${sent ? ` Запрос ушёл так: «${sent}».` : ""}${told ? ` Её ответы: ${told}.` : ""} По этим словам видно, что чинить.`);
+        try { await notices.report({ component: "draw", code: "refused", severity: "degraded", detail: `мастерская не приняла запрос на рисунок${told ? `: ${told}` : ""}` }); } catch { /* весть не важнее ответа */ }
+        return say(turn, "Не вышло: мастерская запрос не приняла. Хозяин об этом узнает.");
+      }
       return say(turn, "Не вышло: мастерская сейчас не отвечает. Попробуйте чуть позже.");
     }
     if (typeof InputFile !== "function" || !has("sendPhoto")) return say(turn, "Рисунок готов, но отправить файл мне сейчас нечем.");
@@ -3968,11 +3998,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       prompt = called.prompt;
       bare = !prompt;
       // Её попросили помолчать: до срока она слышит только «можешь говорить».
-      // «🙊» — чтобы молчание не выглядело поломкой.
-      if (!dry && !command && await fun.quiet(chat.id) && !parseQuiet(prompt)?.speak) {
+      // «🙊» — чтобы молчание не выглядело поломкой. Хозяину она отвечает и в
+      // тишине: к нему нет ограничений — ни режимом чата, ни ролью, ни статусом.
+      if (!dry && !command && !owner(actorId) && await fun.quiet(chat.id) && !parseQuiet(prompt)?.speak) {
         await react(turn, "🙊");
         return { ignored: true, reason: "quiet" };
       }
+      // Чат, где с ней говорят, — в её списке чатов: в нём она могла быть и до того, как научилась вести список.
+      if (!dry) await noteChat(chat).catch(() => false);
     } else {
       turn.replyToMe = message?.reply_to_message?.from?.is_bot === true;
       // В личке имя — вежливость: «Аи, запомни …» — та же просьба, что «запомни …».
@@ -4134,7 +4167,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
@@ -4391,11 +4424,149 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     };
   }
 
+  // ── её чаты: куда добавили, где она админ, откуда убрали ─────────────────
+  /**
+   * Список чатов, где она есть. Ведётся по событию `my_chat_member` и по
+   * разговорам: чат, где к ней обратились, заносится сам. Нужен хозяину («в
+   * каких ты чатах») и тому, что она делает в чатах сама.
+   */
+  const CHATS_KEY = "heart:chats:v1";
+  const CHATS_MAX = 200;
+  const knownChats = new Set();
+  const chatKind = (type) => (type === "channel" ? "канал" : "чат");
+  async function chatList() {
+    const saved = await store.get(CHATS_KEY).catch(() => null);
+    return Array.isArray(saved?.items) ? saved.items.filter(item => item && item.id != null) : [];
+  }
+  /** Занести или поправить чат; `patch` ложится поверх записи. `null` в поле — не менять. */
+  async function noteChat(chat, patch = null) {
+    if (chat?.id == null || chat.type === "private" || !store.available) return false;
+    const id = String(chat.id);
+    if (!patch && knownChats.has(id)) return true;
+    const fields = Object.fromEntries(Object.entries(patch ?? {}).filter(([, value]) => value != null));
+    const title = String(chat.title ?? "").replace(/\s+/gu, " ").trim().slice(0, 80);
+    await store.update(CHATS_KEY, (before) => {
+      const items = Array.isArray(before?.items) ? before.items.filter(item => item && item.id != null) : [];
+      const found = items.find(item => String(item.id) === id);
+      if (found && !patch && (!title || found.title === title)) return before;
+      const entry = { ...(found ?? { id: chat.id, since: now(), role: "member" }), type: chat.type ?? found?.type ?? "", ...(title ? { title } : {}), ...fields };
+      return { items: [...items.filter(item => String(item.id) !== id), entry].slice(-CHATS_MAX), at: now() };
+    });
+    if (knownChats.size > 500) knownChats.clear();
+    knownChats.add(id);
+    return true;
+  }
+  async function dropChat(chatId) {
+    knownChats.delete(String(chatId));
+    if (!store.available) return false;
+    await store.update(CHATS_KEY, (before) => {
+      const items = Array.isArray(before?.items) ? before.items : [];
+      if (!items.some(item => String(item?.id) === String(chatId))) return before;
+      return { items: items.filter(item => String(item?.id) !== String(chatId)), at: now() };
+    });
+    return true;
+  }
+
+  /** Всё рабочее об ушедшем чате: настройки, память чата, отложенное в него. Цитаты, счёт и пары остаются. */
+  const CHAT_LEFTOVERS = ["heart:chat:", LOG_PREFIX, "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:trace:", "heart:daysum:"];
+  async function forgetChat(chatId) {
+    for (const prefix of CHAT_LEFTOVERS) await store.remove(`${prefix}${chatId}`).catch(() => false);
+    await reminders.dropWhere(item => String(item.chatId) === String(chatId)).catch(() => null);
+    await dropChat(chatId).catch(() => false);
+  }
+
+  const MEMBER_IN = new Set(["member", "restricted", "administrator", "creator"]);
+  /**
+   * Telegram сообщил, что с ней самой что-то сделали: добавили в чат, сделали
+   * админом, сняли, убрали; в личке — человек заблокировал её или вернул.
+   *   добавили — чат в списке, хозяину — весть (представляется она по служебному сообщению чата);
+   *   сделали админом — отказ чата в «сообщениях для одного» забыт, и первое такое
+   *     сообщение она сразу пробует: тому, кто дал права;
+   *   убрали — рабочее о чате стёрто, отложенное в него отменено, хозяину — весть;
+   *   заблокировали в личке — его напоминания не звонят в закрытую дверь.
+   */
+  async function onMyChatMember(update, ctx = {}) {
+    const chat = update?.chat;
+    const next = String(update?.new_chat_member?.status ?? "");
+    const prev = String(update?.old_chat_member?.status ?? "");
+    if (chat?.id == null || !next) return { ignored: true };
+    if (ctx?.testRun === true) return { ok: true, side_effects: "none" };
+    if (!store.available) return { ignored: true, reason: "no_storage" };
+    const by = update?.from ?? {};
+    const mine = owner(by.id);
+    const who = safeName(by.first_name) || "кто-то";
+    const isIn = MEMBER_IN.has(next), wasIn = MEMBER_IN.has(prev);
+    const isAdmin = next === "administrator" || next === "creator", wasAdmin = prev === "administrator" || prev === "creator";
+    const tell = async (text) => { try { await notices.tell({ key: `chats:${chat.id}:${next}:${Math.floor(now() / 60_000)}`, text }); } catch { /* весть не важнее дела */ } };
+    const title = String(chat.title ?? "").replace(/\s+/gu, " ").trim().slice(0, 80) || "без названия";
+
+    if (chat.type === "private") {
+      // Личка: «kicked» — человек её заблокировал, «member» — вернул.
+      if (owner(chat.id)) return { ignored: true, reason: "owner" };
+      if (!isIn) {
+        await store.set(`heart:gone:${chat.id}`, { at: now() }).catch(() => false);
+        const dropped = await reminders.dropWhere(item => String(item.chatId) === String(chat.id) && !item.repeat).catch(() => null);
+        pulse.bump("left");
+        return { ok: true, action: "blocked_by_user", dropped: dropped?.removed?.length ?? 0 };
+      }
+      await store.remove(`heart:gone:${chat.id}`).catch(() => false);
+      return { ok: true, action: "unblocked" };
+    }
+
+    if (!isIn) {
+      if (!wasIn && prev !== "") return { ignored: true, reason: "still_out" };
+      await forgetChat(chat.id);
+      pulse.bump("left");
+      if (!mine) await tell(`Меня убрали из ${chatKind(chat.type)}а «${title}»${by.id != null ? ` — ${who}` : ""}. Настройки и память этого чата я стёрла; цитаты и счёт оставила на случай, если вернут.`);
+      return { ok: true, action: "left" };
+    }
+
+    const joined = !wasIn;
+    await noteChat(chat, { role: isAdmin ? "admin" : "member", ...(joined ? { since: now(), by: by.id ?? null } : {}) });
+    if (joined) pulse.bump("joined");
+    if (joined && !mine) await tell(`Меня добавили в ${chatKind(chat.type)} «${title}»${by.id != null ? ` — ${who}` : ""}${isAdmin ? ", сразу админом" : ""}.`);
+
+    if (isAdmin && !wasAdmin && chat.type !== "channel") {
+      // Права админа открывают «сообщения для одного»: прежний отказ чата забыт, и первое уходит сразу.
+      await store.remove(WHISPER_KEY(chat.id)).catch(() => false);
+      let whispered = false;
+      if (by.id != null && by.is_bot !== true) {
+        const text = book.pick("+чат:стала админом", voiceCtx({ actorId: by.id, chatId: chat.id, isPrivate: false, manner: await mannerFor(by.id, { dry: true }).catch(() => null), extra: {} }))
+          ?? "Спасибо за доверие. Это сообщение видите только вы: теперь личное я смогу говорить здесь так, не занимая общий чат.";
+        const sent = await whisper(chat.id, by.id, { text });
+        whispered = sent?.whispered === true;
+      }
+      await noteChat(chat, { whisper: whispered });
+      if (!joined && !mine) await tell(`В чате «${title}» меня сделали админом${by.id != null ? ` — ${who}` : ""}. Сообщения для одного человека там ${whispered ? "работают" : "пока не прошли"}.`);
+      return { ok: true, action: joined ? "joined_admin" : "promoted", whispered };
+    }
+    if (wasAdmin && !isAdmin) {
+      // Прав больше нет: «сообщения для одного» там не пройдут — не начинать с ошибки.
+      await store.set(WHISPER_KEY(chat.id), { no: true, at: now() }).catch(() => false);
+      await noteChat(chat, { whisper: false });
+      return { ok: true, action: "demoted" };
+    }
+    return { ok: true, action: joined ? "joined" : "noted" };
+  }
+
+  /** «В каких ты чатах?» — хозяину, в личке: список с ролями. */
+  async function chatsWords(turn, prompt) {
+    const value = String(prompt ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
+    if (!/^(?:(?:покажи|назови|перечисли)\s+)?(?:в\s+каких\s+(?:ты\s+)?чатах(?:\s+ты)?(?:\s+(?:состоишь|есть|сидишь|работаешь|живешь))?|(?:твои|свои)\s+чаты|список\s+(?:твоих\s+)?чатов|где\s+ты\s+(?:состоишь|админ))$/u.test(value)) return null;
+    if (!owner(turn.actorId) || !turn.isPrivate) return null;
+    if (turn.dry) return say(turn, "Показала бы список своих чатов — репетиция.");
+    const items = (await chatList()).sort((a, b) => (Number(b.since) || 0) - (Number(a.since) || 0));
+    if (!items.length) return say(turn, "Пока не знаю ни одного: список я веду с этой сборки. Чат попадёт в него, как только там со мной заговорят или меня туда добавят.");
+    const lines = items.slice(0, 40).map((item, index) => `${index + 1}. ${item.title || "без названия"} — ${item.type === "channel" ? "канал" : "чат"}${item.role === "admin" ? ", я админ" : ""}${item.whisper === true ? ", личные сообщения работают" : ""}`);
+    return say(turn, `Я в ${items.length} ${plural(items.length, "чате", "чатах", "чатах")}:\n${lines.join("\n")}${items.length > 40 ? `\n…и ещё ${items.length - 40}.` : ""}`);
+  }
+
   return Object.freeze({
     onMessage,
     onCallback,
     onBusinessConnection,
     onBusinessMessage,
+    onMyChatMember,
     tick,
     status,
     reportCrash,
