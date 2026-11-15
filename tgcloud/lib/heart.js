@@ -2043,6 +2043,64 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, [`Общее — ${turn.name || "вы"} и ${theirName}, из названного при всех:`, ...same.map(item => `• ${item.title} — ${item.value}`), differ].filter(Boolean).join("\n"));
   }
 
+  // ── «насколько я знаю …» ────────────────────────────────────────────────
+  /**
+   * Игра для двоих в группе: ответом на сообщение человека — «насколько я его
+   * знаю?», «насколько мы знаем друг друга?». Она спрашивает до пяти вещей из его
+   * анкеты — только названное при всех; отвечают ответом на её вопрос. Без модели.
+   */
+  const KNOW_KEY = (chatId, messageId) => `heart:knows:${chatId}:${messageId}`;
+  const KNOW_TTL_MS = 3_600_000, KNOW_ROUNDS = 5;
+  const KNOW_ASK = /^(?:а\s+)?(?:насколько|как)\s+(?:хорошо\s+)?(?:мы\s+(?:друг\s+друга\s+знаем|знаем\s+друг\s+друга)|я\s+(?:его|ее|этого\s+человека)\s+знаю|я\s+знаю\s+(?:его|ее|этого\s+человека))$|^(?:а\s+)?(?:хорошо\s+ли|знаю\s+ли)\s+я\s+(?:его|ее)(?:\s+знаю)?$|^(?:проверь|проверим|давай\s+проверим),?\s+(?:как|насколько)\s+(?:хорошо\s+)?(?:я\s+(?:его|ее)\s+знаю|мы\s+знаем\s+друг\s+друга|мы\s+друг\s+друга\s+знаем)$/u;
+  const parseKnow = (text) => KNOW_ASK.test(String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim());
+  const knowFold = (text) => String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/[^\p{L}\p{N}\s-]+/gu, " ").replace(/\s+/gu, " ").trim();
+  async function knowAsk(turn, state, lead = "") {
+    const item = state.items[state.i];
+    const sent = await say(turn, `${lead ? `${lead}\n\n` : ""}Вопрос ${state.i + 1} из ${state.items.length}. ${item.t.charAt(0).toUpperCase()}${item.t.slice(1)} — что называет ${state.name}? Ответ — ответом на это сообщение.`);
+    if (sent.messageId != null) await store.set(KNOW_KEY(turn.chatId, sent.messageId), { ...state, at: now() }).catch(() => false);
+    return { ok: true, action: "know", text: sent.text };
+  }
+  async function knowWords(turn, prompt) {
+    if (!LIKES || !turn.inGroup || !parseKnow(prompt)) return null;
+    // Ответ на её собственное сообщение — вопрос о ней самой: это разговор.
+    if (turn.replyToMe) return null;
+    const other = turn.message?.reply_to_message?.from;
+    if (turn.dry) return say(turn, "Начала бы игру «насколько я знаю» — репетиция.");
+    if (other?.id == null) return say(turn, `Это игра для двоих: ${you(turn, "ответьте", "ответь")} этими словами на сообщение человека — и я спрошу ${you(turn, "вас", "тебя")} о любимом, которое он называл мне при всех.`);
+    if (other.is_bot) return say(turn, "Про ботов не спрашиваю: у них любимого нет.");
+    if (String(other.id) === String(turn.actorId)) return say(turn, `Себя ${you(turn, "вы знаете", "ты знаешь")} и без меня. ${you(turn, "Ответьте", "Ответь")} на сообщение другого человека.`);
+    const name = safeName(other.first_name) || "собеседник";
+    const theirs = await tastes.list(other.id, { inGroup: true });
+    if (theirs.length < 3) return say(turn, `Спросить пока не о чем: ${name} называет мне при всех слишком мало любимого — нужно хотя бы три ответа. Рассказать — «${NAME}, мой любимый цвет — …» или «${NAME}, анкета».`);
+    const pool = [...theirs], items = [];
+    while (items.length < KNOW_ROUNDS && pool.length) items.push(pool.splice(Math.min(pool.length - 1, Math.floor(random() * pool.length)), 1)[0]);
+    return knowAsk(turn, { by: turn.actorId, byName: safeName(turn.name) || "", about: other.id, name, items: items.map(item => ({ t: item.title, v: item.value })), i: 0, right: 0 });
+  }
+  /** Ответ на её вопрос игры. null — это не вопрос игры. */
+  async function knowGuess(turn, text, messageId) {
+    if (!LIKES || !store.available || messageId == null) return null;
+    const key = KNOW_KEY(turn.chatId, messageId);
+    const state = await store.get(key).catch(() => null);
+    if (!Array.isArray(state?.items) || !state.items[state.i]) return null;
+    if (now() - Number(state.at) > KNOW_TTL_MS) { await store.remove(key).catch(() => false); return null; }
+    if (String(turn.actorId) !== String(state.by)) return say(turn, `Этот вопрос — не ${you(turn, "вам", "тебе")}: отвечает ${state.byName || "тот, кто начал игру"}. Своя игра — «насколько я знаю» ответом на сообщение человека.`);
+    const said = knowFold(text);
+    if (!said) return null;
+    const item = state.items[state.i];
+    const want = knowFold(item.v);
+    // Верно — то же самое, или названное стоит в ответе целым словом («кажется, синий»), или ответ — слово из названного («чай» при «зелёный чай»).
+    const inside = (whole, part) => part.length >= 3 && ` ${whole} `.includes(` ${part} `);
+    const right = Boolean(want) && (said === want || inside(said, want) || inside(want, said));
+    await store.remove(key).catch(() => false);
+    const next = { ...state, i: state.i + 1, right: state.right + (right ? 1 : 0) };
+    const lead = right ? "Верно." : `Нет: ${item.v}.`;
+    if (next.i < next.items.length) return knowAsk(turn, next, lead);
+    pulse.bump("games");
+    const all = next.items.length;
+    const verdict = next.right === all ? "Всё верно — вот это внимание." : next.right * 2 >= all ? "Неплохо." : "Есть что узнать друг о друге.";
+    return say(turn, `${lead}\n\nИтог: ${next.right} из ${all}. ${verdict}\n${state.name}, теперь очередь за вами: «${NAME}, насколько я знаю?» — ответом на сообщение собеседника.`);
+  }
+
   // ── «узнаю и вернусь» ────────────────────────────────────────────────────
   /**
    * Хозяин, в личке: «чего ты не знала?» — список; «ответ 2: …» — она передаёт
@@ -2944,6 +3002,32 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const answer = await compose(turn, `Ниже — сообщения группового чата, которые собеседник пропустил. Перескажи их коротко, по темам: 3–6 пунктов, каждый с новой строки и со знака «•». Называй, кто что сказал, без оценок людей. Ничего не добавляй от себя.\n\n${transcript(rows)}`).catch(() => null);
     if (answer) { pulse.bump("ruled"); return say(turn, `Пока вас не было — ${rows.length} ${plural(rows.length, "сообщение", "сообщения", "сообщений")}:\n\n${answer.trim()}`); }
     return say(turn, `Пересказать своими словами сейчас нечем, так что по фактам. ${digest(rows, { plural })}`);
+  }
+
+  // ── «кто прав?» ──────────────────────────────────────────────────────────
+  /**
+   * Рассудить спор в группе: модель читает не одну реплику, а последние полчаса
+   * чата — те же записи, что и «что я пропустил?». Судит доводы, не людей; вкус
+   * и нехватку фактов называет прямо, победителя не назначает.
+   * В личке, без памяти чата и когда спора не видно — это обычный разговор.
+   */
+  const JUDGE_ASK = /^(?:ну\s+)?(?:и\s+)?(?:так\s+)?(?:кто\s+(?:же\s+)?(?:(?:из\s+(?:нас|них|них\s+двоих|нас\s+двоих)|тут|здесь)\s+)?прав(?:\s+в\s+(?:этом\s+)?споре)?|рассуди(?:те)?(?:\s+(?:нас|их|спор|этот\s+спор))?|разреши(?:те)?\s+(?:наш\s+|этот\s+)?спор|кто\s+прав,?\s+(?:а\s+)?кто\s+(?:нет|не\s+прав|неправ))$/u;
+  const parseJudge = (text) => JUDGE_ASK.test(String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim());
+  const JUDGE_WINDOW_MS = 30 * 60_000, JUDGE_ROWS = 40;
+  async function judge(turn, prompt) {
+    if (!CHAT_MEMORY || !turn.inGroup || !parseJudge(prompt)) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как просьбу рассудить спор — репетиция, ничего не читаю.");
+    if ((await fun.chatSettings(turn.chatId)).log === false) return null;
+    const rows = (await chatlog.recent(turn.chatId, JUDGE_ROWS))
+      .filter(row => Number(row.at) > now() - JUDGE_WINDOW_MS && (turn.message?.message_id == null || row.id < Number(turn.message.message_id)));
+    // Спор — это хотя бы двое и хотя бы четыре реплики: иначе судить нечего.
+    if (rows.length < 4 || new Set(rows.map(row => row.u)).size < 2) return say(turn, "Спора я не вижу: за последние полчаса тут почти ничего не сказано. Ответьте словами «кто прав?» на сообщение, о котором речь, — или расскажите, в чём спор.");
+    await typing(turn);
+    const quoted = String(turn.message?.reply_to_message?.text ?? "").replace(/\s+/gu, " ").trim().slice(0, 300);
+    const answer = await compose(turn, `Ниже — последние сообщения группового чата: люди спорят, и тебя просят рассудить. Первой строкой назови, о чём спор. Затем — кто прав по фактам и почему: 2–4 фразы. Если это дело вкуса или фактов для решения не хватает — так и скажи и победителя не назначай. Суди доводы, а не людей: без оценок и насмешек. Не выдумывай того, чего в сообщениях нет.${quoted ? `\n\nСпрашивают ответом на сообщение: «${quoted}».` : ""}\n\n${transcript(rows, 2400)}`).catch(() => null);
+    if (!answer) return null;
+    pulse.bump("ruled");
+    return say(turn, answer.trim());
   }
 
   // ── итоги дня в группе ───────────────────────────────────────────────────
@@ -5250,7 +5334,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -5263,6 +5347,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (guessed.miss) await react(turn, "🤔");
         if (guessed.won) pulse.bump("games");
         return ruled(guessed);
+      }
+      // Ответ на вопрос игры «насколько я знаю».
+      if (!request) {
+        const known = await knowGuess(turn, prompt, message.reply_to_message.message_id);
+        if (known) return ruled(known);
       }
       // Ответ на картинку-загадку («угадай рисунок»). Просьба («нарисуй ещё», «статус») — не отгадка.
       if (!request && (message.reply_to_message.photo || message.reply_to_message.caption != null)) {
@@ -5296,7 +5385,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
@@ -5604,7 +5693,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // по сообщению). Вторые убираются семейством; двоеточие после номера обязательно,
   // иначе чат -10 унёс бы с собой и чат -100.
   const CHAT_KEYS = ["heart:chat:", "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:daysum:", "heart:game:"];
-  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:"];
+  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:", "heart:knows:"];
   async function forgetChat(chatId) {
     for (const prefix of CHAT_KEYS) await store.remove(`${prefix}${chatId}`).catch(() => false);
     // Отрицательный срок — «всё, что есть», включая записанное в эту же секунду.

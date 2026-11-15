@@ -126,3 +126,40 @@ test("фон: в группе модель видит, о чём говорил�
   await h.onMessage(message("расскажи что-нибудь про осень"), KEY);
   assert.doesNotMatch(JSON.stringify(request().messages), /Недавно в чате/u);
 });
+
+test("«кто прав?»: судит по последним репликам чата; спора нет — так и говорит; в личке и без памяти — обычный разговор", async () => {
+  reset();
+  let clock = NOON;
+  const h = heart(ON, { now: () => clock });
+  // Старое (час назад) в спор не идёт.
+  await say(h, "вчера было холодно", 22, "Маша");
+  clock += 3_600_000;
+  await say(h, "Аи, кто прав?", 21, "Вася");
+  assert.match(last(-10), /^Спора я не вижу: за последние полчаса тут почти ничего не сказано\./u);
+  assert.equal(chats().length, 0);
+  for (const [text, id, name] of [["Земля ближе к Солнцу летом, поэтому тепло", 21, "Вася"], ["нет, дело в наклоне оси", 22, "Маша"], ["да ну, чем ближе, тем жарче", 21, "Вася"], ["в январе Земля как раз ближе всего к Солнцу", 22, "Маша"]]) await say(h, text, id, name);
+  sdk().fetchQueue.push(says("Спор о том, отчего бывает лето.\nПрава Маша: времена года даёт наклон оси, а ближе всего к Солнцу Земля в январе."));
+  await say(h, "Аи, ну и кто из нас прав?", 21, "Вася");
+  assert.equal(last(-10), "Спор о том, отчего бывает лето.\nПрава Маша: времена года даёт наклон оси, а ближе всего к Солнцу Земля в январе.");
+  const asked = request().messages.at(-1).content;
+  assert.match(asked, /тебя просят рассудить\. Первой строкой назови, о чём спор/u);
+  assert.match(asked, /Суди доводы, а не людей/u);
+  assert.match(asked, /Вася: Земля ближе к Солнцу летом, поэтому тепло\nМаша: нет, дело в наклоне оси\nВася: да ну, чем ближе, тем жарче\nМаша: в январе Земля как раз ближе всего к Солнцу$/u);
+  assert.doesNotMatch(asked, /вчера было холодно|кто из нас прав/u, "ни старого, ни самого вопроса");
+  assert.equal(chats().length, 1);
+  // Ответом на реплику — она названа отдельно.
+  sdk().fetchQueue.push(says("Спор тот же. Права Маша."));
+  await h.onMessage(group("Аи, рассуди", { id: 23, name: "Петя", reply: { message_id: 7, from: { id: 21, is_bot: false }, text: "да ну, чем ближе, тем жарче" }, extra: { message_id: (mid += 1) } }), KEY);
+  assert.match(request().messages.at(-1).content, /Спрашивают ответом на сообщение: «да ну, чем ближе, тем жарче»\./u);
+
+  // В личке и там, где чат не запоминается, — обычный разговор, без чтения чата.
+  sdk().fetchQueue.push(says("Расскажите, в чём спор."));
+  await h.onMessage(message("кто прав?"), KEY);
+  assert.equal(last(), "Расскажите, в чём спор.");
+  assert.doesNotMatch(request().messages.at(-1).content, /рассудить/u);
+  reset();
+  const plain = heart({ CHAT_MEMORY: false }, { now: () => NOON });
+  sdk().fetchQueue.push(says("А о чём спор?"));
+  await plain.onMessage(group("Аи, кто прав?", { id: 21 }), KEY);
+  assert.equal(last(-10), "А о чём спор?");
+});
