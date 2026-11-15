@@ -34,7 +34,7 @@ import { createPhrasebook, partOfDay, fill } from "./phrasebook.js";
 import { accentOf, accentInfo, parseAccent, randomAccent, keyboard as accentKeyboard, garnish, likesAnime } from "./accents.js";
 import { moodOf as feelingNow, behaviourOf } from "./mood.js";
 import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.js";
-import { fajrOn, parseFajr, prayersOn, ishaRule, FAJR_METHODS, FAJR_ANGLE } from "./fajr.js";
+import { fajrOn, parseFajr, prayersOn, ishaRule, methodExtras, DAY_TIMES, SHIFT_MAX, FAJR_METHODS, FAJR_ANGLE } from "./fajr.js";
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
 import { parsePostcard, postcardPrompt, parseHoliday, holidaysOf, holidayDate, OCCASIONS, HOLIDAYS_KEY, HOLIDAYS_MAX } from "./postcard.js";
 import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
@@ -114,15 +114,18 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.29.0";
+export const BUILD = "0.30.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.29.0 — секретарь: срочное письмо («срочно», «это важно», «urgent») приходит хозяину сразу, отдельным сообщением с текстом письма; от одного человека — не чаще раза в две минуты",
-  "если человек после моего ответа просит что-то передать, отвечаю, что обязательно передам, — и в списке «кто мне писал?» это стоит отдельной строкой; таких вторых ответов — не больше трёх человеку",
-  "канал моста: за собой убираю — свой вопрос после ответа и прочитанные ответы и события сестры. Чтобы убирать чужое, мне нужно в канале право «Удаление сообщений»; не будет — скажу. Оставить всё как есть — BRIDGE_TIDY: false",
-  "мост больше не рвётся из-за часов: вопрос годен десять минут вместо одной, и с тем же допуском читаются ответы и события сестры. 15.11 часы моего запуска спешили на три минуты — сестра отвечала «expired», а статус говорил «не ответила»",
-  "строка «Сбои» в статусе называет, что упало, где и когда, а не одно слово «handler»",
+  "0.30.0 — рисование: отказ мастерской теперь разбирается, а не называется фильтром. Запрос отклонён не из-за содержания — пробую ещё раз с одним описанием; сработал фильтр на безобидном — с припиской и у запасных художников. Вам в личке показываю дословно, что ушло и что ответили. Почему отказало «нарисуй кота», я пока не знаю — это покажет следующая попытка",
+  "знаю, что меня добавили в чат, сделали админом или убрали: веду список («в каких ты чатах?»), получив права — сразу пробую сообщение для одного, уходя — стираю настройки и память чата",
+  "намазы: «намазы на сегодня», «когда магриб», «следующий намаз»; «напоминай о намазе за 10 минут» — в личку каждому, кто попросил. Это мой расчёт по солнцу, а не расписание мечети. Метод — «считай намазы по ДУМ» (или по Турции, Лиге, Мекке…), школа асра — «аср по ханафи»; подогнать под расписание вашей мечети — «поправка магриба +3»",
+  "открытки: «нарисуй открытку Маше на день рождения»; в день рождения человека, в ваши праздники («добавь праздник Ураза-байрам 20 марта 2027») и в круглый день нашего знакомства — открытка сама; нет красок — словами",
+  "итоги дня в группе: «Аи, итоги дня» — любому; «Аи, подводи итоги дня в 22:00» — админ, и вечером они приходят сами",
+  "тихий час: «Аи, помолчи до 8:00», «тихий час до утра». Вам отвечаю и в тишине: к вам ограничений нет — ни паузы между запросами, ни «не так быстро» на кнопке",
+  "из старых идей: «чего ты не знала?» и «ответ 2: …» — возвращаюсь к человеку с ответом в тот же чат; «Аи, что у нас общего?» ответом на сообщение; «задавай мне вопрос вечера»; «что между нами было?»",
+  "словарь: слова веры — на «ассаляму алейкум», «джума мубарак», «рамадан мубарак» отвечаю как принято, без шуток и манер; о себе говорю прямо: я программа",
 ]);
 
 const DAY = 86_400_000;
@@ -1364,7 +1367,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         }
         if (!await tastes.ask(item.chatId, item.userId, kind.key, { skipped, evening: true })) return null;
         const formal = (await mannerFor(item.userId).catch(() => null))?.formal !== false;
-        return `🌙 Вопрос вечера: ${formal ? kind.ask.vy : kind.ask.ty}\nОтветить можно парой слов; «не знаю» — пропущу, «хватит» — больше не спрошу.`;
+        return `🌙 Вопрос вечера: ${formal ? kind.ask.vy : kind.ask.ty}\nОтветить можно парой слов, позже — ответом на это сообщение. «Не знаю» — пропущу, «хватит» — больше не спрошу.`;
       }
       if (item.text === "summary") {
         // Чат перестали запоминать или день был пустой — молчит: «итогов нет» каждый вечер никому не нужно.
@@ -1965,21 +1968,31 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `Хорошо: каждый вечер в ${clockText} — один вопрос о любимом, из того, чего я о ${you(turn, "вас", "тебе")} ещё не знаю. Ответить можно парой слов; «не знаю» — пропущу. Вопросы кончатся — перестану сама. Отменить — «не задавай вопрос вечера».`);
   }
 
+  /** О чём спрошено в её сообщении «🌙 Вопрос вечера: …» — по самому тексту, номера сообщений она не хранит. */
+  function eveningAsked(text) {
+    const found = String(text ?? "").match(/^🌙 Вопрос вечера: ([^\n]+)/u);
+    const asked = found?.[1].trim();
+    return asked ? TASTES.find(kind => kind.ask.vy === asked || kind.ask.ty === asked) ?? null : null;
+  }
+
   /** Ответ на вопрос вечера: один вопрос — один ответ, следующего сегодня не будет. */
   async function eveningAnswer(turn, kind, answer, waiting) {
-    await tastes.rest(turn.chatId, turn.actorId);
+    // Ответили на давний вопрос, а ждёт уже другой, сегодняшний, — его ожидание не трогается.
+    if (answer.stop || !waiting.direct || waiting.pending === kind.key) await tastes.rest(turn.chatId, turn.actorId);
     if (answer.stop) {
       await reminders.dropWhere(eveningMailing(turn.actorId)).catch(() => null);
       return say(turn, "Хорошо, вопрос вечера больше не задаю. Вернуть — «задавай мне вопрос вечера».");
     }
+    // «Завтра спрошу ещё» — только если рассылка жива: ответить на старый вопрос можно и после «хватит».
+    const going = (await reminders.list(turn.actorId).catch(() => [])).some(eveningMailing(turn.actorId));
     if (answer.skip) {
       await store.update(EVENING_KEY(turn.actorId), (before) => ({ skipped: [...new Set([...(Array.isArray(before?.skipped) ? before.skipped : waiting.skipped), kind.key])], at: now() })).catch(() => false);
-      return say(turn, "Пропустим. Завтра спрошу о другом.");
+      return say(turn, going ? "Пропустим. Завтра спрошу о другом." : "Пропустим.");
     }
     const saved = await tastes.set(turn.actorId, kind.key, answer.value, { inGroup: false });
     if (!saved.ok) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
     pulse.bump("ruled");
-    return say(turn, `Запомнила: ${yours(turn, kind.title)} — ${saved.value}. Завтра спрошу ещё о чём-нибудь.`);
+    return say(turn, `Запомнила: ${yours(turn, kind.title)} — ${saved.value}.${going ? " Завтра спрошу ещё о чём-нибудь." : ""}`);
   }
 
   // ── что у двоих общего ───────────────────────────────────────────────────
@@ -2069,7 +2082,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!LIKES || turn.dry || !waiting) return null;
     // Вопрос вечера: первые десять минут — как в анкете; позже слово должно быть похоже
     // на ответ именно на этот вопрос, иначе «устал» запишется любимым цветом.
-    const strict = waiting.casual || (waiting.evening && now() - waiting.at > ASK_FRESH_MS);
+    // Ответ на само сообщение с вопросом (`direct`) — всегда ответ, сколько бы ни прошло.
+    const strict = waiting.casual || (waiting.evening && !waiting.direct && now() - waiting.at > ASK_FRESH_MS);
     const answer = strict ? readCasual(prompt, waiting.kind) : readAnswer(prompt);
     // Фраза из словаря («привет», «скажи мяу») — реплика, а не ответ на вопрос.
     const phrase = Boolean(answer?.value) && PHRASES && Boolean(book.match(prompt) || await taught.match(prompt).catch(() => null));
@@ -2115,7 +2129,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const spot = await spotOf(turn.manner?.settings, kept);
       const parts = localParts(now(), zone);
       const sun = spot ? fajrOn({ y: parts.y, m: parts.m, d: parts.d, latitude: spot.lat, longitude: spot.lon, angle: set.angle ?? FAJR_ANGLE }) : null;
-      if (sun) return `доброе утро — на фаджр (сегодня он в ${localClock(sun.fajr, zone)}, ${spot.city})`;
+      if (sun) return `доброе утро — на фаджр (сегодня он в ${localClock(sun.fajr + shiftMs(kept, "fajr"), zone)}, ${spot.city})`;
       return spot
         ? `доброе утро — в ${set.morning}: фаджр там сегодня по солнцу не посчитать`
         : `доброе утро — в ${set.morning}, а будет на фаджр, когда узнаю ваш город: «я живу в …»`;
@@ -2243,23 +2257,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, `Фаджр считаю сама, по солнцу: это час, когда оно утром на ${named(angle)} ниже горизонта. Другие общины берут другой угол: ${FAJR_METHODS.filter(item => item.angle !== angle).map(item => `${item.title} — ${String(item.angle).replace(".", ",")}°`).join(", ")}.${mine ? " Сменить — «считай фаджр по ДУМ» или «угол фаджра 16»." : ""}`);
     }
     const zone = zoneOf(turn);
-    const timeFor = async (deg, { tomorrow = false } = {}) => {
+    const timeFor = async (deg, { tomorrow = false, state = saved } = {}) => {
       const spot = await spotOf(turn.manner?.settings, mine ? saved : null);
       if (!spot) return { text: `Чтобы посчитать, мне нужен ${you(turn, "ваш", "твой")} город. ${you(turn, "Скажите", "Скажи")}: «я живу в Казани».`, spot: null };
       const parts = localParts(now() + (tomorrow ? DAY : 0), zone);
       const sun = fajrOn({ y: parts.y, m: parts.m, d: parts.d, latitude: spot.lat, longitude: spot.lon, angle: deg });
       if (!sun) return { text: `${spot.city}: в этот день там нет восхода или заката — по солнцу фаджр не посчитать.`, spot };
-      const lines = [`Фаджр ${tomorrow ? "завтра" : "сегодня"} — в ${localClock(sun.fajr, zone)}, восход — в ${localClock(sun.sunrise, zone)} (${spot.city}, угол ${String(deg).replace(".", ",")}°).`];
+      // Те же минуты, что в списке намазов: иначе «когда фаджр» и «намазы на сегодня» разошлись бы.
+      const moved = prayerRules(state).shift;
+      const lines = [`Фаджр ${tomorrow ? "завтра" : "сегодня"} — в ${localClock(sun.fajr + (moved.fajr ?? 0) * 60_000, zone)}, восход — в ${localClock(sun.sunrise + (moved.sunrise ?? 0) * 60_000, zone)} (${spot.city}, угол ${String(deg).replace(".", ",")}°${moved.fajr || moved.sunrise ? `; с поправкой: ${shiftWords({ fajr: moved.fajr, sunrise: moved.sunrise })} мин` : ""}).`];
       if (sun.adjusted) lines.push("Сейчас солнце там не опускается так низко, и время взято долей ночи — в такие дни расписания расходятся сильнее всего.");
       lines.push(`Это мой расчёт по солнцу, а не расписание мечети: расхождение в несколько минут — обычное дело, и в сомнении верить надо ему.`);
       return { text: lines.join(" "), spot };
     };
     if (asked.angle != null) {
       if (!mine || !turn.isPrivate) return say(turn, "Угол для расчёта выбирает хозяин — и в личке.");
-      const got = await timeFor(asked.angle);
+      const got = await timeFor(asked.angle, { state: { ...saved, angle: asked.angle, method: asked.method ?? "" } });
       const kept = await store.set(GREET_KEY, { ...saved, angle: asked.angle, method: asked.method ?? "", ...(got.spot ? { spot: got.spot } : {}), at: now() }).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
-      return say(turn, `Хорошо, хозяин: фаджр считаю по углу ${named(asked.angle)}.${got.spot ? ` ${got.text}` : ""}`);
+      // Названный метод — это не только угол фаджра: с ним приходят иша и минуты метода.
+      const whole = asked.method ? ` Остальные намазы — по тому же методу: ${prayerRulesLine(prayerRules({ ...saved, angle: asked.angle, method: asked.method }))}.` : "";
+      return say(turn, `Хорошо, хозяин: фаджр считаю по углу ${named(asked.angle)}.${got.spot ? ` ${got.text}` : ""}${whole}`);
     }
     const got = await timeFor(angle, { tomorrow: asked.tomorrow });
     if (mine && got.spot && saved?.spot?.city !== got.spot.city) await store.set(GREET_KEY, { ...saved, spot: got.spot }).catch(() => false);
@@ -2270,9 +2288,30 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   /** Правила расчёта — общие, их задаёт хозяин: угол фаджра, метод (от него иша), школа для асра. */
   function prayerRules(saved) {
     const angle = greetSettings(saved).angle ?? FAJR_ANGLE;
-    return { angle, ...ishaRule({ method: String(saved?.method ?? ""), angle }), asr: Number(saved?.asr) === 2 ? 2 : 1 };
+    const method = String(saved?.method ?? "");
+    // Минуты метода (если он назван) и минуты хозяина складываются.
+    const extras = methodExtras(method), own = ownShift(saved), shift = {};
+    for (const key of DAY_TIMES) { const total = (extras.shift[key] ?? 0) + (own[key] ?? 0); if (total) shift[key] = total; }
+    return {
+      angle, ...ishaRule({ method, angle }), asr: Number(saved?.asr) === 2 ? 2 : 1,
+      ...(extras.maghribAngle ? { maghribAngle: extras.maghribAngle } : {}), shift, methodShift: extras.shift, own,
+    };
   }
-  const prayerRulesLine = (rules) => `фаджр — ${String(rules.angle).replace(".", ",")}°, иша — ${rules.ishaMinutes ? `через ${rules.ishaMinutes} мин после магриба` : `${String(rules.isha).replace(".", ",")}°`}, аср — ${rules.asr === 2 ? "две тени (ханафитская школа)" : "одна тень"}`;
+  /** Поправки хозяина в минутах: `{ maghrib: 3 }`; чужое и нулевое в запись не попадает. */
+  function ownShift(saved) {
+    const out = {};
+    for (const key of DAY_TIMES) { const minutes = Math.round(Number(saved?.shift?.[key])); if (minutes && Math.abs(minutes) <= SHIFT_MAX) out[key] = minutes; }
+    return out;
+  }
+  /** Сдвиг одного времени в миллисекундах — для мест, где фаджр считается отдельно от остальных. */
+  const shiftMs = (saved, key) => (prayerRules(saved).shift[key] ?? 0) * 60_000;
+  const shiftWords = (shift) => DAY_TIMES.filter(key => shift[key]).map(key => `${prayerInfo(key).title.toLowerCase()} ${shift[key] > 0 ? "+" : "−"}${Math.abs(shift[key])}`).join(", ");
+  const prayerRulesLine = (rules) => [
+    `фаджр — ${String(rules.angle).replace(".", ",")}°, иша — ${rules.ishaMinutes ? `через ${rules.ishaMinutes} мин после магриба` : `${String(rules.isha).replace(".", ",")}°`}, аср — ${rules.asr === 2 ? "две тени (ханафитская школа)" : "одна тень"}`,
+    rules.maghribAngle ? `, магриб — солнце на ${String(rules.maghribAngle).replace(".", ",")}° ниже горизонта` : "",
+    Object.keys(rules.methodShift).length ? `; минуты метода: ${shiftWords(rules.methodShift)}` : "",
+    Object.keys(rules.own).length ? `; поправки хозяина: ${shiftWords(rules.own)} мин` : "",
+  ].join("");
   /** Времена на день по часам человека: `offset` — 0 сегодня, 1 завтра, −1 вчера. */
   function prayerDay(spot, zone, rules, offset = 0, at = now()) {
     const day = localParts(at + offset * DAY, zone);
@@ -2302,7 +2341,32 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const rules = prayerRules(saved);
     const note = "Это мой расчёт по солнцу, а не расписание мечети: расхождение в несколько минут — обычное дело, и в сомнении верить надо ей.";
     if (asked.how) {
-      return say(turn, `Времена намаза считаю сама, по солнцу, для ${you(turn, "вашего", "твоего")} города: ${prayerRulesLine(rules)}. Зухр — истинный полдень, магриб — закат. ${note} Правила меняет хозяин: «считай фаджр по ДУМ», «аср по ханафи».`);
+      return say(turn, `Времена намаза считаю сама, по солнцу, для ${you(turn, "вашего", "твоего")} города: ${prayerRulesLine(rules)}. Зухр — истинный полдень${rules.maghribAngle ? "" : ", магриб — закат"}; минуты прибавляются к этому. ${note} Правила меняет хозяин: «считай фаджр по ДУМ», «аср по ханафи», «поправка магриба +3» — чтобы совпало с расписанием его мечети.`);
+    }
+    if (asked.method != null) {
+      if (!mine || !turn.isPrivate) return say(turn, "Метод расчёта выбирает хозяин — и в личке.");
+      const method = FAJR_METHODS.find(item => item.key === asked.method);
+      if (!method) return say(turn, `Такого метода я не знаю, а расписания мечети у меня нет: считаю по солнцу. Знаю методы: ${FAJR_METHODS.map(item => item.title).join("; ")}. Сказать — «считай намазы по ДУМ»; свой угол — «угол фаджра 16»; подогнать под расписание мечети — «поправка магриба +3».`);
+      const next = { ...saved, angle: method.angle, method: method.key, at: now() };
+      const kept = await store.set(GREET_KEY, next).catch(() => false);
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, `Хорошо, хозяин: намазы считаю по методу «${method.title}»: ${prayerRulesLine(prayerRules(next))}. Посмотреть — «намазы на сегодня»; подогнать под расписание мечети — «поправка магриба +3».`);
+    }
+    if (asked.shift) {
+      if (!mine || !turn.isPrivate) return say(turn, "Поправки к расчёту задаёт хозяин — и в личке.");
+      if (asked.shift.tooBig) return say(turn, `Поправка — не больше ${SHIFT_MAX} минут в любую сторону: больше — это уже другой метод («считай намазы по …»).`);
+      const own = ownShift(saved);
+      const next = asked.shift.clear ? {} : { ...own, [asked.shift.key]: asked.shift.minutes };
+      if (!asked.shift.clear && !asked.shift.minutes) delete next[asked.shift.key];
+      if (asked.shift.clear && !Object.keys(own).length) return say(turn, "Своих поправок у вас и нет: считаю как есть.");
+      const kept = await store.set(GREET_KEY, { ...saved, shift: next, at: now() }).catch(() => false);
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      const after = prayerRules({ ...saved, shift: next });
+      const tail = `Расчёт теперь: ${prayerRulesLine(after)}. Посмотреть — «намазы на сегодня».`;
+      if (asked.shift.clear) return say(turn, `Хорошо, хозяин: ваши поправки сняла. ${tail}`);
+      const title = prayerInfo(asked.shift.key).title.toLowerCase(), minutes = asked.shift.minutes;
+      if (!minutes) return say(turn, `Хорошо, хозяин: ${title} — без вашей поправки. ${tail}`);
+      return say(turn, `Хорошо, хозяин: ${title} — на ${Math.abs(minutes)} мин ${minutes > 0 ? "позже" : "раньше"} расчёта. Это для всех, кому я называю время и напоминаю. ${tail}`);
     }
     if (asked.asr) {
       if (!mine || !turn.isPrivate) return say(turn, "Школу для расчёта асра выбирает хозяин — и в личке.");
@@ -2472,6 +2536,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const before = localParts(at - DAY, zone);
         dawn = [parts, before].map(day => fajrOn({ y: day.y, m: day.m, d: day.d, latitude: spot.lat, longitude: spot.lon, angle: set.angle ?? FAJR_ANGLE })?.fajr ?? null);
         if (dawn.some(moment => moment == null)) dawn = null;
+        else { const moved = shiftMs(saved, "fajr"); dawn = dawn.map(moment => moment + moved); }
       }
     }
     for (const [slot, mark, said, pool] of [["morning", "m", "mAt", "+утро хозяину"], ["night", "n", "nAt", "+ночь хозяину"]]) {
@@ -4711,6 +4776,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // реплику, какой бы она ни была: следующее слово — уже о другом.
     const awaited = !dry && LIKES ? await tastes.asking(turn.chatId, turn.actorId).catch(() => null) : null;
     if (awaited?.casual) await tastes.rest(turn.chatId, turn.actorId).catch(() => false);
+    // Ответ на само сообщение с вопросом вечера — ответ на него, даже когда ожидание давно истекло.
+    const eveningKind = !dry && LIKES && turn.isPrivate && turn.replyToMe ? eveningAsked(message.reply_to_message?.text) : null;
+    const waitingFor = eveningKind
+      ? { kind: eveningKind.key, evening: true, direct: true, casual: false, at: now(), skipped: [], pending: awaited?.evening ? awaited.kind : null }
+      : awaited;
 
     // Забавы — до хода в игре и до всего остального: «обнять», настройка
     // чата, опрос, «мой айди», игра с кнопками. Просьба с известным смыслом
@@ -4747,8 +4817,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
     // Она спросила «какой у вас любимый цвет?» — слово в ответ и есть ответ.
     // Стоит после всех просьб: «мои списки» посреди анкеты — просьба.
-    if (awaited && !request) {
-      const answered = await tasteAnswer(turn, prompt, awaited);
+    if (waitingFor && !request) {
+      const answered = await tasteAnswer(turn, prompt, waitingFor);
       if (answered) return ruled(answered);
     }
 

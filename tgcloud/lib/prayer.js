@@ -8,6 +8,8 @@
  * магриба, «сухур» кончается с фаджром: спрашивают и так.
  */
 
+import { methodByName } from "./fajr.js";
+
 /** Пять намазов и восход (он не намаз: с ним кончается время фаджра). */
 export const PRAYERS = Object.freeze([
   { key: "fajr", title: "Фаджр", gen: "фаджра", bell: true },
@@ -64,6 +66,32 @@ const REMIND_OFF = new RegExp(`^(?:(?:не\\s+(?:напоминай|надо\\s+
 const HOW = new RegExp(`^(?:а\\s+)?(?:как|по\\s+како(?:му|й)\\s+(?:методу|правилу|расчету))\\s+ты\\s+считаешь\\s+(?:время\\s+)?${NAMAZ}$`, "u");
 const ASR_SCHOOL = /^(?:считай\s+)?аср\s+(?:по\s+|как\s+у\s+|в\s+)?(?:(ханафи\S*|ханафитск\S*|абу\s+ханиф\S*|двум\s+теням|две\s+тени)|(шафи\S*|шафиитск\S*|большинств\S*|одной\s+тени|одну\s+тень|обычн\S*))$/u;
 
+// Метод целиком: «считай намазы по Турции», «намазы по ДУМ», «метод намазов — Диянет».
+const BY = "(?:по|как\\s+(?:в|у))\\s+(?:методу\\s+|расчету\\s+|правилу\\s+|мазхабу\\s+)?";
+// Второе в паре — «просьба о методе и без узнанного названия»: «намазы по пятницам» — разговор, а «считай намазы по Марсу» — просьба.
+const METHOD = [
+  [new RegExp(`^(?:считай|рассчитывай|ставь)\\s+(?:все\\s+)?(?:намазы|врем(?:я|ена)\\s+${NAMAZ})\\s+${BY}(.{2,40})$`, "u"), true],
+  [new RegExp(`^намазы\\s+${BY}(.{2,40})$`, "u"), false],
+  [new RegExp(`^метод\\s+(?:расчета\\s+)?${NAMAZ}\\s+(?:[—–-]\\s+)?(.{2,40})$`, "u"), true],
+];
+/** Мазхаб, названный вместо метода: от него зависит только аср. */
+const HANAFI = /^(?:ханафи\S*|ханафитск\S*(?:\s+(?:мазхаб\S*|школ\S*))?|абу\s+ханиф\S*)$/u;
+const OTHERS = /^(?:шафи\S*|шафиитск\S*|малики\S*|ханбали\S*)(?:\s+(?:мазхаб\S*|школ\S*))?$/u;
+
+// Поправка хозяина: «поправка магриба +3», «поправка для фаджра минус 2 минуты».
+const SHIFT_NAME = Object.freeze({
+  fajr: "фаджр\\S{0,2}", sunrise: "(?:восход\\S{0,2}|шурук\\S{0,2})", dhuhr: "(?:зухр\\S{0,2}|зухор\\S{0,2})",
+  asr: "аср\\S{0,2}", maghrib: "магриб\\S{0,2}", isha: "(?:иша|иши)",
+});
+const SHIFT_SET = Object.entries(SHIFT_NAME).map(([key, name]) => [key,
+  new RegExp(`^поправк[аиу]\\s+(?:для\\s+|к\\s+|на\\s+)?${name}\\s+(?:на\\s+)?(плюс\\s+|минус\\s+|[+\\-−–]\\s*)?(\\d{1,2})(?:\\s*(?:минут\\S{0,2}|мин))?$`, "u"),
+  new RegExp(`^(?:убери|сними|сбрось|отмени)\\s+поправку\\s+(?:для\\s+|к\\s+|на\\s+)?${name}$|^${name}\\s+без\\s+поправки$`, "u"),
+]);
+const SHIFT_CLEAR = new RegExp(`^(?:убери|сними|сбрось|отмени)\\s+(?:все\\s+)?поправки\\s+(?:к\\s+|для\\s+|у\\s+)?${NAMAZ}$|^намазы\\s+без\\s+поправок$|^считай\\s+намазы\\s+без\\s+поправок$`, "u");
+const SHIFT_LIST = new RegExp(`^(?:(?:какие|покажи|твои)\\s+)?поправки\\s+(?:к\\s+|для\\s+|у\\s+)?${NAMAZ}$`, "u");
+/** Предел поправки в минутах — тот же, что в расчёте (`SHIFT_MAX` в fajr.js). */
+const SHIFT_LIMIT = 30;
+
 /**
  * Слова о намазе → просьба, иначе null:
  *   { list: true, tomorrow }        — «намазы на сегодня», «расписание намазов на завтра», «когда намаз»;
@@ -72,16 +100,39 @@ const ASR_SCHOOL = /^(?:считай\s+)?аср\s+(?:по\s+|как\s+у\s+|в\s
  *   { next: true }                  — «следующий намаз», «сколько до намаза»;
  *   { remind: 10 } / { remind: false } — «напоминай о намазе за 10 минут», «не напоминай о намазе»;
  *   { asr: 2 }                      — «аср по ханафи» (1 — «аср по шафии»);
- *   { how: true }                   — «как ты считаешь намазы».
+ *   { how: true }                   — «как ты считаешь намазы», «поправки намазов»;
+ *   { shift: { key, minutes } }     — «поправка магриба +3» (0 — снять одну);
+ *   { shift: { clear: true } }      — «убери поправки намазов»;
+ *   { method: "turkey" }            — «считай намазы по Турции», «намазы по ДУМ».
  * О фаджре («когда фаджр») отвечает `parseFajr`: у него свой, подробный ответ.
  */
 export function parsePrayer(text) {
   const value = squash(text);
   if (!value || value.length > 90) return null;
-  if (!/намаз|фаджр|сухур|сахур|шурук|зухр|зухор|аср|икенд|икинд|магриб|ахшам|акшам|ифтар|иша|ясту|яссы|ойл|уйл|иртэнге|иртянге/u.test(value)) return null;
-  if (HOW.test(value)) return { how: true };
+  if (!/намаз|фаджр|сухур|сахур|шурук|зухр|зухор|аср|икенд|икинд|магриб|ахшам|акшам|ифтар|иша|ясту|яссы|ойл|уйл|иртэнге|иртянге|поправк/u.test(value)) return null;
+  if (HOW.test(value) || SHIFT_LIST.test(value)) return { how: true };
+  if (SHIFT_CLEAR.test(value)) return { shift: { clear: true } };
+  for (const [key, set, drop] of SHIFT_SET) {
+    if (drop.test(value)) return { shift: { key, minutes: 0 } };
+    const found = value.match(set);
+    if (!found) continue;
+    const minutes = Number(found[2]) * (/минус|[-−–]/u.test(found[1] ?? "") ? -1 : 1);
+    return Math.abs(minutes) <= SHIFT_LIMIT ? { shift: { key, minutes } } : { shift: { key, tooBig: true } };
+  }
   const school = value.match(ASR_SCHOOL);
   if (school) return { asr: school[1] ? 2 : 1 };
+  for (const [pattern, asking] of METHOD) {
+    const found = value.match(pattern);
+    if (!found) continue;
+    const name = found[1].trim();
+    if (HANAFI.test(name)) return { asr: 2 };
+    if (OTHERS.test(name)) return { asr: 1 };
+    const key = methodByName(name);
+    if (key) return { method: key };
+    if (asking && /^как(?:ой|ому|им)(?:\s|$)/u.test(name)) return { how: true };
+    // Название не узнано, но просьба — о методе: ответить списком, а не отдавать модели.
+    if (asking) return { method: "" };
+  }
   if (REMIND_OFF.test(value)) return { remind: false };
   for (const pattern of REMIND_ON) {
     const found = value.match(pattern);

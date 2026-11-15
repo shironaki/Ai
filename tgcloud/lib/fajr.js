@@ -20,15 +20,20 @@ const fix = (value, mod) => { const out = value - mod * Math.floor(value / mod);
 
 /** Углы, которыми считают фаджр разные общины. Ключ — как его называют словами. */
 export const FAJR_METHODS = Object.freeze([
-  { key: "mwl", angle: 18, isha: 17, title: "Всемирная исламская лига" },
+  // `shift` — минуты «на осторожность», которые метод сам прибавляет к расчёту
+  // (как в открытой библиотеке adhan): зухр — минутой позже зенита и так далее.
+  { key: "mwl", angle: 18, isha: 17, shift: { dhuhr: 1 }, title: "Всемирная исламская лига" },
+  // ДУМ России: углы — по памяти, сверить было не с чем; поправок метода не знаю.
   { key: "russia", angle: 16, isha: 15, title: "ДУМ России" },
-  { key: "turkey", angle: 18, isha: 17, title: "Диянет, Турция" },
+  // Диянет прибавляет «темкин»: восход раньше, зухр, аср и магриб — позже.
+  { key: "turkey", angle: 18, isha: 17, shift: { sunrise: -7, dhuhr: 5, asr: 4, maghrib: 7 }, title: "Диянет, Турция" },
   // Умм аль-Кура: иша — через полтора часа после магриба, а не по углу.
   { key: "makkah", angle: 18.5, ishaMinutes: 90, title: "Умм аль-Кура, Мекка" },
-  { key: "egypt", angle: 19.5, isha: 17.5, title: "Египет" },
-  { key: "karachi", angle: 18, isha: 18, title: "Карачи" },
-  { key: "isna", angle: 15, isha: 15, title: "ИСНА, Северная Америка" },
-  { key: "tehran", angle: 17.7, isha: 14, title: "Тегеран" },
+  { key: "egypt", angle: 19.5, isha: 17.5, shift: { dhuhr: 1 }, title: "Египет" },
+  { key: "karachi", angle: 18, isha: 18, shift: { dhuhr: 1 }, title: "Карачи" },
+  { key: "isna", angle: 15, isha: 15, shift: { dhuhr: 1 }, title: "ИСНА, Северная Америка" },
+  // Тегеран: магриб — не закат, а солнце на 4,5° ниже горизонта.
+  { key: "tehran", angle: 17.7, isha: 14, maghribAngle: 4.5, title: "Тегеран" },
 ]);
 /**
  * Правило для иша: по названному методу, а если хозяин задал только угол
@@ -40,6 +45,19 @@ export function ishaRule({ method = "", angle = 18 } = {}) {
   if (hit?.ishaMinutes) return { ishaMinutes: hit.ishaMinutes };
   return { isha: hit?.isha ?? Math.max(9, Math.min(24, Number(angle) - 1)) };
 }
+/**
+ * Что ещё входит в названный метод, кроме углов: минуты «на осторожность» и
+ * свой угол магриба. Метод не назван (задан только угол или ничего) — пусто:
+ * тогда это чистый расчёт по солнцу.
+ */
+export function methodExtras(method = "") {
+  const hit = FAJR_METHODS.find(item => item.key === method);
+  return { shift: hit?.shift ? { ...hit.shift } : {}, ...(hit?.maghribAngle ? { maghribAngle: hit.maghribAngle } : {}) };
+}
+/** Имена времён дня — в порядке суток. */
+export const DAY_TIMES = Object.freeze(["fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha"]);
+/** Предел поправки в минутах: больше — это уже не поправка, а другой метод. */
+export const SHIFT_MAX = 30;
 export const FAJR_ANGLE = 18;
 /** Восход: центр солнца на 0,833° ниже горизонта — рефракция и радиус диска. */
 const RISE = 0.833;
@@ -114,10 +132,12 @@ export function fajrOn({ y, m, d, latitude, longitude, angle = FAJR_ANGLE } = {}
  *   ниже горизонта или через `ishaMinutes` после заката.
  * `adjusted` — что взято долей ночи: в высоких широтах летом солнце не
  * опускается на нужный угол. `null` — посчитать нельзя (нет восхода или заката).
- * Поправок «на осторожность» в минутах, которые добавляют расписания общин,
- * здесь нет: это чистый расчёт по солнцу.
+ * `maghribAngle` — магриб не на закате, а когда солнце на столько градусов
+ * ниже горизонта (метод Тегерана). `shift` — поправки в минутах по именам
+ * времён (`{ maghrib: 3 }`): минуты метода и минуты хозяина, уже сложенные.
+ * Без них это чистый расчёт по солнцу.
  */
-export function prayersOn({ y, m, d, latitude, longitude, angle = FAJR_ANGLE, isha = 17, ishaMinutes = 0, asr = 1 } = {}) {
+export function prayersOn({ y, m, d, latitude, longitude, angle = FAJR_ANGLE, isha = 17, ishaMinutes = 0, asr = 1, maghribAngle = 0, shift = null } = {}) {
   const dawn = fajrOn({ y, m, d, latitude, longitude, angle });
   if (!dawn) return null;
   const lat = Number(latitude), lon = Number(longitude);
@@ -127,11 +147,12 @@ export function prayersOn({ y, m, d, latitude, longitude, angle = FAJR_ANGLE, is
   let noon = 12;
   for (let pass = 0; pass < 3; pass += 1) noon = fix(12 - sun(jd + noon / 24).equation, 24);
   // Аср: высота солнца, при которой тень длиннее полуденной на `factor` высот предмета.
+  // Полуденная тень — по склонению солнца в самый полдень, а не в час асра.
   const factor = Number(asr) === 2 ? 2 : 1;
+  const height = Math.atan(1 / (factor + Math.tan(Math.abs(lat - sun(jd + noon / 24).declination) * RAD))) / RAD;
   let shade = noon + 3;
   for (let pass = 0; pass < 3; pass += 1) {
     const at = sun(jd + shade / 24);
-    const height = Math.atan(1 / (factor + Math.tan(Math.abs(lat - at.declination) * RAD))) / RAD;
     const ratio = (sin(height) - sin(at.declination) * sin(lat)) / (cos(at.declination) * cos(lat));
     if (!(ratio >= -1 && ratio <= 1)) { shade = Number.NaN; break; }
     shade = fix(12 - at.equation, 24) + acos(ratio) / 15;
@@ -147,14 +168,25 @@ export function prayersOn({ y, m, d, latitude, longitude, angle = FAJR_ANGLE, is
     late = hourAt(jd, lat, deg, false);
     if (Number.isNaN(late) || late - sunset > portion) { late = sunset + portion; lateAdjusted = true; }
   }
+  // Магриб по углу: позже заката; там, где солнце так низко не опускается, — закат.
+  let dusk = sunset;
+  const below = Number(maghribAngle) || 0;
+  if (below > 0 && below <= 10) {
+    const moment = hourAt(jd, lat, below, false);
+    if (!Number.isNaN(moment) && moment > sunset && moment < late) dusk = moment;
+  }
   const midnight = Date.UTC(y, m - 1, d);
   const epoch = (hour) => Math.round(midnight + (hour - lon / 15) * 3_600_000);
-  return {
+  const times = {
     fajr: dawn.fajr, sunrise: dawn.sunrise, dhuhr: epoch(noon),
     asr: Number.isNaN(shade) ? null : epoch(shade),
-    maghrib: epoch(sunset), isha: epoch(late),
-    adjusted: { fajr: dawn.adjusted, isha: lateAdjusted },
+    maghrib: epoch(dusk), isha: epoch(late),
   };
+  for (const key of DAY_TIMES) {
+    const minutes = Number(shift?.[key]) || 0;
+    if (minutes && times[key] != null) times[key] += Math.max(-SHIFT_MAX, Math.min(SHIFT_MAX, minutes)) * 60_000;
+  }
+  return { ...times, adjusted: { fajr: dawn.adjusted, isha: lateAdjusted } };
 }
 
 const squash = (text) => String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/[«»"]/gu, "").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
@@ -168,6 +200,13 @@ const NAMES = [
   ["isna", /^(?:исна|isna|америк\S*|северн\S+\s+америк\S+)$/u],
   ["tehran", /^(?:тегеран\S*|иран\S*)$/u],
 ];
+
+/** Метод по названию общины, как его произносят: «дум», «турции», «диянету», «умм аль-кура». Ключ или null. */
+export function methodByName(name) {
+  const value = squash(name);
+  for (const [key, pattern] of NAMES) if (pattern.test(value)) return key;
+  return null;
+}
 
 /**
  * Слова о фаджре → просьба, иначе null:
@@ -191,8 +230,8 @@ export function parseFajr(text) {
   }
   found = value.match(new RegExp(`^(?:считай\\s+|ставь\\s+|поставь\\s+)?${word}\\s+(?:по|как\\s+(?:в|у))\\s+(?:методу\\s+|расч[её]ту\\s+|правилу\\s+)?(.{2,40})$`, "u"));
   if (found) {
-    const name = found[1].trim();
-    for (const [key, pattern] of NAMES) if (pattern.test(name)) return { method: key, angle: FAJR_METHODS.find(item => item.key === key).angle };
+    const key = methodByName(found[1]);
+    if (key) return { method: key, angle: FAJR_METHODS.find(item => item.key === key).angle };
   }
   return null;
 }

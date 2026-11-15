@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { heart, message, group, reset, last, chats, source, sdk, toChat, toOwner, OWNER, KEY } from "./fixtures/kit.mjs";
 
-const { prayersOn, ishaRule, FAJR_METHODS } = await import("../tgcloud/lib/fajr.js");
+const { prayersOn, ishaRule, methodExtras, FAJR_METHODS } = await import("../tgcloud/lib/fajr.js");
 const { parsePrayer, inWords, PRAYER_KEY } = await import("../tgcloud/lib/prayer.js");
 const { localClock } = await import("../tgcloud/lib/time.js");
 
@@ -134,6 +134,105 @@ test("намазы словами: расписание на день, один 
   await h.onMessage(message("когда магриб"), KEY);
   assert.match(last(), /мне нужен (?:твой|ваш) город/u);
   assert.equal(chats().length, 0, "модель для этого не нужна");
+});
+
+test("метод целиком — как у библиотеки: минуты Диянета, угол магриба Тегерана, минута зухра; поправки хозяина — словом", async () => {
+  // Эталон — пакет adhan 4.4.6 с собственными минутами метода, время округлено до минуты.
+  const rows = [
+    ["Стамбул, ноябрь, Диянет", 41.01, 28.98, 2026, 11, 15, 1, "turkey", "2026-11-15T03:16Z", "2026-11-15T04:44Z", "2026-11-15T09:54Z", "2026-11-15T12:28Z", "2026-11-15T14:53Z", "2026-11-15T16:15Z"],
+    ["Лелистад, июнь, Диянет, ханафи", 52.52, 5.47, 2026, 6, 10, 2, "turkey", "2026-06-10T01:05Z", "2026-06-10T03:09Z", "2026-06-10T11:43Z", "2026-06-10T17:20Z", "2026-06-10T20:07Z", "2026-06-10T22:03Z"],
+    ["Тегеран, март, Тегеран", 35.69, 51.39, 2026, 3, 20, 1, "tehran", "2026-03-20T01:15Z", "2026-03-20T02:38Z", "2026-03-20T08:42Z", "2026-03-20T12:09Z", "2026-03-20T15:04Z", "2026-03-20T15:51Z"],
+    ["Москва, ноябрь, Лига", 55.7558, 37.6173, 2026, 11, 14, 1, "mwl", "2026-11-14T02:52Z", "2026-11-14T05:03Z", "2026-11-14T09:15Z", "2026-11-14T11:00Z", "2026-11-14T13:25Z", "2026-11-14T15:28Z"],
+  ];
+  for (const [name, latitude, longitude, y, m, d, asr, key, ...theirs] of rows) {
+    const method = FAJR_METHODS.find(item => item.key === key);
+    const got = prayersOn({ y, m, d, latitude, longitude, asr, angle: method.angle, ...ishaRule({ method: key, angle: method.angle }), ...methodExtras(key) });
+    for (const [index, time] of ["fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha"].entries()) {
+      assert.ok(Math.abs(got[time] - Date.parse(theirs[index])) < 2 * MINUTE, `${name}: ${time} ${new Date(got[time]).toISOString()} против ${theirs[index]}`);
+    }
+  }
+  // Метод не назван — чистый расчёт; минуты метода — отдельно от углов.
+  assert.deepEqual(methodExtras(""), { shift: {} });
+  assert.deepEqual(methodExtras("russia"), { shift: {} });
+  assert.deepEqual(methodExtras("turkey"), { shift: { sunrise: -7, dhuhr: 5, asr: 4, maghrib: 7 } });
+  assert.deepEqual(methodExtras("tehran"), { shift: {}, maghribAngle: 4.5 });
+  const pure = prayersOn({ y: 2026, m: 3, d: 20, latitude: 35.69, longitude: 51.39 });
+  const late = prayersOn({ y: 2026, m: 3, d: 20, latitude: 35.69, longitude: 51.39, maghribAngle: 4.5 });
+  assert.ok(late.maghrib - pure.maghrib > 10 * MINUTE && late.maghrib - pure.maghrib < 30 * MINUTE && late.maghrib < late.isha, "магриб по углу — позже заката, раньше иша");
+  const moved = prayersOn({ y: 2026, m: 3, d: 20, latitude: 35.69, longitude: 51.39, shift: { maghrib: 3, fajr: -2, isha: 90 } });
+  assert.deepEqual([moved.maghrib - pure.maghrib, moved.fajr - pure.fajr, moved.isha - pure.isha, moved.dhuhr - pure.dhuhr], [3 * MINUTE, -2 * MINUTE, 30 * MINUTE, 0], "поправка — в минутах, не больше получаса");
+
+  assert.deepEqual(parsePrayer("поправка магриба +3"), { shift: { key: "maghrib", minutes: 3 } });
+  assert.deepEqual(parsePrayer("Поправка для фаджра минус 2 минуты."), { shift: { key: "fajr", minutes: -2 } });
+  assert.deepEqual(parsePrayer("поправка восхода −7"), { shift: { key: "sunrise", minutes: -7 } });
+  assert.deepEqual(parsePrayer("поправка зухра 5"), { shift: { key: "dhuhr", minutes: 5 } });
+  assert.deepEqual(parsePrayer("убери поправку магриба"), { shift: { key: "maghrib", minutes: 0 } });
+  assert.deepEqual(parsePrayer("поправка магриба +45"), { shift: { key: "maghrib", tooBig: true } });
+  assert.deepEqual([parsePrayer("убери поправки намазов"), parsePrayer("намазы без поправок")], [{ shift: { clear: true } }, { shift: { clear: true } }]);
+  assert.deepEqual(parsePrayer("поправки намазов"), { how: true });
+  for (const said of ["поправки", "убери поправки", "поправка магриба", "поправка к уроку 3", "поправь магриб", "поправка на ветер 5"]) assert.equal(parsePrayer(said), null, said);
+  // Метод целиком — словами о намазах, а не только о фаджре; мазхаб вместо метода — это школа асра.
+  assert.deepEqual(parsePrayer("считай намазы по Турции"), { method: "turkey" });
+  assert.deepEqual(parsePrayer("Считай намазы по ДУМ."), { method: "russia" });
+  assert.deepEqual(parsePrayer("намазы по Диянету"), { method: "turkey" });
+  assert.deepEqual(parsePrayer("метод намазов — Египет"), { method: "egypt" });
+  assert.deepEqual(parsePrayer("считай время намаза по Умм аль-Кура"), { method: "makkah" });
+  assert.deepEqual([parsePrayer("намазы по ханафи"), parsePrayer("считай намазы по ханафитскому мазхабу"), parsePrayer("намазы по шафиитскому мазхабу")], [{ asr: 2 }, { asr: 2 }, { asr: 1 }]);
+  assert.deepEqual(parsePrayer("считай намазы по Марсу"), { method: "" }, "просьба о методе с неизвестным названием — не разговор");
+  assert.deepEqual(parsePrayer("считай намазы по какому методу"), { how: true });
+  for (const said of ["намазы по пятницам", "намазы по расписанию", "намазы по часам", "считай по Турции", "когда намаз по Москве"]) assert.equal(parsePrayer(said), null, said);
+
+  reset();
+  moscow();
+  const now = at("2026-11-14T09:00:00Z");
+  const h = heart({ SOURCES: true, TIME_ZONE: "Europe/Moscow" }, { now: () => now });
+  await h.onMessage(own("мой город — Москва"), KEY);
+  const base = prayersOn({ y: 2026, m: 11, d: 14, ...SPOT });
+  await h.onMessage(message("поправка магриба +3"), KEY);
+  assert.equal(last(), "Поправки к расчёту задаёт хозяин — и в личке.");
+  await h.onMessage(own("поправка магриба +45"), KEY);
+  assert.match(last(OWNER), /^Поправка — не больше 30 минут в любую сторону/u);
+  await h.onMessage(own("убери поправки намазов"), KEY);
+  assert.equal(last(OWNER), "Своих поправок у вас и нет: считаю как есть.");
+
+  await h.onMessage(own("поправка магриба +3"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин: магриб — на 3 мин позже расчёта. Это для всех, кому я называю время и напоминаю. Расчёт теперь: фаджр — 18°, иша — 17°, аср — одна тень; поправки хозяина: магриб +3 мин. Посмотреть — «намазы на сегодня».");
+  await h.onMessage(own("поправка фаджра -2"), KEY);
+  await h.onMessage(own("намазы на сегодня"), KEY);
+  assert.match(last(OWNER), new RegExp(`^Намазы на сегодня \\(Москва\\):\\nФаджр — ${msk(base.fajr - 2 * MINUTE)}\\nВосход — ${msk(base.sunrise)}\\nЗухр — ${msk(base.dhuhr)}\\nАср — ${msk(base.asr)}\\nМагриб — ${msk(base.maghrib + 3 * MINUTE)}\\nИша — ${msk(base.isha)}\\n\\nРасчёт: фаджр — 18°, иша — 17°, аср — одна тень; поправки хозяина: фаджр −2, магриб \\+3 мин\\.`, "u"));
+  await h.onMessage(own("когда магриб"), KEY);
+  assert.equal(last(OWNER), `Магриб сегодня — в ${msk(base.maghrib + 3 * MINUTE)} (Москва): ${inWords(base.maghrib + 3 * MINUTE - now)}.`);
+  // «Когда фаджр» — свой ответ, но минуты те же: иначе два ответа разошлись бы.
+  await h.onMessage(own("когда фаджр"), KEY);
+  assert.match(last(OWNER), new RegExp(`^Фаджр сегодня — в ${msk(base.fajr - 2 * MINUTE)}, восход — в ${msk(base.sunrise)} \\(Москва, угол 18°; с поправкой: фаджр −2 мин\\)\\.`, "u"));
+  // Другому человеку в том же городе — те же минуты: правила общие.
+  await h.onMessage(message("мой город — Москва"), KEY);
+  await h.onMessage(message("когда магриб"), KEY);
+  assert.equal(last(), `Магриб сегодня — в ${msk(base.maghrib + 3 * MINUTE)} (Москва): ${inWords(base.maghrib + 3 * MINUTE - now)}.`);
+
+  // Метод Диянета приносит свои минуты; поправка хозяина складывается с ними.
+  await h.onMessage(message("считай намазы по Турции"), KEY);
+  assert.equal(last(), "Метод расчёта выбирает хозяин — и в личке.");
+  await h.onMessage(own("считай намазы по расписанию мечети"), KEY);
+  assert.match(last(OWNER), /^Такого метода я не знаю, а расписания мечети у меня нет: считаю по солнцу\. Знаю методы: Всемирная исламская лига; ДУМ России; Диянет, Турция; /u);
+  await h.onMessage(own("считай намазы по Турции"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин: намазы считаю по методу «Диянет, Турция»: фаджр — 18°, иша — 17°, аср — одна тень; минуты метода: восход −7, зухр +5, аср +4, магриб +7; поправки хозяина: фаджр −2, магриб +3 мин. Посмотреть — «намазы на сегодня»; подогнать под расписание мечети — «поправка магриба +3».");
+  await h.onMessage(own("поправка фаджра 0"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: фаджр — без вашей поправки\. Расчёт теперь: фаджр — 18°, иша — 17°, аср — одна тень; минуты метода: восход −7, зухр \+5, аср \+4, магриб \+7; поправки хозяина: магриб \+3 мин\./u);
+  await h.onMessage(own("намазы на сегодня"), KEY);
+  assert.match(last(OWNER), new RegExp(`Фаджр — ${msk(base.fajr)}\\nВосход — ${msk(base.sunrise - 7 * MINUTE)}\\nЗухр — ${msk(base.dhuhr + 5 * MINUTE)}\\nАср — ${msk(base.asr + 4 * MINUTE)}\\nМагриб — ${msk(base.maghrib + 10 * MINUTE)}\\nИша — ${msk(base.isha)}\\n`, "u"));
+  await h.onMessage(own("намазы без поправок"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: ваши поправки сняла\. Расчёт теперь: фаджр — 18°, иша — 17°, аср — одна тень; минуты метода: восход −7, зухр \+5, аср \+4, магриб \+7\./u);
+  await h.onMessage(own("как ты считаешь намазы"), KEY);
+  assert.match(last(OWNER), /Зухр — истинный полдень, магриб — закат; минуты прибавляются к этому\..*«поправка магриба \+3» — чтобы совпало с расписанием его мечети\.$/u);
+  // Прежние слова о фаджре называют метод так же — и говорят, что он теперь для всех намазов.
+  await h.onMessage(own("считай фаджр по Тегерану"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: фаджр считаю по углу 17,7° \(Тегеран\)\..* Остальные намазы — по тому же методу: фаджр — 17,7°, иша — 14°, аср — одна тень, магриб — солнце на 4,5° ниже горизонта\.$/u);
+  await h.onMessage(own("когда магриб"), KEY);
+  const tehran = prayersOn({ y: 2026, m: 11, d: 14, ...SPOT, angle: 17.7, isha: 14, maghribAngle: 4.5 });
+  assert.equal(last(OWNER), `Магриб сегодня — в ${msk(tehran.maghrib)} (Москва): ${inWords(tehran.maghrib - now)}.`);
+  assert.ok(tehran.maghrib - base.maghrib > 15 * MINUTE, "в Москве в ноябре это больше четверти часа после заката");
+  assert.equal(chats().length, 0);
 });
 
 test("напоминание о намазе: за столько минут, сколько просили; один раз; каждый день; выключается словом", async () => {

@@ -249,6 +249,27 @@ test("утро на фаджр: город хозяина известен — �
   assert.match(last(OWNER), /доброе утро — на фаджр \(сегодня он в 05:5\d, Москва\)/u);
 });
 
+test("поправка фаджра хозяина сдвигает и утреннее приветствие: оно идёт за тем же временем, что названо в списке намазов", async () => {
+  reset();
+  moscow();
+  let now = at("2026-11-13T09:00:00Z");
+  const h = heart({ ...ON, SOURCES: true }, { now: () => now });
+  await h.onMessage(own("мой город — Москва"), KEY);
+  await h.onMessage(own("поправка фаджра +10"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: фаджр — на 10 мин позже расчёта\./u);
+  await h.onMessage(own("когда ты пишешь первой?"), KEY);
+  assert.match(last(OWNER), /доброе утро — на фаджр \(сегодня он в 06:0\d, Москва\)/u);
+  const count = toOwner().length;
+  // 14 ноября расчётный фаджр — 05:52; с поправкой — 06:02.
+  now = at("2026-11-14T02:54:00Z"); // 05:54
+  await h.tick({});
+  assert.equal(toOwner().length, count, "по расчёту уже пора, но поправка — десять минут");
+  now = at("2026-11-14T03:03:00Z"); // 06:03
+  await h.tick({});
+  assert.equal(toOwner().length, count + 1, "пишет по времени с поправкой");
+  assert.equal(chats().length, 0);
+});
+
 test("«когда фаджр?»: время для города человека, с оговоркой; без города — просит город; угол меняет только хозяин", async () => {
   reset();
   moscow();

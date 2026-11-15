@@ -206,7 +206,8 @@ function sandbox({ lines = null } = {}) {
         const press = (signal) => { try { process.kill(-child.pid, signal); } catch { child.kill(signal); } };
         const watch = setInterval(() => {
           const now = Date.now();
-          if (!presses && !(until() || now - started > 40_000)) return;
+          // Условию виден и журнал: файл состояния пишется раньше строки о нём, и на занятом процессоре Ctrl+C попадал между ними.
+          if (!presses && !(until(String(out)) || now - started > 40_000)) return;
           if (presses && now - pressedAt < 3_000) return;
           presses += 1;
           pressedAt = now;
@@ -645,7 +646,7 @@ test("вечный цикл: публикует сразу, прошлые не�
     // Прошлый запуск трижды не смог; владелец поправил причину и запустил снова.
     for (let round = 0; round < 3; round += 1) box.run("once", { FAKE_FAIL: "fetch" });
     assert.match(box.state("failed"), /\n3\n/u);
-    const done = await box.loop(() => box.state("published") !== "" && box.state("alarm.msg") !== "");
+    const done = await box.loop((out) => box.state("published") !== "" && box.state("alarm.msg") !== "" && /Сборка 1\.0\.0 опубликована/u.test(out));
     assert.match(done.out, /Дом запущен: ветка «work»/u);
     assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
     assert.equal(done.code, 0, "остановка — не ошибка");
