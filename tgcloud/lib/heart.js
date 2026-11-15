@@ -497,7 +497,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try {
       const got = await api.getMe();
       if (got?.id != null) {
-        me = { id: got.id, username: String(got.username ?? fallback.username), at: now() };
+        // `all` — у бота выключен Group Privacy: в группах он видит все сообщения и без прав админа.
+        me = { id: got.id, username: String(got.username ?? fallback.username), at: now(), ...(typeof got.can_read_all_group_messages === "boolean" ? { all: got.can_read_all_group_messages } : {}) };
         await store.set("heart:me", me);
         return me;
       }
@@ -5355,6 +5356,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     } finally {
       if (!dry) {
         try { await afterTalk(ref.turn); } catch { /* шаг отношений подождёт */ }
+        // В группе, где с ней заговорили, а прав админа у неё нет, — один раз сказать об этом.
+        try { if (ref.turn?.addressed && !ref.turn.isPrivate) await adminNotice(message.chat, { extra: ref.turn.extra }); } catch { /* скажет в другой раз */ }
         try { await drain(ctx, ref.turn); } catch { /* очередь подождёт следующего обновления */ }
         try { await pulse.commit(); } catch { /* счётчики не важнее ответа */ }
       }
@@ -5468,6 +5471,61 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     await dropChat(chatId).catch(() => false);
   }
 
+  /**
+   * Она в группе без прав админа — и один раз говорит об этом в самом чате: что
+   * ей доступно не всё и что нужно, чтобы заработало. Больше не напоминает.
+   * Дали права и сняли — скажет ещё раз, тоже один.
+   *
+   * Роль известна по событию `my_chat_member`; если событие не приходило — она
+   * спрашивает Telegram о себе самой. Проверить нечем — молчит: говорить
+   * «я не админ» наугад нельзя.
+   */
+  const ADMIN_NOTICE = config.ADMIN_NOTICE !== false;
+  const ADMIN_WORDS = "Я здесь без прав админа, и поэтому мне доступно не всё: я могу не видеть сообщений, где ко мне не обращаются напрямую, не подвожу итоги дня, не убираю за собой лишнее и не могу сказать что-то одному человеку. Чтобы работало всё, дайте мне права админа. Говорю об этом один раз.";
+  const ADMIN_LOST = "Прав админа у меня здесь больше нет. Поэтому мне снова доступно не всё: я могу не видеть сообщений без обращения ко мне, не подвожу итоги дня, не убираю за собой лишнее и не могу сказать что-то одному человеку. Вернёте права — заработает всё. Больше не напомню.";
+  const adminSettled = new Set();
+  async function adminNotice(chat, { role = "", extra = {}, again = false } = {}) {
+    if (!ADMIN_NOTICE || chat?.id == null || (chat.type !== "group" && chat.type !== "supergroup") || !store.available) return false;
+    const id = String(chat.id);
+    if (!again && adminSettled.has(id)) return false;
+    const settle = () => { if (adminSettled.size > 500) adminSettled.clear(); adminSettled.add(id); };
+    const entry = (await chatList()).find(item => String(item.id) === id) ?? null;
+    if (entry?.told && !again) { settle(); return false; }
+    let mine = role;
+    if (!mine && entry?.checked && entry.role === "admin") mine = "admin";
+    if (!mine) {
+      // Роль не проверена: записи «участник» из разговора верить нельзя — спросить Telegram о себе.
+      if (entry?.asked && now() - Number(entry.asked) < DAY) return false;
+      const self = await whoAmI();
+      if (self?.id == null || !has("getChatMember")) return false;
+      try {
+        const member = await api.getChatMember({ chat_id: chat.id, user_id: self.id });
+        mine = member?.status === "administrator" || member?.status === "creator" ? "admin" : MEMBER_IN.has(String(member?.status ?? "")) ? "member" : "";
+      } catch { mine = ""; }
+      if (!mine) { await noteChat(chat, { asked: now() }).catch(() => false); return false; }
+    }
+    if (mine === "admin") { await noteChat(chat, { role: "admin", checked: now() }).catch(() => false); settle(); return false; }
+    // Отметка — до слов: два пробуждения разом не скажут дважды.
+    let claimed = false;
+    const landed = await store.update(CHATS_KEY, (before) => {
+      const items = Array.isArray(before?.items) ? before.items.filter(item => item && item.id != null) : [];
+      const found = items.find(item => String(item.id) === id);
+      claimed = !found?.told || again;
+      if (!claimed) return null;
+      const title = String(chat.title ?? found?.title ?? "").replace(/\s+/gu, " ").trim().slice(0, 80);
+      const next = { ...(found ?? { id: chat.id, since: now() }), type: chat.type ?? found?.type ?? "", ...(title ? { title } : {}), role: "member", checked: now(), told: now() };
+      return { items: [...items.filter(item => String(item.id) !== id), next].slice(-CHATS_MAX), at: now() };
+    }).catch(() => false);
+    settle();
+    if (!landed || !claimed) return false;
+    const text = (PHRASES ? book.pick(again ? "+чат:сняли админа" : "+чат:не админ", { formal: true }) : null) ?? (again ? ADMIN_LOST : ADMIN_WORDS);
+    try {
+      await api.sendMessage({ chat_id: chat.id, text, ...(extra?.message_thread_id != null ? { message_thread_id: extra.message_thread_id } : {}) });
+      pulse.bump("admin_asked");
+      return true;
+    } catch { return false; }
+  }
+
   const MEMBER_IN = new Set(["member", "restricted", "administrator", "creator"]);
   /**
    * Telegram сообщил, что с ней самой что-то сделали: добавили в чат, сделали
@@ -5515,9 +5573,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
 
     const joined = !wasIn;
-    await noteChat(chat, { role: isAdmin ? "admin" : "member", ...(joined ? { since: now(), by: by.id ?? null } : {}) });
+    // Роль названа самим Telegram — проверена. Дали права — прежнее «я без прав» снято: снимут — скажет снова.
+    await noteChat(chat, { role: isAdmin ? "admin" : "member", checked: now(), ...(isAdmin ? { told: 0 } : {}), ...(joined ? { since: now(), by: by.id ?? null } : {}) });
+    if (isAdmin) adminSettled.delete(String(chat.id));
     if (joined) pulse.bump("joined");
-    if (joined && !mine) await tell(`Меня добавили в ${chatKind(chat.type)} «${title}»${by.id != null ? ` — ${who}` : ""}${isAdmin ? ", сразу админом" : ""}.`);
+    // Добавили без прав админа — один раз сказать в самом чате, что ей доступно не всё.
+    const asked = joined && !isAdmin ? await adminNotice(chat, { role: "member" }).catch(() => false) : false;
+    if (joined && !mine) await tell(`Меня добавили в ${chatKind(chat.type)} «${title}»${by.id != null ? ` — ${who}` : ""}${isAdmin ? ", сразу админом" : asked ? ", без прав админа: я сказала там об этом — один раз" : ""}.`);
 
     if (isAdmin && !wasAdmin && chat.type !== "channel") {
       // Права админа открывают «сообщения для одного»: прежний отказ чата забыт, и первое уходит сразу.
@@ -5537,7 +5599,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Прав больше нет: «сообщения для одного» там не пройдут — не начинать с ошибки.
       await store.set(WHISPER_KEY(chat.id), { no: true, at: now() }).catch(() => false);
       await noteChat(chat, { whisper: false });
-      return { ok: true, action: "demoted" };
+      // Права сняли: часть того, что работало, перестанет — об этом она тоже говорит один раз.
+      const asked = await adminNotice(chat, { role: "member", again: true }).catch(() => false);
+      return { ok: true, action: "demoted", asked };
     }
     return { ok: true, action: joined ? "joined" : "noted" };
   }
