@@ -13,6 +13,18 @@
  *
  * Судит код, а не модель: что рисовать нельзя, решается здесь, до запроса.
  *
+ * Что уходит художнику. Он рисует описанное, а не названное: на «кота» из
+ * одного слова его фильтр срабатывает зря (известная беда мастерской: одно
+ * слово — и «NSFW»), а название в непривычном падеже переводчик коверкает.
+ * Поэтому описание собирается по порядку:
+ *   1) свой словарь художника (`data/subjects.js`) — частые просьбы описаны
+ *      заранее, не тратится ничего;
+ *   2) модель того же ключа пишет описание по просьбе (несколько нейронов);
+ *   3) переводчик — целой фразой «Нарисуй …», а не обрывком; знакомые места
+ *      в просьбе добавляются подсказкой из словаря.
+ * Как было собрано и что ушло, запоминается: хозяин спрашивает «как
+ * нарисовано?» — и видит.
+ *
  * Отказ мастерской разбирается, а не принимается на веру. Раньше любой ответ
  * 400 со словами вроде «not allowed» считался её фильтром, и на «нарисуй кота»
  * человек слышал про фильтр, хотя причина могла быть в самом запросе. Теперь:
@@ -21,7 +33,11 @@
  * мастерская, запоминается дословно: хозяин видит это в ответе и в статусе.
  */
 
+import { subjectFor, placesIn, foldSubject, SUBJECTS } from "./data/subjects.js";
+
 export const DRAW_STATE_KEY = "heart:draw:v1";
+/** Какие модели-составители описаний не ответили и до какого часа их не спрашивать. */
+export const DIRECTOR_STATE_KEY = "heart:draw:director";
 export const DRAWN_PREFIX = "heart:drawn:";
 /** Альбом человека: его последние просьбы о рисунке, свежая — последней. */
 export const ALBUM_KEY = (userId) => `heart:album:${userId}`;
@@ -64,6 +80,57 @@ export const PAINTERS = Object.freeze([
 export const DRAW_LAST_KEY = "heart:draw:last";
 /** Слова мастерской о своём фильтре. Только они — «blocked»; остальное 400 — не фильтр. */
 const FLAGGED = /nsfw|not\s+safe\s+for\s+work|safety\s+(?:checker|filter|system)|content\s+(?:policy|filter)|flagged\s+as/u;
+/**
+ * Памятка модели, которая пишет описание для художника. По-английски: так она
+ * точнее держит формат. Ответ — одна строка; «NONE» — писать нечего.
+ */
+const BRIEF = [
+  "You write prompts for a text-to-image model.",
+  "The user message is a request for a picture, usually in Russian. Reply with ONE prompt in English and nothing else: no quotes, no notes, no line breaks, 15 to 45 words.",
+  "Rules:",
+  "1. Depict exactly what is asked. Keep every detail, colour, action and style the user named. Add only a fitting setting and light.",
+  "2. Start with the main subject: how it looks, what it does, where it is.",
+  "3. A famous place, building, character or thing: give its English name and say what it looks like. Example: Мекка → the Kaaba in Mecca, a black cube with a gold band in the white marble courtyard of the Grand Mosque, pilgrims in white, minarets.",
+  "4. People and animals have natural anatomy and both eyes open unless the user asked otherwise.",
+  "5. If the user named no style: a photo for places, nature, animals, food and things; a digital painting for fantasy and characters.",
+  "6. Never mention text, letters, captions, watermarks or signatures.",
+  "7. If the request cannot be drawn, or you will not write it, reply with the single word NONE.",
+].join("\n");
+const DIRECTOR_TIMEOUT_MS = 9_000;
+/**
+ * Рассуждающие модели: раздумья здесь ни к чему — описание в одну строку, а
+ * думая, модель тратит весь отведённый ответ ещё до первого слова. У Gemma 4 в
+ * мастерской раздумья выключаются полем `chat_template_kwargs.enable_thinking`
+ * (схема модели, прочитана 15.11.2026).
+ */
+const THINKS = /gemma-4|qwen3|qwq|glm-4|deepseek-r1|gpt-oss/iu;
+/** Кто пишет описание, если в настройках не названо иное: первая — основная, вторая — запасная. */
+export const DIRECTORS = Object.freeze(["@cf/google/gemma-4-26b-a4b-it", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"]);
+/** «Что-нибудь», «на свой вкус» — рисует из того, что любит сама. */
+const ANY = /^(?:что[-\s]?(?:нибудь|то)(?:\s+(?:красивое|интересное|милое|доброе|свое|на\s+(?:свой|твой)\s+вкус))?|что\s+(?:угодно|хочешь|хотите|захочешь)|на\s+(?:свой|твой)\s+вкус|сюрприз|любую\s+картинку|картинку|рисунок)$/u;
+const FAVOURITES = SUBJECTS.filter(row => row.group === "природа" || row.forms[0] === "уют" || row.forms[0] === "кот" || row.forms[0] === "сова" || row.forms[0] === "лиса");
+/** «Нарисуй кота.» → «Draw a cat.» → «a cat»: глагол рамки снимается, остаётся описание. */
+const unframe = (text) => {
+  const value = String(text ?? "").replace(/\s+/gu, " ").trim().replace(/[.!…]+$/u, "").trim();
+  return value.replace(/^(?:please[,\s]+)?(?:draw(?:ing)?|paint(?:ing)?|sketch(?:ing)?|depict(?:ing)?|portray|illustrate|picture)\s+(?:(?:me|us|up|out)\s+)?(?:of\s+)?/iu, "").trim() || value;
+};
+/** Ответ модели → одна строка описания или пусто: отказ, русский текст, обрывок — не описание. */
+export function briefOf(raw) {
+  let text = String(raw ?? "").replace(/<think>[\s\S]*?<\/think>/giu, " ").replace(/<think>[\s\S]*$/iu, " ");
+  text = text.split(/\n+/u).map(line => line.trim()).filter(Boolean)[0] ?? "";
+  text = text.replace(/\*\*/gu, "").replace(/^(?:(?:english\s+|image\s+)?prompt)\s*[:—-]\s*/iu, "").replace(/^["'`«“]+|["'`»”]+$/gu, "").trim();
+  if (text.length < 12 || text.length > 700 || /[а-яё]/iu.test(text)) return "";
+  if (/^none\b/iu.test(text) || /^(?:i\s+(?:can(?:no|'|’)?t|won(?:'|’)?t|am\s+(?:sorry|unable|not\s+able))|i(?:'|’)m\s+(?:sorry|unable)|sorry|i\s+apologi[sz]e|as\s+an\s+ai|unfortunately)/iu.test(text)) return "";
+  return text.split(/\s+/u).length >= 4 ? text : "";
+}
+
+/**
+ * Шаги художника. У FLUX schnell их от 1 до 8, по умолчанию в мастерской — 4;
+ * «больше шагов — лучше качество, но дольше» (её документация). Цена картинки
+ * 1024×1024 на 15.11.2026: 4 шага — 57,6 нейрона, 8 шагов — 96 при 10 000
+ * бесплатных в сутки. Настройка `DRAW_STEPS` возвращает прежние 4.
+ */
+export const STEPS = 8;
 /** На весь рисунок — не дольше: человек ждёт ответа, а не четвёртой попытки. */
 const PAINT_BUDGET_MS = 40_000;
 const CALL_TIMEOUT_MS = 25_000;
@@ -112,6 +179,9 @@ const LEWD = /(?:соблазн|пошл|возбужд|развратн|раз�
 const YOUNG = /(?:(?<![а-я])(?:ребен|ребят|дет(?:и|ей|ям|ьми|ях|ск|к[аиуе]|ишк|очк)|девочк|девчонк|девчушк|мальчик|мальчишк|мальчуган|пацан|школьн|школот|подрост|несовершеннолет|малолет|малыш|малютк|младен|юн(?:ая|ый|ую|ого|ой|ые|ых|ым|ость|ец|ош)|молоденьк|младш(?:ая|ую|ей|ий|его)|сестренк|сестричк|братик|братишк|доч(?:ь|к|ер|ур|ень)|сын(?:а|у|ом|ок|очек|ишк)?(?![а-я])|внучк|внук|ученик|учениц|первоклассн|второклассн|третьеклассн|пятиклассн|шестиклассн|семиклассн|восьмиклассн|девятиклассн|старшеклассн|младшеклассн|одноклассн|гимназистк|пионерк|октябрен|детсад|лоли|шота(?![а-я])|чиби)|(?<![a-z])(?:loli|lolicon|shota|shotacon|child|children|childish|kid|kids|kiddo|teen|teens|teenage|teenager|underage|minor|minors|schoolgirl|schoolboy|school\s+uniform|preteen|toddler|infant|baby|babyface|juvenile|adolescent|youngster|little\s+(?:girl|boy|sister|brother)|young\s+(?:girl|boy)|daughter|son|chibi|petite\s+young)(?![a-z]))/iu;
 // Насилие в откровенном — не рисуется никому.
 const FORCED = /(?:изнасил|насилу|принужд|против\s+(?:ее|его|их)\s+воли|(?<![a-z])(?:rape|raped|raping|rapist|non-?con|forced\s+sex)(?![a-z]))/iu;
+// Аллаха и пророков не изображают. Мечеть Пророка, каллиграфия, имя — это не изображение.
+const SACRED = /(?:(?<![а-я])пророк(?:а|у|ом|е|ов|и|ами)?(?![а-я])|посланник\S*\s+аллаха|(?<![а-я])аллах|(?<![а-я])всевышн|prophet\s+muhamm[ae]d|(?<![a-z])allah(?![a-z]))/iu;
+const SACRED_OK = /(?:мечеть\S*\s+пророка|город\S*\s+пророка|надпис|каллиграф|им(?:я|ени|енем)\s+аллаха|слов\S+\s+аллах|шамаил|calligraphy|mosque\s+of\s+the\s+prophet|prophet'?s\s+mosque)/iu;
 /** Возраст цифрой: «15 лет», «16-летняя», «14 y.o.» — меньше восемнадцати. */
 function underage(value) {
   for (const hit of value.matchAll(/(?<![\d.,])(\d{1,2})\s*(?:-\s*)?(?:лет(?![а-я])|год(?:а|ик|ика|иков|ов)?(?![а-я])|летн|летк|years?\s*old|y\.?\s?o\.?(?![a-z])|yrs?)/giu)) {
@@ -120,9 +190,9 @@ function underage(value) {
   return false;
 }
 /**
- * Причина отказа или пустая строка: «adult», «minor», «gore», «hate».
+ * Причина отказа или пустая строка: «adult», «minor», «gore», «hate», «sacred».
  * `free` — просит хозяин, в личке: своих границ для него у неё нет, и «adult»,
- * «gore», «hate» не возвращаются. Не зависит от того, кто просит, одно: откровенное
+ * «gore», «hate», «sacred» не возвращаются. Не зависит от того, кто просит, одно: откровенное
  * с любым намёком на ребёнка и насилие в откровенном — «minor» для всех.
  */
 export function refusal(text, { free = false } = {}) {
@@ -131,6 +201,7 @@ export function refusal(text, { free = false } = {}) {
   const adult = ADULT.test(value);
   if ((adult || LEWD.test(value)) && (YOUNG.test(value) || underage(value))) return "minor";
   if (free) return "";
+  if (SACRED.test(value) && !SACRED_OK.test(value)) return "sacred";
   if (adult) return "adult";
   if (GORE.test(value)) return "gore";
   if (HATE.test(value)) return "hate";
@@ -165,10 +236,11 @@ export function subjectOf(query) {
   return { text: String(query).replace(/\s+/gu, " ").trim().slice(0, 300) };
 }
 
-export function createDraw({ fetchImpl = null, key = "", store = null, now = () => Date.now(), steps = 4 } = {}) {
+export function createDraw({ fetchImpl = null, key = "", store = null, now = () => Date.now(), steps = STEPS, directors = [] } = {}) {
   const parts = splitKey(key);
   const available = Boolean(parts && typeof fetchImpl === "function");
-  const memory = { until: 0, why: "" };
+  const memory = { until: 0, why: "", words: { off: {}, why: {}, translator: null } };
+  const writers = (Array.isArray(directors) ? directors : []).map(item => String(item ?? "").trim()).filter(item => item.startsWith("@")).slice(0, 2);
 
   async function state() {
     let saved = null;
@@ -213,10 +285,10 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
    * Один запрос к мастерской: `{ ok, status, data, text, bytes }`; сеть упала — status 0.
    * `bytes` — когда в ответ пришёл сам файл картинки, а не JSON.
    */
-  async function call(model, body) {
+  async function call(model, body, ms = CALL_TIMEOUT_MS) {
     let response;
     try {
-      const signal = timeout(CALL_TIMEOUT_MS);
+      const signal = timeout(ms);
       response = await fetchImpl(`${API}/${parts.account}/ai/run/${model}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${parts.token}`, "Content-Type": "application/json" },
@@ -237,17 +309,126 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     return { ok, status, data, text, bytes };
   }
 
-  /** Русское описание → английское. Не вышло — остаётся как было: модель поймёт хуже, но поймёт. */
-  async function english(text) {
-    if (!/[а-яё]/iu.test(text)) return text;
-    for (const [from, to] of [["ru", "en"], ["russian", "english"]]) {
-      const got = await call(TRANSLATOR, { text, source_lang: from, target_lang: to });
+  /** Текст с одного языка на другой: перевод или пустая строка — переводчик не ответил. */
+  async function translate(text, { from = "ru", to = "en" } = {}) {
+    if (!available) return "";
+    // Языки называются кодом; старое написание словом — запасное, для русского и английского.
+    const names = { ru: "russian", en: "english" };
+    const pairs = [[from, to]];
+    if (names[from] && names[to]) pairs.push([names[from], names[to]]);
+    let trouble = null;
+    for (const [source, target] of pairs) {
+      const got = await call(TRANSLATOR, { text: String(text).slice(0, 1500), source_lang: source, target_lang: target });
       const out = String(got.data?.result?.translated_text ?? got.data?.translated_text ?? "").trim();
-      if (got.ok && out) return out.slice(0, 1000);
+      if (got.ok && out) return out.slice(0, 2000);
+      const said = saidBy(got);
+      trouble = { at: now(), status: got.status, said: got.ok ? "ответ без перевода" : said.words, codes: said.codes };
       // Отказ по ключу или лимиту второй попыткой не лечится.
       if (got.status === 0 || got.status === 401 || got.status === 403 || got.status === 429) break;
     }
-    return text;
+    // Что переводчик ответил, остаётся для статуса: по этим словам видно, что чинить.
+    if (trouble) await wordsKeep({ translator: trouble });
+    return "";
+  }
+  /** Русское описание → английское. Не вышло — остаётся как было. */
+  async function english(text) {
+    if (!/[а-яё]/iu.test(text)) return text;
+    return (await translate(text)) || text;
+  }
+
+  // ── кто пишет описание ──────────────────────────────────────────────────
+  /** Что известно о составителях описаний: `{ off: { модель: до какого часа }, why: { модель: слова }, translator }`. */
+  async function wordsState() {
+    let saved = null;
+    try { saved = store && typeof store.get === "function" ? await store.get(DIRECTOR_STATE_KEY) : null; } catch { saved = null; }
+    const value = saved && typeof saved === "object" ? saved : memory.words;
+    return {
+      off: value.off && typeof value.off === "object" ? value.off : {},
+      why: value.why && typeof value.why === "object" ? value.why : {},
+      translator: value.translator && typeof value.translator === "object" ? value.translator : null,
+    };
+  }
+  async function wordsKeep(patch) {
+    const before = await wordsState();
+    memory.words = { ...before, ...patch };
+    try { if (store && typeof store.set === "function") await store.set(DIRECTOR_STATE_KEY, { ...memory.words, at: now() }); } catch { /* останется в памяти изолята */ }
+  }
+  const writersOff = async () => (await wordsState()).off;
+  async function writerRest(model, ms, said = "") {
+    const before = await wordsState();
+    await wordsKeep({ off: { ...before.off, [model]: now() + ms }, why: { ...before.why, [model]: String(said).slice(0, 200) } });
+  }
+  /**
+   * Описание по просьбе пишет модель того же ключа: `{ prompt, model }` или null.
+   * Модель, которой нет или которая не приняла запрос, шесть часов не
+   * спрашивается; лимит и сеть — дело художника: он скажет об этом сам.
+   */
+  async function direct(request) {
+    if (!available || !writers.length) return null;
+    const off = await writersOff();
+    for (const model of writers) {
+      if ((Number(off?.[model]) || 0) > now()) continue;
+      const body = {
+        messages: [{ role: "system", content: BRIEF }, { role: "user", content: String(request).slice(0, 300) }],
+        max_tokens: 400, temperature: 0.4,
+      };
+      let got = await call(model, THINKS.test(model) ? { ...body, chat_template_kwargs: { enable_thinking: false } } : body, DIRECTOR_TIMEOUT_MS);
+      // Поле о раздумьях не принято — тот же запрос без него, с запасом на раздумья.
+      if (!got.ok && got.status === 400 && THINKS.test(model)) got = await call(model, { ...body, max_tokens: 900 }, DIRECTOR_TIMEOUT_MS);
+      if (got.ok) {
+        const data = got.data?.result ?? got.data ?? {};
+        const raw = String(data.choices?.[0]?.message?.content ?? data.response ?? "").trim();
+        // Ответ пуст: модель продумала всё отведённое и ничего не сказала. Так будет и дальше — пусть отдохнёт.
+        if (!raw) { await writerRest(model, 6 * 3_600_000, "ответ пуст"); continue; }
+        const text = briefOf(raw);
+        // «NONE», отказ или не описание: вторая модель скажет то же — дальше переводчик.
+        return text ? { prompt: text, model } : null;
+      }
+      if (got.status === 429 || got.status === 0) return null;
+      const said = saidBy(got);
+      await writerRest(model, got.status === 401 || got.status === 403 ? 30 * 60_000 : 6 * 3_600_000, `${got.status}${said.words ? ` «${said.words}»` : ""}${said.codes ? ` (код ${said.codes})` : ""}`);
+      if (got.status === 401) return null;
+    }
+    return null;
+  }
+
+  /**
+   * Просьба человека → что послать художнику: `{ prompt, core, how, by }`.
+   *   how: «словарь» — своё готовое описание; «модель» — написала модель (`by`);
+   *        «перевод» — переводчик; «как есть» — просьба уже по-английски;
+   *        пусто — описания нет: переводчик молчит, а по-русски художник не понимает.
+   * `core` — описание без добавок: с ним повторяется попытка после отказа фильтра.
+   * `literal` — не пересказывать: хозяин наедине просит откровенное, и его слова
+   * идут как есть, только переведённые.
+   */
+  async function compose(request, { literal = false, free = false, random = Math.random } = {}) {
+    const text = String(request ?? "").replace(/\s+/gu, " ").trim().slice(0, 300);
+    if (!text) return { prompt: "", core: "", how: "" };
+    if (!literal) {
+      if (ANY.test(foldSubject(text))) {
+        const row = FAVOURITES[Math.min(FAVOURITES.length - 1, Math.floor(random() * FAVOURITES.length))];
+        return { prompt: row.prompt, core: row.prompt, how: "словарь" };
+      }
+      const own = subjectFor(text);
+      if (own) return { prompt: own.prompt, core: own.prompt, how: "словарь" };
+      const brief = await direct(text);
+      // Модель могла дописать лишнего: её слова проходят ту же проверку, что и слова человека.
+      if (brief && !refusal(brief.prompt, { free })) return { prompt: brief.prompt, core: brief.prompt, how: "модель", by: brief.model };
+    }
+    const hints = literal ? [] : placesIn(text).map(row => row.prompt);
+    const latin = !/[а-яё]/iu.test(text);
+    const base = latin ? text : unframe(await translate(`Нарисуй ${text.replace(/[.!?…]+$/u, "")}.`));
+    if (!base || /[а-яё]/iu.test(base)) {
+      // Переводчик молчит. Знакомое место в просьбе рисуется по словарю; иначе рисовать нечего.
+      if (hints.length) return { prompt: hints.join("; "), core: hints.join("; "), how: "словарь" };
+      const told = (await wordsState()).translator;
+      return { prompt: "", core: "", how: "", said: told && now() - (Number(told.at) || 0) < 60_000 ? `${told.status || "нет связи"}${told.said ? ` «${told.said}»` : ""}${told.codes ? ` (код ${told.codes})` : ""}` : "" };
+    }
+    const core = [base, ...hints].join("; ").slice(0, 1500);
+    if (literal) return { prompt: core, core, how: latin ? "как есть" : "перевод" };
+    // Одно-два слова художнику посылать нельзя: его фильтр срабатывает на них зря.
+    const short = base.split(/\s+/u).length < 4 && !hints.length;
+    return { prompt: short ? `A detailed, beautiful picture of ${core}, natural light, sharp focus` : `${core}, highly detailed`, core, how: latin ? "как есть" : "перевод" };
   }
 
   /** Что мастерская сказала об отказе: её слова, без служебной обёртки. */
@@ -281,18 +462,22 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
    * `prompt` — каким запрос ушёл.
    *
    * Фильтр мастерской ошибается и на безобидном, поэтому после её «нет» запрос
-   * пробуется ещё раз тем же художником с припиской «без откровенного»: решает
-   * по-прежнему её фильтр. `asIs` — приписку не делать (хозяин наедине просит
-   * откровенное). `free` — просит хозяин наедине: после фильтра его запрос идёт
-   * запасным художникам как есть. Остальным фильтр мастерской — последнее слово.
+   * пробуется ещё раз тем же художником: сначала с припиской «illustration,
+   * safe for work», затем описанием без добавок (`core`). Решает по-прежнему её
+   * фильтр. `asIs` — приписку не делать (хозяин наедине просит откровенное).
+   * `free` — просит хозяин наедине: после фильтра его запрос идёт запасным
+   * художникам как есть. Остальным фильтр мастерской — последнее слово.
+   *
+   * `prompt` — готовое английское описание: его собирает `compose`.
+   * К удаче приложено `via` — какой по счёту и какой попыткой вышло.
    */
-  async function paint(prompt, { translate = true, seed = null, free = false, asIs = false } = {}) {
+  async function paint(prompt, { seed = null, free = false, asIs = false, core = "" } = {}) {
     if (!available) return { ok: false, code: "off" };
     const idle = await state();
     if (idle.until > now()) return { ok: false, code: "resting", why: idle.why, until: idle.until };
     const started = now();
-    const words = (translate ? await english(String(prompt)) : String(prompt)).slice(0, 2000);
-    const full = { prompt: words, steps: Math.min(8, Math.max(1, Number(steps) || 4)) };
+    const words = String(prompt).slice(0, 2000);
+    const full = { prompt: words, steps: Math.min(8, Math.max(1, Math.trunc(Number(steps)) || STEPS)) };
     if (Number.isFinite(Number(seed)) && seed != null) full.seed = Number(seed);
     const tries = [];
     let flagged = false, down = 0;
@@ -301,7 +486,7 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
       return { ok: false, code, tries, prompt: words, ...more };
     };
     /** Одна попытка: картинка, окончательный отказ (`code`) или null — пробовать дальше. */
-    const attempt = async (painter, body) => {
+    const attempt = async (painter, body, via = "") => {
       const got = await call(painter.id, body);
       if (got.ok) {
         const packed = got.data?.result?.image ?? got.data?.image ?? "";
@@ -310,7 +495,7 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
           await wake();
           // Вышло не с первого раза: что этому мешало, остаётся в статусе.
           if (tries.length) await keep({ at: now(), code: "recovered", by: painter.title, tries: tries.slice(-6) });
-          return { ok: true, bytes: image, prompt: body.prompt, by: painter.title };
+          return { ok: true, bytes: image, prompt: body.prompt, by: painter.title, via, tries: tries.slice(-6) };
         }
         tries.push({ by: painter.title, status: got.status, said: "ответ без картинки", codes: "" });
         return null;
@@ -331,17 +516,26 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     if (settled(got)) return got;
     // Не фильтр, а «запрос не принят»: то же самое без необязательных полей.
     if (!flagged && tries[0].status >= 400 && tries[0].status < 500) {
-      got = await attempt(main, { prompt: words });
+      got = await attempt(main, { prompt: words }, "без необязательных полей");
       if (settled(got)) return got;
     }
     if (flagged && !asIs) {
-      got = await attempt(main, { prompt: `${words}, illustration, safe for work`.slice(0, 2000) });
+      const plain = String(core || words).slice(0, 1900);
+      // Живой «кот» 15.11.2026 вышел плоской иллюстрацией с каракулями вместо подписи — похоже,
+      // именно этой попыткой (доказательства нет: статуса тогда не было). Приписка меняет манеру,
+      // поэтому она — вторая попытка, а не первая.
+      got = await attempt(main, { ...full, prompt: `${plain}, illustration, safe for work` }, "с припиской «illustration, safe for work»");
       if (settled(got)) return got;
+      // Фильтр срабатывает и на добавки: то же описание без них.
+      if (plain !== words) {
+        got = await attempt(main, { ...full, prompt: plain }, "описанием без добавок");
+        if (settled(got)) return got;
+      }
     }
     if (flagged && !free) return fail("blocked");
     for (const spare of PAINTERS.slice(1)) {
       if (now() - started > PAINT_BUDGET_MS) break;
-      got = await attempt(spare, { prompt: words });
+      got = await attempt(spare, { prompt: words }, "запасным художником");
       if (settled(got)) return got;
       if (flagged && !free) return fail("blocked");
     }
@@ -350,5 +544,5 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     return fail(down === tries.length ? "network" : "refused", { status: tries.at(-1)?.status ?? 0 });
   }
 
-  return Object.freeze({ available, paint, english, state, lastFailure });
+  return Object.freeze({ available, paint, compose, english, translate, state, lastFailure, writers, wordsState });
 }

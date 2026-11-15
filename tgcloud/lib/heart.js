@@ -53,7 +53,8 @@ import { detectFact, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offer
 import { createTaught, parseTeach } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
-import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX } from "./draw.js";
+import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
+import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
 /**
@@ -309,7 +310,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // Чему её научил хозяин словами и что из короткого она не узнала.
   const taught = createTaught({ store, now, random });
   const tastes = createTastes({ store, now });
-  const draw = createDraw({ fetchImpl, key: config.DRAW === false ? "" : (config.DRAW_KEY ?? extraKeys.cloudflare ?? ""), store, now, steps: config.DRAW_STEPS });
+  // Описание для художника пишет модель того же ключа — первые две из списка мозга Cloudflare.
+  // `DRAW_DIRECTOR: false` — не писать: останутся её словарь художника и переводчик.
+  const drawWriters = config.DRAW_DIRECTOR === false ? [] : (Array.isArray(config.DRAW_DIRECTORS) ? config.DRAW_DIRECTORS
+    : (Array.isArray(config.AI_PROVIDERS) ? config.AI_PROVIDERS : []).find(item => item?.kind === "cloudflare")?.models ?? DRAW_DIRECTORS);
+  const draw = createDraw({ fetchImpl, key: config.DRAW === false ? "" : (config.DRAW_KEY ?? extraKeys.cloudflare ?? ""), store, now, steps: config.DRAW_STEPS, directors: drawWriters });
 
   /**
    * Что сердце знает о манере разговора с человеком: «вы» или «ты», насколько
@@ -787,7 +792,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const trouble = failed && now() - (Number(failed.at) || 0) < DAY
       ? ` · ${failed.code === "recovered" ? `заминка в ${clock(failed.at)} (нарисовал ${failed.by})` : `неудача в ${clock(failed.at)}`}: ${drawTries(failed.tries)}`
       : "";
-    return `краски есть${count}${DRAW_DAILY > 0 ? ` · на человека в день — ${DRAW_DAILY}` : ""}${trouble}`;
+    // Чем собирается описание для художника: своё — бесплатно, модель — несколько нейронов.
+    // Модель или переводчик не ответили — их слова здесь же: по ним видно, что чинить.
+    const told = await draw.wordsState();
+    const short = (model) => String(model).split("/").pop();
+    const resting = draw.writers.filter(model => (Number(told.off[model]) || 0) > now());
+    const writer = !draw.writers.length ? "" : resting.length === draw.writers.length
+      ? `, модель не пишет (${resting.map(model => `${short(model)} — ${told.why[model] || "не ответила"}`).join("; ")})`
+      : `, модель${resting.length ? ` (${resting.map(model => `${short(model)} не пишет — ${told.why[model] || "не ответила"}`).join("; ")})` : ""}`;
+    const mute = told.translator && now() - (Number(told.translator.at) || 0) < DAY
+      ? ` (молчал в ${clock(told.translator.at)}: ${told.translator.status || "нет связи"}${told.translator.said ? ` «${told.translator.said}»` : ""}${told.translator.codes ? `, код ${told.translator.codes}` : ""})` : "";
+    const words = ` · описания: словарь художника (${DRAW_SUBJECTS.length})${writer}, переводчик${mute}`;
+    return `краски есть${count}${DRAW_DAILY > 0 ? ` · на человека в день — ${DRAW_DAILY}` : ""}${words}${trouble}`;
   }
 
   async function clockLine() {
@@ -3005,6 +3021,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     minor: "Такое я рисовать не буду.",
     gore: "Такое я рисовать не буду: жестокость — не моя тема.",
     hate: "Такое я рисовать не буду.",
+    sacred: "Аллаха и пророков не изображают — и я не стану. Могу нарисовать мечеть, Каабу или Медину.",
   });
   // ── открытки ─────────────────────────────────────────────────────────────
   const CARD_WORDS = Object.freeze({
@@ -3031,7 +3048,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try {
       if (Number((await draw.state())?.until) > now()) return null;
       // Описание своё и заведомо безобидное: после ложного отказа фильтра можно звать запасных художников.
-      const got = await draw.paint(postcardPrompt(occasion, title), { translate: false, seed: Math.floor(random() * 1_000_000), free: true });
+      const got = await draw.paint(postcardPrompt(occasion, title), { seed: Math.floor(random() * 1_000_000), free: true });
       return got.ok ? got.bytes : null;
     } catch { return null; }
   }
@@ -3154,13 +3171,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, `На сегодня я ${you(turn, "вам", "тебе")} уже нарисовала ${used} ${plural(used, "картинку", "картинки", "картинок")} — краски не бесконечные, и они нужны всем. Завтра продолжим.`);
     }
     if (has("sendChatAction")) { try { await api.sendChatAction({ chat_id: turn.chatId, action: "upload_photo", ...(turn.extra.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) }); } catch { /* индикатор не важнее рисунка */ } }
-    // «Себя в шляпе»: просьба переводится отдельно и встаёт перед её приметами.
-    const wish = subject.look ? `${await draw.english(subject.text)}, ${subject.look}` : subject.prompt ?? subject.text;
     // Хозяин наедине просит откровенное — запрос идёт как есть; безобидному после отказа
     // мастерской можно дать вторую попытку с припиской «без откровенного».
     const asIs = free && Boolean(subject.text && drawRefusal(subject.text, { free: false }));
+    // Что послать художнику. Своё (она, комната, кот, открытка) — готовое; «себя в шляпе» —
+    // просьба переводится и встаёт перед её приметами; остальное собирается: словарь
+    // художника, модель, переводчик.
+    let made;
+    if (subject.look) { const wish = `${await draw.english(subject.text)}, ${subject.look}`; made = { prompt: wish, core: wish, how: "своё" }; }
+    else if (subject.prompt) made = { prompt: subject.prompt, core: subject.prompt, how: "своё" };
+    else made = await draw.compose(subject.text, { literal: asIs, free, random });
+    if (!made.prompt) return say(turn, `Не вышло: переводчик для художника сейчас не отвечает, а по-русски он не понимает.${free && made.said ? ` Его ответ: ${made.said}.` : ""} ${you(turn, "Попробуйте", "Попробуй")} чуть позже — или ${you(turn, "опишите", "опиши")} по-английски.`);
     // У открытки описание готовое и безобидное: после ложного отказа фильтра ей можно к запасным художникам.
-    const got = await draw.paint(wish, { translate: !subject.prompt && !subject.look, seed: Math.floor(random() * 1_000_000), free: free || Boolean(subject.card), asIs });
+    const got = await draw.paint(made.prompt, { seed: Math.floor(random() * 1_000_000), free: free || Boolean(subject.card), asIs, core: made.core });
     if (!got.ok) {
       if (got.code === "resting" || got.code === "limit" || got.code === "auth") {
         const why = got.code === "resting" ? got.why : got.code;
@@ -3192,7 +3215,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     } catch { return say(turn, "Рисунок готов, но Telegram его не принял. Попросите ещё раз."); }
     pulse.bump("drawn");
     await store.set(countKey, { n: used + 1 }).catch(() => false);
-    await store.set(lastKey, { q: String(query).slice(0, 300), at: now() }).catch(() => false);
+    // Что и как нарисовано: хозяин спросит «как нарисовано?» — и увидит, что ушло художнику.
+    await store.set(lastKey, {
+      q: String(query).slice(0, 300), at: now(), how: made.how, ...(made.by ? { writer: made.by } : {}),
+      by: got.by, via: got.via || "", sent: String(got.prompt ?? "").slice(0, 700), tries: (got.tries ?? []).slice(-4),
+    }).catch(() => false);
     await store.set(`heart:credit:${turn.chatId}`, { own: true, title: String(query).slice(0, 120), at: now() }).catch(() => false);
     // Альбом человека: последние десять просьб. Повтор той же просьбы подряд — одна строка.
     try {
@@ -3202,6 +3229,33 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await store.set(ALBUM_KEY(turn.actorId), { items: [...items, { q: wish, at: now() }].slice(-ALBUM_MAX), at: now() });
     } catch { /* альбом не важнее рисунка */ }
     return { ok: true, action: "photo", kind: "draw" };
+  }
+
+  /**
+   * «Как нарисовано?» — хозяину: чем собрано описание последнего рисунка в этом
+   * чате, что ушло художнику и с какой попытки вышло. По этим словам видно,
+   * почему картинка получилась такой.
+   */
+  const DRAW_HOW = /^(?:(?:как|чем)\s+(?:ты\s+)?(?:это\s+)?(?:на)?рисова(?:ла|но|н)(?:\s+это)?|как\s+(?:это\s+)?нарисовано|что\s+(?:ты\s+)?(?:сказала|отправила|послала|написала)\s+художнику|что\s+ушло\s+художнику|(?:покажи\s+)?(?:запрос|описание)\s+(?:последнего\s+)?рисунка)$/u;
+  const HOW_WORDS = Object.freeze({
+    "словарь": "из моего словаря художника — ни переводчик, ни модель не тратились", "модель": "написала модель", "перевод": "перевёл переводчик",
+    "как есть": "просьба уже была по-английски", "своё": "моё собственное, готовое",
+  });
+  async function drawHow(turn, prompt) {
+    if (!draw.available || !owner(turn.actorId)) return null;
+    if (!DRAW_HOW.test(String(prompt ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim())) return null;
+    if (turn.dry) return say(turn, "Рассказала бы, как собран последний рисунок, — репетиция.");
+    const before = await store.get(`heart:drew:${turn.chatId}`).catch(() => null);
+    if (!before?.q) return say(turn, "Здесь я ещё ничего не рисовала: рассказывать не о чем.");
+    if (!before.sent) return say(turn, `Последний рисунок здесь — «${before.q}». Как он был собран, я тогда ещё не записывала: нарисую заново — расскажу.`);
+    const writer = before.how === "модель" && before.writer ? ` (${String(before.writer).split("/").pop()})` : "";
+    const earlier = drawTries(before.tries);
+    return say(turn, [
+      `Последний рисунок здесь — «${before.q}», в ${localClock(before.at, zoneOf(turn))}.`,
+      `Описание: ${HOW_WORDS[before.how] ?? "собрано как обычно"}${writer}.`,
+      `Художнику ушло: «${before.sent}».`,
+      `Рисовал ${before.by || "художник"} — ${earlier ? `не с первого раза: вышло ${before.via || "повтором"}. До этого: ${earlier}.` : "с первого раза."}`,
+    ].join("\n"));
   }
 
   /**
@@ -4797,7 +4851,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки

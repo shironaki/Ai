@@ -101,7 +101,7 @@ test("альбом: «мои рисунки» — последние десят�
   source("flux-1-schnell", { success: true, result: { image: PIXELS.toString("base64") } });
   source("m2m100", { success: true, result: { translated_text: "something" } });
   let now = at("2026-11-18T09:00:00Z");
-  const h = heart({ DRAW_KEY: "0123456789abcdef0123456789abcdef:cf-token_ABCDEFGH-1234567890xyz", PHRASES: true }, { now: () => now });
+  const h = heart({ DRAW_KEY: "0123456789abcdef0123456789abcdef:cf-token_ABCDEFGH-1234567890xyz", DRAW_DIRECTOR: false, PHRASES: true }, { now: () => now });
   await h.onMessage(message("мои рисунки"), KEY);
   assert.match(last(), /^Альбом пока пуст/u);
   await h.onMessage(message("нарисуй кота в шляпе"), KEY);
@@ -113,7 +113,7 @@ test("альбом: «мои рисунки» — последние десят�
   const before = calls("sendPhoto").length;
   await h.onMessage(message("повтори рисунок 2"), KEY);
   assert.equal(calls("sendPhoto").length, before + 1);
-  assert.equal(sdk().sourceFetches.filter(item => item.url.includes("m2m100")).map(item => JSON.parse(item.options.body).text).at(-1), "кота в шляпе");
+  assert.equal(sdk().sourceFetches.filter(item => item.url.includes("m2m100")).map(item => JSON.parse(item.options.body).text).at(-1), "Нарисуй кота в шляпе.");
   await h.onMessage(message("повтори рисунок 7"), KEY);
   assert.match(last(), /В альбоме 2 рисунка — такого номера нет/u);
   // Альбом у каждого свой; в группе не показывается; в копию души входит.
