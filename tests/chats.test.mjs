@@ -60,13 +60,22 @@ test("убрали из чата: настройки и память чата с
   await h.onMessage(message("напомни через час про чай", { id: 21, name: "Вася" }), KEY);
   assert.equal(kept("heart:chat:-20")?.rp, false);
   assert.equal((await h.reminders.list(21)).length, 2);
+  // Соседний чат с похожим номером: его память и настройки уход из -20 задеть не должен.
+  await h.onMessage(group("Аи, выключи рп", { id: 21, name: "Вася", chat: -200 }), KEY);
+  await h.onMessage(group("просто разговор", { id: 22, name: "Маша", chat: -200 }), KEY);
+  const logged = (chat) => [...sdk().kv.keys()].filter(key => key.startsWith(`heart:log:${chat}:`)).length;
+  assert.ok(logged(-20) >= 2, "память чата записана — по ключу на сообщение");
+  assert.ok(logged(-200) >= 2);
 
   const before = toOwner().length;
   assert.equal((await h.onMyChatMember(moved("administrator", "kicked"))).action, "left");
   assert.equal(sdk().kv.has("heart:chat:-20"), false, "настройки чата стёрты");
-  assert.equal(sdk().kv.has("heart:log:-20"), false, "и память чата — тоже");
+  assert.equal(logged(-20), 0, "и память чата — тоже: все её записи");
+  assert.equal([...sdk().kv.keys()].filter(key => /^heart:[a-z]+:-20(?::|$)/u.test(key)).length, 0, "под номером чата не осталось ничего");
+  assert.ok(logged(-200) >= 2, "соседний чат не тронут");
+  assert.equal(kept("heart:chat:-200")?.rp, false);
   assert.deepEqual((await h.reminders.list(21)).map(item => item.chatId), [21], "напоминание в личку осталось");
-  assert.deepEqual(kept("heart:chats:v1").items, []);
+  assert.deepEqual(kept("heart:chats:v1").items.map(item => item.id), [-200], "из списка ушёл только этот чат");
   assert.equal(toOwner().length, before + 1);
   assert.match(told(), /Меня убрали из чата «Клуб» — Вася\. Настройки и память этого чата я стёрла/u);
 
@@ -79,7 +88,7 @@ test("убрали из чата: настройки и память чата с
   const news = { id: -40, type: "channel", title: "Новости" };
   assert.equal((await h.onMyChatMember(moved("left", "administrator", { chat: news }))).action, "joined");
   await h.onMessage(message("список чатов", { id: OWNER }), KEY);
-  assert.equal(last(OWNER), "Я в 1 чате:\n1. Новости — канал, я админ");
+  assert.equal(last(OWNER), "Я в 2 чатах:\n1. без названия — чат\n2. Новости — канал, я админ");
 });
 
 test("чат, где с ней говорят, попадает в список сам; блокировка в личке отменяет разовые напоминания", async () => {

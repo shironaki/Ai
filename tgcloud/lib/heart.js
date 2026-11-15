@@ -401,7 +401,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Перк «отвечает быстрее» действует только по подтверждённому статусу;
     // мост закрыт — работает обычная пауза, а не вера на слово. Тот же вопрос
     // и тот же тип чата, что в профиле ответа: один конверт, а не два.
-    intervalFor: async ({ userId, chatId, isPrivate }) => pauseFor({ facts: await factsFor({ userId, chatId, isPrivate }), config }),
+    // Хозяина она не заставляет ждать и между двумя сообщениями подряд.
+    intervalFor: async ({ userId, chatId, isPrivate }) => (owner(userId) ? 0 : pauseFor({ facts: await factsFor({ userId, chatId, isPrivate }), config })),
     now,
   });
 
@@ -860,6 +861,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Словарь: ${PHRASES ? (({ sections, lines }) => `${sections} ${plural(sections, "тема", "темы", "тем")}, ${lines} ${plural(lines, "фраза", "фразы", "фраз")} — на них модель не трачу`)(book.stats()) : "выключен настройкой"}${taughtCount ? ` · выучено от хозяина: ${taughtCount}` : ""} · манеры — ${MANNERS ? "включены" : "выключены"} · память чата — ${CHAT_MEMORY ? "двое суток" : "выключена"}`,
       `Рисование: ${await drawLine(today)}`,
       `Будильник: ${await clockLine()}`,
+      `Чаты и намазы: ${await roundsLine()}`,
       `События: ${events.KINDS.join(", ")} — не чаще раза в ${Math.round(events.cooldownMs / 60_000)} мин`,
       `Уроки: ${study.active} ${plural(study.active, "активный", "активных", "активных")}${study.proposed ? ` · ждут вашего слова: ${study.proposed}` : ""}${asked ? ` · не знала ответа: ${asked}` : ""}`,
       `Сегодня: ${pulse.lines(today).join("; ")}${waiting ? `; в очереди: ${waiting}` : ""}`,
@@ -1370,6 +1372,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const text = `🎂 С днём рождения${settings.address ? `, ${settings.address}` : ""}! Пусть этот год будет добрым — а я буду рядом.`;
       // К словам — открытка, если краски есть; нет — поздравление остаётся словами.
       const photo = await ownCard("birthday");
+      // Открытка — из дневной нормы рисунков человека: она в счёте, но в ней не отказывают.
+      if (photo) await store.update(`${DRAWN_PREFIX}${dayOf(now())}:${item.userId}`, (before) => ({ n: (Number(before?.n) || 0) + 1 })).catch(() => false);
       return photo ? { text, photo } : text;
     }
     const head = `⏰ Напоминаю${lateNote}`;
@@ -1709,7 +1713,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Тишина чата — для всех, кроме хозяина: к нему ограничений нет.
     if (!owner(query.from.id) && await fun.quiet(chatId)) { await answer("Меня попросили помолчать."); return { ok: true, action: "again", quiet: true }; }
     const gate = `heart:again:${chatId}`;
-    if (now() - (Number((await store.get(gate).catch(() => null))?.at) || 0) < 2000) { await answer("Не так быстро."); return { ok: true, action: "again", throttled: true }; }
+    if (!owner(query.from.id) && now() - (Number((await store.get(gate).catch(() => null))?.at) || 0) < 2000) { await answer("Не так быстро."); return { ok: true, action: "again", throttled: true }; }
     await store.set(gate, { at: now() }).catch(() => false);
     const thread = query.message.is_topic_message === true && query.message.message_thread_id != null ? { message_thread_id: query.message.message_thread_id } : {};
     try {
@@ -1984,7 +1988,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     else if (asked.set) { next[asked.set] = asked.time; next[`${asked.set}Off`] = false; if (asked.set === "morning") next.by = "clock"; }
     for (const slot of asked.off === "all" ? ["morning", "night"] : asked.off ? [asked.off] : []) next[`${slot}Off`] = true;
     for (const slot of asked.on === "all" ? ["morning", "night"] : asked.on ? [asked.on] : []) next[`${slot}Off`] = false;
-    const kept = await store.set(GREET_KEY, { ...next, at: now() }).then(() => true).catch(() => false);
+    const kept = await store.set(GREET_KEY, { ...next, at: now() }).catch(() => false);
     if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
     if (asked.off === "all") return say(turn, "Хорошо, хозяин: первой писать не буду. Передумаете — «пиши первой».");
     return say(turn, `Хорошо, хозяин: ${await describe(next)}.`);
@@ -2077,7 +2081,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (asked.angle != null) {
       if (!mine || !turn.isPrivate) return say(turn, "Угол для расчёта выбирает хозяин — и в личке.");
       const got = await timeFor(asked.angle);
-      const kept = await store.set(GREET_KEY, { ...saved, angle: asked.angle, method: asked.method ?? "", ...(got.spot ? { spot: got.spot } : {}), at: now() }).then(() => true).catch(() => false);
+      const kept = await store.set(GREET_KEY, { ...saved, angle: asked.angle, method: asked.method ?? "", ...(got.spot ? { spot: got.spot } : {}), at: now() }).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, `Хорошо, хозяин: фаджр считаю по углу ${named(asked.angle)}.${got.spot ? ` ${got.text}` : ""}`);
     }
@@ -2126,7 +2130,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     if (asked.asr) {
       if (!mine || !turn.isPrivate) return say(turn, "Школу для расчёта асра выбирает хозяин — и в личке.");
-      const kept = await store.set(GREET_KEY, { ...saved, asr: asked.asr, at: now() }).then(() => true).catch(() => false);
+      const kept = await store.set(GREET_KEY, { ...saved, asr: asked.asr, at: now() }).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, asked.asr === 2 ? "Хорошо, хозяин: аср считаю по ханафитской школе — когда тень длиннее полуденной на две высоты предмета." : "Хорошо, хозяин: аср считаю, как большинство школ, — когда тень длиннее полуденной на одну высоту предмета.");
     }
@@ -2135,7 +2139,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await store.update(PRAYER_KEY, (before) => {
         const subs = before?.subs && typeof before.subs === "object" ? before.subs : {};
         had = Boolean(subs[String(turn.actorId)]);
-        if (!had) return before;
+        if (!had) return null;
         const { [String(turn.actorId)]: _gone, ...rest } = subs;
         return { subs: rest, at: now() };
       }).catch(() => false);
@@ -2156,11 +2160,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const subs = before?.subs && typeof before.subs === "object" ? before.subs : {};
         const id = String(turn.actorId);
         full = !subs[id] && Object.keys(subs).length >= PRAYER_SUBS_MAX;
-        if (full) return before;
+        if (full) return null;
         return { subs: { ...subs, [id]: { ...(subs[id] ?? {}), lead: asked.remind, city: spot.city, lat: spot.lat, lon: spot.lon, tz: zone, fails: 0, since: Number(subs[id]?.since) || now() } }, at: now() };
-      }).then(() => true).catch(() => false);
-      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      }).catch(() => false);
       if (full) return say(turn, "Напоминаний о намазе у меня уже слишком много: новое пока не возьму.");
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       const lead = asked.remind ? `за ${asked.remind} ${plural(asked.remind, "минуту", "минуты", "минут")}` : "в его время";
       const near = coming ? ` Ближайший — ${prayerInfo(coming.key).title.toLowerCase()}, в ${localClock(coming.time, zone)}.` : "";
       return say(turn, `Хорошо${mine ? ", хозяин" : ""}: о каждом намазе напомню ${lead} (${spot.city}).${near} Выключить — «не напоминай о намазе».`);
@@ -2227,20 +2231,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (!due) continue;
       // Отметить за собой: кто первый записал — тот и говорит.
       let claimed = false;
-      await store.update(PRAYER_KEY, (before) => {
+      const landed = await store.update(PRAYER_KEY, (before) => {
         const entry = before?.subs?.[userId];
         claimed = Boolean(entry) && entry.said?.[due.key] !== due.mark;
-        if (!claimed) return before;
+        if (!claimed) return null;
         return { ...before, subs: { ...before.subs, [userId]: { ...entry, said: { ...(entry.said ?? {}), [due.key]: due.mark } } }, at };
-      }).catch(() => { claimed = false; });
-      if (!claimed) continue;
+      }).catch(() => false);
+      if (!landed || !claimed) continue;
       // Город мог смениться: тогда времена уже не те — пересчитать место и подождать следующего удара.
       const settings = (await personal.settings(userId).catch(() => null)) ?? {};
       const city = String(settings.city ?? "").trim();
       if (city && city !== sub.city) {
         const spot = await spotOf(settings).catch(() => null);
         if (spot) {
-          await store.update(PRAYER_KEY, (before) => (before?.subs?.[userId] ? { ...before, subs: { ...before.subs, [userId]: { ...before.subs[userId], city: spot.city, lat: spot.lat, lon: spot.lon, ...(validTimeZone(settings.tz) ? { tz: settings.tz } : {}), said: {} } } } : before)).catch(() => false);
+          await store.update(PRAYER_KEY, (before) => (before?.subs?.[userId] ? { ...before, subs: { ...before.subs, [userId]: { ...before.subs[userId], city: spot.city, lat: spot.lat, lon: spot.lon, ...(validTimeZone(settings.tz) ? { tz: settings.tz } : {}), said: {} } } } : null)).catch(() => false);
           continue;
         }
       }
@@ -2259,7 +2263,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (!delivered || Number(sub.fails) > 0) {
         await store.update(PRAYER_KEY, (before) => {
           const entry = before?.subs?.[userId];
-          if (!entry) return before;
+          if (!entry) return null;
           const fails = delivered ? 0 : (Number(entry.fails) || 0) + 1;
           if (fails >= 3) { const { [userId]: _gone, ...rest } = before.subs; return { ...before, subs: rest }; }
           return { ...before, subs: { ...before.subs, [userId]: { ...entry, fails } } };
@@ -2767,7 +2771,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     march8: "С 8 Марта! Весны, тепла и радости.", feb23: "С 23 февраля! Сил, спокойствия и крепкого здоровья.",
     love: "С любовью. Просто так — потому что хочется сказать.", thanks: "Спасибо! От души.", getwell: "Выздоравливай! Пусть силы вернутся скорее.",
     wedding: "С днём свадьбы! Мира, тепла и долгих лет вместе.", faith: "С праздником! Мира, добра и благополучия.",
-    holiday: "С праздником! Пусть этот день будет светлым.", known: "Нашему знакомству сегодня круглая дата. Спасибо, что вы есть.",
+    holiday: "С праздником! Пусть этот день будет светлым.", known: "Спасибо, что вы есть.",
   });
   /** Подпись открытки: слова по случаю; названо, кому, — «Маше — с днём рождения!». */
   function cardCaption({ occasion, to = "", title = "" } = {}) {
@@ -2785,7 +2789,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!draw.available || typeof InputFile !== "function" || !has("sendPhoto")) return null;
     try {
       if (Number((await draw.state())?.until) > now()) return null;
-      const got = await draw.paint(postcardPrompt(occasion, title), { translate: false, seed: Math.floor(random() * 1_000_000), free: false });
+      // Описание своё и заведомо безобидное: после ложного отказа фильтра можно звать запасных художников.
+      const got = await draw.paint(postcardPrompt(occasion, title), { translate: false, seed: Math.floor(random() * 1_000_000), free: true });
       return got.ok ? got.bytes : null;
     } catch { return null; }
   }
@@ -2813,23 +2818,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (today.hh < HOLIDAY_FROM || today.hh >= HOLIDAY_TILL) return 0;
     const mark = `${today.y}-${String(today.m).padStart(2, "0")}-${String(today.d).padStart(2, "0")}`;
     const due = holidaysOf(saved).filter(item => item.d === today.d && item.m === today.m && (!item.y || item.y === today.y));
+    // Круглый день знакомства — тоже повод: та же строка, что в «добром утре», и открытка к ней.
+    const known = milestoneLine(await daysKnown(OWNER, zone).catch(() => 0));
+    if (known) due.push({ d: today.d, m: today.m, title: "знакомство", known });
     let sent = 0;
     for (const item of due) {
       const id = `${item.m}-${item.d}:${item.title.toLowerCase()}`;
       let claimed = false;
-      await store.update(HOLIDAYS_KEY, (before) => {
+      const landed = await store.update(HOLIDAYS_KEY, (before) => {
         const base = before && typeof before === "object" ? before : {};
         claimed = base.sent?.[id] !== mark;
-        if (!claimed) return before;
+        if (!claimed) return null;
         // Прошлогодние отметки не копятся: остаются только сегодняшние.
         const kept = Object.fromEntries(Object.entries(base.sent ?? {}).filter(([, value]) => value === mark));
         return { ...base, sent: { ...kept, [id]: mark }, at: now() };
-      }).catch(() => { claimed = false; });
-      if (!claimed) continue;
-      const occasion = /нов\S*\s+год/iu.test(item.title) ? "newyear" : /8\s+марта/iu.test(item.title) ? "march8" : /23\s+февраля/iu.test(item.title) ? "feb23" : /рождени/iu.test(item.title) ? "birthday" : "holiday";
+      }).catch(() => false);
+      if (!landed || !claimed) continue;
+      const occasion = item.known ? "known" : /нов\S*\s+год/iu.test(item.title) ? "newyear" : /8\s+марта/iu.test(item.title) ? "march8" : /23\s+февраля/iu.test(item.title) ? "feb23" : /рождени/iu.test(item.title) ? "birthday" : "holiday";
       const address = String(((await personal.settings(OWNER).catch(() => null)) ?? {}).address ?? "").trim();
-      const words = cardCaption({ occasion, title: occasion === "holiday" ? item.title : "" });
-      const text = `${words}${address ? ` Это вам, ${address}.` : ""}`;
+      const words = item.known ? `${item.known} ${cardCaption({ occasion })}` : cardCaption({ occasion, title: occasion === "holiday" ? item.title : "" });
+      const text = `${words}${address && !item.known ? ` Это вам, ${address}.` : ""}`;
       const photo = await ownCard(occasion, item.title);
       try {
         if (!(photo && await sendCard(OWNER, photo, text))) await api.sendMessage({ chat_id: OWNER, text });
@@ -2850,11 +2858,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const listed = (list) => list.map((item, index) => `${index + 1}. ${item.title} — ${holidayDate(item)}${item.y ? " (один раз)" : ", каждый год"}`).join("\n");
     if (asked.list) {
       const off = saved?.cards === false ? "\n\nОткрытки сейчас выключены: «присылай открытки» — вернуть." : "";
-      if (!items.length) return say(turn, `Праздников в моём списке нет. Добавить — «добавь праздник Навруз 21 марта».${off}`);
-      return say(turn, `В эти дни я пришлю вам открытку — после девяти утра:\n${listed(items)}\n\nДобавить — «добавь праздник Ураза-байрам 20 марта 2027» (с годом — один раз, без года — каждый год). Убрать — «убери праздник 2». День рождения я помню отдельно.${off}`);
+      if (!items.length) return say(turn, `Праздников в моём списке нет: какие дни для вас праздник, знаете только вы, и сама я их не назначаю. Назовите — и в этот день пришлю открытку: «добавь праздник Ураза-байрам 20 марта 2027» (с годом — один раз) или «добавь праздник Навруз 21 марта» (каждый год). День рождения и круглые дни нашего знакомства я помню сама.${off}`);
+      return say(turn, `В эти дни я пришлю вам открытку — после девяти утра:\n${listed(items)}\n\nДобавить — «добавь праздник Ураза-байрам 20 марта 2027» (с годом — один раз, без года — каждый год). Убрать — «убери праздник 2». День рождения и круглые дни нашего знакомства я помню сама.${off}`);
     }
     if (asked.cards != null) {
-      const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), cards: asked.cards, at: now() })).then(() => true).catch(() => false);
+      const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), cards: asked.cards, at: now() })).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, asked.cards ? "Хорошо, хозяин: в праздники снова пришлю открытку." : "Хорошо, хозяин: сама открыток к праздникам не присылаю. По просьбе — «нарисуй открытку» — всегда.");
     }
@@ -2863,14 +2871,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const same = (item) => item.title.toLowerCase() === asked.add.title.toLowerCase();
       if (!items.some(same) && items.length >= HOLIDAYS_MAX) return say(turn, `В списке уже ${items.length} праздников — это предел. Лишний можно убрать: «убери праздник 3».`);
       const next = [...items.filter(item => !same(item)), asked.add].sort((a, b) => a.m - b.m || a.d - b.d);
-      const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: next, at: now() })).then(() => true).catch(() => false);
+      const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: next, at: now() })).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, `Запомнила, хозяин: ${asked.add.title} — ${holidayDate(asked.add)}${asked.add.y ? ", один раз" : ", каждый год"}. В этот день пришлю открытку.`);
     }
     const index = typeof asked.drop === "number" ? asked.drop - 1 : items.findIndex(item => item.title.toLowerCase().replace(/ё/gu, "е") === asked.drop);
     const gone = items[index];
     if (!gone) return say(turn, `Такого праздника в списке нет.${items.length ? `\n${listed(items)}` : ""}`);
-    const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: items.filter((_, at) => at !== index), at: now() })).then(() => true).catch(() => false);
+    const kept = await store.update(HOLIDAYS_KEY, (before) => ({ ...(before && typeof before === "object" ? before : {}), items: items.filter((_, at) => at !== index), at: now() })).catch(() => false);
     if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
     return say(turn, `Убрала: ${gone.title} (${holidayDate(gone)}).`);
   }
@@ -2910,7 +2918,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Хозяин наедине просит откровенное — запрос идёт как есть; безобидному после отказа
     // мастерской можно дать вторую попытку с припиской «без откровенного».
     const asIs = free && Boolean(subject.text && drawRefusal(subject.text, { free: false }));
-    const got = await draw.paint(wish, { translate: !subject.prompt && !subject.look, seed: Math.floor(random() * 1_000_000), free, asIs });
+    // У открытки описание готовое и безобидное: после ложного отказа фильтра ей можно к запасным художникам.
+    const got = await draw.paint(wish, { translate: !subject.prompt && !subject.look, seed: Math.floor(random() * 1_000_000), free: free || Boolean(subject.card), asIs });
     if (!got.ok) {
       if (got.code === "resting" || got.code === "limit" || got.code === "auth") {
         const why = got.code === "resting" ? got.why : got.code;
@@ -4820,7 +4829,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     await store.update(CHATS_KEY, (before) => {
       const items = Array.isArray(before?.items) ? before.items.filter(item => item && item.id != null) : [];
       const found = items.find(item => String(item.id) === id);
-      if (found && !patch && (!title || found.title === title)) return before;
+      if (found && !patch && (!title || found.title === title)) return null;
       const entry = { ...(found ?? { id: chat.id, since: now(), role: "member" }), type: chat.type ?? found?.type ?? "", ...(title ? { title } : {}), ...fields };
       return { items: [...items.filter(item => String(item.id) !== id), entry].slice(-CHATS_MAX), at: now() };
     });
@@ -4833,16 +4842,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!store.available) return false;
     await store.update(CHATS_KEY, (before) => {
       const items = Array.isArray(before?.items) ? before.items : [];
-      if (!items.some(item => String(item?.id) === String(chatId))) return before;
+      if (!items.some(item => String(item?.id) === String(chatId))) return null;
       return { items: items.filter(item => String(item?.id) !== String(chatId)), at: now() };
     });
     return true;
   }
 
   /** Всё рабочее об ушедшем чате: настройки, память чата, отложенное в него. Цитаты, счёт и пары остаются. */
-  const CHAT_LEFTOVERS = ["heart:chat:", LOG_PREFIX, "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:trace:", "heart:daysum:"];
+  // Рабочее о чате лежит под ключами двух видов: «…:<чат>» и «…:<чат>:<ещё что-то>»
+  // (память чата — по сообщению, следы и намеренное молчание — по человеку, столы игр —
+  // по сообщению). Вторые убираются семейством; двоеточие после номера обязательно,
+  // иначе чат -10 унёс бы с собой и чат -100.
+  const CHAT_KEYS = ["heart:chat:", "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:daysum:", "heart:game:"];
+  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX];
   async function forgetChat(chatId) {
-    for (const prefix of CHAT_LEFTOVERS) await store.remove(`${prefix}${chatId}`).catch(() => false);
+    for (const prefix of CHAT_KEYS) await store.remove(`${prefix}${chatId}`).catch(() => false);
+    // Отрицательный срок — «всё, что есть», включая записанное в эту же секунду.
+    for (const prefix of CHAT_FAMILIES) await store.sweep(`${prefix}${chatId}:`, -DAY).catch(() => false);
     await reminders.dropWhere(item => String(item.chatId) === String(chatId)).catch(() => null);
     await dropChat(chatId).catch(() => false);
   }
@@ -4919,6 +4935,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return { ok: true, action: "demoted" };
     }
     return { ok: true, action: joined ? "joined" : "noted" };
+  }
+
+  /** Строка статуса: сколько чатов в её списке и скольким она напоминает о намазе. */
+  async function roundsLine() {
+    const items = await chatList().catch(() => []);
+    const admin = items.filter(item => item.role === "admin").length;
+    const subs = Object.keys(((await store.get(PRAYER_KEY).catch(() => null)) ?? {}).subs ?? {}).length;
+    const chatsText = items.length ? `в списке ${items.length} ${plural(items.length, "чат", "чата", "чатов")}${admin ? `, админ в ${admin}` : ""}` : "список чатов пока пуст";
+    return `${chatsText}; о намазе напоминаю ${subs ? `${subs} ${plural(subs, "человеку", "людям", "людям")}` : "— никому"}`;
   }
 
   /** «В каких ты чатах?» — хозяину, в личке: список с ролями. */

@@ -90,6 +90,9 @@ test("день рождения: к поздравлению — открытк�
   assert.match(photos()[0].caption, /^🎂 С днём рождения.*Пусть этот год будет добрым — а я буду рядом\.$/u);
   assert.equal(String(photos()[0].chat_id), "5");
   assert.doesNotMatch(last(), /С днём рождения/u, "вторым сообщением слова не повторяются");
+  // Открытка — из дневной нормы рисунков человека: в этот день ему осталось четыре, не пять.
+  const drawn = [...sdk().kv.entries()].filter(([key]) => /^heart:drawn:.*:5$/u.test(key)).map(([, value]) => JSON.parse(value).n);
+  assert.deepEqual(drawn, [1]);
 
   // Через год мастерская не отвечает: поздравление — словами.
   sdk().sourceReplies.length = 0;
@@ -132,14 +135,21 @@ test("праздники хозяина: список словами; в сам 
   assert.deepEqual([parseHoliday("убери праздник 2"), parseHoliday("убери праздник Навруз")], [{ drop: 2 }, { drop: "навруз" }]);
   assert.deepEqual([parseHoliday("не присылай открытки"), parseHoliday("присылай открытки")], [{ cards: false }, { cards: true }]);
   for (const said of ["скоро праздники", "люблю праздники", "с праздником", "какой сегодня праздник", "добавь соли", "убери за собой"]) assert.equal(parseHoliday(said), null, said);
-  assert.deepEqual(holidaysOf(null), [{ d: 1, m: 1, title: "Новый год" }]);
+  assert.deepEqual(holidaysOf(null), [], "сама она праздников не назначает");
 
   reset();
   source("flux-1-schnell", image());
   let at = Date.parse("2026-11-18T09:00:00Z");
   const h = heart({ ...ON, GREET: true, TIME_ZONE: "Europe/Moscow" }, { now: () => at });
   await h.onMessage(own("праздники"), KEY);
-  assert.match(last(OWNER), /^В эти дни я пришлю вам открытку — после девяти утра:\n1\. Новый год — 1 января, каждый год\n/u);
+  assert.match(last(OWNER), /^Праздников в моём списке нет: какие дни для вас праздник, знаете только вы, и сама я их не назначаю\./u);
+  // Пустой список — в Новый год она сама ничего не шлёт.
+  at = Date.parse("2026-01-01T07:00:00Z");
+  await h.tick({});
+  assert.equal(photos().length, 0);
+  at = Date.parse("2026-11-18T09:00:00Z");
+  await h.onMessage(own("добавь праздник Новый год 1 января"), KEY);
+  assert.equal(last(OWNER), "Запомнила, хозяин: Новый год — 1 января, каждый год. В этот день пришлю открытку.");
   await h.onMessage(own("добавь праздник Ураза-байрам 20 марта 2027"), KEY);
   assert.equal(last(OWNER), "Запомнила, хозяин: Ураза-байрам — 20 марта 2027, один раз. В этот день пришлю открытку.");
   await h.onMessage(own("добавь праздник Навруз 21 марта"), KEY);
@@ -196,4 +206,29 @@ test("праздники хозяина: список словами; в сам 
   assert.match(last(OWNER), /^Такого праздника в списке нет\./u);
   assert.equal(JSON.parse(sdk().kv.get(HOLIDAYS_KEY)).cards, false);
   assert.equal(chats().length, 0);
+});
+
+test("круглый день знакомства: хозяину — открытка со строкой о дне, один раз; обычный день — ничего", async () => {
+  reset();
+  source("flux-1-schnell", image());
+  let at = Date.parse("2026-08-06T09:00:00Z");
+  const h = heart({ ...ON, GREET: true, TIME_ZONE: "Europe/Moscow" }, { now: () => at });
+  await h.onMessage(own("привет"), KEY);
+  const cards = () => photos().filter(item => String(item.chat_id) === String(OWNER));
+  at = Date.parse("2026-11-13T09:00:00Z"); // 99-й день
+  await h.tick({});
+  assert.equal(cards().length, 0);
+  at = Date.parse("2026-11-14T09:00:00Z"); // сотый
+  await h.tick({});
+  assert.equal(cards().length, 1);
+  assert.equal(prompts().at(-1), OCCASIONS.known.prompt);
+  assert.ok(pool("+открытка:знакомство").map(line => `Сегодня 100-й день, как мы знакомы. ${line}`).includes(cards()[0].caption), cards()[0].caption);
+  at += 3 * 3_600_000;
+  await h.tick({});
+  assert.equal(cards().length, 1, "в тот же день — один раз");
+  at = Date.parse("2027-08-06T09:00:00Z"); // ровно год
+  await h.tick({});
+  assert.equal(cards().length, 2);
+  assert.match(cards()[1].caption, /^Сегодня ровно год, как мы знакомы\. /u);
+  assert.equal(chats().length, 0, "модель не тратится");
 });

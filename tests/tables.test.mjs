@@ -4,7 +4,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { heart, message, group, reset, sdk, source, calls, toChat, last, reactions, chats, KEY } from "./fixtures/kit.mjs";
+import { heart, message, group, reset, sdk, source, calls, toChat, last, reactions, chats, OWNER, KEY } from "./fixtures/kit.mjs";
 
 const { parseParty } = await import("../tgcloud/lib/party.js");
 const { BEASTS, beastNamed, beastsLeft, bestTrait, MAX_ASK, HIDE_ASKS, QUIZ_ROUNDS } = await import("../tgcloud/lib/tables.js");
@@ -407,6 +407,12 @@ test("кнопка «Ещё»: под вопросом дня и под карт
   at += 5000;
   await press(h, "q", { messageId: 1, prefix: "a:" });
   assert.equal(answers().at(-1).text, "Меня попросили помолчать.");
+  // Хозяину кнопка отвечает и в тишине, и дважды подряд: к нему ограничений нет.
+  const quiet = toChat(-10).length;
+  await press(h, "q", { id: OWNER, name: "Хозяин", messageId: 1, prefix: "a:" });
+  await press(h, "q", { id: OWNER, name: "Хозяин", messageId: 1, prefix: "a:" });
+  assert.equal(toChat(-10).length, quiet + 2);
+  assert.equal(answers().at(-1).text, undefined);
   // Репетиция ничего не трогает.
   assert.deepEqual(await h.onCallback({ id: "x", from: { id: 1 }, data: "a:q" }, { testRun: true }), { ok: true, route: "again", side_effects: "none" });
 });

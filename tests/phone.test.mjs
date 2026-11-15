@@ -660,19 +660,19 @@ test("вечный цикл: публикует сразу, прошлые не�
 test("секретарь: новые обработчики репетируются перед публикацией; «events» знает, что событие уже слушается", { skip }, () => {
   const box = sandbox();
   try {
-    for (const name of ["callback_query", "business_connection", "business_message"]) writeFileSync(join(box.seed, `tgcloud/handlers/${name}.js`), "export default async function () {}\n");
+    for (const name of ["callback_query", "business_connection", "business_message", "my_chat_member"]) writeFileSync(join(box.seed, `tgcloud/handlers/${name}.js`), "export default async function () {}\n");
     box.commit("1.1.0");
-    const SUBSCRIBED = { FAKE_UPDATES: "message, channel_post, callback_query, business_connection, business_message" };
+    const SUBSCRIBED = { FAKE_UPDATES: "message, channel_post, callback_query, business_connection, business_message, my_chat_member" };
     const first = box.run("once", SUBSCRIBED);
     assert.equal(first.code, 0, first.out);
     assert.match(first.out, /✓ Сборка 1\.1\.0 опубликована/u);
     assert.doesNotMatch(first.out, /не подписан/u);
     assert.deepEqual(names(box.cli()), [
-      "run:handlers/message", "run:handlers/channel_post", "run:handlers/callback_query", "run:handlers/business_connection", "run:handlers/business_message",
+      "run:handlers/message", "run:handlers/channel_post", "run:handlers/callback_query", "run:handlers/business_connection", "run:handlers/business_message", "run:handlers/my_chat_member",
       "fetch", "push handlers", "migrate --yes", "webhook", "run:handlers/message:deployed",
     ]);
     // Репетиция — без побочных действий: обработчикам говорится, что это проба.
-    for (const call of box.cli().filter(item => /business_/u.test(item.args[1] ?? ""))) assert.ok(call.args.includes("{ testRun: true }"), call.args.join(" "));
+    for (const call of box.cli().filter(item => /business_|my_chat_member/u.test(item.args[1] ?? ""))) assert.ok(call.args.includes("{ testRun: true }"), call.args.join(" "));
     // Письмо секретарю на репетиции упало — публикации нет, бот на прежней сборке.
     box.commit("1.2.0");
     const broken = box.run("once", { FAKE_FAIL: "run:handlers/business_message" });
@@ -682,9 +682,9 @@ test("секретарь: новые обработчики репетируют
     // Опубликовано, но подписка бота не обновилась: владелец узнаёт, каких событий нет.
     box.commit("1.3.0");
     const deaf = box.run("once", { FAKE_UPDATES: "message,channel_post,callback_query" });
-    assert.match(deaf.out, /⚠ Бот не подписан на события: business_connection business_message — то, что на них держится/u);
+    assert.match(deaf.out, /⚠ Бот не подписан на события: business_connection business_message my_chat_member — то, что на них держится/u);
     assert.match(box.state("published"), /\n1\.3\.0\n/u, "сборка при этом опубликована");
-    assert.ok(box.curl().some(line => /не подписан на события: business_connection business_message/u.test(decodeURIComponent(line))), "и в Telegram владельцу — тоже");
+    assert.ok(box.curl().some(line => /не подписан на события: business_connection business_message my_chat_member/u.test(decodeURIComponent(line))), "и в Telegram владельцу — тоже");
     // Строки о подписке в ответе нет — проверять нечего, тревоги нет.
     box.commit("1.4.0");
     const blind = box.run("once", { FAKE_UPDATES: " " });
