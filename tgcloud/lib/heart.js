@@ -34,7 +34,8 @@ import { createPhrasebook, partOfDay, fill } from "./phrasebook.js";
 import { accentOf, accentInfo, parseAccent, randomAccent, keyboard as accentKeyboard, garnish, likesAnime } from "./accents.js";
 import { moodOf as feelingNow, behaviourOf } from "./mood.js";
 import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.js";
-import { fajrOn, parseFajr, FAJR_ANGLE, FAJR_METHODS } from "./fajr.js";
+import { fajrOn, parseFajr, prayersOn, ishaRule, FAJR_METHODS, FAJR_ANGLE } from "./fajr.js";
+import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
 import {
   parseSecretary, canReply, langOf, noticeEnglish, noticeRussian, stateOf as secretaryStateOf, notePerson, toldKey,
   isUrgent, isRelay, quoteOf, ackRussian, ackEnglish, urgentKey, ACKS_MAX, URGENT_EXCERPT,
@@ -2063,13 +2064,196 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (asked.angle != null) {
       if (!mine || !turn.isPrivate) return say(turn, "Угол для расчёта выбирает хозяин — и в личке.");
       const got = await timeFor(asked.angle);
-      const kept = await store.set(GREET_KEY, { ...saved, angle: asked.angle, ...(got.spot ? { spot: got.spot } : {}), at: now() }).then(() => true).catch(() => false);
+      const kept = await store.set(GREET_KEY, { ...saved, angle: asked.angle, method: asked.method ?? "", ...(got.spot ? { spot: got.spot } : {}), at: now() }).then(() => true).catch(() => false);
       if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
       return say(turn, `Хорошо, хозяин: фаджр считаю по углу ${named(asked.angle)}.${got.spot ? ` ${got.text}` : ""}`);
     }
     const got = await timeFor(angle, { tomorrow: asked.tomorrow });
     if (mine && got.spot && saved?.spot?.city !== got.spot.city) await store.set(GREET_KEY, { ...saved, spot: got.spot }).catch(() => false);
     return say(turn, got.text);
+  }
+
+  // ── намазы: все времена и напоминание ────────────────────────────────────
+  /** Правила расчёта — общие, их задаёт хозяин: угол фаджра, метод (от него иша), школа для асра. */
+  function prayerRules(saved) {
+    const angle = greetSettings(saved).angle ?? FAJR_ANGLE;
+    return { angle, ...ishaRule({ method: String(saved?.method ?? ""), angle }), asr: Number(saved?.asr) === 2 ? 2 : 1 };
+  }
+  const prayerRulesLine = (rules) => `фаджр — ${String(rules.angle).replace(".", ",")}°, иша — ${rules.ishaMinutes ? `через ${rules.ishaMinutes} мин после магриба` : `${String(rules.isha).replace(".", ",")}°`}, аср — ${rules.asr === 2 ? "две тени (ханафитская школа)" : "одна тень"}`;
+  /** Времена на день по часам человека: `offset` — 0 сегодня, 1 завтра, −1 вчера. */
+  function prayerDay(spot, zone, rules, offset = 0, at = now()) {
+    const day = localParts(at + offset * DAY, zone);
+    const times = prayersOn({ y: day.y, m: day.m, d: day.d, latitude: spot.lat, longitude: spot.lon, ...rules });
+    return times ? { times, mark: `${day.y}-${String(day.m).padStart(2, "0")}-${String(day.d).padStart(2, "0")}` } : null;
+  }
+  /** Ближайший намаз после `at`: `{ key, time }` — из сегодняшних, иначе завтрашний фаджр. */
+  function nextPrayer(spot, zone, rules, at = now()) {
+    for (const offset of [-1, 0, 1]) {
+      const day = prayerDay(spot, zone, rules, offset, at);
+      for (const key of PRAYER_KEYS) if (day?.times[key] != null && day.times[key] > at) return { key, time: day.times[key] };
+    }
+    return null;
+  }
+
+  /**
+   * «Намазы на сегодня», «когда магриб», «следующий намаз», «напоминай о намазе
+   * за 10 минут». Времена — по солнцу для города человека; правила расчёта общие.
+   * Напоминание — в личку, каждому, кто попросил; школу для асра выбирает хозяин.
+   */
+  async function prayerWords(turn, prompt) {
+    const asked = parsePrayer(prompt);
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Посчитала бы время намаза — репетиция.");
+    const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
+    const mine = owner(turn.actorId);
+    const rules = prayerRules(saved);
+    const note = "Это мой расчёт по солнцу, а не расписание мечети: расхождение в несколько минут — обычное дело, и в сомнении верить надо ей.";
+    if (asked.how) {
+      return say(turn, `Времена намаза считаю сама, по солнцу, для ${you(turn, "вашего", "твоего")} города: ${prayerRulesLine(rules)}. Зухр — истинный полдень, магриб — закат. ${note} Правила меняет хозяин: «считай фаджр по ДУМ», «аср по ханафи».`);
+    }
+    if (asked.asr) {
+      if (!mine || !turn.isPrivate) return say(turn, "Школу для расчёта асра выбирает хозяин — и в личке.");
+      const kept = await store.set(GREET_KEY, { ...saved, asr: asked.asr, at: now() }).then(() => true).catch(() => false);
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      return say(turn, asked.asr === 2 ? "Хорошо, хозяин: аср считаю по ханафитской школе — когда тень длиннее полуденной на две высоты предмета." : "Хорошо, хозяин: аср считаю, как большинство школ, — когда тень длиннее полуденной на одну высоту предмета.");
+    }
+    if (asked.remind === false) {
+      let had = false;
+      await store.update(PRAYER_KEY, (before) => {
+        const subs = before?.subs && typeof before.subs === "object" ? before.subs : {};
+        had = Boolean(subs[String(turn.actorId)]);
+        if (!had) return before;
+        const { [String(turn.actorId)]: _gone, ...rest } = subs;
+        return { subs: rest, at: now() };
+      }).catch(() => false);
+      return say(turn, had ? "Хорошо, о намазах больше не напоминаю. Вернуть — «напоминай о намазе»." : "Я и не напоминала. Включить — «напоминай о намазе за 10 минут».");
+    }
+    const spot = await spotOf(turn.manner?.settings, mine ? saved : null);
+    if (!spot) return say(turn, `Чтобы посчитать, мне нужен ${you(turn, "ваш", "твой")} город. ${you(turn, "Скажите", "Скажи")}: «я живу в Казани».`);
+    if (mine && saved?.spot?.city !== spot.city) await store.set(GREET_KEY, { ...saved, spot }).catch(() => false);
+    const zone = zoneOf(turn);
+    const today = prayerDay(spot, zone, rules, 0);
+    if (!today) return say(turn, `${spot.city}: в этот день там нет восхода или заката — по солнцу время намаза не посчитать.`);
+    const coming = nextPrayer(spot, zone, rules);
+
+    if (asked.remind != null) {
+      if (!turn.isPrivate) return say(turn, "О намазе напоминаю в личке: там — «напоминай о намазе за 10 минут».");
+      let full = false;
+      const kept = await store.update(PRAYER_KEY, (before) => {
+        const subs = before?.subs && typeof before.subs === "object" ? before.subs : {};
+        const id = String(turn.actorId);
+        full = !subs[id] && Object.keys(subs).length >= PRAYER_SUBS_MAX;
+        if (full) return before;
+        return { subs: { ...subs, [id]: { ...(subs[id] ?? {}), lead: asked.remind, city: spot.city, lat: spot.lat, lon: spot.lon, tz: zone, fails: 0, since: Number(subs[id]?.since) || now() } }, at: now() };
+      }).then(() => true).catch(() => false);
+      if (!kept) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+      if (full) return say(turn, "Напоминаний о намазе у меня уже слишком много: новое пока не возьму.");
+      const lead = asked.remind ? `за ${asked.remind} ${plural(asked.remind, "минуту", "минуты", "минут")}` : "в его время";
+      const near = coming ? ` Ближайший — ${prayerInfo(coming.key).title.toLowerCase()}, в ${localClock(coming.time, zone)}.` : "";
+      return say(turn, `Хорошо${mine ? ", хозяин" : ""}: о каждом намазе напомню ${lead} (${spot.city}).${near} Выключить — «не напоминай о намазе».`);
+    }
+    if (asked.next) {
+      if (!coming) return say(turn, "Ближайший намаз посчитать не вышло.");
+      // «Какой сейчас намаз»: время намаза, которое идёт, — последний наступивший.
+      const passed = PRAYER_KEYS.map(key => [key, today.times[key]]).filter(([, time]) => time != null && time <= now()).at(-1);
+      const current = passed ? ` Сейчас — время ${prayerInfo(passed[0]).gen}: с ${localClock(passed[1], zone)}.` : "";
+      return say(turn, `Следующий намаз — ${prayerInfo(coming.key).title.toLowerCase()}, в ${localClock(coming.time, zone)}: ${inWords(coming.time - now())}.${current}`);
+    }
+    if (asked.list) {
+      const day = asked.tomorrow ? prayerDay(spot, zone, rules, 1) : today;
+      if (!day) return say(turn, `${spot.city}: на завтра по солнцу время намаза не посчитать.`);
+      const lines = PRAYERS.map(item => `${item.title} — ${day.times[item.key] == null ? "не посчитать" : localClock(day.times[item.key], zone)}`);
+      const stretched = day.times.adjusted.fajr || day.times.adjusted.isha ? " Сейчас солнце там не опускается достаточно низко: фаджр и иша взяты долей ночи — в такие дни расписания расходятся сильнее." : "";
+      return say(turn, `Намазы на ${asked.tomorrow ? "завтра" : "сегодня"} (${spot.city}):\n${lines.join("\n")}\n\nРасчёт: ${prayerRulesLine(rules)}.${stretched} ${note}`);
+    }
+    const info = prayerInfo(asked.one);
+    const time = today.times[asked.one];
+    if (time == null) return say(turn, `${info.title}: сегодня в городе ${spot.city} по солнцу не посчитать.`);
+    if (asked.left) {
+      const ahead = time > now() ? time : prayerDay(spot, zone, rules, 1)?.times[asked.one];
+      if (ahead == null) return say(turn, `${info.title}: на завтра по солнцу не посчитать.`);
+      return say(turn, `До ${info.gen} — ${inWords(ahead - now()).replace(/^через\s+/u, "")}: ${ahead === time ? "сегодня" : "завтра"} в ${localClock(ahead, zone)} (${spot.city}).`);
+    }
+    if (asked.tomorrow) {
+      const next = prayerDay(spot, zone, rules, 1)?.times[asked.one];
+      return say(turn, next == null ? `${info.title}: на завтра по солнцу не посчитать.` : `${info.title} завтра — в ${localClock(next, zone)} (${spot.city}).`);
+    }
+    const later = time <= now() ? prayerDay(spot, zone, rules, 1)?.times[asked.one] : null;
+    return say(turn, later != null
+      ? `${info.title} сегодня ${asked.one === "isha" ? "была" : "был"} в ${localClock(time, zone)}; завтра — в ${localClock(later, zone)} (${spot.city}).`
+      : `${info.title} сегодня — в ${localClock(time, zone)} (${spot.city}): ${inWords(time - now())}.`);
+  }
+
+  /**
+   * Напомнить о намазе тем, кто просил. Зовётся при каждом пробуждении: времена
+   * считаются заново, поэтому пропущенный удар будильника ничего не ломает.
+   * Сказанное отмечается до отправки: два пробуждения разом не скажут дважды.
+   */
+  async function prayerBell() {
+    if (!store.available) return 0;
+    const state = await store.get(PRAYER_KEY).catch(() => null);
+    const subs = state?.subs && typeof state.subs === "object" ? Object.entries(state.subs) : [];
+    if (!subs.length) return 0;
+    const rules = prayerRules((await store.get(GREET_KEY).catch(() => null)) ?? {});
+    const at = now();
+    let sent = 0;
+    for (const [userId, sub] of subs) {
+      if (!Number.isFinite(Number(sub?.lat)) || !Number.isFinite(Number(sub?.lon))) continue;
+      const zone = validTimeZone(sub.tz) ? sub.tz : TZ;
+      const lead = Math.max(0, Math.min(60, Number(sub.lead) || 0)) * 60_000;
+      let due = null;
+      for (const offset of [-1, 0, 1]) {
+        const day = prayerDay(sub, zone, rules, offset, at);
+        if (!day) continue;
+        for (const key of PRAYER_KEYS) {
+          const time = day.times[key];
+          if (time == null || at < time - lead || at >= time + PRAYER_LATE_MS || sub.said?.[key] === day.mark) continue;
+          due = { key, time, mark: day.mark };
+        }
+      }
+      if (!due) continue;
+      // Отметить за собой: кто первый записал — тот и говорит.
+      let claimed = false;
+      await store.update(PRAYER_KEY, (before) => {
+        const entry = before?.subs?.[userId];
+        claimed = Boolean(entry) && entry.said?.[due.key] !== due.mark;
+        if (!claimed) return before;
+        return { ...before, subs: { ...before.subs, [userId]: { ...entry, said: { ...(entry.said ?? {}), [due.key]: due.mark } } }, at };
+      }).catch(() => { claimed = false; });
+      if (!claimed) continue;
+      // Город мог смениться: тогда времена уже не те — пересчитать место и подождать следующего удара.
+      const settings = (await personal.settings(userId).catch(() => null)) ?? {};
+      const city = String(settings.city ?? "").trim();
+      if (city && city !== sub.city) {
+        const spot = await spotOf(settings).catch(() => null);
+        if (spot) {
+          await store.update(PRAYER_KEY, (before) => (before?.subs?.[userId] ? { ...before, subs: { ...before.subs, [userId]: { ...before.subs[userId], city: spot.city, lat: spot.lat, lon: spot.lon, ...(validTimeZone(settings.tz) ? { tz: settings.tz } : {}), said: {} } } } : before)).catch(() => false);
+          continue;
+        }
+      }
+      const manner = await mannerFor(userId, { dry: true }).catch(() => null);
+      const turn = { actorId: Number(userId), chatId: Number(userId), isPrivate: true, manner, seen: null, extra: {} };
+      const info = prayerInfo(due.key);
+      const clockAt = localClock(due.time, zone);
+      const vars = { "намаз": info.title.toLowerCase(), "намаза": info.gen, "время": clockAt, "через": inWords(due.time - at) };
+      const text = at < due.time - 30_000
+        ? (PHRASES ? book.pick("+намаз:скоро", voiceCtx(turn, vars)) : null) ?? `${vars["через"][0].toUpperCase()}${vars["через"].slice(1)} — ${vars["намаз"]}, в ${clockAt}.`
+        : (PHRASES ? book.pick("+намаз:время", voiceCtx(turn, vars)) : null) ?? `Время ${vars["намаза"]} — ${clockAt}.`;
+      let delivered = true;
+      try { await api.sendMessage({ chat_id: Number(userId), text }); } catch { delivered = false; }
+      if (delivered) { sent += 1; pulse.bump("prayers"); }
+      // Трижды подряд не дошло — человек закрыл личку: напоминание снимается.
+      if (!delivered || Number(sub.fails) > 0) {
+        await store.update(PRAYER_KEY, (before) => {
+          const entry = before?.subs?.[userId];
+          if (!entry) return before;
+          const fails = delivered ? 0 : (Number(entry.fails) || 0) + 1;
+          if (fails >= 3) { const { [userId]: _gone, ...rest } = before.subs; return { ...before, subs: rest }; }
+          return { ...before, subs: { ...before.subs, [userId]: { ...entry, fails } } };
+        }).catch(() => false);
+      }
+    }
+    return sent;
   }
 
   /**
@@ -3209,6 +3393,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Напоминания звонят при любом пробуждении: от будильника или от сообщения.
     try { await ring(); } catch { /* следующее пробуждение повторит */ }
     try { await greetOwner(); } catch { /* доброе утро подождёт до завтра */ }
+    try { await prayerBell(); } catch { /* следующее пробуждение посчитает заново */ }
     if (!selfReports) return;
     if (now() - digestCheckedAt > 10 * 60_000) {
       digestCheckedAt = now();
@@ -4167,7 +4352,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
