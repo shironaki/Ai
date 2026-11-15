@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseIntent, normalize, INTENTS, ABILITY_OF, SPOKEN_HELP } from "../tgcloud/lib/intents.js";
+import { parseIntent, normalize, INTENTS, ABILITY_OF } from "../tgcloud/lib/intents.js";
 
 test("слова, а не команды: одна просьба — одно намерение", () => {
   assert.deepEqual(parseIntent("Запомни, что я люблю кофе без сахара"), {
@@ -61,5 +61,5 @@ test("список закрыт: каждое намерение либо дей
   const handled = new Set([...Object.keys(ABILITY_OF), ...[...source.matchAll(/case "([a-z_]+)":/gu)].map(match => match[1])]);
   for (const tool of Object.values(ABILITY_OF)) assert.equal(typeof tool, "string");
   for (const intent of INTENTS) assert.ok(handled.has(intent), `нет обработчика: ${intent}`);
-  assert.equal(SPOKEN_HELP.length >= 5, true);
+  // Что из этого показывается человеку — в SKILLS.txt; сверка с кодом — tests/skills.test.mjs.
 });

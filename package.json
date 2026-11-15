@@ -9,6 +9,7 @@
     "check": "node scripts/check-syntax.mjs",
     "test": "node --test --test-timeout=120000",
     "phrases": "node scripts/phrases.mjs",
+    "skills": "node scripts/skills.mjs",
     "ci": "npm run check && npm test"
   }
 }

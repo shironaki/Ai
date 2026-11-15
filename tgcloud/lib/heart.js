@@ -10,7 +10,9 @@ import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
 import { createPersonal, addressRequest, lengthRequest, formRequest } from "./personal.js";
 import { createMemory } from "./memory.js";
-import { parseIntent, normalize, ABILITY_OF, SPOKEN_HELP, INTENTS } from "./intents.js";
+import { parseIntent, normalize, ABILITY_OF, INTENTS } from "./intents.js";
+import { parseSkillAsk, findSkill, shown as skillShown, skillsList, skillText } from "./skills.js";
+import { SKILLS } from "./data/skills.js";
 import { createBrains } from "./brains.js";
 import { createLessons } from "./lessons.js";
 import { createPulse } from "./pulse.js";
@@ -605,29 +607,30 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /**
-   * Список того, что сердце действительно делает. Составляется здесь, а не
-   * моделью: на вопрос о помощи модель однажды перечислила /settings и
-   * /feedback, которых нет, — и человек пошёл их вводить.
+   * Список того, что сердце действительно делает. Берётся из документа SKILLS.txt
+   * (собран в data/skills.js), а не у модели: на вопрос о помощи модель однажды
+   * перечислила /settings и /feedback, которых нет, — и человек пошёл их вводить.
+   *
+   * Без слова — разделы по одной строке; со словом («игры») — один раздел целиком.
+   * Раздел, который этому человеку не положен (хозяйский — чужому), не открывается:
+   * вместо него идёт общий список.
    */
-  function helpLines(turn) {
-    const lines = [
-      `${NAME}. Что я умею:`,
-      "",
-      `• поговорить — ${you(turn, "пишите", "пиши")} как есть, без команд;`,
-      turn.inGroup ? "• в группе — позвать по имени, @упоминанием или ответом на моё сообщение;" : "",
-      "",
-      "Сказать словами — я пойму:",
-      ...SPOKEN_HELP,
-    ];
-    if (draw.available) lines.push("• рисование — «нарисуй кота в шляпе», «нарисуй себя в шляпе», «нарисуй ещё»; альбом — «мои рисунки», «повтори рисунок 2»;");
-    if (owner(turn.actorId) && turn.isPrivate) {
-      lines.push("", "Для хозяина: «статус» (он же /status), «покажи уроки», «прими урок 3», «отклони урок 3», «откати уроки за сегодня», «резервная копия».", "Словарь: на «фраза» отвечай «ответ», «мои фразы», «забудь фразу 2», «что ты не поняла?».", "Пишу первой: «когда ты пишешь первой?», «желай доброго утра на фаджр» или «…в 7:30», «считай фаджр по ДУМ», «угол фаджра 16», «не пиши первой». Мой дневник — «покажи свой дневник».");
-      if (SECRETARY) lines.push("Секретарь: «секретарь» (что с ним и как подключить), «отвечай за меня», «отвечай за меня до 18:00: я на встрече», «кто мне писал?», «я тут».");
-    }
-    if (abilities.open()) {
-      lines.push("", `${SISTER} рядом: профиль, задания, предупреждения и её игры — ${you(turn, "скажите", "скажи")} словами, я передам.`);
-    }
-    return lines.filter((line, index, all) => line !== "" || all[index - 1] !== "").join("\n");
+  function helpLines(turn, topic = "") {
+    const formal = you(turn, true, false);
+    const flags = {
+      "хозяин": owner(turn.actorId) && turn.isPrivate, "группа": turn.inGroup, "личка": turn.isPrivate,
+      "краски": draw.available, "секретарь": SECRETARY, "сестра": abilities.open(),
+      setting: (name) => config[name] !== false,
+    };
+    const section = topic ? findSkill(SKILLS, topic) : null;
+    if (section && skillShown(section.tags, flags)) return skillText(section, flags, { formal });
+    return skillsList(SKILLS, flags, { name: NAME, formal });
+  }
+
+  /** «Что ты умеешь: игры», «помощь по напоминаниям» — один раздел. Просто «что ты умеешь» — намерение help. */
+  async function skillWords(turn, prompt) {
+    const topic = parseSkillAsk(prompt, SKILLS);
+    return topic ? say(turn, helpLines(turn, topic)) : null;
   }
 
   /**
@@ -6304,7 +6307,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const managed = command.name === "start" ? sub.match(/^bizchat(-?\d+)$/u) : null;
       if (managed && SECRETARY && owner(actorId) && turn.isPrivate) return ruled(await secretaryWords(turn, "секретарь", { chatId: managed[1] }));
       if (command.name === "start") return ruled(await greeting(turn));
-      if (command.name === "help") return ruled(await say(turn, helpLines(turn)));
+      if (command.name === "help") return ruled(await say(turn, helpLines(turn, command.rest)));
       if (["status", "aidiag", "диагностика"].includes(command.name)) return diagnostic(turn);
       if (/^(?:relationship|отношени[ея]|отношения)$/u.test(command.name)) return ruled(await answerRelationship(turn));
       if (command.name !== "ai") {
@@ -6470,7 +6473,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt))) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt)) || parseSkillAsk(prompt, SKILLS)) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -6521,7 +6524,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await stickerWords(turn, prompt) ?? await translateWords(turn, prompt, message) ?? await adviceWords(turn, prompt) ?? await wikiDayWords(turn, prompt) ?? await searchWords(turn, prompt) ?? await examWords(turn, prompt) ?? await thoughtsWords(turn, prompt) ?? await sceneWords(turn, prompt) ?? await partnerWords(turn, prompt) ?? await newsWords(turn, prompt) ?? await sureWords(turn, prompt, message) ?? await proposeWords(turn, prompt) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await skillWords(turn, prompt) ?? await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await stickerWords(turn, prompt) ?? await translateWords(turn, prompt, message) ?? await adviceWords(turn, prompt) ?? await wikiDayWords(turn, prompt) ?? await searchWords(turn, prompt) ?? await examWords(turn, prompt) ?? await thoughtsWords(turn, prompt) ?? await sceneWords(turn, prompt) ?? await partnerWords(turn, prompt) ?? await newsWords(turn, prompt) ?? await sureWords(turn, prompt, message) ?? await proposeWords(turn, prompt) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
