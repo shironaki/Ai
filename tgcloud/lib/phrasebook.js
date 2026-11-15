@@ -12,7 +12,7 @@
  * «узнала не то» стоит доверия.
  */
 import { SECTIONS } from "./data/phrases.js";
-import { EXCLUSIVE, clean } from "./catalogue.js";
+import { EXCLUSIVES, clean } from "./catalogue.js";
 
 export { TAGS, parseCatalogue, expandTrigger } from "./catalogue.js";
 
@@ -109,7 +109,11 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
                 : tag === "личка" ? ctx.isPrivate === true
                   : tag === "группа" ? ctx.isPrivate !== true
                     : tag === "флирт" ? ctx.flirt === true
-                      : tag === ctx.part);
+                      // Состояние: устала (лимит на исходе), задета грубостью, довольна добрым словом.
+                      : tag === "устала" ? ctx.tired === true
+                        : tag === "обижена" ? ctx.hurt === true
+                          : tag === "довольна" ? ctx.glad === true
+                            : tag === ctx.part);
 
   /** Одна строка темы под человека и час. `avoid` — что уже звучало: не повторяться. */
   function pick(name, ctx = {}, { avoid = "" } = {}) {
@@ -121,7 +125,7 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
       if (!tags.every(tag => fits(tag, ctx))) continue;
       const text = fill(body, ctx);
       if (text == null || !text) continue;
-      pool.push({ text, weight: 1 + tags.reduce((sum, tag) => sum + (WEIGHT[tag] ?? 3), 0), exclusive: tags.includes(EXCLUSIVE) });
+      pool.push({ text, weight: 1 + tags.reduce((sum, tag) => sum + (WEIGHT[tag] ?? 3), 0), exclusive: tags.some(tag => EXCLUSIVES.includes(tag)) });
     }
     if (pool.some(item => item.exclusive)) pool = pool.filter(item => item.exclusive);
     if (pool.length > 1 && avoid) pool = pool.filter(item => item.text !== avoid).length ? pool.filter(item => item.text !== avoid) : pool;

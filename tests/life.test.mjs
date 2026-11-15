@@ -18,13 +18,13 @@ const MODELS = { AI_MODELS: ["openai/gpt-oss-120b", "llama-3.3-70b-versatile"] }
 
 // ── не упираться в лимит ────────────────────────────────────────────────
 
-test("лимит: упёрлась в одну модель — думает следующей, и человек этого не замечает", async () => {
+test("лимит: упёрлась в одну модель — думает следующей; человек получает ответ", async () => {
   reset();
   let at = Date.UTC(2026, 10, 11, 9);
   const h = heart(MODELS, { now: () => at });
   sdk().fetchQueue.push(refuses(429, { code: "rate_limit_exceeded", headers: { "retry-after": "3600" } }), says("ответ запасной модели"));
   await h.onMessage(message("привет"), KEY);
-  assert.equal(last(), "ответ запасной модели");
+  assert.equal(last(), "ответ запасной модели\n\nЯ сегодня утомилась: дальше отвечу короче.", "лимит на час: ответ есть, и сказано, что устала");
   assert.deepEqual(chats().map(item => JSON.parse(item.options.body).model), ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]);
   assert.equal(toOwner().length, 1, "владелец узнал, что она думает запасной");
   assert.match(toOwner()[0].text, /запасной/);

@@ -450,7 +450,7 @@ test("тот же ключ — запасной мозг: адрес с ID ак�
   // Основная модель упёрлась в лимит — отвечает Cloudflare.
   sdk().fetchQueue.push(refuses(429, { code: "rate_limit_exceeded", headers: { "retry-after": "3600" } }), says("Отвечаю запасным мозгом."));
   await h.onMessage(message("объясни, почему небо синее, в двух словах"), KEY);
-  assert.equal(last(), "Отвечаю запасным мозгом.");
+  assert.equal(last(), "Отвечаю запасным мозгом.\n\nЯ сегодня утомилась: дальше отвечу короче.", "лимит на час — она говорит, что устала");
   const spare = chats().at(-1);
   assert.equal(spare.url, `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/v1/chat/completions`);
   assert.equal(spare.options.headers.Authorization, "Bearer cf-token_ABCDEFGH-1234567890xyz", "в заголовке — только токен");

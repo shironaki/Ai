@@ -694,7 +694,7 @@ test("лимит на исходе: владелец узнаёт заранее
   const h = heart();
   sdk().fetchQueue.push(says("ответ", { headers: { "x-ratelimit-remaining-requests": "40", "x-ratelimit-limit-requests": "1000" } }));
   await h.onMessage(message("расскажи что-нибудь"), KEY);
-  assert.equal(last(), "ответ");
+  assert.equal(last(), "ответ\n\nЯ сегодня утомилась: дальше отвечу короче.");
   assert.equal(toOwner().length, 1);
   assert.match(toOwner()[0].text, /лимит модели gpt-oss-20b на исходе: осталось 40 из 1000 запросов/);
 });

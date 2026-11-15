@@ -204,7 +204,7 @@ test("дневной лимит: одна весть в сутки — с при
   // Дневное окно у провайдера скользящее: ждать он просит пять минут, но лимит — дневной.
   sdk().fetchQueue.push(limit(300, TPD), says("ответ запасной"));
   await h.onMessage(message("расскажи что-нибудь"), KEY);
-  assert.equal(last(), "ответ запасной");
+  assert.equal(last(), "ответ запасной\n\nЯ сегодня утомилась: дальше отвечу короче.");
   assert.equal(toOwner().length, 1);
   assert.equal(toOwner()[0].text, [
     "ℹ️ Хозяин, к сведению — это не поломка",
@@ -339,7 +339,7 @@ test("все упёрлись, а в конце цепочки — мёртва�
   const asked = message("сколько планет в Солнечной системе?");
   await h.onMessage(asked, KEY);
   assert.deepEqual(models(), ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.3-70b-versatile"]);
-  assert.match(last(), /^Сейчас мне нечем думать: лимит модели вышел\. Вопрос я записала и отвечу сама, как только смогу — примерно после 12:20\.$/u);
+  assert.match(last(), /^Я выдохлась: мысли на сегодня кончились\. Вопрос я записала и отвечу сама, как только отдохну — примерно после 12:20\.$/u);
   assert.doesNotMatch(last(), /неполадка/u);
   assert.equal((await h.status()).queue, 1, "вопрос в очереди");
   const codes = alerts().map(item => item.text.split("\n").at(-1));
@@ -361,7 +361,7 @@ test("все упёрлись, а в конце цепочки — мёртва�
   const other = heart({ AI_MODELS: ["llama-3.3-70b-versatile"] }, { now: () => at });
   sdk().fetchQueue.push(limit(1800, TPD), says("ответ запасной"));
   await other.onMessage(message("расскажи что-нибудь"), KEY);
-  assert.equal(last(), "ответ запасной");
+  assert.equal(last(), "ответ запасной\n\nЯ сегодня утомилась: дальше отвечу короче.");
   at += 60_000;
   sdk().fetchQueue.push(refuses(404, { code: "model_not_found" }));
   await other.onMessage(message("а теперь расскажи другое", { id: 9 }), KEY);
@@ -551,7 +551,7 @@ test("«лимит на исходе» и «все модели упёрлись
     "━━━━━━━━━━━━━━━━━━━━",
     "Где: Модели",
     "Что: лимит модели gpt-oss-20b на исходе: осталось 40 из 1000 запросов до сброса",
-    "Что делать: Ничего: выйдет лимит — отвечу запасной моделью, а он вернётся сам.",
+    "Что делать: Ничего: людям я скажу, что устала, и отвечать им будут запасные модели; остаток основной берегу для вас. Лимит вернётся сам.",
     "Код: brains:low",
   ].join("\n"));
 

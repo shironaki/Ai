@@ -35,6 +35,7 @@ import { createMedia, parseMedia, captions, creditOf } from "./media.js";
 import { createPhrasebook, partOfDay, fill } from "./phrasebook.js";
 import { accentOf, accentInfo, parseAccent, randomAccent, keyboard as accentKeyboard, garnish, likesAnime } from "./accents.js";
 import { moodOf as feelingNow, behaviourOf } from "./mood.js";
+import { tire, tiredNow, runningLow, staminaLine, TIRED_KEY } from "./stamina.js";
 import { parseGreet, greetSettings, GREET_KEY, GREET_WINDOW_MS } from "./greet.js";
 import { fajrOn, parseFajr, prayersOn, ishaRule, methodExtras, DAY_TIMES, SHIFT_MAX, FAJR_METHODS, FAJR_ANGLE } from "./fajr.js";
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
@@ -433,7 +434,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // Длина и тон приходят из характера: раньше сюда попадали несуществующие
         // поля настроек, и запрос всегда уходил с 700 токенами и 0.7.
         temperature: character.temperature,
-        maxTokens: character.maxTokens,
+        // Устала — отвечает короче: остаток дня должен достаться всем.
+        maxTokens: inflight.get(`${chatId}:${userId}`)?.brief ? Math.max(200, Math.round(character.maxTokens * 0.6)) : character.maxTokens,
       };
     },
     // Получасовые токены провайдеров с обменом ключа переживают смену изолята.
@@ -948,6 +950,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Модель: ${config.AI_MODEL}`,
       `Мозги: ${await brainsLine(apiKey)}`,
       await stumbleLine(),
+      `Силы: ${staminaLine(await tiredState(), { at: now(), clock })}`,
       `Память: ${memoryLine(await store.probe())}`,
       `Способности: ${await bridgeLine({ live: turn.dry ? null : turn })}`,
       turn.dry ? "Источники: пробный запуск — живая проверка не выполнялась." : `Источники: ${await sourcesLine()}`,
@@ -1936,11 +1939,67 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (turn.feel) return turn.feel;
     let day = {};
     try { day = await pulse.read(dayOf(now())); } catch { day = {}; }
+    // Устала она по счёту провайдера и до срока, а не «весь день после первого лимита».
+    const tired = await tiredState(turn);
     turn.feel = feelingNow({
       now: now(), timeZone: zoneOf(turn), userId: turn.actorId, gapDays: Number(turn.seen?.gapDays) || 0,
-      talks: (Number(day.replies) || 0) + (Number(day.ruled) || 0), limited: Number(day.limited) > 0,
+      talks: (Number(day.replies) || 0) + (Number(day.ruled) || 0), limited: Boolean(tired),
     });
     return turn.feel;
+  }
+
+  // ── силы: «устала», когда лимит на исходе (см. stamina.js) ────────────────
+  /** Устала ли она сейчас: запись или null. За одно сообщение читается один раз. */
+  async function tiredState(turn = null) {
+    if (turn && turn.tired !== undefined) return turn.tired;
+    let state = null;
+    try { state = await store.get(TIRED_KEY); } catch { state = null; }
+    const live = tiredNow(state, now()) ? state : null;
+    if (turn) turn.tired = live;
+    return live;
+  }
+  async function setTired(change, turn = null) {
+    try {
+      const before = await store.get(TIRED_KEY).catch(() => null);
+      const next = tire(before, change, now());
+      if (next && JSON.stringify(next) !== JSON.stringify(before)) await store.set(TIRED_KEY, next);
+      if (turn) turn.tired = next;
+      return next;
+    } catch { return null; }
+  }
+  /**
+   * Что ответ модели говорит о её силах. Основная ответила, а запросов осталась десятая
+   * часть — устала; ответила с запасом — отдохнула. Долгий лимит основной и «упёрлись все»
+   * записываются там, где о них узнают: в `noteSwitch` и `fallback`.
+   */
+  async function noteStamina(turn, answer) {
+    if (!answer?.ok || answer.testRun) return;
+    if (answer.switched) {
+      // Ответила запасная, потому что у основной вышел дневной лимит: устала — до часа, когда он вернётся.
+      const cause = answer.cause ?? {};
+      if (cause.why !== "choice" && switchKind(cause, now()) === "long") {
+        await setTired({ why: "limit", until: Number(cause.until) || 0, model: shortModel(cause.model || config.AI_MODEL) }, turn);
+      }
+      return;
+    }
+    if (answer.remainingRequests == null) return;
+    if (runningLow(answer.remainingRequests, answer.limitRequests)) {
+      await setTired({ why: "low", model: shortModel(answer.model), left: Number(answer.remainingRequests), cap: Number(answer.limitRequests) }, turn);
+    } else if ((await tiredState(turn))?.why === "low") {
+      await store.remove(TIRED_KEY).catch(() => false);
+      if (turn) turn.tired = null;
+    }
+  }
+  /** «Я устала» — одной строкой к ответу, раз на чат за одну усталость. Не устала или уже сказала — пусто. */
+  async function tiredAside(turn) {
+    const tired = await tiredState(turn);
+    if (!tired) return "";
+    const key = `heart:tired:told:${turn.chatId}`;
+    const told = await store.get(key).catch(() => null);
+    if (Number(told?.since) === Number(tired.since)) return "";
+    await store.set(key, { since: tired.since, at: now() }).catch(() => false);
+    const line = PHRASES ? book.pick(tired.why === "spent" ? "+выдохлась" : "+устала", voiceCtx(turn)) : null;
+    return line ?? "Я сегодня утомилась: дальше отвечу короче.";
   }
   /** Кому и когда говорится фраза из словаря: близость, час, место, имя. */
   function voiceCtx(turn, vars = {}) {
@@ -1950,6 +2009,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // В группе хозяин — близкий человек, но не «хозяин»: кто он ей, при всех не звучит.
       owner: mine && turn.isPrivate === true, level: mine ? "close" : levelOf(turn.manner?.score), part: partOfDay(feel.hour), isPrivate: turn.isPrivate === true, flirt: flirtOk(turn),
       formal: mine ? true : turn.manner?.formal !== false, name: turn.manner?.settings?.address || "",
+      // Состояние для пометок словаря: [устала], [обижена], [довольна].
+      tired: Boolean(turn.tired), hurt: feel.mood === "обиженное", glad: feel.mood === "довольное",
       vars: { "час": feel.clock, "сборка": BUILD, ...vars },
     };
   }
@@ -4979,8 +5040,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Лимит на исходе: владелец узнаёт заранее, а не когда она уже замолчала.
     const left = Number(answer.remainingRequests), cap = Number(answer.limitRequests);
     if (answer.remainingRequests != null && Number.isFinite(left) && cap > 0 && left / cap <= 0.1) {
-      try { await notices.report({ component: "brains", code: "low", title: "Модели", severity: "info", detail: `лимит модели ${short} на исходе: осталось ${left} из ${cap} запросов до сброса`, hint: "Ничего: выйдет лимит — отвечу запасной моделью, а он вернётся сам." }); } catch { /* ответ важнее отчёта */ }
+      try { await notices.report({ component: "brains", code: "low", title: "Модели", severity: "info", detail: `лимит модели ${short} на исходе: осталось ${left} из ${cap} запросов до сброса`, hint: "Ничего: людям я скажу, что устала, и отвечать им будут запасные модели; остаток основной берегу для вас. Лимит вернётся сам." }); } catch { /* ответ важнее отчёта */ }
     }
+    await noteStamina(turn, answer);
     if (answer.switched) await noteSwitch(answer, short);
     await store.set(`heart:trace:${turn.chatId}:${turn.actorId}`, {
       at: now(), q: prompt.slice(0, 160), model: short, tier: answer.tier,
@@ -5020,6 +5082,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try {
       // Основная снята, ждёт оплаты, ключ не принят — весть об этом, а не общее «провайдер отклонил запрос».
       const named = await noteTroubles(answer, { primary: true });
+      // Упёрлись все модели: она выдохлась — до часа, когда вернётся первая.
+      if (limited) await setTired({ why: "spent", until: Number(answer.retryAt) || 0, model: short }, turn);
       if (limited) {
         await notices.report({
           component: "brains", code: "exhausted", title: "Модели", severity: "degraded",
@@ -5068,8 +5132,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         turn.queuedNow = true;
         await react(turn, "✍");
         const when = answer.retryAt > now() ? ` — примерно после ${clock(answer.retryAt)}` : "";
+        // Лимит вышел у всех — она говорит это как о себе: выдохлась. Вопрос записан, ответит сама.
+        const worn = limited && PHRASES ? book.pick("+выдохлась", voiceCtx(turn)) : null;
+        if (limited) await store.set(`heart:tired:told:${chatId}`, { since: Number(turn.tired?.since) || now(), at: now() }).catch(() => false);
         return say(turn, limited
-          ? `Сейчас мне нечем думать: лимит модели вышел. Вопрос я записала и отвечу сама, как только смогу${when}.`
+          ? `${worn ?? "Я выдохлась: мысли на сегодня кончились."} Вопрос я записала и отвечу сама, как только отдохну${when}.`
           : "Сейчас не получается связаться с моделью. Вопрос я записала и отвечу сама, как только связь вернётся.");
       }
       return say(turn, `Сейчас мне нечем думать, а отложенных вопросов уже много. ${you(turn, "Напишите", "Напиши")} чуть позже.`);
@@ -5127,7 +5194,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!deferred) await typing(turn);
     const context = dry ? { note: "", lessons: [] } : await contextFor(turn, prompt, { lateMs });
     const key = `${chatId}:${actorId}`;
-    const shared = { manner: turn.manner, facts: 0, mood: "", way: "" };
+    const shared = { manner: turn.manner, facts: 0, mood: "", way: "", brief: false };
+    // Устала: людям сначала отвечают запасные модели — остаток основной бережётся для хозяина;
+    // ответы короче. Хозяина это не касается: к нему ограничений нет.
+    const tired = dry ? null : await tiredState(turn);
+    if (tired && !owner(actorId)) {
+      shared.brief = true;
+      if (!avoid && tired.why === "low") avoid = shortModel(config.AI_MODEL);
+    }
     if (!dry && !plain && PHRASES) {
       // То же настроение, что она назвала бы словами, — и его причина.
       try {
@@ -5451,9 +5525,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     if (answer.ok) {
       const found = turn.reference?.kind === "search" && !turn.dry && !answer.testRun;
+      // Лимит на исходе — она говорит, что устала: раз на чат, строкой после ответа.
+      let aside = "";
+      if (!turn.dry && !answer.testRun) { await noteStamina(turn, answer); aside = await tiredAside(turn).catch(() => ""); }
+      const body = `${voiced(turn, answer.text)}${aside ? `\n\n${aside}` : ""}`;
       const sent = found
-        ? await say(turn, `${voiced(turn, answer.text)}\n\n${foundLine(turn.reference)}`, { extra: { disable_web_page_preview: true } })
-        : await say(turn, voiced(turn, answer.text));
+        ? await say(turn, `${body}\n\n${foundLine(turn.reference)}`, { extra: { disable_web_page_preview: true } })
+        : await say(turn, body);
       if (!turn.dry && !answer.testRun && sent.ok) {
         if (turn.reference) pulse.bump("sourced");
         await remember(turn, prompt, answer, context, facts);

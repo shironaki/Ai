@@ -414,7 +414,7 @@ test("запасной провайдер: 402 и исчерпанный дне�
   const h = heart(XPL, { now: () => at });
   sdk().fetchQueue.push(limited(), refuses(402, { code: "card_required" }), refuses(429, { code: "insufficient_quota" }));
   await h.onMessage(message("расскажи о погоде на Марсе"), KEY);
-  assert.match(last(), /^Сейчас мне нечем думать: лимит модели вышел\. Вопрос я записала/);
+  assert.match(last(), /^Я выдохлась: мысли на сегодня кончились\. Вопрос я записала/);
   assert.equal(await h.queue.size(), 1);
   const state = await h.brains.describe({ apiKey: "k" });
   const paid = state.find(item => item.model === "deepseek-v4.1-flash:free");
