@@ -22,7 +22,9 @@
 #   AI_PROVIDER_KEY=…       ключ модели
 #   OWNER_TG_ID=…           числовой ID владельца
 #   KEY_GIGACHAT=…          ключ запасных мозгов: имя после KEY_ — id провайдера
-#                           (MISTRAL, CEREBRAS, GEMINI, OPENROUTER, NVIDIA, GHMODELS, EXPLABS)
+#                           (GIGACHAT, EXPLABS, CLOUDFLARE — список в docs/BRAINS.md)
+#   KEY_TAVILY=…            поиск в интернете; ещё KEY_EXA и KEY_YOU — спрашиваются
+#                           в этом порядке, без ключей остаётся Википедия
 #   KEY_CLOUDFLARE=ID:токен  рисование и запасной мозг: ID аккаунта, двоеточие, токен
 #   HEART_BRANCH=…          за какой веткой следить (без строки — ветка, с
 #                           которой склонирована папка)
