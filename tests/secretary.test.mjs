@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { heart, message, group, reset, last, calls, chats, says, sdk, toChat, toOwner, OWNER, KEY, DAY } from "./fixtures/kit.mjs";
 
-const { parseSecretary, parseSpan, langOf, excerptOf, canReply, SECRETARY_KEY, toldKey, ALIEN_PREFIX, NOTICES_PER_HOUR } = await import("../tgcloud/lib/secretary.js");
+const { parseSecretary, parseSpan, langOf, excerptOf, canReply, sameName, SECRETARY_KEY, toldKey, ALIEN_PREFIX, NOTICES_PER_HOUR } = await import("../tgcloud/lib/secretary.js");
 const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
 const { SOUL_PREFIXES } = await import("../tgcloud/lib/soul.js");
 
@@ -213,11 +213,11 @@ test("отлучка: одному человеку — одно уведомл�
 
   // «Управление ботом» в чате с Машей: Telegram открывает личку с ней ссылкой /start bizChat<номер>.
   await h.onMessage(own("/start bizChat501"), KEY);
-  assert.match(last(OWNER), /^Секретарь: к вашему аккаунту я подключена\.\n.*\nВ том чате \(Маша\): за эту отлучку — 3 сообщения; я один раз ответила, что вы не на связи\.$/su);
+  assert.match(last(OWNER), /^Секретарь: к вашему аккаунту я подключена\.\n.*\nВ том чате \(Маша\): за эту отлучку — 3 сообщения; я один раз ответила, что вы не на связи\.\nЧтобы я в том чате не отвечала никогда, скажите сейчас «этому не отвечай»\.$/su);
   await h.onMessage(own("/start bizChat504"), KEY);
   assert.match(last(OWNER), /В том чате \(Петя\): за эту отлучку — 2 сообщения; я один раз ответила/u);
   await h.onMessage(own("/start bizChat999"), KEY);
-  assert.match(last(OWNER), /В том чате за эту отлучку мне ничего не приходило — и я там ничего не писала\.$/u);
+  assert.match(last(OWNER), /В том чате за эту отлучку мне ничего не приходило — и я там ничего не писала\.\nЧтобы я в том чате не отвечала никогда, скажите сейчас «этому не отвечай»\.$/u);
   // Чужому такая ссылка — обычное приветствие.
   await h.onMessage(message("/start bizChat501"), KEY);
   assert.match(last(), /^Аи\. Я рядом\./u);
@@ -692,4 +692,185 @@ test("срочное — хозяину сразу; просят передат�
   await mute.onBusinessMessage(letter("срочно, это важно", { id: 701, name: "Тимур" }), KEY);
   assert.equal(business(701).length, 0);
   assert.equal(toOwner().at(-1).text, "❗ Срочное. Тимур пишет вам:\n«срочно, это важно»\nСама я на это письмо не отвечала.");
+});
+
+test("разбор: расписание и «этим не отвечай»; разговорные «не отвечай мне так» — мимо", () => {
+  const night = { from: "23:00", to: "07:00" };
+  const cases = {
+    "ночью отвечай сама": { plan: night }, "по ночам отвечай за меня": { plan: night }, "отвечай за меня по ночам": { plan: night }, "секретарь, отвечай за меня каждую ночь": { plan: night },
+    "Ночью отвечай сама: я сплю, отвечу утром": { plan: night, words: "я сплю, отвечу утром" },
+    "отвечай за меня каждый день с 23 до 7": { plan: night }, "отвечай за меня с 22:30 до 8 каждый день": { plan: { from: "22:30", to: "08:00" } },
+    "отвечай за меня ежедневно с 9 вечера до 6 утра": { plan: { from: "21:00", to: "06:00" } }, "ночью отвечай сама с 11 до 7": { plan: night },
+    "каждый день отвечай за меня с 0 до 8": { plan: { from: "00:00", to: "08:00" } }, "отвечай за меня по расписанию с 13 до 14": { plan: { from: "13:00", to: "14:00" } },
+    // Повтор назван, а часов нет или они пустые — переспросит.
+    "отвечай за меня каждый день": { plan: null }, "отвечай за меня всегда": { plan: null }, "отвечай за меня каждый день с 7 до 7": { plan: null },
+    "убери расписание секретаря": { planOff: true }, "не отвечай по ночам": { planOff: true }, "ночью не отвечай": { planOff: true }, "больше не отвечай за меня ночью": { planOff: true },
+    "расписание секретаря": { status: true },
+    "не отвечай @vasya": { mute: { users: ["vasya"], names: [], strict: true } },
+    "этим не отвечай: @vasya, Маша и @petya_1": { mute: { users: ["vasya", "petya_1"], names: ["маша"], strict: true } },
+    "секретарь, не отвечай Маше": { mute: { users: [], names: ["маше"], strict: true } }, "не отвечай Маше": { mute: { users: [], names: ["маше"], strict: false } },
+    "этому не отвечай": { mute: { here: true } }, "здесь не отвечай": { mute: { here: true } }, "не отвечай ему": { mute: { here: true } }, "ей больше не отвечай": { mute: { here: true } },
+    "снова отвечай @vasya": { unmute: { users: ["vasya"], names: [] } }, "отвечай @vasya": { unmute: { users: ["vasya"], names: [] } }, "отвечай снова Маше": { unmute: { users: [], names: ["маше"] } },
+    "этому снова отвечай": { unmute: { here: true } }, "отвечай всем": { unmute: { all: true } }, "кому ты не отвечаешь?": { muted: true },
+    // Прежние слова — прежние.
+    "отвечай всем за меня": { on: true }, "не отвечай за меня": { off: true }, "отвечай за меня до 18:00": { on: true, span: { at: "18:00" } },
+  };
+  for (const [said, want] of Object.entries(cases)) assert.deepEqual(parseSecretary(said), want, said);
+  for (const said of ["не отвечай мне так", "не отвечай так грубо", "не отвечай", "не отвечай на это", "не отвечай пока", "отвечай за меня с 23 до 7", "ночью я сплю", "отвечай сама", "отвечай Маше вежливо", "ночью отвечай быстрее"]) {
+    assert.equal(parseSecretary(said), null, said);
+  }
+  // «Кому» из имени в списке: без словаря падежей.
+  for (const [said, name] of [["Маше", "Маша"], ["Маше", "Маша Иванова"], ["Сергею", "Сергей"], ["Петру", "Пётр"], ["Павлу", "Павел"], ["Марии", "Мария"], ["Игорю", "Игорь"], ["John", "John"], ["маша", "Маша"]]) assert.equal(sameName(said, name), true, `${said} ~ ${name}`);
+  for (const [said, name] of [["Маше", "Миша"], ["Оле", "Олег"], ["Ане", "Анна"], ["Ире", "Игорь"], ["Олегу", "Оля"]]) assert.equal(sameName(said, name), false, `${said} ~ ${name}`);
+});
+
+test("расписание: в свои часы начинает сама и молча; утром — кто писал; никто не писал — тишина; «я тут» — до следующей ночи", async () => {
+  reset();
+  let now = NOON;
+  const h = heart(ON, { now: () => now, random: () => 0 });
+  await h.onBusinessConnection(connection(), KEY);
+  await h.onMessage(own("ночью отвечай сама: сплю, отвечу утром"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: каждый день с 23:00 до 07:00 отвечаю за вас сама\.\nКаждому, кто напишет вам в эти часы, один раз скажу:\n«[^\n]*сплю, отвечу утром[^\n]*»\nКогда часы кончатся, расскажу, кто писал; никто не писал — промолчу\. Вернётесь раньше — «я тут»: до следующего раза не начну\. Убрать — «убери расписание секретаря»\.$/u);
+  assert.deepEqual([state().plan.from, state().plan.to, state().plan.words, state().away.on], ["23:00", "07:00", "сплю, отвечу утром", false]);
+  // Днём она молчит и не записывает.
+  assert.deepEqual(await h.onBusinessMessage(letter("привет"), KEY), { ignored: true, reason: "not_away" });
+  const told = toOwner().length;
+
+  // 23:01 — удар будильника: начала, хозяину ни слова.
+  now = Date.parse("2026-11-18T20:01:00Z");
+  await h.tick({});
+  assert.equal(state().away.on, true);
+  assert.equal(state().away.auto, true);
+  assert.equal(state().away.until, Date.parse("2026-11-19T04:00:00Z"), "до семи утра по Москве");
+  assert.equal(toOwner().length, told, "начинает молча: часы назвал он сам");
+  await h.onBusinessMessage(letter("ты спишь?", { at: now }), KEY);
+  assert.match(business(501)[0].text, /сплю, отвечу утром/u);
+
+  // Утро: часы кончились — рассказывает, кто писал.
+  now = Date.parse("2026-11-19T04:00:30Z");
+  await h.tick({});
+  assert.match(toOwner().at(-1).text, /^Часы расписания кончились: за вас я больше не отвечаю\.\n\nПока вас не было \(с 18\.11 в 23:01\), писали — 1 человек:\n• Маша — 1 сообщение, 18\.11 в 23:01: «ты спишь\?»\nКаждому я один раз сказала, что вы не на связи\.$/u);
+  assert.equal(state().away.on, false);
+  assert.ok(state().plan, "расписание остаётся");
+
+  // Следующая ночь: никто не писал — утром она молчит.
+  now = Date.parse("2026-11-19T21:30:00Z"); // 00:30 — окно началось вчера
+  await h.tick({});
+  assert.equal(state().away.on, true);
+  const quiet = toOwner().length;
+  now = Date.parse("2026-11-20T04:01:00Z");
+  await h.tick({});
+  assert.equal(state().away.on, false);
+  assert.equal(toOwner().length, quiet, "никто не писал — о пустой ночи не рассказывает");
+
+  // Письмо пришло в часы расписания раньше будильника — отлучку начинает оно само.
+  now = Date.parse("2026-11-20T20:00:20Z");
+  await h.onBusinessMessage(letter("не спишь?", { id: 502, name: "Зоя", at: now }), KEY);
+  assert.equal(state().away.on, true);
+  assert.equal(business(502).length, 1);
+  // «Я тут» посреди ночи: кончает — и до конца этих часов сама не начинает.
+  now += 3_600_000;
+  await h.onMessage(own("я тут"), KEY);
+  assert.match(last(OWNER), /^С возвращением, хозяин\. За вас больше не отвечаю\./u);
+  await h.tick({});
+  assert.equal(state().away.on, false, "хозяин вернулся — в эту ночь больше не начинает");
+  now = Date.parse("2026-11-21T20:02:00Z");
+  await h.tick({});
+  assert.equal(state().away.on, true, "а в следующую — снова");
+
+  // Своя отлучка идёт — расписание её не перебивает; статус и отмена.
+  now = Date.parse("2026-11-22T10:00:00Z");
+  await h.tick({});
+  await h.onMessage(own("отвечай за меня на 72 часа: я в горах"), KEY);
+  now = Date.parse("2026-11-22T20:05:00Z");
+  await h.tick({});
+  assert.equal(state().away.auto, undefined, "идёт отлучка, включённая хозяином");
+  assert.equal(state().away.words, "я в горах");
+  await h.onMessage(own("секретарь"), KEY);
+  assert.match(last(OWNER), /\nРасписание: каждый день с 23:00 до 07:00 начинаю отвечать сама\. Убрать — «убери расписание секретаря»\./u);
+  await h.onMessage(own("не отвечай по ночам"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин: расписание (каждый день с 23:00 до 07:00) убрано. Сама больше не начинаю — только по слову «отвечай за меня».");
+  assert.equal(state().plan, null);
+  await h.onMessage(own("убери расписание секретаря"), KEY);
+  assert.equal(last(OWNER), "Расписания у меня и нет: отвечаю за вас только по слову «отвечай за меня».");
+  await h.onMessage(own("отвечай за меня каждый день"), KEY);
+  assert.match(last(OWNER), /^Назовите часы — например: «отвечай за меня каждый день с 23 до 7»/u);
+
+  // Названные часы уже идут — начинает сразу; без подключения расписания нет.
+  await h.onMessage(own("я тут"), KEY);
+  await h.onMessage(own("отвечай за меня каждый день с 23 до 7"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: каждый день с 23:00 до 07:00 отвечаю за вас сама\. Эти часы уже идут — начала\./u);
+  assert.equal(state().away.auto, true);
+  reset();
+  const bare = heart(ON, { now: () => NOON });
+  await bare.onMessage(own("ночью отвечай сама"), KEY);
+  assert.match(last(OWNER), /^Не могу: к вашему аккаунту я не подключена\./u);
+  assert.equal(chats().length, 0);
+});
+
+test("«этим не отвечай»: по @имени, по имени из списка и из чата через «Управление ботом»; письма записывает, срочное передаёт", async () => {
+  reset();
+  let now = NOON;
+  const h = heart(ON, { now: () => now, random: () => 0 });
+  await h.onBusinessConnection(connection(), KEY);
+  // По @имени — можно заранее: человек ещё не писал.
+  await h.onMessage(own("не отвечай @masha"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин: @masha — не отвечаю никогда, даже когда отвечаю за вас. Письма записываю и покажу в списке; напишут «срочно» — сообщу вам сразу. Вернуть — «снова отвечай @masha».");
+  await h.onMessage(own("отвечай за меня до 18:00"), KEY);
+  await h.onBusinessMessage(letter("привет, ты где?", { id: 501, name: "Маша", user: "Masha" }), KEY);
+  await h.onBusinessMessage(letter("привет", { id: 502, name: "Зоя" }), KEY);
+  assert.equal(business(501).length, 0, "Маше — ни слова");
+  assert.equal(business(502).length, 1);
+  assert.deepEqual(state().mute.map(item => [item.id, item.name, item.user]), [[501, "Маша", "masha"]], "по первому письму узнала, кто такой @masha");
+  // Просит передать — тоже молчит; срочное — хозяину сразу, с пометкой.
+  await h.onBusinessMessage(letter("передай, что я жду", { id: 501, name: "Маша", user: "Masha" }), KEY);
+  await h.onBusinessMessage(letter("это срочно!", { id: 501, name: "Маша", user: "Masha" }), KEY);
+  assert.equal(business(501).length, 0);
+  assert.equal(toOwner().at(-1).text, "❗ Срочное. Маша (@Masha) пишет вам:\n«это срочно!»\nСама я не отвечала: этому человеку вы велели не отвечать.");
+
+  // По имени — из списка писавших; непонятное имя — честно; короткое «не отвечай Свете» без такой в списке — разговор.
+  await h.onMessage(own("не отвечай Зое"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: Зоя — не отвечаю никогда/u);
+  await h.onMessage(own("секретарь, не отвечай Свете"), KEY);
+  assert.match(last(OWNER), /^Не знаю, кто это: «свете»\. По имени я узнаю только тех, кто писал вам, пока я отвечаю за вас\./u);
+  sdk().fetchQueue.push(says("Свете — не отвечу."));
+  await h.onMessage(own("не отвечай Свете"), KEY);
+  assert.equal(last(OWNER), "Свете — не отвечу.");
+  await h.onMessage(own("кому ты не отвечаешь?"), KEY);
+  assert.equal(last(OWNER), "Не отвечаю никогда — 2:\n• Маша (@masha)\n• Зоя\nИх письма записываю, срочное передаю вам сразу. Вернуть — «снова отвечай @имя» или «отвечай всем».");
+
+  // Возвращение: в списке видно, кому не отвечала по его слову.
+  await h.onMessage(own("я тут"), KEY);
+  assert.match(last(OWNER), /\nСказала, что вы не на связи, — 1 из 2\. По вашему слову не отвечала — 1: Маша\.$/u);
+  assert.equal(state().mute.length, 2, "список молчания отлучку переживает");
+
+  // Из чата с человеком: «Управление ботом» → «этому не отвечай».
+  await h.onMessage(own("/start bizChat777"), KEY);
+  assert.match(last(OWNER), /\nЧтобы я в том чате не отвечала никогда, скажите сейчас «этому не отвечай»\.$/u);
+  await h.onMessage(own("этому не отвечай"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: чат 777 — не отвечаю никогда/u);
+  await h.onMessage(own("отвечай за меня"), KEY);
+  await h.onBusinessMessage(letter("ау", { id: 777, name: "Олег" }), KEY);
+  assert.equal(business(777).length, 0);
+  await h.onMessage(own("/start bizChat777"), KEY);
+  assert.match(last(OWNER), /\nЭтому человеку я не отвечаю никогда — так вы велели\. Вернуть — скажите сейчас «этому снова отвечай»\.$/u);
+  await h.onMessage(own("этому снова отвечай"), KEY);
+  assert.match(last(OWNER), /^Хорошо, хозяин: (?:Олег|чат 777) — снова отвечаю, когда отвечаю за вас\.$/u);
+  // Без открытого чата «этому» — некому: она просит назвать.
+  now += 20 * 60_000;
+  await h.onMessage(own("этому не отвечай"), KEY);
+  assert.match(last(OWNER), /^Не знаю, о каком чате речь\./u);
+
+  // Вернуть по @имени, по имени и всех разом.
+  await h.onMessage(own("снова отвечай @masha"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин: Маша (@masha) — снова отвечаю, когда отвечаю за вас.");
+  await h.onMessage(own("отвечай всем"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин: снова отвечаю всем. Из списка убрано — 1.");
+  await h.onMessage(own("кому ты не отвечаешь?"), KEY);
+  assert.match(last(OWNER), /^Таких нет: когда отвечаю за вас, отвечаю всем\./u);
+  // Чужому эти слова — не её: обычный разговор.
+  sdk().fetchQueue.push(says("Это не ко мне."));
+  await h.onMessage(message("не отвечай @masha"), KEY);
+  assert.equal(last(), "Это не ко мне.");
+  assert.equal(chats().length, 2);
 });

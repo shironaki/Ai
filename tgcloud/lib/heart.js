@@ -49,6 +49,7 @@ import {
   parseSecretary, canReply, langOf, noticeEnglish, noticeRussian, stateOf as secretaryStateOf, notePerson, toldKey,
   isUrgent, isRelay, quoteOf, ackRussian, ackEnglish, urgentKey, ACKS_MAX, URGENT_EXCERPT,
   SECRETARY_KEY, TOLD_PREFIX, ALIEN_PREFIX, AWAY_DEFAULT_MS, AWAY_MAX_MS, NOTICES_PER_HOUR, OWNER_BUSY_MS, STALE_MS, SERVICE_CHATS, PEOPLE_MAX,
+  MUTE_MAX, FOCUS_MS, sameName, mutedBy, muteLabel,
 } from "./secretary.js";
 import { createBond, parseJoke } from "./bond.js";
 import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS } from "./chatlog.js";
@@ -4401,6 +4402,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       store.remove(EVENING_KEY(actorId)).catch(() => false),
     ]);
     if (turn.isPrivate) await store.remove(`heart:game:${turn.chatId}`).catch(() => false);
+    // Имя в списке секретаря «этим не отвечай» — тоже данные человека: правило хозяина остаётся, имя стирается.
+    await mutateSecretary(cur => (cur.mute.some(item => String(item.id) === String(actorId))
+      ? { ...cur, mute: cur.mute.map(item => (String(item.id) === String(actorId) ? { id: item.id, at: item.at } : item)) } : null)).catch(() => false);
     for (const item of await lessons.list({ viewer: actorId }).catch(() => [])) {
       if (item.author === String(actorId) && item.scope !== "all") await lessons.retire(item.id, { by: actorId }).catch(() => null);
     }
@@ -5045,6 +5049,47 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
   }
 
+  /**
+   * Окно расписания, в которое попадает момент `at`: `{ from, to }` — или null,
+   * если сейчас не его часы. Окно через полночь («с 23 до 7») началось вчера.
+   */
+  function planWindow(plan, at, zone) {
+    if (!plan) return null;
+    const [fh, fm] = String(plan.from).split(":").map(Number), [th, tm] = String(plan.to).split(":").map(Number);
+    const over = th * 60 + tm <= fh * 60 + fm;
+    for (const back of [0, 1]) {
+      const day = localParts(at - back * DAY, zone);
+      const from = zonedEpoch({ y: day.y, m: day.m, d: day.d, hh: fh, mm: fm }, zone);
+      const to = zonedEpoch({ y: day.y, m: day.m, d: day.d + (over ? 1 : 0), hh: th, mm: tm }, zone);
+      if (at >= from && at < to) return { from, to };
+    }
+    return null;
+  }
+  const planText = (plan) => `каждый день с ${plan.from} до ${plan.to}`;
+  /** Слова, которые получат люди: из словаря, один раз на отлучку — хозяин видит ровно их. */
+  function awayWords({ name = "", clockText = "", words = "" }) {
+    const vars = { "кто": name || "Владелец этого аккаунта", ...(clockText ? { "срок": clockText } : {}), ...(words ? { "слова": words } : {}) };
+    const ru = (PHRASES ? book.pick(words ? "+секретарь:слова" : clockText ? "+секретарь:нет на связи до" : "+секретарь:нет на связи", { formal: true, vars }) : null)
+      ?? noticeRussian({ name, until: clockText, words });
+    return { ru, en: noticeEnglish({ name, until: clockText, words }) };
+  }
+  /**
+   * Начать отлучку (или сменить срок и слова идущей). `auto` — начал будильник по
+   * расписанию: такая не перебивает отлучку, которую хозяин включил сам.
+   * Вернёт слова для людей — или null, если запись не легла.
+   */
+  async function beginAway({ at, until, words = "", clockText = "", auto = false }) {
+    let said = null;
+    const armed = await mutateSecretary(cur => {
+      if (!cur.conn || (auto && cur.away.on)) return null;
+      said = awayWords({ name: cur.conn.name || "", clockText, words });
+      // Отлучка уже шла — меняются срок и слова, а список писавших и «уже сказано» остаются.
+      const going = cur.away.on;
+      return { ...cur, away: { on: true, since: going ? cur.away.since : at, until, words, ru: said.ru, en: said.en, ...(auto ? { auto: true } : {}) }, ...(going ? {} : { people: [], more: 0, own: {} }) };
+    });
+    return armed ? said : null;
+  }
+
   /** Кто писал, пока хозяина не было, — словами для него самого. */
   function secretaryDigest(state, zone) {
     // Свежие — первыми: каждое новое письмо переносит человека в конец списка.
@@ -5055,12 +5100,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const rows = people.flatMap(item => [`${item.urgent ? "❗" : "•"} ${item.name}${item.user ? ` (@${item.user})` : ""} — ${item.n} ${plural(item.n, "сообщение", "сообщения", "сообщений")}, ${item.n > 1 ? "последнее — " : ""}${whenShort(item.at, zone)}: ${item.text}${item.urgent ? " · срочное" : ""}`, ...(Array.isArray(item.asks) ? item.asks : []).map(ask => `   просьба передать: «${ask}»`)]);
     const more = Number(state.more) || 0, total = people.length + more;
     const told = people.filter(item => item.told).length, failed = people.filter(item => item.failed && !item.told).length;
+    // Кому велено не отвечать — отдельной строкой: это не её промах.
+    const hushed = people.filter(item => item.mute && !item.told);
     const tail = !state.conn?.reply ? "Отвечать за вас мне не разрешено — я только записывала."
       : told === people.length ? `Каждому${more ? " из перечисленных" : ""} я один раз сказала, что вы не на связи.`
         : [
           told ? `Сказала, что вы не на связи, — ${told} из ${people.length}.` : "Никому не отвечала.",
           failed ? `Не вышло ответить — ${failed}: Telegram отказал, проверьте права подключения.` : "",
-          people.length - told - failed > 0 ? "Остальным не стала: вы писали им сами, письмо дошло с опозданием или ответов за час было слишком много." : "",
+          hushed.length ? `По вашему слову не отвечала — ${hushed.length}: ${hushed.map(item => item.name).join(", ")}.` : "",
+          people.length - told - failed - hushed.length > 0 ? "Остальным не стала: вы писали им сами, письмо дошло с опозданием или ответов за час было слишком много." : "",
         ].filter(Boolean).join(" ");
     return [
       `Пока вас не было${since}, писали — ${total} ${plural(total, "человек", "человека", "человек")}:`,
@@ -5076,19 +5124,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * кончил другой запуск или запись не прошла: говорить хозяину нечего.
    * `expired` — кончать, только если срок и правда вышел: хозяин мог его продлить.
    */
-  async function endAway(zone, { expired = false } = {}) {
+  async function endAway(zone, { expired = false, detail = null } = {}) {
     let text = "", since = 0, people = [];
     const done = await mutateSecretary(cur => {
       if (!cur.away.on || (expired && !(cur.away.until && now() >= cur.away.until))) return null;
       text = secretaryDigest(cur, zone);
       since = cur.away.since;
       people = cur.people;
-      return { ...cur, away: { ...AWAY_OFF }, people: [], more: 0, own: {} };
+      if (detail) Object.assign(detail, { auto: cur.away.auto === true, wrote: cur.people.length + (Number(cur.more) || 0) });
+      // Хозяин вернулся посреди часов расписания — до конца этого окна она сама не начнёт.
+      const window = expired ? null : planWindow(cur.plan, now(), zone);
+      return { ...cur, away: { ...AWAY_OFF }, people: [], more: 0, own: {}, ...(window ? { plan: { ...cur.plan, skip: window.to } } : {}) };
     });
     if (!done) return null;
     // Отметки «уже сказано» больше не нужны; не убрались — их сметёт уборка.
     await Promise.all(people.slice(0, 40).map(item => store.remove(toldKey(since, item.id)).catch(() => false)));
     return text;
+  }
+  /** Срок отлучки вышел: рассказать хозяину, кто писал. Ночь по расписанию, когда никто не писал, — молча. */
+  async function tellAwayEnded(text, detail, since) {
+    if (detail.auto && !detail.wrote) return;
+    await tellOwnerNow(`${detail.auto ? "Часы расписания кончились" : "Срок вышел"}: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${since}`);
   }
 
   /** Срок вышел — она сама перестаёт отвечать и рассказывает, кто писал. Зовётся с будильника. */
@@ -5104,8 +5160,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return;
     }
     if (!state.away.until || now() < state.away.until) return;
-    const text = await endAway(await ownerZone(), { expired: true });
-    if (text != null) await tellOwnerNow(`Срок вышел: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
+    const detail = {};
+    const text = await endAway(await ownerZone(), { expired: true, detail });
+    if (text != null) await tellAwayEnded(text, detail, state.away.since);
+  }
+  /** Расписание: настали его часы — она начинает отвечать сама. Молча: хозяин сам назвал эти часы. */
+  async function secretaryPlan() {
+    if (!SECRETARY || !store.available || !(OWNER > 0)) return;
+    const state = await secretaryState();
+    if (!state.plan || !state.conn || state.away.on) return;
+    const at = now(), zone = await ownerZone();
+    const window = planWindow(state.plan, at, zone);
+    if (!window || (Number(state.plan.skip) || 0) > at) return;
+    if (await beginAway({ at, until: window.to, words: String(state.plan.words ?? ""), clockText: localClock(window.to, zone), auto: true })) pulse.bump("secretary_plan");
   }
 
   /**
@@ -5209,14 +5276,21 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       }
       const at = now();
       if (state.away.on && state.away.until && at >= state.away.until) {
-        const text = await endAway(await ownerZone(), { expired: true });
+        const detail = {};
+        const text = await endAway(await ownerZone(), { expired: true, detail });
         if (text != null) {
-          await tellOwnerNow(`Срок вышел: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
+          await tellAwayEnded(text, detail, state.away.since);
           return { ignored: true, reason: "not_away" };
         }
         // Кончать было нечего: либо отлучку уже кончил соседний запуск, либо хозяин только что продлил срок.
         state = await secretaryState();
         if (!state.conn || !state.away.on || (state.away.until && at >= state.away.until)) return { ignored: true, reason: "not_away" };
+      }
+      // Часы расписания уже идут, а будильник ещё не ударил — отлучку начинает само письмо.
+      if (!state.away.on && state.plan) {
+        await secretaryPlan().catch(() => null);
+        state = await secretaryState();
+        if (!state.conn) return { ignored: true, reason: "not_owner" };
       }
       const since = state.away.since;
       const going = (cur) => cur.away.on && cur.away.since === since;
@@ -5238,14 +5312,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Письмо — в список «кто писал» сразу, до ответа, и поверх самого свежего состояния:
       // соседнее письмо не затрётся, а вернись хозяин посреди отправки — человек в списке уже есть.
       let seen = null;
+      const writer = { id: chatId, user: String(message.from?.username ?? message.chat?.username ?? "") };
       const noted = await mutateSecretary(cur => {
         if (!going(cur) || !cur.conn) return null;
         seen = { known: cur.people.find(same) ?? null, own: Number(cur.own?.[chatId]) || 0, sent: cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0, conn: cur.conn, away: cur.away };
-        const people = notePerson(cur.people, message, at);
+        // «Этим не отвечай»: письмо записывается, ответа не будет. Названный по @имени при первом письме получает номер и имя.
+        seen.mute = cur.mute.some(item => mutedBy(item, writer));
+        let people = notePerson(cur.people, message, at);
         seen.name = people.at(-1).name;
+        if (seen.mute) people = people.map(item => (same(item) ? { ...item, mute: true } : item));
+        const mute = seen.mute ? cur.mute.map(item => (mutedBy(item, writer) && item.id == null ? { ...item, id: chatId, name: seen.name } : item)) : cur.mute;
         // Список — на сорок человек: кого он вытеснил, того она уже не помнит, но счёт им ведёт.
         const pushed = cur.people.length + (seen.known ? 0 : 1) - people.length;
-        return { ...cur, people, more: cur.more + Math.max(0, pushed) };
+        return { ...cur, people, mute, more: cur.more + Math.max(0, pushed) };
       });
       // Не записалось: хозяин уже вернулся или хранилище молчит — отвечать за него тогда нельзя.
       if (!noted) return { ignored: true, reason: "not_away" };
@@ -5255,7 +5334,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const urgent = isUrgent(message), relay = isRelay(message), english = langOf(message) === "en";
       // Что она ответила на это письмо — для вести хозяину о срочном.
       let replied = "";
-      const may = seen.conn.reply && fresh && !busy && seen.known?.told !== true && seen.known?.failed !== true;
+      const may = seen.conn.reply && fresh && !busy && !seen.mute && seen.known?.told !== true && seen.known?.failed !== true;
       let action = "secretary_noted";
       if (may && seen.sent >= NOTICES_PER_HOUR) {
         // Писем слишком много — похоже на рассылку или на двух секретарей друг против друга.
@@ -5291,7 +5370,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const ping = urgent && !busy && await store.setIfAbsent(urgentKey(since, chatId, at), stamp(message.message_id));
       // После её первого ответа: просят передать — «обязательно передам»; срочное — «уже сообщила».
       // Не больше трёх таких ответов человеку за отлучку и в общий счёт ответов за час.
-      if (seen.known?.told === true && (relay || ping) && seen.conn.reply && fresh && !busy && seen.sent < NOTICES_PER_HOUR) {
+      if (seen.known?.told === true && (relay || ping) && seen.conn.reply && fresh && !busy && !seen.mute && seen.sent < NOTICES_PER_HOUR) {
         const reserved = await mutateSecretary(cur => {
           const person = cur.people.find(same);
           if (!going(cur) || !person || (Number(person.acks) || 0) >= ACKS_MAX) return null;
@@ -5314,7 +5393,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const when = fresh ? "" : ` — письмо от ${whenShort(Number(message.date) * 1000, zone)}, дошло с опозданием`;
         const done = replied === "first_urgent" ? "Я ответила, что вы не на связи и что сообщила вам сразу."
           : replied === "ack_urgent" ? "Я ответила, что уже сообщила вам."
-            : "Сама я на это письмо не отвечала.";
+            : seen.mute ? "Сама я не отвечала: этому человеку вы велели не отвечать."
+              : "Сама я на это письмо не отвечала.";
         await tellOwnerNow(`❗ Срочное. ${who} пишет вам${when}:\n«${quoteOf(message, URGENT_EXCERPT)}»\n${done}`, `secretary:urgent:${since}:${chatId}:${message.message_id}`);
         if (action === "secretary_noted" || action === "secretary_ack") action = "secretary_urgent";
       }
@@ -5340,12 +5420,93 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // «Я тут» и «кто мне писал?» — слова обычные: без подключения и отлучки они не её.
     if (asked.back && !state.away.on) return null;
     if (asked.who && !state.conn) return null;
+    // Короткое «не отвечай Маше» — её слова, только если такая Маша ей известна; иначе это разговор.
+    if (asked.mute && !asked.mute.here && !asked.mute.strict
+      && !asked.mute.names.every(name => [...state.people, ...state.mute].some(item => sameName(name, item.name)))) return null;
     if (!state.conn) {
       if (asked.status) return say(turn, `Секретарём я пока не работаю: к вашему аккаунту меня не подключали. ${HOW_TO_CONNECT}`);
-      if (asked.off) return say(turn, "Я и не отвечала за вас: к вашему аккаунту я не подключена.");
+      if (asked.off || asked.planOff) return say(turn, "Я и не отвечала за вас: к вашему аккаунту я не подключена.");
       return say(turn, `Не могу: к вашему аккаунту я не подключена. ${HOW_TO_CONNECT}`);
     }
     const untilText = (until) => (until ? `до ${whenShort(until, zone).replace(/^(\d\d\.\d\d) в /u, "$1, ")}` : "");
+    // Открыли «Управление ботом» из чата с человеком — четверть часа «этому не отвечай» значит «ему».
+    if (chatId != null) await mutateSecretary(cur => ({ ...cur, focus: { id: String(chatId), at: now() } }));
+
+    // ── «этим не отвечай» ──
+    if (asked.muted) {
+      if (!state.mute.length) return say(turn, "Таких нет: когда отвечаю за вас, отвечаю всем. Закрыть кого-то — «не отвечай @имя» или из чата с человеком: «Управление ботом», затем «этому не отвечай».");
+      return say(turn, `Не отвечаю никогда — ${state.mute.length}:\n${state.mute.map(item => `• ${muteLabel(item)}`).join("\n")}\nИх письма записываю, срочное передаю вам сразу. Вернуть — «снова отвечай @имя» или «отвечай всем».`);
+    }
+    if (asked.mute || asked.unmute) {
+      const want = asked.mute ?? asked.unmute;
+      const off = Boolean(asked.mute);
+      if (want.all) {
+        if (!state.mute.length) return say(turn, "Я и так отвечаю всем: список пуст.");
+        if (!await mutateSecretary(cur => ({ ...cur, mute: [] }))) return say(turn, "Не запомнилось: хранилище не отвечает.");
+        return say(turn, `Хорошо, хозяин: снова отвечаю всем. Из списка убрано — ${state.mute.length}.`);
+      }
+      // Кого назвали: «этому» — чат, открытый через «Управление ботом»; иначе @имена и имена из списков.
+      const picked = [], unknown = [], vague = [];
+      if (want.here) {
+        const focus = state.focus && now() - Number(state.focus.at) < FOCUS_MS ? state.focus : chatId != null ? { id: String(chatId) } : null;
+        if (!focus) return say(turn, "Не знаю, о каком чате речь. Откройте чат с этим человеком, нажмите «Управление ботом» — и скажите мне это ещё раз. Или назовите его: «не отвечай @имя».");
+        const person = state.people.find(item => String(item.id) === String(focus.id)) ?? state.mute.find(item => String(item.id) === String(focus.id));
+        picked.push({ id: focus.id, name: person?.name ?? "", user: person?.user ?? "" });
+      } else {
+        for (const user of want.users) {
+          const person = state.people.find(item => String(item.user).toLowerCase() === user) ?? state.mute.find(item => String(item.user ?? "").toLowerCase() === user);
+          picked.push({ ...(person?.id != null ? { id: person.id } : {}), name: person?.name ?? "", user: person?.user || user });
+        }
+        for (const name of want.names) {
+          const pool = off ? [...state.people, ...state.mute] : state.mute;
+          const hits = pool.filter(item => sameName(name, item.name)).filter((item, index, list) => list.findIndex(other => String(other.id) === String(item.id)) === index);
+          if (hits.length === 1) picked.push({ id: hits[0].id, name: hits[0].name, user: hits[0].user ?? "" });
+          else if (hits.length > 1) vague.push(`«${name}» — это ${hits.map(muteLabel).join(" или ")}`);
+          else unknown.push(name);
+        }
+      }
+      if (vague.length) return say(turn, `Не пойму, кого вы назвали: ${vague.join("; ")}. Назовите по @имени — или откройте чат с человеком, «Управление ботом», и скажите «этому ${off ? "не " : ""}отвечай».`);
+      if (unknown.length) {
+        return say(turn, off
+          ? `Не знаю, кто это: ${unknown.map(name => `«${name}»`).join(", ")}. По имени я узнаю только тех, кто писал вам, пока я отвечаю за вас. Назовите по @имени — или откройте чат с человеком, нажмите «Управление ботом» и скажите «этому не отвечай».`
+          : `В списке тех, кому я не отвечаю, такого нет: ${unknown.map(name => `«${name}»`).join(", ")}. Кто в нём — «кому ты не отвечаешь?».`);
+      }
+      const hit = (entry) => (item) => mutedBy(item, { id: entry.id ?? null, user: entry.user });
+      let full = false;
+      const saved = await mutateSecretary(cur => {
+        if (!off) return { ...cur, mute: cur.mute.filter(item => !picked.some(entry => hit(entry)(item))) };
+        const fresh = picked.filter(entry => !cur.mute.some(hit(entry)));
+        if (cur.mute.length + fresh.length > MUTE_MAX) { full = true; return null; }
+        return { ...cur, mute: [...cur.mute, ...fresh.map(entry => ({ ...entry, at: now() }))] };
+      });
+      if (full) return say(turn, `В списке уже ${state.mute.length} — больше ${MUTE_MAX} не держу. Уберите кого-нибудь: «снова отвечай @имя».`);
+      if (!saved) return say(turn, "Не запомнилось: хранилище не отвечает.");
+      const names = picked.map(muteLabel).join(", ");
+      if (!off) return say(turn, `Хорошо, хозяин: ${names} — снова отвечаю, когда отвечаю за вас.`);
+      return say(turn, `Хорошо, хозяин: ${names} — не отвечаю никогда, даже когда отвечаю за вас. Письма записываю и покажу в списке; напишут «срочно» — сообщу вам сразу. Вернуть — «снова отвечай ${picked[0].user ? `@${picked[0].user}` : picked[0].name || "@имя"}».`);
+    }
+
+    // ── расписание ──
+    if (asked.planOff) {
+      if (!state.plan) return say(turn, "Расписания у меня и нет: отвечаю за вас только по слову «отвечай за меня».");
+      if (!await mutateSecretary(cur => ({ ...cur, plan: null }))) return say(turn, "Не запомнилось: хранилище не отвечает.");
+      return say(turn, `Хорошо, хозяин: расписание (${planText(state.plan)}) убрано. Сама больше не начинаю — только по слову «отвечай за меня».${state.away.on && state.away.auto ? " Сейчас я ещё отвечаю за вас; кончить — «я тут»." : ""}`);
+    }
+    if ("plan" in asked) {
+      if (!asked.plan) return say(turn, "Назовите часы — например: «отвечай за меня каждый день с 23 до 7» или просто «ночью отвечай сама» (это с 23:00 до 07:00).");
+      const words = String(asked.words ?? "").replace(/\s+/gu, " ").trim().slice(0, 200);
+      const plan = { from: asked.plan.from, to: asked.plan.to, words, skip: 0, at: now() };
+      if (!await mutateSecretary(cur => (cur.conn ? { ...cur, plan } : null))) return say(turn, "Не запомнилось: хранилище не отвечает — расписания нет.");
+      // Его часы уже идут — начинает сразу, а не со следующим ударом будильника.
+      const at = now(), window = planWindow(plan, at, zone);
+      const started = window && !state.away.on ? await beginAway({ at, until: window.to, words, clockText: localClock(window.to, zone), auto: true }) : null;
+      const sample = started ?? awayWords({ name: state.conn.name || "", clockText: plan.to, words });
+      return say(turn, [
+        `Хорошо, хозяин: ${planText(plan)} отвечаю за вас сама${state.conn.reply ? "" : " — точнее, записываю, кто писал: отвечать мне не разрешено"}.${started ? " Эти часы уже идут — начала." : ""}`,
+        state.conn.reply ? `Каждому, кто напишет вам в эти часы, один раз скажу:\n«${sample.ru}»` : "",
+        "Когда часы кончатся, расскажу, кто писал; никто не писал — промолчу. Вернётесь раньше — «я тут»: до следующего раза не начну. Убрать — «убери расписание секретаря».",
+      ].filter(Boolean).join("\n"));
+    }
     if (asked.status) {
       const lines = [
         `Секретарь: к вашему аккаунту я подключена${state.conn.reply ? "" : ", но отвечать мне не разрешено — могу только записывать, кто писал"}.`,
@@ -5353,6 +5514,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ? `Сейчас отвечаю за вас ${untilText(state.away.until)}: писали — ${state.people.length + state.more} ${plural(state.people.length + state.more, "человек", "человека", "человек")}. Кто именно — «кто мне писал?»; закончить — «я тут».`
           : "Сейчас в ваших чатах я молчу и ничего не записываю. Начать — «отвечай за меня» (можно со сроком: «…до 18:00», «…на 2 часа») или со словами для людей: «отвечай за меня: я на встрече, перезвоню».",
         state.away.on && state.away.ru ? `Людям я говорю: «${state.away.ru}»` : "",
+        state.plan ? `Расписание: ${planText(state.plan)} начинаю отвечать сама. Убрать — «убери расписание секретаря».` : "Расписания нет. Завести — «ночью отвечай сама» или «отвечай за меня каждый день с 23 до 7».",
+        state.mute.length ? `Не отвечаю никогда — ${state.mute.length}: ${state.mute.slice(0, 8).map(muteLabel).join(", ")}${state.mute.length > 8 ? " и другие" : ""}. Весь список — «кому ты не отвечаешь?».` : "",
       ];
       // Открыто из чата с человеком («Управление ботом»): что она делала именно там.
       if (chatId != null) {
@@ -5360,6 +5523,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         lines.push(person
           ? `В том чате (${person.name}): за эту отлучку — ${person.n} ${plural(person.n, "сообщение", "сообщения", "сообщений")}; ${person.told ? "я один раз ответила, что вы не на связи" : "я не отвечала"}.`
           : state.away.on ? "В том чате за эту отлучку мне ничего не приходило — и я там ничего не писала." : "В том чате я ничего не писала.");
+        lines.push(state.mute.some(item => String(item.id) === String(chatId))
+          ? "Этому человеку я не отвечаю никогда — так вы велели. Вернуть — скажите сейчас «этому снова отвечай»."
+          : "Чтобы я в том чате не отвечала никогда, скажите сейчас «этому не отвечай».");
       }
       return say(turn, lines.filter(Boolean).join("\n"));
     }
@@ -5388,19 +5554,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (until <= at + 60_000) until += DAY;
     }
     const words = String(asked.words ?? "").replace(/\s+/gu, " ").trim().slice(0, 200);
-    const name = state.conn.name || "";
-    const clockText = asked.span ? localClock(until, zone) : "";
     // Текст выбирается один раз: хозяин видит ровно то, что получат люди.
-    const vars = { "кто": name || "Владелец этого аккаунта", ...(clockText ? { "срок": clockText } : {}), ...(words ? { "слова": words } : {}) };
-    const ru = (PHRASES ? book.pick(words ? "+секретарь:слова" : clockText ? "+секретарь:нет на связи до" : "+секретарь:нет на связи", { formal: true, vars }) : null)
-      ?? noticeRussian({ name, until: clockText, words });
-    const en = noticeEnglish({ name, until: clockText, words });
-    const armed = await mutateSecretary(cur => {
-      if (!cur.conn) return null;
-      // Отлучка уже шла — меняются срок и слова, а список писавших и «уже сказано» остаются.
-      const going = cur.away.on;
-      return { ...cur, away: { on: true, since: going ? cur.away.since : at, until, words, ru, en }, ...(going ? {} : { people: [], more: 0, own: {} }) };
-    });
+    const armed = await beginAway({ at, until, words, clockText: asked.span ? localClock(until, zone) : "" });
+    const ru = armed?.ru ?? "";
     if (!armed) return say(turn, "Не запомнилось: хранилище не отвечает — за вас не отвечаю.");
     if (!state.conn.reply) return say(turn, `Отвечать за вас мне не разрешено: ${untilText(until)} буду только записывать, кто писал. Вернётесь раньше — «я тут».`);
     return say(turn, [
@@ -5553,6 +5709,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     await beat(deployed ? "deploy" : "run");
     await wake(ctx, { announce: deployed });
     try { await secretaryClock(); } catch { /* срок отлучки проверится со следующим ударом */ }
+    try { await secretaryPlan(); } catch { /* расписание проверится со следующим ударом */ }
     // Отложенные ответы: до трёх за удар, пока есть чем думать.
     for (let round = 0; round < 3; round++) {
       const before = await queue.size().catch(() => 0);
