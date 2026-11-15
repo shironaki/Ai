@@ -609,6 +609,9 @@ export function createAiService({
       deferred = false,
       // Пометки сердца к этой реплике: что прислали, на что отвечают.
       note = "",
+      // Вопрос без собеседника (экзамен, ночное размышление): истории нет, она не читается
+      // и не пишется, пауза между запросами и счёт запросов человека не применяются.
+      stateless = false,
     }) {
       // A rehearsal answers the route, never the network. Without this, a test
       // run still travelled through every hook below — and once the bridge to
@@ -631,8 +634,8 @@ export function createAiService({
       const privateChat = isPrivate == null ? String(chatId) === String(userId) : Boolean(isPrivate);
 
       const key = `${String(chatId)}:${String(userId)}`;
-      let pause = minimumIntervalMs;
-      if (typeof intervalFor === "function") {
+      let pause = stateless ? 0 : minimumIntervalMs;
+      if (!stateless && typeof intervalFor === "function") {
         try {
           const value = await intervalFor({ userId: String(userId), chatId: String(chatId), isPrivate: privateChat });
           if (Number.isFinite(value) && value >= 0) pause = value;
@@ -648,10 +651,10 @@ export function createAiService({
       lastRequest.set(key, now());
       if (lastRequest.size > 512) for (const [k, at] of lastRequest) if (now() - at > 60_000) lastRequest.delete(k);
 
-      if (claimRequest && !await claimRequest({ userId, chatId })) {
+      if (!stateless && claimRequest && !await claimRequest({ userId, chatId })) {
         return { ok: false, code: "rate_limited", text: "Слишком много запросов подряд." };
       }
-      const history = await loadHistory({ userId: String(userId), chatId: String(chatId) });
+      const history = stateless ? [] : await loadHistory({ userId: String(userId), chatId: String(chatId) });
       const fullHistory = Array.isArray(history)
         ? history.filter((item) => ["user", "assistant"].includes(item?.role) && typeof item?.content === "string")
           .slice(-MAX_HISTORY_MESSAGES)
@@ -660,8 +663,8 @@ export function createAiService({
       const userText = clampText(prompt, MAX_PROMPT_CHARS);
       let assistantContext, profile;
       try {
-        assistantContext = await additionalContext({ userId, chatId, isPrivate: privateChat, prompt: userText });
-        profile = await responseProfile({ userId, chatId, prompt: userText, isPrivate: privateChat });
+        assistantContext = stateless ? "" : await additionalContext({ userId, chatId, isPrivate: privateChat, prompt: userText });
+        profile = await responseProfile({ userId, chatId, prompt: userText, isPrivate: privateChat, stateless });
       } catch { return { ok: false, code: "assistant_context_unavailable", text: "Не удалось прочитать настройки и память." }; }
       // Короткое ядро — для простой реплики; деликатная тема получает полный текст.
       const tier = profile?.tier === "core" && typeof profile?.core === "string" && profile.core ? "core" : "full";
@@ -823,7 +826,7 @@ export function createAiService({
         const updatedHistory = [...fullHistory, { role: "user", content: userText }, { role: "assistant", content: answer }]
           .slice(-MAX_HISTORY_MESSAGES);
         try {
-          await saveHistory({ userId: String(userId), chatId: String(chatId), messages: updatedHistory });
+          if (!stateless) await saveHistory({ userId: String(userId), chatId: String(chatId), messages: updatedHistory });
         } catch {
           // The answer remains useful if optional history storage is not available.
         }

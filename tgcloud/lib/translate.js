@@ -84,6 +84,8 @@ for (const [alias, code] of [["по-голландски", "nl"], ["на анг�
 const UNKNOWN = /^(?:чеченск|аварск|ингушск|осетинск|якутск|чувашск|удмуртск|марийск|калмыцк|бурятск|эсперанто)/u;
 
 export const languageName = (code) => LANGUAGES.find(item => item.code === code)?.to ?? code;
+/** Язык по слову человека: «английский», «английского», «по-английски», «на английском» → запись, иначе null. */
+export const languageBy = (words) => BY_TO.get(words) ?? BY_HOW.get(words) ?? BY_FROM.get(words) ?? null;
 
 /** На каком языке текст — по буквам. Наверняка узнаются только письменности; остальное — догадка. */
 export function guessLanguage(text) {
