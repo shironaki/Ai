@@ -192,11 +192,11 @@ test("чего она не рисует: отказ до запроса, и от
   assert.deepEqual(asked("flux-1-schnell").map(body => body.prompt), [
     "A detailed, beautiful picture of something, natural light, sharp focus", "something, illustration, safe for work", "something",
   ], "одно слово художнику не уходит; после «нет» — приписка, затем описание без добавок");
-  assert.equal(sourced().filter(url => /stable-diffusion|dreamshaper/u.test(url)).length, 0);
+  assert.equal(sourced().filter(url => /stable-diffusion|dreamshaper|flux-2-klein/u.test(url)).length, 0);
   // Хозяину — честно: отказалась мастерская, а не она, и её слова — дословно.
   await strict.onMessage(message("нарисуй странную сцену", { id: OWNER }), KEY);
   assert.match(last(OWNER), /^Не вышло: мастерская этот запрос не пропустила — это её фильтр, не мой\. Запрос ушёл так: «A detailed, beautiful picture of something, natural light, sharp focus»\. Её ответы: FLUX schnell — 400 «Input prompt contains NSFW content\.» \(код 3030\)/u);
-  assert.match(last(OWNER), /SDXL Lightning — 404/u, "хозяину наедине пробуются и запасные художники");
+  assert.match(last(OWNER), /\(код 3030\) ×3; FLUX\.2 klein — 404; SDXL Lightning — 404; DreamShaper — 404; SDXL — 404\. Попробуйте описать иначе\.$/u, "хозяину наедине пробуются и запасные художники; первый ответ основного из строки не выпадает");
 });
 
 /** Картинка файлом, как её отдают запасные художники: поток байт и заголовок типа. */
@@ -252,9 +252,11 @@ test("«нарисуй кота»: отказ мастерской не прин
   await h.onMessage(message("нарисуй кота"), KEY);
   assert.equal(last(), "Не вышло: мастерская запрос не приняла. Хозяин об этом узнает.");
   assert.equal(photos().length, 0);
-  assert.equal(sourced().filter(url => !url.includes("m2m100")).length, 5, "основной дважды и три запасных");
+  assert.equal(sourced().filter(url => !url.includes("m2m100")).length, 6, "основной дважды и четыре запасных");
+  // Запасные, которые запрос не приняли, отдыхают шесть часов: второй раз их не спрашивают, а хозяину они названы.
   await h.onMessage(message("нарисуй кота", { id: OWNER }), KEY);
-  assert.match(last(OWNER), /^Не вышло: мастерская запрос не приняла, и дело не в фильтре\. Запрос ушёл так: «a photo of a fluffy domestic cat [^»]*»\. Её ответы: .*DreamShaper — 404; SDXL — 404\. По этим словам видно, что чинить\.$/u);
+  assert.equal(sourced().filter(url => !url.includes("m2m100")).length, 8, "во второй раз — только основной, дважды");
+  assert.match(last(OWNER), /^Не вышло: мастерская запрос не приняла, и дело не в фильтре\. Запрос ушёл так: «a photo of a fluffy domestic cat [^»]*»\. Её ответы: FLUX schnell — 400 «[^»]*prompt is odd» \(код 5006\) ×2; запасные отдыхают после отказа: FLUX\.2 klein, SDXL Lightning, DreamShaper, SDXL\. По этим словам видно, что чинить\.$/u);
   const all = toOwner().map(item => item.text).join("\n");
   assert.match(all, /мастерская не приняла запрос на рисунок: /u, "о чужой неудаче хозяин узнаёт вестью");
   assert.ok(!all.includes(ACCOUNT) && !all.includes("cf-token"), "ни ключа, ни ID аккаунта в словах нет");
@@ -693,4 +695,74 @@ test("«угадай рисунок»: рисует слово из своего
   const plain = heart({}, { now: () => NOON });
   await plain.onMessage(message("угадай рисунок"), KEY);
   assert.match(last(), /^Загадку рисунком я загадать не могу: рисовать мне нечем\./u);
+});
+
+test("запасные художники: FLUX.2 klein получает форму; готовое описание после ложного фильтра идёт к запасным; не принявший отдыхает шесть часов", async () => {
+  const forms = (model) => sdk().sourceFetches.filter(item => item.url.includes(model)).map(item => ({ type: item.options.headers["Content-Type"], body: String(item.options.body) }));
+  const spare = (text) => sdk().sourceFetches.filter(item => /flux-2-klein|stable-diffusion|dreamshaper/u.test(item.url) && String(item.options.body).includes(text)).length;
+
+  // 1. Основной запрос не принимает (не фильтр) — рисует первый запасной: ему уходит форма с описанием и размером.
+  reset();
+  source("flux-1-schnell", cfError(400, 5007, "No such model"));
+  source("flux-2-klein-4b", image());
+  let at = NOON;
+  let h = heart(ON, { now: () => at });
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(photos().length, 1);
+  const [sent] = forms("flux-2-klein-4b");
+  const boundary = sent.type.match(/^multipart\/form-data; boundary=(----ai[a-z0-9]+)$/u)?.[1];
+  assert.ok(boundary, sent.type);
+  assert.equal(sent.body, `--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\n${CAT_WORDS}\r\n--${boundary}\r\nContent-Disposition: form-data; name="width"\r\n\r\n1024\r\n--${boundary}\r\nContent-Disposition: form-data; name="height"\r\n\r\n1024\r\n--${boundary}--\r\n`);
+  assert.equal(spare("fluffy"), 1, "остальных запасных не спрашивали");
+  await h.onMessage(message("как нарисовано?", { id: OWNER }), KEY);
+  await h.onMessage(message("нарисуй кота", { id: OWNER }), KEY);
+  await h.onMessage(message("как нарисовано?", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /FLUX\.2 klein/u, "кто нарисовал — хозяину видно");
+
+  // 2. Фильтр ошибся на её же описании из словаря — и не хозяину можно к запасным: описание безобидно по построению.
+  //    Чужие слова после фильтра к запасным не идут (это проверено выше: «странную сцену»).
+  reset();
+  source("flux-1-schnell", cfError(400, 3030, "Input prompt contains NSFW content."));
+  source("flux-2-klein-4b", image());
+  h = heart(ON, { now: () => at });
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(photos().length, 1, "кот нарисован запасным, хотя фильтр основного трижды сказал «нет»");
+  assert.equal(asked("flux-1-schnell").length, 2, "основной: описание и оно же с припиской (без добавок оно и так)");
+  assert.equal(forms("flux-2-klein-4b").length, 1);
+
+  // 3. Запасной запрос не принял — отдыхает шесть часов, в статусе назван; после отдыха его спрашивают снова.
+  reset();
+  source("flux-1-schnell", cfError(400, 5007, "No such model"));
+  source("flux-2-klein-4b", cfError(400, 5006, "Bad input: unexpected field"));
+  source("stable-diffusion-xl-lightning", cfError(410, 5028, "Model has been deprecated"));
+  source("dreamshaper-8-lcm", cfError(410, 5028, "Model has been deprecated"));
+  source("stable-diffusion-xl-base-1.0", cfError(410, 5028, "Model has been deprecated"));
+  h = heart(ON, { now: () => at });
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(last(), "Не вышло: мастерская запрос не приняла. Хозяин об этом узнает.");
+  assert.equal(spare("fluffy"), 4);
+  await h.onMessage(message("нарисуй кота"), KEY);
+  assert.equal(spare("fluffy"), 4, "отдыхающих не спрашивают");
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /Рисование: краски есть.* · запасные художники отдыхают после отказа: FLUX\.2 klein — 400 «Bad input: unexpected field»; SDXL Lightning — 410 «Model has been deprecated»; DreamShaper — 410 «Model has been deprecated»; SDXL — 410 «Model has been deprecated»/u);
+  at += 6 * 3_600_000 + 60_000;
+  sdk().sourceReplies.length = 0;
+  source("flux-1-schnell", cfError(400, 5007, "No such model"));
+  source("flux-2-klein-4b", image());
+  await h.onMessage(message("нарисуй кота", { id: OWNER }), KEY);
+  assert.equal(photos().length, 1, "через шесть часов запасного спросили снова — и он нарисовал");
+
+  // 4. Откровенное от хозяина наедине строгому запасному не предлагается: он откажет, а запрос уйдёт впустую.
+  reset();
+  source("m2m100", translated("a nude woman"));
+  source("flux-1-schnell", cfError(400, 3030, "Input prompt contains NSFW content."));
+  source("flux-2-klein-4b", image());
+  source("stable-diffusion-xl-lightning", cfError(410, 5028, "Model has been deprecated"));
+  source("dreamshaper-8-lcm", cfError(410, 5028, "Model has been deprecated"));
+  source("stable-diffusion-xl-base-1.0", cfError(410, 5028, "Model has been deprecated"));
+  h = heart(ON, { now: () => at });
+  await h.onMessage(message("нарисуй голую девушку", { id: OWNER }), KEY);
+  assert.equal(photos().length, 0);
+  assert.equal(forms("flux-2-klein-4b").length, 0);
+  assert.match(last(OWNER), /^Не вышло: мастерская этот запрос не пропустила — это её фильтр, не мой\..*SDXL Lightning — 410 «Model has been deprecated»/u);
 });

@@ -794,7 +794,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Что мастерская отвечала в последний раз, когда рисунок не вышел или вышел не сразу: сутки.
     const failed = await draw.lastFailure();
     const trouble = failed && now() - (Number(failed.at) || 0) < DAY
-      ? ` · ${failed.code === "recovered" ? `заминка в ${clock(failed.at)} (нарисовал ${failed.by})` : `неудача в ${clock(failed.at)}`}: ${drawTries(failed.tries)}`
+      ? ` · ${failed.code === "recovered" ? `заминка в ${clock(failed.at)} (нарисовал ${failed.by})` : `неудача в ${clock(failed.at)}`}: ${drawTries(failed.tries, failed.resting)}`
       : "";
     // Чем собирается описание для художника: своё — бесплатно, модель — несколько нейронов.
     // Модель или переводчик не ответили — их слова здесь же: по ним видно, что чинить.
@@ -807,7 +807,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const mute = told.translator && now() - (Number(told.translator.at) || 0) < DAY
       ? ` (молчал в ${clock(told.translator.at)}: ${told.translator.status || "нет связи"}${told.translator.said ? ` «${told.translator.said}»` : ""}${told.translator.codes ? `, код ${told.translator.codes}` : ""})` : "";
     const words = ` · описания: словарь художника (${DRAW_SUBJECTS.length})${writer}, переводчик${mute}`;
-    return `краски есть${count}${DRAW_DAILY > 0 ? ` · на человека в день — ${DRAW_DAILY}` : ""}${words}${trouble}`;
+    // Запасные художники, которые запрос не приняли (например, отключены поставщиком): их пока не спрашивают.
+    const idleSpares = Object.values(await draw.spares().catch(() => ({})));
+    const spare = idleSpares.length
+      ? ` · запасные художники отдыхают после отказа: ${idleSpares.map(item => `${item.title} — ${item.status || "нет связи"}${item.said ? ` «${item.said}»` : ""}`).join("; ")}`
+      : "";
+    return `краски есть${count}${DRAW_DAILY > 0 ? ` · на человека в день — ${DRAW_DAILY}` : ""}${words}${spare}${trouble}`;
   }
 
   async function clockLine() {
@@ -2753,7 +2758,70 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     const rows = await taught.unheard({ limit: 30 });
     if (!rows.length) return say(turn, "Пока нечего показать: короткого, чего я не узнала бы, не было.");
-    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}\n\nНаучить сразу: на «фраза» отвечай «ответ». Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятое».`);
+    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}\n\nНаучить сразу: на «фраза» отвечай «ответ». Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятое».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+  }
+
+  // ── сама предлагает ответы для словаря (идея 128) ───────────────────────
+  /**
+   * Хозяин, в личке: «предложи ответы». Она берёт до десяти коротких фраз, которых
+   * чаще всего не узнавала, одним вопросом к модели сочиняет к ним ответы в своём
+   * характере и показывает списком. «Беру 1 3» / «беру все» — в словарь: дальше
+   * на эти фразы она отвечает без модели. Сама в словарь ничего не кладёт.
+   */
+  const PROPOSED_KEY = "heart:proposed:v1";
+  const PROPOSE_ROWS = 10;
+  const PROPOSE_ASK = /^(?:предложи|придумай|подбери|сочини)(?:те)?\s+(?:сама\s+)?(?:мне\s+)?ответы(?:\s+(?:на\s+(?:непонятое|неузнанное|эти\s+фразы)|для\s+словаря|в\s+словарь))?$|^пополни\s+словарь(?:\s+сама)?$/u;
+  const PROPOSE_TAKE = /^(?:беру|бери|возьми|принимаю)\s+(все|(?:\d{1,2}[\s,]*(?:и\s+)?)+)$/u;
+  const parsePropose = (text) => {
+    const value = String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
+    if (!value || value.length > 80) return null;
+    if (PROPOSE_ASK.test(value)) return { ask: true };
+    const take = value.match(PROPOSE_TAKE);
+    if (!take) return null;
+    return take[1] === "все" ? { take: "all" } : { take: [...new Set((take[1].match(/\d{1,2}/gu) ?? []).map(Number))] };
+  };
+  async function proposeWords(turn, prompt) {
+    if (!PHRASES || !owner(turn.actorId) || !turn.isPrivate) return null;
+    const asked = parsePropose(prompt);
+    if (!asked) return null;
+    if (asked.take) {
+      const saved = await store.get(PROPOSED_KEY).catch(() => null);
+      const items = Array.isArray(saved?.items) && now() - Number(saved.at) < DAY ? saved.items : [];
+      // «Беру 2» без свежего предложения — обычные слова: пусть идут своим путём.
+      if (!items.length) return null;
+      if (turn.dry) return say(turn, "Взяла бы предложенные ответы в словарь — репетиция, ничего не записываю.");
+      const picked = asked.take === "all" ? items.map((item, index) => index) : asked.take.map(number => number - 1).filter(index => items[index]);
+      if (!picked.length) return say(turn, `Таких номеров в предложенном нет: там их ${items.length}.`);
+      let added = 0;
+      const failed = [];
+      for (const index of picked) {
+        const done = await taught.add(items[index].when, items[index].say);
+        if (done.ok) { added += 1; await taught.settle(items[index].when); } else failed.push(index + 1);
+      }
+      // Предложение закрывается одним ответом: номера после «беру 1» уже значили бы другое.
+      await store.remove(PROPOSED_KEY).catch(() => false);
+      if (!added) return say(turn, "Не добавилось: память сейчас недоступна или выученных фраз уже предел.");
+      return say(turn, `Добавила в словарь: ${added}. Теперь на ${added === 1 ? "эту фразу" : "эти фразы"} отвечаю без модели. Список — «мои фразы», убрать — «забудь фразу 3».${failed.length ? ` Не легли: ${failed.join(", ")}.` : ""}`);
+    }
+    if (turn.dry) return say(turn, "Предложила бы ответы на неузнанное — репетиция, модель не трачу.");
+    const rows = (await taught.unheard({ limit: 30 })).slice(0, PROPOSE_ROWS);
+    if (!rows.length) return say(turn, "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
+    await typing(turn);
+    const answer = await compose(turn, `Ниже — короткие реплики, на которые у тебя нет готового ответа: люди пишут их тебе в чатах. К каждой напиши один короткий ответ в своём характере — до 12 слов. Ответ услышат разные люди, поэтому: без слов «ты» и «вы», без имён, без вопросов о личном, без дат, чисел и фактов, которые устареют. Формат строго такой: номер, точка, ответ — каждая реплика с новой строки. Больше ничего не пиши.\n\n${rows.map((row, index) => `${index + 1}. ${row.text}`).join("\n")}`).catch(() => null);
+    if (!answer) return say(turn, "Сочинить сейчас нечем: модель не отвечает или дневной лимит вышел. Список неузнанного — «что ты не поняла?».");
+    const items = [];
+    for (const line of String(answer).split("\n")) {
+      const found = line.match(/^\s*(\d{1,2})\s*[.):—-]\s*(.+)$/u);
+      const row = found ? rows[Number(found[1]) - 1] : null;
+      const words = found ? found[2].trim().replace(/^[«"“„]+|[»"”]+$/gu, "").trim() : "";
+      // Не по форме, слишком длинно, с разметкой или «не знаю» — в предложение не идёт.
+      if (!row || !words || words.length > 200 || /[{}<>]/u.test(words) || UNSURE.test(words) || items.some(item => item.when === row.text)) continue;
+      items.push({ when: row.text, say: words });
+    }
+    if (!items.length) return say(turn, "Модель ответила не по форме — предложить нечего. Попробуйте ещё раз чуть позже.");
+    if (!await store.set(PROPOSED_KEY, { items, at: now() }).catch(() => false)) return say(turn, "Не запомнилось: хранилище не отвечает.");
+    pulse.bump("ruled");
+    return say(turn, `Вот что я бы отвечала (${items.length}):\n${items.map((item, index) => `${index + 1}. «${item.when}» → «${item.say}»`).join("\n")}\n\nВзять — одним сообщением: «беру 1 3» или «беру все». Не нравится ответ — научите своим: на «фраза» отвечай «ответ». В словарь без вашего слова ничего не кладу.`);
   }
 
   /**
@@ -3532,8 +3600,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /** Ответы мастерской одной строкой: «FLUX schnell — 400 «…»; SDXL — 404 «…»». */
-  const drawTries = (tries) => (Array.isArray(tries) ? tries : []).slice(-4)
-    .map(item => `${item.by} — ${item.status || "нет связи"}${item.said ? ` «${item.said}»` : ""}${item.codes ? ` (код ${item.codes})` : ""}`).join("; ");
+  /**
+   * Ответы мастерской одной строкой. Одинаковые подряд от одного художника — один раз, со счётом:
+   * первый ответ основного художника важнее всех и из строки не выпадает.
+   */
+  const drawTries = (tries, resting = []) => {
+    const groups = [];
+    for (const item of Array.isArray(tries) ? tries : []) {
+      const line = `${item.by} — ${item.status || "нет связи"}${item.said ? ` «${item.said}»` : ""}${item.codes ? ` (код ${item.codes})` : ""}`;
+      if (groups.at(-1)?.line === line) groups.at(-1).n += 1; else groups.push({ line, n: 1 });
+    }
+    const shown = (groups.length > 6 ? [groups[0], ...groups.slice(-5)] : groups).map(group => `${group.line}${group.n > 1 ? ` ×${group.n}` : ""}`).join("; ");
+    const idle = (Array.isArray(resting) ? resting : []).filter(Boolean);
+    return `${shown}${idle.length ? `${shown ? "; " : ""}запасные отдыхают после отказа: ${idle.join(", ")}` : ""}`;
+  };
   async function drawPicture(turn, query) {
     const lastKey = `heart:drew:${turn.chatId}`;
     // «Открытку Маше на день рождения»: описание для художника — готовое, слова — подписью.
@@ -3572,8 +3652,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     else if (subject.prompt) made = { prompt: subject.prompt, core: subject.prompt, how: "своё" };
     else made = await draw.compose(subject.text, { literal: asIs, free, random });
     if (!made.prompt) return say(turn, `Не вышло: переводчик для художника сейчас не отвечает, а по-русски он не понимает.${free && made.said ? ` Его ответ: ${made.said}.` : ""} ${you(turn, "Попробуйте", "Попробуй")} чуть позже — или ${you(turn, "опишите", "опиши")} по-английски.`);
-    // У открытки описание готовое и безобидное: после ложного отказа фильтра ей можно к запасным художникам.
-    const got = await draw.paint(made.prompt, { seed: Math.floor(random() * 1_000_000), free: free || Boolean(subject.card), asIs, core: made.core });
+    // Готовое описание — открытка, её собственное (комната, кот) или строка словаря художника —
+    // безобидно по построению: после ложного отказа фильтра ему можно к запасным художникам.
+    // Чужие слова («себя в шляпе») готовым описанием не считаются.
+    const ready = Boolean(subject.card) || (!subject.look && (made.how === "словарь" || made.how === "своё"));
+    const got = await draw.paint(made.prompt, { seed: Math.floor(random() * 1_000_000), free: free || ready, asIs, core: made.core });
     if (!got.ok) {
       if (got.code === "resting" || got.code === "limit" || got.code === "auth") {
         const why = got.code === "resting" ? got.why : got.code;
@@ -3584,7 +3667,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         return say(turn, `Краски на сегодня кончились: рисую я не больше, чем позволяет дневная норма. Вернутся в ${clock(got.until)}.`);
       }
       // Отказалась мастерская, а не она. Хозяину наедине — её слова дословно: по ним видно, что чинить.
-      const told = drawTries(got.tries);
+      const told = drawTries(got.tries, got.resting);
       const sent = String(got.prompt ?? "").slice(0, 200);
       if (got.code === "blocked") {
         if (free) return say(turn, `Не вышло: мастерская этот запрос не пропустила — это её фильтр, не мой.${sent ? ` Запрос ушёл так: «${sent}».` : ""}${told ? ` Её ответы: ${told}.` : ""} Попробуйте описать иначе.`);
@@ -5090,7 +5173,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Раз в неделю, по понедельникам: чего в словаре не хватило на деле.
     const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await taught.unheard({ limit: 8, sinceMs: 7 * DAY }).catch(() => []) : [];
     const weekLines = localParts(now(), TZ).weekday === 1 ? await weekInNumbers().catch(() => []) : [];
-    const unheardLine = weekly.length ? `За неделю не узнала из короткого: ${weekly.map(row => `«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join(", ")}. Весь список — «что ты не поняла?».` : "";
+    const unheardLine = weekly.length ? `За неделю не узнала из короткого: ${weekly.map(row => `«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join(", ")}. Весь список — «что ты не поняла?»; ответы могу предложить сама — «предложи ответы».` : "";
     const lines = [
       `🤍 Хозяин, вот мой вчерашний день, ${yesterday.slice(8, 10)}.${yesterday.slice(5, 7)}:`,
       ...pulse.lines(counters),
@@ -5460,7 +5543,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Просьба важнее хода: «профиль» посреди виселицы — не слово из семи букв.
     const lowered = normalize(prompt);
     const noted = parseNote(prompt);
-    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -5511,7 +5594,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? (parseRiddle(prompt) ? await drawRiddle(turn) : null) ?? await translateWords(turn, prompt, message) ?? await proposeWords(turn, prompt) ?? await cardsWords(turn, prompt) ?? await knowWords(turn, prompt) ?? await judge(turn, prompt) ?? await feastWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await drawHow(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
@@ -5644,7 +5727,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // записать ли. Только в личке: в группе такой вопрос — шум для остальных.
     const fact = !dry && turn.isPrivate ? await factToOffer(turn, prompt).catch(() => null) : null;
     // Короткое, чего не взял ни словарь, ни правило, — в список неузнанного.
-    if (!dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt)) await taught.note(prompt).catch(() => false);
+    if (!dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt) && !parsePropose(prompt)) await taught.note(prompt).catch(() => false);
     const sent = await answerByModel(turn, prompt);
     if (fact && sent?.ok) await offerFact(turn, fact);
     return sent;

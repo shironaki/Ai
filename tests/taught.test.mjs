@@ -138,3 +138,66 @@ test("по понедельникам сводка хозяину называе
   assert.ok(digest, "в понедельник строка есть");
   assert.match(digest, /За неделю не узнала из короткого: «кек чебурек» ×2, «ну ты и булка»\. Весь список — «что ты не поняла\?»/u);
 });
+
+test("128: «предложи ответы» — один вопрос к модели, хозяин выбирает; в словарь без его слова ничего не идёт", async () => {
+  reset();
+  const h = heart(ON, { now: () => NOON });
+  // Предлагать не к чему — без модели.
+  await h.onMessage(own("предложи ответы"), KEY);
+  assert.equal(last(OWNER), "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
+  assert.equal(chats().length, 0);
+  for (const said of ["кек чебурек", "кек чебурек", "ну ты и булка", "как оно ничего"]) {
+    sdk().fetchQueue.push(says("Ответ модели."));
+    await h.onMessage(message(said), KEY);
+  }
+  const before = chats().length;
+  // Чужому — нет: слова уходят в разговор, списка он не видит.
+  sdk().fetchQueue.push(says("Это не ко мне."));
+  await h.onMessage(message("предложи ответы"), KEY);
+  assert.equal(last(), "Это не ко мне.");
+  sdk().fetchQueue.length = 0;
+
+  // Модель отвечает по форме; «не знаю», разметка и лишние номера — мимо.
+  sdk().fetchQueue.push(says("1. Чебурек кек — и точка.\n2. «Булка — это комплимент, я считаю.»\n3. Не знаю, что на это сказать.\n7. Лишний номер.\nИ ещё пара слов от себя."));
+  await h.onMessage(own("предложи ответы"), KEY);
+  assert.equal(last(OWNER), "Вот что я бы отвечала (2):\n1. «кек чебурек» → «Чебурек кек — и точка.»\n2. «ну ты и булка» → «Булка — это комплимент, я считаю.»\n\nВзять — одним сообщением: «беру 1 3» или «беру все». Не нравится ответ — научите своим: на «фраза» отвечай «ответ». В словарь без вашего слова ничего не кладу.");
+  assert.equal(chats().length, before + 2, "один вопрос к модели на весь список (и один — чужому выше)");
+  const sentToModel = JSON.parse(chats().at(-1).options.body).messages.at(-1).content;
+  assert.match(sentToModel, /К каждой напиши один короткий ответ в своём характере — до 12 слов\./u);
+  assert.match(sentToModel, /\n\n1\. кек чебурек\n2\. (?:ну ты и булка|как оно ничего)\n3\. (?:ну ты и булка|как оно ничего)$/u);
+  // Пока не взято — в словаре пусто: на фразу отвечает модель.
+  assert.equal(sdk().kv.get(TAUGHT_KEY) ?? null, null);
+
+  // Чужое «беру все» — не команда. Хозяин берёт первый — предложение закрыто.
+  sdk().fetchQueue.push(says("Берите."));
+  await h.onMessage(message("беру все"), KEY);
+  assert.equal(last(), "Берите.");
+  await h.onMessage(own("беру 5"), KEY);
+  assert.equal(last(OWNER), "Таких номеров в предложенном нет: там их 2.");
+  await h.onMessage(own("беру 1"), KEY);
+  assert.equal(last(OWNER), "Добавила в словарь: 1. Теперь на эту фразу отвечаю без модели. Список — «мои фразы», убрать — «забудь фразу 3».");
+  const calls = chats().length;
+  await h.onMessage(message("кек чебурек"), KEY);
+  assert.equal(last(), "Чебурек кек — и точка.");
+  assert.equal(chats().length, calls, "выученное — без модели");
+  // Взятое ушло из неузнанного; второе «беру» без нового предложения — обычные слова.
+  assert.deepEqual(Object.keys(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).sort(), ["как оно ничего", "ну ты и булка"]);
+  sdk().fetchQueue.push(says("Что берёте?"));
+  await h.onMessage(own("беру 2"), KEY);
+  assert.equal(last(OWNER), "Что берёте?");
+
+  // «Беру все»; модель не по форме или молчит — честно.
+  sdk().fetchQueue.push(says("1. Булка так булка.\n2. Ничего — это уже что-то."));
+  await h.onMessage(own("пополни словарь"), KEY);
+  assert.match(last(OWNER), /^Вот что я бы отвечала \(2\):/u);
+  await h.onMessage(own("беру всё"), KEY);
+  assert.match(last(OWNER), /^Добавила в словарь: 2\. Теперь на эти фразы отвечаю без модели\./u);
+  sdk().fetchQueue.push(says("Ответ модели."));
+  await h.onMessage(message("опять двадцать пять"), KEY);
+  sdk().fetchQueue.push(says("Вот вам мои мысли без номеров."));
+  await h.onMessage(own("предложи ответы"), KEY);
+  assert.equal(last(OWNER), "Модель ответила не по форме — предложить нечего. Попробуйте ещё раз чуть позже.");
+  // «Что ты не поняла?» подсказывает новую просьбу.
+  await h.onMessage(own("что ты не поняла?"), KEY);
+  assert.match(last(OWNER), /Могу сама предложить ответы, а вы выберете — «предложи ответы»/u);
+});

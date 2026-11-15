@@ -67,15 +67,28 @@ const PAINTER = "@cf/black-forest-labs/flux-1-schnell";
 const TRANSLATOR = "@cf/meta/m2m100-1.2b";
 /**
  * Художники по порядку. Первый — основной; остальные пробуются, когда он
- * запрос не принял. Запасные отдают картинку файлом, а не строкой base64, и
- * понимают только `prompt`: лишних полей им не посылается.
+ * запрос не принял.
+ *
+ * FLUX.2 klein — тот же поставщик, что у основного, и свой фильтр: запрос ему
+ * уходит формой (`form`), а откровенное он не рисует (`strict`) — такие просьбы
+ * к нему не идут вовсе.
+ *
+ * Три последних отдают картинку файлом и понимают только `prompt`. Cloudflare
+ * назначил им отключение на 20.11.2026 (страницы моделей, сверено 15.11.2026):
+ * после этой даты они ответят отказом, отдохнут (`SPARE_REST_MS`) и в очереди
+ * мешать не будут. Убрать их из списка — когда отключение подтвердится вживую.
  */
 export const PAINTERS = Object.freeze([
   { id: PAINTER, title: "FLUX schnell" },
+  { id: "@cf/black-forest-labs/flux-2-klein-4b", title: "FLUX.2 klein", form: true, strict: true },
   { id: "@cf/bytedance/stable-diffusion-xl-lightning", title: "SDXL Lightning" },
   { id: "@cf/lykon/dreamshaper-8-lcm", title: "DreamShaper" },
   { id: "@cf/stabilityai/stable-diffusion-xl-base-1.0", title: "SDXL" },
 ]);
+/** Запасной художник запрос не принял (не фильтр и не лимит) — столько его не спрашивают. */
+export const SPARE_REST_MS = 6 * 3_600_000;
+/** Кто из запасных отдыхает: `{ [id]: { until, status, said } }`. Для очереди и для статуса. */
+export const SPARES_KEY = "heart:draw:spares";
 /** Последняя неудача рисования: что ответила мастерская. Для статуса. */
 export const DRAW_LAST_KEY = "heart:draw:last";
 /** Слова мастерской о своём фильтре. Только они — «blocked»; остальное 400 — не фильтр. */
@@ -239,7 +252,7 @@ export function subjectOf(query) {
 export function createDraw({ fetchImpl = null, key = "", store = null, now = () => Date.now(), steps = STEPS, directors = [] } = {}) {
   const parts = splitKey(key);
   const available = Boolean(parts && typeof fetchImpl === "function");
-  const memory = { until: 0, why: "", words: { off: {}, why: {}, translator: null } };
+  const memory = { until: 0, why: "", words: { off: {}, why: {}, translator: null }, spares: {} };
   const writers = (Array.isArray(directors) ? directors : []).map(item => String(item ?? "").trim()).filter(item => item.startsWith("@")).slice(0, 2);
 
   async function state() {
@@ -257,6 +270,25 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     if (!memory.until && !(await state()).until) return;
     memory.until = 0; memory.why = "";
     try { if (store && typeof store.set === "function") await store.set(DRAW_STATE_KEY, { until: 0, why: "", at: now() }); } catch { /* не страшно */ }
+  }
+
+  /** Кто из запасных художников отдыхает сейчас: `{ [id]: { until, status, said } }`. */
+  async function spares() {
+    let saved = null;
+    try { saved = store && typeof store.get === "function" ? await store.get(SPARES_KEY) : null; } catch { saved = null; }
+    const value = saved && typeof saved === "object" ? saved : memory.spares;
+    const out = {};
+    for (const painter of PAINTERS.slice(1)) {
+      const row = value?.[painter.id];
+      if (row && Number(row.until) > now()) out[painter.id] = { title: painter.title, until: Number(row.until), status: Number(row.status) || 0, said: String(row.said ?? "") };
+    }
+    return out;
+  }
+  async function restSpare(painter, { status = 0, said = "" } = {}) {
+    const resting = await spares();
+    const next = Object.fromEntries(Object.entries({ ...resting, [painter.id]: { until: now() + SPARE_REST_MS, status, said: String(said).slice(0, 160) } }).map(([id, row]) => [id, { until: row.until, status: row.status, said: row.said }]));
+    memory.spares = next;
+    try { if (store && typeof store.set === "function") await store.set(SPARES_KEY, { ...next, at: now() }); } catch { /* останется в памяти изолята */ }
   }
 
   /** Чужие слова — без ключа и без ID аккаунта, одной короткой строкой. */
@@ -285,14 +317,17 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
    * Один запрос к мастерской: `{ ok, status, data, text, bytes }`; сеть упала — status 0.
    * `bytes` — когда в ответ пришёл сам файл картинки, а не JSON.
    */
-  async function call(model, body, ms = CALL_TIMEOUT_MS) {
+  /** Поля формы одной строкой: `FormData` в изоляте не обещан, а поля здесь только текстовые. */
+  const formOf = (fields, boundary) => `${Object.entries(fields).map(([name, value]) => `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${String(value).replace(/\r?\n/gu, " ")}\r\n`).join("")}--${boundary}--\r\n`;
+  async function call(model, body, ms = CALL_TIMEOUT_MS, { form = false } = {}) {
     let response;
     try {
       const signal = timeout(ms);
+      const boundary = `----ai${Math.floor(now()).toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`;
       response = await fetchImpl(`${API}/${parts.account}/ai/run/${model}`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${parts.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        headers: { Authorization: `Bearer ${parts.token}`, "Content-Type": form ? `multipart/form-data; boundary=${boundary}` : "application/json" },
+        body: form ? formOf(body, boundary) : JSON.stringify(body),
         ...(signal ? { signal } : {}),
       });
     } catch { return { ok: false, status: 0, data: null, text: "", bytes: null }; }
@@ -483,22 +518,29 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     const full = { prompt: words, steps: Math.min(8, Math.max(1, Math.trunc(Number(steps)) || STEPS)) };
     if (Number.isFinite(Number(seed)) && seed != null) full.seed = Number(seed);
     const tries = [];
+    // Кого из запасных не спрашивали: они отдыхают после своего отказа. В отказе и в статусе — по именам.
+    const resting = [];
     let flagged = false, down = 0;
+    // В записи — первый ответ (основного художника) и пять последних: он важнее всех.
+    const brief = () => (tries.length > 6 ? [tries[0], ...tries.slice(-5)] : [...tries]);
     const fail = async (code, more = {}) => {
-      await keep({ at: now(), code, tries: tries.slice(-6) });
-      return { ok: false, code, tries, prompt: words, ...more };
+      await keep({ at: now(), code, tries: brief(), ...(resting.length ? { resting } : {}) });
+      return { ok: false, code, tries, prompt: words, ...(resting.length ? { resting } : {}), ...more };
     };
     /** Одна попытка: картинка, окончательный отказ (`code`) или null — пробовать дальше. */
     const attempt = async (painter, body, via = "") => {
-      const got = await call(painter.id, body);
+      // Художнику с формой — только поля, которые он знает: описание и размер.
+      const got = painter.form
+        ? await call(painter.id, { prompt: body.prompt, width: 1024, height: 1024 }, CALL_TIMEOUT_MS, { form: true })
+        : await call(painter.id, body);
       if (got.ok) {
         const packed = got.data?.result?.image ?? got.data?.image ?? "";
         const image = got.bytes ?? (packed ? fromBase64(packed) : new Uint8Array(0));
         if (image.length >= 100) {
           await wake();
           // Вышло не с первого раза: что этому мешало, остаётся в статусе.
-          if (tries.length) await keep({ at: now(), code: "recovered", by: painter.title, tries: tries.slice(-6) });
-          return { ok: true, bytes: image, prompt: body.prompt, by: painter.title, via, tries: tries.slice(-6) };
+          if (tries.length) await keep({ at: now(), code: "recovered", by: painter.title, tries: brief() });
+          return { ok: true, bytes: image, prompt: body.prompt, by: painter.title, via, tries: brief() };
         }
         tries.push({ by: painter.title, status: got.status, said: "ответ без картинки", codes: "" });
         return null;
@@ -510,6 +552,9 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
       if (got.status === 0) return fail("network");
       if (got.status >= 500) down += 1;
       else if (FLAGGED.test(said.low)) flagged = true;
+      // Запасной запрос не принял, и дело не в фильтре: модель отключена или говорит на другом
+      // языке полей. Спрашивать его каждый раз незачем — пусть отдохнёт.
+      else if (painter.id !== PAINTER) await restSpare(painter, { status: got.status, said: said.words });
       return null;
     };
     const settled = (got) => Boolean(got?.ok || got?.code);
@@ -536,8 +581,12 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
       }
     }
     if (flagged && !free) return fail("blocked");
+    const idleSpares = await spares();
     for (const spare of PAINTERS.slice(1)) {
       if (now() - started > PAINT_BUDGET_MS) break;
+      if (idleSpares[spare.id]) { resting.push(spare.title); continue; }
+      // Откровенное строгому художнику не предлагается: он откажет, а запрос уйдёт впустую.
+      if (asIs && spare.strict) continue;
       got = await attempt(spare, { prompt: words }, "запасным художником");
       if (settled(got)) return got;
       if (flagged && !free) return fail("blocked");
@@ -547,5 +596,5 @@ export function createDraw({ fetchImpl = null, key = "", store = null, now = () 
     return fail(down === tries.length ? "network" : "refused", { status: tries.at(-1)?.status ?? 0 });
   }
 
-  return Object.freeze({ available, paint, compose, english, translate, state, lastFailure, writers, wordsState });
+  return Object.freeze({ available, paint, compose, english, translate, state, lastFailure, writers, wordsState, spares });
 }
