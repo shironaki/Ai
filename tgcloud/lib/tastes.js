@@ -18,6 +18,11 @@ export const TASTE_ASK_KEY = (chatId, userId) => `heart:tasteask:${chatId}:${use
 /** Сколько она ждёт ответа на вопрос анкеты. */
 export const TASTE_ASK_TTL_MS = 10 * 60_000;
 export const TASTE_CASUAL_TTL_MS = 3 * 60_000;
+/** Вопрос вечера ждёт дольше: его задала она сама, и человек может увидеть его не сразу. */
+export const TASTE_EVENING_TTL_MS = 3 * 3_600_000;
+/** Что пропущено в вопросах вечера: завтра она спросит о другом. */
+export const EVENING_KEY = (userId) => `heart:evening:${userId}`;
+export const EVENING_HOUR = 20;
 const MAX_VALUE = 60;
 
 /** Прилагательное при названии («зелёный чай», «белые розы») и связки. Строка уже приведена: «ё» → «е». */
@@ -302,11 +307,76 @@ export function createTastes({ store, now = () => Date.now() } = {}) {
     const saved = await store.get(TASTE_ASK_KEY(chatId, userId)).catch(() => null);
     if (!saved?.kind || !BY_KEY.has(saved.kind)) return null;
     // Встречный вопрос «а ваш?» ждёт недолго: через три минуты слово уже о другом.
-    if (now() - Number(saved.at) > (saved.casual ? TASTE_CASUAL_TTL_MS : TASTE_ASK_TTL_MS)) return null;
-    return { kind: saved.kind, casual: saved.casual === true, skipped: Array.isArray(saved.skipped) ? saved.skipped.filter(key => BY_KEY.has(key)) : [] };
+    if (now() - Number(saved.at) > (saved.casual ? TASTE_CASUAL_TTL_MS : saved.evening ? TASTE_EVENING_TTL_MS : TASTE_ASK_TTL_MS)) return null;
+    return { kind: saved.kind, casual: saved.casual === true, evening: saved.evening === true, at: Number(saved.at) || 0, skipped: Array.isArray(saved.skipped) ? saved.skipped.filter(key => BY_KEY.has(key)) : [] };
   }
-  const ask = (chatId, userId, kind, { skipped = [], casual = false } = {}) => store.set(TASTE_ASK_KEY(chatId, userId), { kind, skipped, ...(casual ? { casual: true } : {}), at: now() }).then(result => result !== false).catch(() => false);
+  const ask = (chatId, userId, kind, { skipped = [], casual = false, evening = false } = {}) => store.set(TASTE_ASK_KEY(chatId, userId), { kind, skipped, ...(casual ? { casual: true } : {}), ...(evening ? { evening: true } : {}), at: now() }).then(result => result !== false).catch(() => false);
   const rest = (chatId, userId) => store.set(TASTE_ASK_KEY(chatId, userId), { kind: "", at: 0 }).then(result => result !== false).catch(() => false);
 
   return { list, get, set, drop, clear, next, asking, ask, rest };
+}
+
+// ── вопрос вечера ────────────────────────────────────────────────────────
+const EV_TIME = "(?:\\s+в\\s+(\\d{1,2})(?:[:.](\\d{2}))?(?:\\s*(?:час(?:а|ов)?|ч))?(?:\\s+вечера)?)?";
+const EV_EVERY = "(?:\\s+(?:каждый\\s+(?:день|вечер)|по\\s+вечерам|ежедневно))?";
+const EVENING_ON = [
+  new RegExp(`^(?:задавай|спрашивай|присылай|шли|включи)(?:те)?\\s+(?:мне\\s+)?вопрос(?:ы)?\\s+вечера${EV_EVERY}${EV_TIME}$`, "u"),
+  new RegExp(`^вопрос(?:ы)?\\s+вечера\\s+(?:каждый\\s+(?:день|вечер)|по\\s+вечерам|ежедневно)${EV_TIME}$`, "u"),
+  new RegExp(`^(?:спрашивай|расспрашивай)(?:те)?\\s+меня\\s+(?:о\\s+любимом\\s+)?по\\s+вечерам${EV_TIME}$`, "u"),
+];
+const EVENING_OFF = /^(?:не\s+(?:задавай|спрашивай|присылай|шли|надо|нужно)|выключи|отключи|убери|отмени|хватит)(?:те)?\s+(?:больше\s+)?(?:мне\s+)?вопрос(?:ы|а|ов)?\s+вечера$|^не\s+(?:спрашивай|расспрашивай)(?:те)?\s+меня\s+по\s+вечерам$/u;
+
+/**
+ * «Задавай мне вопрос вечера [в 21:00]», «не задавай вопрос вечера».
+ * Возвращает `{ on: true, hour, minute }`, `{ on: false }` или null.
+ * Час до полудня понимается как вечерний: «в 9» — это 21:00.
+ */
+export function parseEvening(text) {
+  const value = fold(String(text ?? "")).replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
+  if (!value || value.length > 70) return null;
+  if (EVENING_OFF.test(value)) return { on: false };
+  for (const pattern of EVENING_ON) {
+    const found = value.match(pattern);
+    if (!found) continue;
+    let hour = found[1] == null ? EVENING_HOUR : Number(found[1]);
+    const minute = Number(found[2]) || 0;
+    if (hour >= 1 && hour < 12) hour += 12;
+    if (hour > 23 || hour < 12 || minute > 59) return null;
+    return { on: true, hour, minute };
+  }
+  return null;
+}
+
+// ── что у двоих общего ───────────────────────────────────────────────────
+const WHOM = "(?:\\s+с\\s+(?:ним|ней|этим\\s+человеком|[@\\p{L}\\d_][@\\p{L}\\d_ ]{0,30}))?";
+const COMMON = [
+  new RegExp(`^(?:а\\s+)?что\\s+у\\s+(?:нас|меня)${WHOM}\\s+общего$`, "u"),
+  new RegExp(`^(?:а\\s+)?что\\s+у\\s+(?:нас|меня)\\s+общего${WHOM}$`, "u"),
+  new RegExp(`^(?:а\\s+)?что\\s+общего\\s+у\\s+(?:нас|меня)${WHOM}$`, "u"),
+  /^сравни(?:те)?\s+(?:нас|наши\s+(?:анкеты|вкусы)|меня\s+с\s+(?:ним|ней))$/u,
+  /^(?:а\s+)?(?:у\s+нас|мы)\s+(?:есть\s+)?(?:что-то|что-нибудь|хоть\s+что-то)\s+общее$/u,
+];
+/** «Что у нас общего?», «сравни нас» — слова о сравнении двух анкет. С кем — решает сердце: по ответу на сообщение. */
+export function parseCommon(text) {
+  const value = fold(String(text ?? "")).replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
+  if (!value || value.length > 70) return null;
+  return COMMON.some(pattern => pattern.test(value)) ? { common: true } : null;
+}
+
+/**
+ * Сравнение двух списков любимого (`[{ key, title, value }]`).
+ * `same` — оба назвали одно и то же; `both` — оба назвали, но разное.
+ * Без оценок и процентов: что совпало, то и названо.
+ */
+export function commonOf(mine, theirs) {
+  const other = new Map((Array.isArray(theirs) ? theirs : []).map(item => [item.key, item]));
+  const same = [], both = [];
+  for (const item of Array.isArray(mine) ? mine : []) {
+    const pair = other.get(item.key);
+    if (!pair) continue;
+    const short = item.title.replace(/^любим\S+\s+/u, "");
+    if (fold(item.value) === fold(pair.value)) same.push({ key: item.key, title: short, value: item.value });
+    else both.push({ key: item.key, title: short, a: item.value, b: pair.value });
+  }
+  return { same, both };
 }

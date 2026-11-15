@@ -38,6 +38,7 @@ import { fajrOn, parseFajr, prayersOn, ishaRule, FAJR_METHODS, FAJR_ANGLE } from
 import { parsePrayer, prayerInfo, inWords, PRAYERS, PRAYER_KEYS, PRAYER_KEY, PRAYER_SUBS_MAX, PRAYER_LATE_MS } from "./prayer.js";
 import { parsePostcard, postcardPrompt, parseHoliday, holidaysOf, holidayDate, OCCASIONS, HOLIDAYS_KEY, HOLIDAYS_MAX } from "./postcard.js";
 import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
+import { parseAsked, askedItems, ASKED_KEY, ASKED_MAX } from "./asked.js";
 import {
   parseSecretary, canReply, langOf, noticeEnglish, noticeRussian, stateOf as secretaryStateOf, notePerson, toldKey,
   isUrgent, isRelay, quoteOf, ackRussian, ackEnglish, urgentKey, ACKS_MAX, URGENT_EXCERPT,
@@ -51,7 +52,7 @@ import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { detectFact, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
-import { createTastes, parseTaste, readAnswer, readCasual, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
+import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 
@@ -139,7 +140,7 @@ const APOLOGY = /(?:^|[\s,])(?:прости|простите|извини|изв
 /** Человек поправляет её ответ: это сигнал ошибки и повод для урока. */
 const CORRECTION = /^(?:нет[,.!\s]|неа[,.!\s]|не\s+так|не\s+то[,.!\s]|неправильно|неверно|ты\s+(?:ошиблась|ошибаешься|не\s+права|путаешь|перепутала)|вы\s+(?:ошиблись|ошибаетесь|не\s+правы)|это\s+(?:не\s+так|неправда|неверно|ошибка)|на\s+самом\s+деле|вообще-то|поправлю)/iu;
 /** Она сама призналась, что не знает: вопрос уходит в список «спросить у хозяина». */
-const UNSURE = /(?:^|[\s,])(?:не\s+знаю|не\s+уверена|нет\s+данных|не\s+располагаю|мне\s+неизвестно|не\s+могу\s+сказать\s+точно)(?=$|[\s,.!])/iu;
+const UNSURE = /(?:^|[\s,])(?:не\s+знаю|не\s+уверена|нет\s+данных|не\s+располагаю|мне\s+неизвестно|не\s+могу\s+сказать\s+точно)(?=$|[\s,.!?:;…)—–-])/iu;
 const YES = /^(?:да|ага|принять|прими|принимаю|ок|ok|хорошо|верно|согласен|согласна|\+)[\s!.]*$/iu;
 const NO = /^(?:нет|неа|отклонить|отклони|не\s+надо|не\s+нужно|-)[\s!.]*$/iu;
 /** После её слов о режиме общения: «хочу», «покажи», «какие?» — то же «да». */
@@ -1349,6 +1350,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (late > 6 * 3_600_000) return null;
       const today = calendarDate(now(), zone);
       if (item.text === "card") return cardText(cardFor(item.userId, today));
+      if (item.text === "evening") {
+        // Вечер прошёл (будильник стоял) — ночью не спрашивает.
+        if (!LIKES || late > 2 * 3_600_000) return null;
+        const state = (await store.get(EVENING_KEY(item.userId)).catch(() => null)) ?? {};
+        const skipped = Array.isArray(state.skipped) ? state.skipped : [];
+        const kind = await tastes.next(item.userId, { skipped });
+        if (!kind) {
+          // Спрашивать больше не о чем: рассылка снимает себя сама.
+          await reminders.dropWhere(entry => entry.kind === "daily" && entry.text === "evening" && String(entry.userId) === String(item.userId)).catch(() => null);
+          await store.remove(EVENING_KEY(item.userId)).catch(() => false);
+          return "🌙 Вопросы вечера кончились: всё, о чём я умею спрашивать, я уже знаю или пропустила. Спасибо за ответы. Посмотреть — «что я люблю».";
+        }
+        if (!await tastes.ask(item.chatId, item.userId, kind.key, { skipped, evening: true })) return null;
+        const formal = (await mannerFor(item.userId).catch(() => null))?.formal !== false;
+        return `🌙 Вопрос вечера: ${formal ? kind.ask.vy : kind.ask.ty}\nОтветить можно парой слов; «не знаю» — пропущу, «хватит» — больше не спрошу.`;
+      }
       if (item.text === "summary") {
         // Чат перестали запоминать или день был пустой — молчит: «итогов нет» каждый вечер никому не нужно.
         if (!CHAT_MEMORY || (await fun.chatSettings(item.chatId)).log === false) return null;
@@ -1922,6 +1939,127 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, cleared.had ? `Анкета чистая: всё, что ${you(turn, "вы говорили", "ты говорил(а)")} о любимом, я забыла.` : "Анкета и так пустая.");
   }
 
+  // ── вопрос вечера ────────────────────────────────────────────────────────
+  const eveningMailing = (userId) => (entry) => entry.kind === "daily" && entry.text === "evening" && String(entry.userId) === String(userId);
+  /** «Задавай мне вопрос вечера [в 21:00]», «не задавай вопрос вечера» — в личке, по желанию человека. */
+  async function eveningWords(turn, prompt) {
+    const asked = LIKES ? parseEvening(prompt) : null;
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как «вопрос вечера» — репетиция, ничего не ставлю.");
+    if (!turn.isPrivate) return say(turn, "Вопрос вечера — личное: я спрашиваю о любимом и пишу первой. Включается в личке.");
+    const gone = await reminders.dropWhere(eveningMailing(turn.actorId)).catch(() => ({ removed: [] }));
+    if (!asked.on) {
+      await tastes.rest(turn.chatId, turn.actorId);
+      return say(turn, gone.removed?.length ? "Хорошо, вопрос вечера больше не задаю. Вернуть — «задавай мне вопрос вечера»." : "Я его и не задавала. Включить — «задавай мне вопрос вечера».");
+    }
+    const skipped = ((await store.get(EVENING_KEY(turn.actorId)).catch(() => null)) ?? {}).skipped ?? [];
+    if (!await tastes.next(turn.actorId, { skipped: Array.isArray(skipped) ? skipped : [] })) {
+      return say(turn, `Спрашивать мне уже не о чем: анкета заполнена. Поменять ответ — «мой любимый цвет — …», посмотреть — «что я люблю».`);
+    }
+    const zone = zoneOf(turn);
+    const clockText = `${String(asked.hour).padStart(2, "0")}:${String(asked.minute).padStart(2, "0")}`;
+    const parsed = parseReminder(`напоминай каждый день в ${clockText} рассылка`, { now: now(), timeZone: zone });
+    if (!parsed?.ok) return say(turn, "Не получилось поставить вопрос на это время.");
+    const added = await reminders.add({ userId: turn.actorId, chatId: turn.chatId, at: parsed.at, text: "evening", repeat: parsed.repeat, kind: "daily", zone });
+    if (!added.ok) return say(turn, added.code === "too_many" ? `У ${you(turn, "вас", "тебя")} уже двадцать напоминаний — это мой предел. Лишнее можно отменить: «мои напоминания».` : "Не получилось запомнить: хранилище не отвечает.");
+    return say(turn, `Хорошо: каждый вечер в ${clockText} — один вопрос о любимом, из того, чего я о ${you(turn, "вас", "тебе")} ещё не знаю. Ответить можно парой слов; «не знаю» — пропущу. Вопросы кончатся — перестану сама. Отменить — «не задавай вопрос вечера».`);
+  }
+
+  /** Ответ на вопрос вечера: один вопрос — один ответ, следующего сегодня не будет. */
+  async function eveningAnswer(turn, kind, answer, waiting) {
+    await tastes.rest(turn.chatId, turn.actorId);
+    if (answer.stop) {
+      await reminders.dropWhere(eveningMailing(turn.actorId)).catch(() => null);
+      return say(turn, "Хорошо, вопрос вечера больше не задаю. Вернуть — «задавай мне вопрос вечера».");
+    }
+    if (answer.skip) {
+      await store.update(EVENING_KEY(turn.actorId), (before) => ({ skipped: [...new Set([...(Array.isArray(before?.skipped) ? before.skipped : waiting.skipped), kind.key])], at: now() })).catch(() => false);
+      return say(turn, "Пропустим. Завтра спрошу о другом.");
+    }
+    const saved = await tastes.set(turn.actorId, kind.key, answer.value, { inGroup: false });
+    if (!saved.ok) return say(turn, "Запомнить не вышло: память сейчас недоступна.");
+    pulse.bump("ruled");
+    return say(turn, `Запомнила: ${yours(turn, kind.title)} — ${saved.value}. Завтра спрошу ещё о чём-нибудь.`);
+  }
+
+  // ── что у двоих общего ───────────────────────────────────────────────────
+  /**
+   * «Аи, что у нас общего?» — в группе, ответом на сообщение второго человека.
+   * Сравнивается только названное при всех: сказанное в личке здесь не звучит.
+   * Без оценок: что совпало, то и названо.
+   */
+  async function commonWords(turn, prompt) {
+    if (!LIKES || !turn.inGroup || !parseCommon(prompt)) return null;
+    const other = turn.message?.reply_to_message?.from;
+    // Ответ на её собственное сообщение — вопрос к ней самой: это разговор, не сравнение анкет.
+    if (turn.replyToMe) return null;
+    if (turn.dry) return say(turn, "Сравнила бы две анкеты — репетиция.");
+    if (other?.id == null) return say(turn, `Сравнить могу двоих: ${you(turn, "ответьте", "ответь")} этими словами на сообщение человека — и я назову, что у вас совпало из названного при всех.`);
+    if (other.is_bot) return say(turn, "С ботами анкеты не сравниваю: у них любимого нет.");
+    if (String(other.id) === String(turn.actorId)) return say(turn, `Это ${you(turn, "ваше", "твоё")} же сообщение. ${you(turn, "Ответьте", "Ответь")} на сообщение другого человека.`);
+    const theirName = safeName(other.first_name) || "собеседник";
+    const [mine, theirs] = await Promise.all([tastes.list(turn.actorId, { inGroup: true }), tastes.list(other.id, { inGroup: true })]);
+    const hint = `Рассказать — «${NAME}, мой любимый цвет — …» или «${NAME}, анкета».`;
+    if (!mine.length && !theirs.length) return say(turn, `Сравнивать пока нечего: при всех о любимом не рассказывал никто из вас. ${hint}`);
+    if (!mine.length) return say(turn, `${you(turn, "Вы", "Ты")} при всех о любимом мне ещё не ${you(turn, "рассказывали", "рассказывал(а)")} — сравнивать не с чем. ${hint}`);
+    if (!theirs.length) return say(turn, `${theirName} при всех о любимом мне ещё ничего не говорил(а) — сравнивать не с чем. ${hint}`);
+    const { same, both } = commonOf(mine, theirs);
+    const differ = both.length ? `Оба назвали, но разное: ${both.map(item => `${item.title} (${item.a} / ${item.b})`).join(", ")}.` : "";
+    pulse.bump("ruled");
+    if (!same.length) return say(turn, [`Одинакового из названного при всех пока нет: ${turn.name || "вы"} и ${theirName}.`, differ, both.length ? "" : "Об одном и том же вы оба ещё не рассказывали."].filter(Boolean).join("\n"));
+    return say(turn, [`Общее — ${turn.name || "вы"} и ${theirName}, из названного при всех:`, ...same.map(item => `• ${item.title} — ${item.value}`), differ].filter(Boolean).join("\n"));
+  }
+
+  // ── «узнаю и вернусь» ────────────────────────────────────────────────────
+  /**
+   * Хозяин, в личке: «чего ты не знала?» — список; «ответ 2: …» — она передаёт
+   * ответ человеку в тот же чат, ответом на его сообщение; «забудь вопрос 2».
+   */
+  async function askedWords(turn, prompt) {
+    const asked = parseAsked(prompt);
+    if (!asked) return null;
+    // Остальным и при всех — мимо, молча: «ответ 2: …» в чате может быть ходом в игре.
+    if (!owner(turn.actorId) || !turn.isPrivate) return null;
+    if (turn.dry) return say(turn, "Показала бы вопросы без ответа — репетиция.");
+    const items = askedItems(await store.get(ASKED_KEY).catch(() => null));
+    const zone = zoneOf(turn);
+    const dayText = (at) => { const parts = localParts(at, zone); return `${String(parts.d).padStart(2, "0")}.${String(parts.m).padStart(2, "0")}`; };
+    const from = (item) => (item.chat != null ? `${item.who || "участник"}${item.title ? `, «${item.title}»` : ""}` : "ваш вопрос");
+    if (asked.list) {
+      if (!items.length) return say(turn, "Вопросов без ответа у меня нет.");
+      return say(turn, ["Вопросы, на которые я не знала ответа:", ...items.map((item, index) => `${index + 1}. «${item.q}» — ${from(item)}, ${dayText(item.at)}`), "",
+        "Ответить человеку — «ответ 1: …»: передам в тот же чат, ответом на его сообщение. Убрать — «забудь вопрос 1». Чтобы я знала это и впредь — «знай: …»."].join("\n"));
+    }
+    if (asked.clear) {
+      await store.set(ASKED_KEY, { items: [] }).catch(() => false);
+      return say(turn, items.length ? `Убрала все вопросы без ответа: ${items.length}.` : "Вопросов без ответа и не было.");
+    }
+    const index = asked.drop ?? asked.answer.index;
+    const item = items[index - 1];
+    if (!item) return say(turn, items.length ? `Под номером ${index} вопроса нет: их ${items.length}. Список — «чего ты не знала?».` : "Вопросов без ответа у меня нет.");
+    const drop = () => store.update(ASKED_KEY, (before) => ({ items: askedItems(before).filter(entry => !(entry.q === item.q && Number(entry.at) === Number(item.at))) })).catch(() => false);
+    if (asked.drop != null) {
+      await drop();
+      return say(turn, `Убрала: «${item.q}».`);
+    }
+    if (item.chat == null) {
+      await drop();
+      return say(turn, `Этот вопрос задавали вы сами — передавать некому. Убрала его из списка. Чтобы я знала ответ и впредь — «знай: ${asked.answer.text.slice(0, 60)}${asked.answer.text.length > 60 ? "…" : ""}».`);
+    }
+    try {
+      await api.sendMessage({
+        chat_id: item.chat, text: `${item.who ? `${item.who}, раньше` : "Раньше"} я не знала, что ответить на «${item.q}». Теперь знаю: ${asked.answer.text}`,
+        ...(item.thread != null ? { message_thread_id: item.thread } : {}),
+        ...(item.mid != null ? { reply_parameters: { message_id: item.mid, allow_sending_without_reply: true } } : {}),
+      });
+    } catch {
+      return say(turn, `Не дошло: в чат${item.title ? ` «${item.title}»` : ""} я сейчас написать не могу. Вопрос оставила в списке.`);
+    }
+    await drop();
+    pulse.bump("ruled");
+    return say(turn, `Передала: ${from(item)} — ответом на то сообщение. Чтобы я знала это и впредь, без вас, — «знай: …».`);
+  }
+
   /**
    * Ответ на её вопрос: из анкеты («Какой у вас любимый цвет?») или встречный
    * («Синий. А ваш?»). `waiting` — вопрос, которого она ждёт. Не похоже на
@@ -1929,11 +2067,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   async function tasteAnswer(turn, prompt, waiting) {
     if (!LIKES || turn.dry || !waiting) return null;
-    const answer = waiting.casual ? readCasual(prompt, waiting.kind) : readAnswer(prompt);
+    // Вопрос вечера: первые десять минут — как в анкете; позже слово должно быть похоже
+    // на ответ именно на этот вопрос, иначе «устал» запишется любимым цветом.
+    const strict = waiting.casual || (waiting.evening && now() - waiting.at > ASK_FRESH_MS);
+    const answer = strict ? readCasual(prompt, waiting.kind) : readAnswer(prompt);
     // Фраза из словаря («привет», «скажи мяу») — реплика, а не ответ на вопрос.
     const phrase = Boolean(answer?.value) && PHRASES && Boolean(book.match(prompt) || await taught.match(prompt).catch(() => null));
     if (!answer || phrase) return null;
     const kind = tasteByKey(waiting.kind);
+    if (waiting.evening) return eveningAnswer(turn, kind, answer, waiting);
     if (answer.stop) {
       await tastes.rest(turn.chatId, turn.actorId);
       return say(turn, "Хорошо, остановимся. Продолжить — «анкета».");
@@ -2011,6 +2153,38 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /**
+   * «Что между нами было?» — что у неё осталось от знакомства: с какого дня,
+   * как звать, что помнит. По записям, без модели; в группе — только число дней.
+   */
+  async function ourStory(turn) {
+    const zone = zoneOf(turn);
+    const first = await personal.daysWith(turn.actorId).catch(() => null);
+    const days = await daysKnown(turn.actorId, zone);
+    const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+    const since = Number.isFinite(first?.at) ? (({ d, m, y }) => `${d} ${MONTHS[m - 1]} ${y}`)(localParts(first.at, zone)) : "";
+    const head = days > 0 ? `Мы знакомы ${days} ${plural(days, "день", "дня", "дней")}${since ? ` — с ${since}` : ""}.` : "Мы знакомы с сегодняшнего дня.";
+    if (!turn.isPrivate) return say(turn, `${head} Остальное расскажу в личке: там это только между нами.`);
+    const settings = turn.manner?.settings ?? {};
+    const [facts, likes, jokes, mine] = await Promise.all([
+      memory.count(turn.actorId).catch(() => 0), tastes.list(turn.actorId, { inGroup: false }).catch(() => []),
+      PHRASES ? bond.jokes(turn.actorId).catch(() => []) : [], reminders.list(turn.actorId).catch(() => []),
+    ]);
+    const ahead = (Array.isArray(mine) ? mine : []).filter(item => !["birthday", "daily", "morning"].includes(item.kind)).length;
+    const lines = [
+      settings.address ? `• как ${you(turn, "вас", "тебя")} звать — «${settings.address}»;` : "",
+      settings.birthday ? `• день рождения — ${settings.birthday}: поздравлю сама;` : "",
+      settings.city ? `• город — ${settings.city};` : "",
+      facts ? `• о ${you(turn, "вас", "тебе")} — ${facts} ${plural(facts, "запись", "записи", "записей")} («что ты обо мне помнишь»);` : "",
+      likes.length ? `• из любимого — ${likes.length} из ${TASTES.length} («что я люблю»);` : "",
+      jokes.length ? `• наших шуток — ${jokes.length} («наши шутки»);` : "",
+      ahead ? `• напоминаний впереди — ${ahead} («мои напоминания»).` : "",
+    ].filter(Boolean);
+    pulse.bump("ruled");
+    if (!lines.length) return say(turn, `${head} Пока у меня от этого времени только число: о себе ${you(turn, "вы мне ничего не рассказывали", "ты мне ничего не рассказывал(а)")}. Начать можно с «анкета» или «запомни, …».`);
+    return say(turn, [head, "Что у меня от этого времени осталось:", ...lines, "", "Саму переписку я долго не храню: только последние реплики, чтобы не терять нить."].join("\n"));
+  }
+
+  /**
    * Памятные даты: «сколько до моего дня рождения», «сколько мы знакомы».
    * День рождения она знает, если человек его называл (и поздравит сама).
    */
@@ -2019,8 +2193,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!value || value.length > 70) return null;
     const birthday = /^(?:а\s+)?(?:сколько|скоро\s+ли|когда)\s+(?:(?:дней|еще|осталось|там)\s+)*(?:до\s+)?(?:мо(?:его|й|я)\s+)?(?:дня\s+рождения|день\s+рождения|др|днюх[аи])(?:\s+осталось)?$/u.test(value);
     const known = /^(?:а\s+)?(?:сколько|как\s+давно|давно\s+ли)\s+(?:(?:дней|уже|времени)\s+)*мы\s+(?:с\s+тобой\s+)?(?:знакомы|общаемся|дружим)$/u.test(value);
-    if (!birthday && !known) return null;
+    const story = /^(?:а\s+)?(?:что\s+(?:между\s+нами|у\s+нас(?:\s+с\s+тобой)?)\s+было|(?:расскажи\s+)?(?:наша|нашу)\s+истори[яю]|что\s+ты\s+помнишь\s+о\s+нас|расскажи\s+о\s+нас|что\s+нас\s+связывает)$/u.test(value);
+    if (!birthday && !known && !story) return null;
     if (turn.dry) return say(turn, "Посчитала бы дни — репетиция.");
+    if (story) return ourStory(turn);
     if (known) {
       const days = await daysKnown(turn.actorId, zoneOf(turn));
       return say(turn, days > 0 ? `Мы знакомы ${days} ${plural(days, "день", "дня", "дней")}.` : "Мы знакомы с сегодняшнего дня.");
@@ -3330,9 +3506,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Текст чужого личного вопроса владельцу не показывается — только счёт.
       // В список идут вопросы, заданные при всех, и вопросы самого владельца.
       if (turn.inGroup || owner(turn.actorId)) {
-        const saved = await store.get("heart:unknown:v1").catch(() => null);
-        const items = [...(Array.isArray(saved?.items) ? saved.items : []), { q: prompt.slice(0, 140), at: now() }].slice(-20);
-        await store.set("heart:unknown:v1", { items });
+        // Вопрос при всех записывается с местом: хозяин ответит — она вернётся к человеку туда же.
+        const place = turn.inGroup && !owner(turn.actorId) ? {
+          chat: turn.chatId, mid: turn.message?.message_id ?? null, uid: turn.actorId, who: turn.manner?.settings?.address || turn.name || "",
+          title: String(turn.message?.chat?.title ?? "").slice(0, 60), ...(turn.extra.message_thread_id != null ? { thread: turn.extra.message_thread_id } : {}),
+        } : {};
+        await store.update(ASKED_KEY, (before) => ({ items: [...askedItems(before), { q: prompt.slice(0, 140), at: now(), ...place }].slice(-ASKED_MAX) })).catch(() => false);
       }
     }
   }
@@ -4147,7 +4326,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `🤍 Хозяин, вот мой вчерашний день, ${yesterday.slice(8, 10)}.${yesterday.slice(5, 7)}:`,
       ...pulse.lines(counters),
       study.active ? `Уроки: всего ${study.active}${study.proposed ? ` · ждут вашего слова: ${study.proposed} («покажи уроки»)` : ""}${study.doubt ? ` · под сомнением: ${study.doubt}` : ""}` : "",
-      asked.length ? `Не знала ответа: ${asked.map(item => `«${item.q}»`).join("; ")}. Научить — «знай: …».` : "",
+      asked.length ? `Не знала ответа: ${asked.map(item => `«${item.q}»`).join("; ")}. Научить — «знай: …»; ответить человеку — «чего ты не знала?».` : "",
       ...weekLines,
       unheardLine,
       waiting ? `В очереди ждут ответа: ${waiting}` : "",
@@ -4514,7 +4693,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const noted = parseNote(prompt);
     const request = Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
-      || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (CHAT_MEMORY && parseDaySum(prompt))
+      || parsePrayer(prompt) || parseFajr(prompt) || parseHoliday(prompt) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
 
     // Отгадка в «крокодиле» — ответ на сообщение стола: не разговор и не ход
@@ -4548,7 +4727,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (viaFun) return ruled(viaFun);
     const viaBook = await chatbook.score(turn, prompt) ?? await chatbook.quotes(turn, prompt);
     if (viaBook) return ruled(viaBook);
-    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
+    const viaSelf = await secretaryWords(turn, prompt) ?? await chatsWords(turn, prompt) ?? await manners(turn, prompt) ?? await ourJokes(turn, prompt) ?? await missed(turn, prompt) ?? await daySumWords(turn, prompt) ?? await askedWords(turn, prompt) ?? await commonWords(turn, prompt) ?? await eveningWords(turn, prompt) ?? await phraseLesson(turn, prompt) ?? await firstWords(turn, prompt) ?? await fajrWords(turn, prompt) ?? await prayerWords(turn, prompt) ?? await holidayWords(turn, prompt) ?? await album(turn, prompt) ?? await dates(turn, prompt) ?? await diary(turn, prompt) ?? await favourites(turn, prompt);
     if (viaSelf) return ruled(viaSelf);
 
     // Списки, цели, дневник. «Список уроков» и «список игр» — не списки
