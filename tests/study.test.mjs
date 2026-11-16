@@ -67,7 +67,8 @@ test("разбор: «выучи» — текст для знаний, а «вы
   assert.ok(parts.every(part => part.length <= 200 && /[.…]$/u.test(part)), "ни одна часть не оборвана посреди предложения");
   assert.equal(titleOf({ name: "Правила_чата.txt" }), "Правила чата");
   assert.equal(titleOf({ text: "# Прайс на услуги\nстрока" }), "Прайс на услуги");
-  assert.equal(textFile({ file_id: "x", file_name: "a.pdf", mime_type: "application/pdf" }).ok, false);
+  assert.equal(textFile({ file_id: "x", file_name: "a.pdf", mime_type: "application/pdf" }).kind, "pdf");
+  assert.equal(textFile({ file_id: "x", file_name: "a.doc", mime_type: "application/msword" }).ok, false);
   assert.equal(textFile({ file_id: "x", file_name: "a.md" }).ok, true);
   assert.equal(textFile({ file_id: "x", file_name: "photo.jpg", mime_type: "image/jpeg" }).ok, false);
 });
@@ -193,15 +194,16 @@ test("короткое «выучи: …» — знание одной стро�
   await h.onMessage(message("выучи", { id: OWNER }), KEY);
   assert.match(last(OWNER), /^Что выучить\? Пришлите текстовый файл с подписью «выучи»/u);
   await h.onMessage(file("Договор.pdf", "%PDF-1.7", { caption: "выучи", type: "application/pdf" }), KEY);
-  assert.equal(last(OWNER), "Такой файл (.pdf) я прочитать не могу: умею только текстовые — txt, md, csv, json, html. Скопируйте текст в сообщение или сохраните его как .txt.");
-  // Windows-1251 вместо UTF-8: буквы превращаются в значки замены — такое не учится.
-  stored.set("file-cp1251.txt", new Uint8Array(400).fill(0xcf));
+  assert.match(last(OWNER), /^Файл не разобрался: он повреждён/u, "PDF она читает (tests/docread.test.mjs), но это — не PDF, а одно название");
+  // Двоичный файл под видом текстового: служебные знаки вместо букв — такое не учится.
+  // (Windows-1251 она с 0.34.0 читает сама — см. tests/docread.test.mjs.)
+  stored.set("file-cp1251.txt", new Uint8Array(400).fill(0x01));
   serve();
   const bad = message("", { id: OWNER });
   delete bad.text; bad.caption = "выучи";
   bad.document = { file_id: "file-cp1251.txt", file_name: "cp1251.txt", mime_type: "text/plain", file_size: 400 };
   await h.onMessage(bad, KEY);
-  assert.match(last(OWNER), /^Файл не в кодировке UTF-8/u);
+  assert.match(last(OWNER), /^Это не текст: в файле служебные знаки/u);
   assert.equal((await h.knowledge.docs()).length, 0);
   // Длинное сообщение, на которое ответили словом «выучи».
   const reply = message("выучи как «Правила»", { id: OWNER });

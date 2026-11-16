@@ -23,6 +23,8 @@
  * Ищет по основам слов, без модели и без сети. Каталог (заголовки и основы документов) —
  * одна запись, читается на каждый вопрос к модели; сам документ — только если подошёл.
  */
+
+import { documentKind } from "./docread.js";
 export const KNOW_INDEX = "heart:know:index:v1";
 export const KNOW_DOC = (id) => `heart:know:doc:${id}`;
 export const KNOW_NOTES = "heart:know:notes:v1";
@@ -147,16 +149,22 @@ export function parseStudy(value) {
   return { op: "learn", title: String(learn[1] ?? "").trim(), text: url ? "" : rest, url };
 }
 
-/** Файл, который она может выучить: текст. Картинки, PDF и архивы — нет. */
+/**
+ * Файл, который она может выучить. Текстовые — как есть; документы с разметкой (Word, PDF, RTF,
+ * OpenDocument, FB2, EPUB) читает docread.js, и у такого файла назван вид — `kind`.
+ * Картинки, таблицы, презентации, архивы и старый .doc — нет.
+ */
 export function textFile(document) {
   if (!document?.file_id) return null;
   const name = String(document.file_name ?? "");
   const type = String(document.mime_type ?? "").toLowerCase();
   const ext = name.match(/\.([a-z0-9]{1,8})$/iu)?.[1]?.toLowerCase() ?? "";
-  const known = ["txt", "md", "markdown", "text", "log", "csv", "tsv", "json", "html", "htm", "rtf"];
-  if (ext === "rtf" || type === "application/rtf") return { ok: false, code: "format", name, ext: ext || "rtf" };
+  const size = Number(document.file_size) || 0;
+  const kind = documentKind({ name, type });
+  if (kind) return { ok: true, id: document.file_id, name, kind, html: false, size };
+  const known = ["txt", "md", "markdown", "text", "log", "csv", "tsv", "json", "html", "htm"];
   if (known.includes(ext) || /^text\//u.test(type) || type === "application/json") {
-    return { ok: true, id: document.file_id, name, html: ext === "html" || ext === "htm" || type === "text/html", size: Number(document.file_size) || 0 };
+    return { ok: true, id: document.file_id, name, html: ext === "html" || ext === "htm" || type === "text/html", size };
   }
   return { ok: false, code: "format", name, ext };
 }
