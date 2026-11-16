@@ -150,18 +150,25 @@ export function parseAction(text) {
  * Всё остальное после глагола — предмет, и он не она: «глажу рубашки», «кормлю кота».
  */
 const DETAIL_LEAD = /^(?:по|за|в|во|на|с|со|к|ко|под|из|от|у|через|до|без)\s/iu;
-const DETAIL_HOW = /^(?:крепко|крепко-крепко|нежно|сильно|ласково|осторожно|аккуратно|тихонько|легонько|больно|мягко|тепло|долго|быстро|слегка|чуть|чуть-чуть|очень|снова|опять|сразу|молча|тихо|страстно|робко|смело|неловко|медленно|вежливо|внезапно|неожиданно|по-дружески|по-братски)(?=$|\s)/iu;
-const DETAIL_WITH = /^[а-яё-]{3,}(?:ем|ём|ой|ою|ью|ами|ями)(?=$|\s)/iu;
+const HOW = "(?:крепко|нежно|сильно|ласково|осторожно|аккуратно|тихонько|легонько|больно|мягко|тепло|долго|быстро|слегка|чуть|очень|снова|опять|сразу|молча|тихо|страстно|робко|смело|неловко|медленно|вежливо|внезапно|неожиданно|по-дружески|по-братски)";
+// «Крепко-крепко», «чуть-чуть» — то же слово дважды.
+const DETAIL_HOW = new RegExp(`^${HOW}(?:-${HOW})?(?=$|\\s)`, "iu");
+// Творительный падеж: «печеньем», «подушкой», «руками». Без «-ью»: «кормлю семью», «обнял Наталью» — это предмет.
+const DETAIL_WITH = /^[а-яё-]{3,}(?:ем|ём|ой|ою|ами|ями)(?=$|\s)/iu;
 /**
  * Человек говорит о своём дне, а не делает это с ней (0.35.0): «кормлю кота», «глажу рубашки»,
  * «защитил диплом», «лечу в Москву» («лечу» — ещё и «лететь»). Раньше она отвечала на это
  * «Ням. Спасибо!» и «Приятно. Спасибо.»: за адресата принимала себя. «Тебя» сказано — это ей.
  */
-export function aboutOwnDay(parsed) {
+export function aboutOwnDay(parsed, { self = "" } = {}) {
   if (!parsed || parsed.asked || parsed.named || parsed.mention || !parsed.tail) return false;
+  // Её имя после глагола — это она и есть: «обнимаю Аи крепко», «целую Аи в щёчку» (0.35.1).
+  const me = String(self ?? "").trim().toLowerCase().replace(/ё/gu, "е");
+  const tail = parsed.tail.toLowerCase().replace(/ё/gu, "е");
+  if (me && (tail === me || tail.startsWith(`${me} `))) return false;
   if (parsed.action.key === "heal") return true;
-  if (parsed.action.tail && parsed.tail.startsWith(parsed.action.tail)) return false;
-  return !(DETAIL_LEAD.test(parsed.tail) || DETAIL_HOW.test(parsed.tail) || DETAIL_WITH.test(parsed.tail));
+  if (parsed.action.tail && tail.startsWith(parsed.action.tail)) return false;
+  return !(DETAIL_LEAD.test(tail) || DETAIL_HOW.test(tail) || DETAIL_WITH.test(tail));
 }
 
 // ── имена ─────────────────────────────────────────────────────────────────

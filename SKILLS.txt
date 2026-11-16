@@ -41,7 +41,7 @@
 #  После правки:  npm run skills   (соберёт tgcloud/lib/data/skills.js)
 # ══════════════════════════════════════════════════════════════════
 
-сборка: 0.35.0
+сборка: 0.35.1
 служебное: parseCommand, parseDuration, parseSpan, parseTarget, parseCatalogue, parseFeed, parseIntent, parseReflection, parseSkills
 
 == разговор ==

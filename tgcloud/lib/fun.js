@@ -370,7 +370,7 @@ export function createFun({
     const target = targetOf(turn, parsed, self);
     const third = target && !target.self ? target : null;
     // «Кормлю кота», «глажу рубашки», «лечу в Москву» — о своём дне, а не действие с ней: это разговор.
-    if (addressed && !third && aboutOwnDay(parsed)) return null;
+    if (addressed && !third && aboutOwnDay(parsed, { self: name })) return null;
     // Между людьми: только изъявительное («обнял»), только с адресатом.
     if (!addressed && (parsed.asked || !third)) return null;
     if (turn.dry) return addressed ? say(turn, "Разобрала бы это как действие — репетиция, ничего не отправляю.") : null;

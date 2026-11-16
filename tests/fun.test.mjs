@@ -340,4 +340,10 @@ test("0.35.0: «кормлю кота», «глажу рубашки», «леч
   assert.deepEqual(flight.topics, ["командировка"]);
   // А действие с ней осталось действием.
   assert.equal((await h.onMessage(message("глажу по голове", { id: 5 }), KEY)).action, "rp");
+  // 0.35.1: её имя посреди фразы — это она, а не чужой предмет; «-ью» — предмет, а не подробность.
+  const mine = (said) => aboutOwnDay(parseAction(said), { self: "Аи" });
+  for (const said of ["обнимаю аи крепко", "целую аи в щёчку", "глажу аи", "обнял крепко-крепко", "обнял чуть-чуть"]) assert.equal(mine(said), false, said);
+  for (const said of ["кормлю семью", "обнял наталью", "глажу аиста"]) assert.equal(mine(said), true, said);
+  assert.equal((await h.onMessage(message("обнимаю Аи крепко", { id: 5 }), KEY)).action, "rp");
+  assert.equal((await h.onMessage(message("целую Аи в щёчку", { id: 5 }), KEY)).action, "rp");
 });

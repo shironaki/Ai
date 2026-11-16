@@ -158,3 +158,11 @@ test("«без ревности» выключает её совсем — сл�
   assert.equal(toOwner().length, sent + 2, "ответ и строка вдогонку");
   assert.ok(bondOf(OWNER).last.jealous > before);
 });
+
+test("0.35.1: при всех «хозяин» не звучит — ни на «можешь ревновать», ни на «можно флиртовать»", async () => {
+  reset();
+  const h = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
+  const said = async (text) => { await h.onMessage(group(`Аи, ${text}`, { id: OWNER }), KEY); return last(-10); };
+  assert.equal(await said("можешь ревновать"), "Хорошо. Ревную я только наедине и только тех, кто мне близок, — так что посмотрим.");
+  assert.equal(await said("можно флиртовать"), "С вами я и так не сдерживаюсь. Наедине.");
+});
