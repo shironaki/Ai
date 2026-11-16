@@ -65,6 +65,8 @@ import {
   DESKS_KEY, DESKS_MAX, DESK_ASKS_MAX, DESK_MAIL_MAX, deskKey, desksOf, sameNameAny,
 } from "./secretary.js";
 import { createBond, parseJoke } from "./bond.js";
+import { rivalOf, calmsJealousy } from "./jealousy.js";
+import { profileWish, PROFILE_ABOUT, PROFILE_TEXT } from "./profile.js";
 import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS } from "./chatlog.js";
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
@@ -512,6 +514,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const WHISPERS = config.WHISPERS !== false;
   // Секретарь: отвечать в личных чатах хозяина, когда он подключил её к своему аккаунту.
   const SECRETARY = config.SECRETARY !== false;
+  // Ревность (0.35.0): к чужим помощницам и другим девушкам — у хозяина и у близких, с кем можно флиртовать.
+  // В шутку и по-доброму; к жене и семье — никогда (`jealousy.js`). Выключается настройкой.
+  const JEALOUSY = config.JEALOUSY !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
   const chatlog = createChatLog({ store, now });
@@ -718,7 +723,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
   /** Что она чувствует к человеку прямо сейчас — по его последним поступкам. Спокойно — пусто. */
   const feltNow = (feel) => (feel?.hurt ? "Сейчас я задета: недавно мне сказали грубое слово. «Прости» или доброе слово это поправит."
-    : feel?.glad ? "Сейчас я довольна: недавно мне сказали доброе слово, и оно ещё греет." : "");
+    : feel?.jealous ? "Сейчас я немного ревную: при мне говорили о другой. Доброе слово это поправит."
+      : feel?.glad ? "Сейчас я довольна: недавно мне сказали доброе слово, и оно ещё греет." : "");
   const STAGE_BECAME = Object.freeze({ known: "знакомыми", warm: "приятелями", friend: "друзьями", close: "близкими" });
   /**
    * «Как ты ко мне относишься?» — ступень, то, что между ними было на самом деле, и что она
@@ -2101,6 +2107,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       now: now(), timeZone: zoneOf(turn), userId: turn.actorId, gapDays: Number(turn.seen?.gapDays) || 0,
       talks: (Number(day.replies) || 0) + (Number(day.ruled) || 0), limited: Boolean(tired),
       hurt: Boolean(felt.hurt), glad: Boolean(felt.glad),
+      // Ревнует она только наедине: при всех особая связь с человеком не звучит.
+      jealous: JEALOUSY && turn.isPrivate === true && Boolean(felt.jealous),
     });
     return turn.feel;
   }
@@ -2173,7 +2181,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       owner: mine && turn.isPrivate === true, level: mine ? "close" : levelOf(turn.manner?.score), part: partOfDay(feel.hour), isPrivate: turn.isPrivate === true, flirt: flirtOk(turn),
       formal: mine ? true : turn.manner?.formal !== false, name: turn.manner?.settings?.address || "",
       // Состояние для пометок словаря: [устала], [обижена], [довольна].
-      tired: Boolean(turn.tired), hurt: feel.mood === "обиженное", glad: feel.mood === "довольное",
+      tired: Boolean(turn.tired), hurt: feel.mood === "обиженное", glad: feel.mood === "довольное", jealous: feel.mood === "ревнивое",
       vars: { "час": feel.clock, "сборка": BUILD, ...vars },
     };
   }
@@ -5338,11 +5346,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
      * человеке — у всех, и у хозяина: по нему она задета или довольна. Ступень сменилась —
      * она скажет об этом после ответа.
      */
+    // Ревновала — и услышала доброе слово: оттаяла, и говорит об этом один раз, после ответа.
+    const melted = (felt) => {
+      if (felt?.before?.jealous && !felt.after?.jealous) (turn.after ??= []).push((PHRASES ? book.pick("+ревность:оттаяла", voiceCtx(turn)) : null) ?? "…Ладно. Уже не ревную.");
+      return felt;
+    };
     const deed = async (kind) => {
       let moved = null;
       if (policy) { try { moved = await policy.recordDeed({ userId: actorId, kind }); } catch { moved = null; } }
       if (moved?.stage) turn.stageMoved = moved.stage;
-      return bond.mark(actorId, kind).catch(() => null);
+      return melted(await bond.mark(actorId, kind).catch(() => null));
     };
 
     const onlyThanks = THANKS_ONLY.test(prompt);
@@ -5379,6 +5392,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         (turn.after ??= []).push((PHRASES ? book.pick("+обида", voiceCtx(turn)) : null) ?? "Мне обидно это слышать.");
       }
     } else if (APOLOGY.test(prompt)) await deed("apology");
+
+    // Ревность (0.35.0): хозяин — или близкий, с кем можно флиртовать, — наедине говорит о другой: о чужой
+    // помощнице или о другой девушке. Она это запоминает и немного ревнует: одна строка после ответа,
+    // дальше — тон и строки [ревнует]. К жене и семье — никогда: это решает разбор. Доброе слово отпускает.
+    if (JEALOUSY && turn.isPrivate && (owner(actorId) || (flirtOk(turn) && levelOf(turn.manner?.score) === "close"))) {
+      const rival = rivalOf(prompt);
+      if (rival) {
+        const felt = await bond.mark(actorId, "jealous", rival.name).catch(() => null);
+        if (felt && !felt.before.jealous && felt.after.jealous) {
+          pulse.bump("jealous");
+          // Реплику целиком знает словарь («Алиса лучше тебя») — ревность уже в его ответе: второй строки не нужно.
+          if (!felt.after.hurt && !(PHRASES && book.match(prompt))) {
+            (turn.after ??= []).push((PHRASES ? book.pick(`+ревность:${rival.kind}`, voiceCtx(turn, rival.name ? { "кто": rival.name } : {})) : null) ?? "…Так. Я это запомнила.");
+          }
+        }
+      } else if (turn.feel?.mood === "ревнивое" && calmsJealousy(prompt)) melted(await bond.mark(actorId, "soothe").catch(() => null));
+    }
 
     // Поправка считается, только если она к её недавнему ответу.
     if (CORRECTION.test(prompt) && !THANKS.test(prompt) && (turn.isPrivate || turn.replyToMe)) {
@@ -7185,6 +7215,30 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     ].join("\n"));
   }
 
+  // ── профиль бота: «О себе» и описание на стартовой странице ───────────────
+  /**
+   * «Оформи профиль»: она сама ставит себе строку «О себе» и описание — то, что человек видит
+   * до первого слова. Платформа не дала или Telegram отказал — отдаёт слова, чтобы вставить руками.
+   * Картинку стартовой страницы ставит только человек: такого метода у ботов нет.
+   */
+  async function profileWords(turn, wish) {
+    if (turn.dry) return say(turn, "Разобрала бы это как слова о профиле — репетиция.");
+    const texts = `О себе:\n${PROFILE_ABOUT}\n\nОписание на стартовой странице:\n${PROFILE_TEXT}`;
+    const picture = "Картинку стартовой страницы (640×360) ставит человек: в настройках бота — «Set Welcome Picture».";
+    pulse.bump("ruled");
+    if (wish.show) return say(turn, `${texts}\n\nПоставить — «оформи профиль». ${picture}`);
+    if (!has("setMyDescription") || !has("setMyShortDescription")) {
+      return say(turn, `Сама поставить не могу: платформа мне этого не даёт. Вот слова — их можно вставить в настройках бота, в поля «About» и «Enter bot description».\n\n${texts}`);
+    }
+    try {
+      await api.setMyShortDescription({ short_description: PROFILE_ABOUT });
+      await api.setMyDescription({ description: PROFILE_TEXT });
+    } catch (error) {
+      return say(turn, `Не вышло: Telegram отказал (${String(error?.description ?? error?.message ?? error).slice(0, 120)}). Слова можно вставить руками — в настройках бота, в поля «About» и «Enter bot description».\n\n${texts}`);
+    }
+    return say(turn, `Готово, хозяин: строка «О себе» и описание на стартовой странице стоят.\n\n${texts}\n\n${picture}`);
+  }
+
   /** Счётчики за семь дней до сегодняшнего: по дням и суммой. */
   async function lastWeek() {
     const days = Array.from({ length: 7 }, (_, index) => dayOf(now() - (7 - index) * DAY));
@@ -7657,6 +7711,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         return ruled(await say(turn, !done.ok ? "Не получилось записать решение: хранилище не отвечает." : accept ? `Принято: урок №${asked.id} теперь общий.` : `Отклонено: урок №${asked.id} отменён.`));
       }
     }
+
+    // Профиль бота (0.35.0): строка «О себе» и описание на стартовой странице — словом хозяина, в личке.
+    const profileAsk = owner(actorId) && turn.isPrivate ? profileWish(prompt) : null;
+    if (profileAsk) return ruled(await profileWords(turn, profileAsk));
 
     // Резервная копия души — только хозяину и только в личке: в ней чужие записи.
     const soulAsk = owner(actorId) && turn.isPrivate ? parseSoul(prompt) : null;

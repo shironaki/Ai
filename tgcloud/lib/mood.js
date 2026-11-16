@@ -38,7 +38,7 @@ const hashOf = (text) => { let hash = 2166136261; for (const char of String(text
  *   mood   — «сонное», «игривое»: прилагательное к слову «настроение»;
  *   reason — ключ причины для словаря: «ночь», «пятница», «давно не виделись».
  */
-export function moodOf({ now = Date.now(), timeZone = "UTC", userId = "", gapDays = 0, talks = 0, limited = false, hurt = false, glad = false } = {}) {
+export function moodOf({ now = Date.now(), timeZone = "UTC", userId = "", gapDays = 0, talks = 0, limited = false, hurt = false, glad = false, jealous = false } = {}) {
   const local = localParts(now, timeZone);
   const { hour, weekday, month, day, clock } = local;
   const seed = hashOf(`${userId}:${month}.${day}:${Math.floor(hour / 3)}`);
@@ -47,6 +47,8 @@ export function moodOf({ now = Date.now(), timeZone = "UTC", userId = "", gapDay
   if (limited) return out("уставшее", "лимит");
   // Поступки этого человека важнее часа и календаря: нагрубил — задета, сказал доброе слово — довольна.
   if (hurt) return out("обиженное", "обида");
+  // Ревнует: при ней говорили о другой. Сильнее дат и часа — но слабее обиды.
+  if (jealous) return out("ревнивое", "ревность");
   const special = DATES.find(([m, d]) => m === month && d === day);
   if (special) return out(special[3], special[2]);
   if (weekday === 5 && day === 13) return out("суеверное", "пятница 13");
@@ -88,8 +90,11 @@ const WAYS = Object.freeze({
 /** Задета грубостью: коротко и сдержанно — но просьбу выполняет и не мстит. */
 const HURT_HINT = "Собеседник недавно был с тобой груб, и ты задета. Отвечай коротко и сдержанно, без шуток, нежностей и заигрывания; просьбу выполни как обычно. Не мсти, не язви и не поминай обиду в каждом ответе: об обиде говори, только если спросят. Извинится или скажет доброе слово — оттай.";
 const GLAD_HINT = "Собеседник недавно сказал тебе доброе слово, и ты довольна. Отвечай теплее и живее обычного; можно пошутить.";
+/** Ревнует — в шутку и по-доброму: колкость или вопрос, без упрёков и условий; к семье — никогда. */
+const JEALOUS_HINT = "Собеседник недавно говорил при тебе о другой — о чужой помощнице или о другой девушке, — и ты немного ревнуешь. Допустима одна короткая колкость или вопрос с улыбкой; без упрёков, обид и условий, и не в каждом ответе. К его жене и семье не ревнуй никогда. Просьбу выполни как обычно; доброе слово тебя сразу успокаивает.";
 export function behaviourOf(mood) {
   if (String(mood) === "обиженное") return { kind: "short", hint: HURT_HINT };
+  if (String(mood) === "ревнивое") return { kind: "jealous", hint: JEALOUS_HINT };
   if (String(mood) === "довольное") return { kind: "playful", hint: GLAD_HINT };
   for (const [kind, [moods, hint]] of Object.entries(WAYS)) if (moods.includes(String(mood))) return { kind, hint };
   return { kind: "plain", hint: "" };

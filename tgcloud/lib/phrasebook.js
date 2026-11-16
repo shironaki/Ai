@@ -48,7 +48,7 @@ export function fill(text, { formal = true, name = "", vars = {} } = {}) {
 }
 
 /** Чем точнее пометка, тем охотнее берётся строка: хозяину — его строки, близким — близкие. */
-const WEIGHT = Object.freeze({ "хозяин": 30, "близко": 6, "флирт": 5, "не хозяин": 1 });
+const WEIGHT = Object.freeze({ "хозяин": 30, "ревнует": 14, "близко": 6, "флирт": 5, "не хозяин": 1 });
 
 /** Время суток по часу: для пометок «утро», «день», «вечер», «ночь». */
 export const partOfDay = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
@@ -113,6 +113,8 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
                       : tag === "устала" ? ctx.tired === true
                         : tag === "обижена" ? ctx.hurt === true
                           : tag === "довольна" ? ctx.glad === true
+                            // Ревнует (0.35.0): строки не вытесняют остальные, но берутся охотнее — см. WEIGHT.
+                            : tag === "ревнует" ? ctx.jealous === true
                             : tag === ctx.part);
 
   /** Одна строка темы под человека и час. `avoid` — что уже звучало: не повторяться. */

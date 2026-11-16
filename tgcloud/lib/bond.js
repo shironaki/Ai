@@ -10,10 +10,12 @@ const KEY = (userId) => `heart:bond:${userId}`;
 export const MILESTONES = Object.freeze([10, 25, 50, 100, 250, 500, 1000, 2500, 5000]);
 const MAX_JOKES = 12;
 /** Поступки, которые она помнит за каждым — и за хозяином тоже: её чувства к нему живые. */
-export const MARKS = Object.freeze(["thanks", "praise", "taught", "apology", "caress", "rude"]);
+export const MARKS = Object.freeze(["thanks", "praise", "taught", "apology", "caress", "rude", "jealous", "soothe"]);
 /** Сколько держится обида на грубость и радость от доброго слова. */
 export const HURT_MS = 3 * 3_600_000;
 export const GLAD_MS = 2 * 3_600_000;
+/** Сколько держится ревность (0.35.0): два часа — или до первого доброго слова. */
+export const JEALOUS_MS = 2 * 3_600_000;
 const WARM = ["thanks", "praise", "taught", "caress"];
 
 /**
@@ -25,8 +27,12 @@ export function feelOf(last = {}, at = Date.now()) {
   const when = (key) => Number(last?.[key]) || 0;
   const rude = when("rude");
   const warm = Math.max(0, ...WARM.map(when));
-  if (rude && at - rude < HURT_MS && Math.max(warm, when("apology")) <= rude) return { hurt: rude, glad: 0 };
-  return { hurt: 0, glad: warm > rude && at - warm < GLAD_MS ? warm : 0 };
+  // Ревнует («jealous» — час, когда при ней заговорили о другой), пока не услышит доброе слово
+  // или слово-успокоение («soothe»: «не ревнуй», «ты у меня одна»). Поля нет, пока она не ревнует.
+  const jealous = when("jealous");
+  const stung = jealous && at - jealous < JEALOUS_MS && Math.max(warm, when("soothe")) <= jealous ? { jealous } : {};
+  if (rude && at - rude < HURT_MS && Math.max(warm, when("apology")) <= rude) return { hurt: rude, glad: 0, ...stung };
+  return { hurt: 0, glad: warm > rude && at - warm < GLAD_MS ? warm : 0, ...stung };
 }
 const dayBefore = (day) => new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
@@ -50,7 +56,8 @@ export function parseJoke(text) {
 export function createBond({ store, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
   const object = (value) => (value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {});
-  const shape = (saved) => ({ c: object(saved?.c), jokes: Array.isArray(saved?.jokes) ? saved.jokes.slice(0, MAX_JOKES) : [], last: object(saved?.last), d: object(saved?.d) });
+  // `rival` — как она называет ту, к кому ревнует («Алиса»); поля нет, пока имени не было.
+  const shape = (saved) => ({ c: object(saved?.c), jokes: Array.isArray(saved?.jokes) ? saved.jokes.slice(0, MAX_JOKES) : [], last: object(saved?.last), d: object(saved?.d), ...(typeof saved?.rival === "string" && saved.rival ? { rival: saved.rival.slice(0, 40) } : {}) });
   const load = async (userId) => shape(usable() ? await store.get(KEY(userId)).catch(() => null) : null);
   /**
    * Правка поверх свежей записи. `change(state)` меняет её и возвращает итог; итог с `keep: true` —
@@ -108,11 +115,12 @@ export function createBond({ store, now = () => Date.now() } = {}) {
   const counts = async (userId) => (await load(userId)).c;
 
   /** Поступок: счёт и час. Возвращает чувство до и после — по нему видно, задело ли и оттаяла ли. */
-  async function mark(userId, kind) {
+  async function mark(userId, kind, note = "") {
     if (userId == null || !MARKS.includes(kind)) return null;
     const { out } = await amend(userId, (state) => {
       const before = feelOf(state.last, now());
       state.c[kind] = (Number(state.c[kind]) || 0) + 1;
+      if (kind === "jealous") { if (note) state.rival = String(note).slice(0, 40); else delete state.rival; }
       // Порядок поступков важнее часов: два в одну миллисекунду всё равно идут друг за другом.
       state.last[kind] = Math.max(now(), 1 + Math.max(0, ...Object.values(state.last).map(value => Number(value) || 0)));
       return { n: state.c[kind], before, after: feelOf(state.last, now()) };
@@ -131,7 +139,11 @@ export function createBond({ store, now = () => Date.now() } = {}) {
     const { keep: _keep, ...answer } = out;
     return answer;
   }
-  const feel = async (userId) => feelOf((await load(userId)).last, now());
+  const feel = async (userId) => {
+    const state = await load(userId);
+    const felt = feelOf(state.last, now());
+    return felt.jealous ? { ...felt, rival: state.rival ?? "" } : felt;
+  };
   /** Всё, что она помнит о поступках человека: для ответа «как ты ко мне относишься». */
   async function facts(userId) {
     const state = await load(userId);
