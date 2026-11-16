@@ -5,22 +5,22 @@
  * «что не сделано — доделай». На платформе нет ни библиотек, ни распаковки, поэтому
  * разбор свой (`lib/docread.js`), и проверяется он так же, как своё сжатие картинок:
  * чужим эталоном. Распаковка — против zlib; кодировка — против TextDecoder; файлы в
- * `fixtures/docs` сделаны настоящими программами (python-docx, ReportLab, fpdf2, MuPDF),
+ * `fixtures/documents.mjs` сделаны настоящими программами (python-docx, ReportLab, fpdf2, MuPDF),
  * а текст из них при написании сверен с тем, что читает MuPDF, слово в слово. Там же, вне
  * тестов, прогнаны PDF из набора pdf.js (Word, Chrome, статья на 23 страницы).
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
 import { randomBytes } from "node:crypto";
 import { heart, message, reset, last, sdk, OWNER, KEY } from "./fixtures/kit.mjs";
+import { documentBytes } from "./fixtures/documents.mjs";
 
 const { inflateRaw, inflate, cp1251, decodeText, zipEntries, zipRead, docxText, rtfText, pdfText, readDocument, documentKind, glyphChar, readCMap } = await import("../tgcloud/lib/docread.js");
 const { textFile } = await import("../tgcloud/lib/knowledge.js");
 
 const NOON = Date.parse("2026-11-18T09:00:00Z");
-const fixture = (name) => new Uint8Array(readFileSync(new URL(`./fixtures/docs/${name}`, import.meta.url)));
+const fixture = documentBytes;
 const words = (text) => String(text).toLowerCase().replace(/ё/gu, "е").match(/[\p{L}\p{N}]+/gu) ?? [];
 /** Четыре абзаца, которыми набраны файлы-образцы. */
 const P = [
