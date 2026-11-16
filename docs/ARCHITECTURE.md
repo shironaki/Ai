@@ -531,3 +531,27 @@ JPEG или PNG → `{ ok, bytes, width, height, cut }`. Сердце кладё
 разрешено и кто просит; `heart:secretary:stranger:<id>` — «хозяина об этом
 человеке уже спрашивали» (тридцать дней). Счётчики чужого стола — с окончанием
 `_kin`: в сводке хозяина «ответила за вас» значит за него.
+
+## Что добавила 0.36.0: где что лежит
+
+| Что | Где |
+|---|---|
+| Слова чата → обычные слова («чо делаеш» → «что делаешь») | `plainWords`, таблица `WORDS` в `lib/slang.js` |
+| Растянутые и задвоенные буквы («привееет», «класссс») | `squeezed` в `lib/slang.js`; сжимается только сказанное, фразы словаря — нет |
+| Смех и одни смайлы | `isLaugh`, `emojiOnly`, `smileMood` в `lib/slang.js`; реакции — `noteDeeds` в `lib/heart.js` |
+| Слой опечаток в словаре: только после промаха | `loose` в `lib/phrasebook.js`; `match(text, { strict: true })` — без слоя |
+| Просьбы словами чата («чо умеешь», «го играть») | главный поток `lib/heart.js`, сразу после `handleIntent` |
+| «Принято» одним словом («оке», «лан», «пон») | `ACK_WORD`, `ackOnly` в начале `lib/heart.js` |
+| Ревность в том же ходе; ответ её строкой без модели | `noteDeeds` в `lib/heart.js`; `asksAnswer`, `aboutHer`, `LOST` в `lib/jealousy.js` |
+| Модель знает её умения | `skillsFrame`, `SKILLS_TALK` в `lib/heart.js` (рамка в `responseProfile`) |
+| «Покажи профиль» хозяину; сверка с Telegram; картинки и «поменяй» | `profileWish(text, { loose })` в `lib/profile.js`; `profileWords`, `PROFILE_AT_KEY`, `runAbility({ instead })` в `lib/heart.js` |
+| «Кто писал?» без «мне»; «не подключена»; когда отдан список | `WHO`, `WHO_BARE` в `lib/secretary.js`; `secretaryWords`, поле `last.at` стола в `lib/heart.js` |
+| Список непонятого сверяется со сборкой | `knownNow`, `unheardNow` в `lib/heart.js`; `settleAll` в `lib/taught.js` |
+| Что не ложится в непонятое | `worth`, `CONTEXTUAL` в `lib/taught.js` |
+
+Ключ хранилища: `heart:profile:at` — когда хозяин последний раз говорил о её
+профиле (пятнадцать минут «покажи профиль» значит её профиль).
+
+Порядок для короткой реплики теперь такой: словарь как написано → слой
+опечаток (`slang.js`) → реакция (смех, «ок», смайлы) → модель. Новую опечатку
+или сокращение вписывают в `WORDS`, а не в `PHRASES.txt`.
