@@ -74,7 +74,7 @@ test("разбор: включить со сроком и словами, вык
   assert.ok(!SOUL_PREFIXES.some(prefix => SECRETARY_KEY.startsWith(prefix)), "подключение и чужие письма в копию души не идут");
 });
 
-test("подключение: хозяину — слова один раз; чужому — честный отказ, и его чаты она не слушает", async () => {
+test("подключение: хозяину — слова один раз; о чужом — вопрос хозяину, и чужие чаты она не слушает", async () => {
   reset();
   const h = heart(ON, { now: () => NOON });
   // Не подключена: «секретарь» объясняет, как подключить; «отвечай за меня» — тоже.
@@ -121,12 +121,15 @@ test("подключение: хозяину — слова один раз; ч�
   await h.onBusinessConnection(connection({ enabled: false }), KEY);
   assert.equal(toOwner().length, told + 1);
 
-  // Чужой человек подключил её к себе: один раз — отказ; его письма не читаются и не хранятся.
+  // Чужой человек подключил её к себе: хозяину — вопрос (один раз), человеку — что вопрос задан; его письма не читаются и не хранятся.
+  const asks = toOwner().length;
   const stranger = await h.onBusinessConnection(connection({ id: "conn-x", user: 777, name: "Некто" }), KEY);
-  assert.deepEqual(stranger, { ignored: true, reason: "not_owner" });
-  assert.match(last(777), /^Я работаю секретарём только у одного человека\. Ваши чаты я не читаю/u);
+  assert.deepEqual(stranger, { ok: true, action: "secretary_asked" });
+  assert.match(last(777), /^Секретарём я работаю у хозяина и у тех, кому он разрешил\. Я спросила его о вас.*До тех пор ваши чаты я не читаю/su);
+  assert.match(toOwner().at(-1).text, /^Некто просит меня в секретари/u);
   await h.onBusinessConnection(connection({ id: "conn-x", user: 777, name: "Некто" }), KEY);
   assert.equal(toChat(777).length, 1, "повторять не станет");
+  assert.equal(toOwner().length, asks + 1, "и хозяина второй раз не спрашивает");
   const snapshot = sdk().kv.get(SECRETARY_KEY);
   const ignored = await h.onBusinessMessage(letter("секретное письмо не для неё", { id: 900, conn: "conn-x" }), KEY);
   assert.deepEqual(ignored, { ignored: true, reason: "not_owner" });
@@ -395,7 +398,7 @@ test("секретарь — только хозяину и только в ли
   // Чужие слова «отвечай за меня» секретаря не включают — и к модели не идут: она отвечает сама, прямо (с 0.34.1).
   // В группе и хозяин секретаря не включает: ему сказано, куда с этим идти.
   await h.onMessage(message("отвечай за меня"), KEY);
-  assert.match(last(), /^Секретарём я работаю только у хозяина/u);
+  assert.match(last(), /^Секретарём я работаю у хозяина и у тех, кому он разрешил/u);
   await h.onMessage(group("Аи, отвечай за меня", { id: OWNER }), KEY);
   assert.equal(last(-10), "Это — в личке со мной: там скажите «отвечай за меня», и я начну.");
   assert.equal(chats().length, 0, "модель не спрашивали");

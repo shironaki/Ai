@@ -4,8 +4,11 @@
  * чатов — событиями `business_connection` и `business_message`.
  *
  * Здесь только слова и правила; отправляет сердце. Правила такие:
- *   • работает она секретарём одного человека — хозяина. Чужое подключение
- *     она не слушает вовсе: ни читать, ни хранить, ни отвечать;
+ *   • работает она секретарём хозяина — и тех близких, кому он разрешил
+ *     (с 0.35.0; у каждого свой «стол»: своё состояние, свои вести, свой список,
+ *     и чужой стол не показывается никому, хозяину тоже). Чужое подключение она
+ *     не слушает вовсе: ни читать, ни хранить, ни отвечать — только спрашивает
+ *     хозяина, разрешить ли;
  *   • пока хозяин не сказал «отвечай за меня», в его чатах она молчит;
  *   • отвечает она от его аккаунта, но не притворяется им: первая же строка —
  *     «это Аи, помощница»;
@@ -33,6 +36,21 @@ export const URGENT_EXCERPT = 300;
 export const ASK_MAX = 200;
 /** Чужое подключение (не хозяина): запоминается, чтобы не спрашивать Telegram о нём на каждое письмо. */
 export const ALIEN_PREFIX = "heart:secretary:alien:";
+/**
+ * Столы близких: у кого она секретарь кроме хозяина (`list`) и кто подключил её к себе и ждёт
+ * его слова (`asks`). Решает только хозяин; у каждого стола своё состояние под своим ключом.
+ */
+export const DESKS_KEY = "heart:secretary:desks:v1";
+export const DESKS_MAX = 5;
+export const DESK_ASKS_MAX = 10;
+/** Сколько недошедших вестей близкому ждут следующего удара будильника. */
+export const DESK_MAIL_MAX = 6;
+export const deskKey = (userId) => `${SECRETARY_KEY}:${userId}`;
+/** Список столов из базы → полный: чего нет — пусто. */
+export function desksOf(saved) {
+  const rows = (value, limit) => (Array.isArray(value) ? value.filter(item => item && item.id != null).slice(-limit) : []);
+  return { list: rows(saved?.list, DESKS_MAX), asks: rows(saved?.asks, DESK_ASKS_MAX) };
+}
 
 /** Ночь по умолчанию — для «ночью отвечай сама» без часов. */
 export const PLAN_NIGHT = Object.freeze({ from: "23:00", to: "07:00" });
@@ -155,6 +173,22 @@ export function sameName(said, name) {
 }
 
 /**
+ * То же имя в любом из падежей, в которых его называют в просьбе: «Айдине» и «у Айдины»,
+ * «Сергею» и «у Сергея», «Петру» и «у Петра». Дательный знает `sameName`; здесь — родительный.
+ */
+export function sameNameAny(said, name) {
+  if (sameName(said, name)) return true;
+  const fold = (value) => String(value ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim();
+  const x = fold(said).split(" ")[0], y = fold(name).split(" ")[0];
+  if (!x || !y) return false;
+  const stem = y.slice(0, -1), last = y.slice(-1);
+  const forms = /[ая]/u.test(last) ? [`${stem}ы`, `${stem}и`, `${stem}у`, `${stem}ю`]
+    : /[йь]/u.test(last) ? [`${stem}я`]
+      : [`${y}а`, ...(/[её].$/u.test(y) ? [`${y.slice(0, -2)}${last}а`] : [])];
+  return forms.includes(x);
+}
+
+/**
  * Срок в словах → `{ at: "HH:MM" }` (до этого часа) или `{ ms }` (на столько),
  * иначе null. «До 18», «до 18:30», «до 7 утра», «на 2 часа», «час», «полчаса»,
  * «на 40 минут».
@@ -179,6 +213,28 @@ export function parseSpan(text) {
   return null;
 }
 
+// ── столы близких: слова хозяина ───────────────────────────────────────────
+/** «Жене», «ей», «этому человеку» — не имя: значит «тому, кто просит» (или единственному). */
+const KIN_WORD = /^(?:(?:моей\s+|моему\s+)?(?:жене|жены|жену|жена|супруге|супруги|мужу|мужа|супругу|супруга)|ей|ему|ее|его|нее|него|этому\s+человеку|этого\s+человека)(?:\s+тоже)?$/u;
+const DESKS = /^(?:а\s+)?(?:у\s+кого\s+(?:ты\s+)?(?:еще\s+)?(?:работаешь\s+)?секретар(?:ь|ем)|(?:чей|кому)\s+ты\s+(?:еще\s+)?секретарь|секретарь\s+у\s+кого|кто\s+(?:еще\s+)?просит\s+секретаря|кто\s+просится\s+в\s+секретари)$/u;
+const DESK_ALLOW = /^(?:да[,\s]+)?(?:разреши|разрешаю|разрешить)\s+секретаря(?:\s+(?:для\s+)?(.{2,40}))?$/u;
+const DESK_ALLOW_AT = /^(?:будь|стань|поработай)\s+секретарем\s+(?:и\s+|еще\s+и\s+)?(?:у|для)\s+(.{2,40})$/u;
+const DESK_DENY = /^(?:нет[,\s]+)?(?:не\s+разрешай|не\s+разрешаю|не\s+давай|откажи|отказать)\s+(?:секретаря|в\s+секретаре)(?:\s+(?:для\s+)?(.{2,40}))?$/u;
+const DESK_REVOKE = /^(?:забери|убери|отними|сними)\s+секретаря\s+у\s+(.{2,40})$/u;
+const DESK_REVOKE_AT = /^(?:больше\s+)?не\s+будь\s+секретарем\s+(?:у|для)\s+(.{2,40})$/u;
+/** Слова хозяина о столах близких: `{ desks }`, `{ allow }`, `{ deny }`, `{ revoke }`; имя — или "" («тот, кто просит»). */
+function deskWish(value) {
+  if (DESKS.test(value)) return { desks: true };
+  const who = (name) => { const text = String(name ?? "").trim(); return KIN_WORD.test(text) ? "" : text; };
+  let found = value.match(DESK_ALLOW) ?? value.match(DESK_ALLOW_AT);
+  if (found) return { allow: who(found[1]) };
+  found = value.match(DESK_DENY);
+  if (found) return { deny: who(found[1]) };
+  found = value.match(DESK_REVOKE) ?? value.match(DESK_REVOKE_AT);
+  if (found) return { revoke: who(found[1]) };
+  return null;
+}
+
 /**
  * Слова хозяина о секретаре → просьба, иначе null:
  *   { on: true, span?, words? } — «отвечай за меня», «…до 18:00», «…: я на встрече, перезвоню»
@@ -192,12 +248,16 @@ export function parseSpan(text) {
  *   { mute: { here } | { users, names, strict } }   — «этому не отвечай», «не отвечай @vasya», «этим не отвечай: Маша»
  *   { unmute: { here } | { all } | { users, names } } — «снова отвечай @vasya», «отвечай всем»
  *   { muted: true }             — «кому ты не отвечаешь?»
+ *   { desks: true } | { allow } | { deny } | { revoke } — столы близких: «у кого ты секретарь?»,
+ *                                 «разреши секретаря [Айдине]», «не разрешай секретаря», «забери секретаря у Айдины»
  */
 export function parseSecretary(text) {
   let raw = String(text ?? "").replace(/\s+/gu, " ").trim();
   if (!raw || raw.length > 320) return null;
   const value = clean(raw).replace(/[?!]+$/u, "").trim();
   if (STATUS.test(value) || /^(?:мое\s+)?расписание\s+секретаря$/u.test(value)) return { status: true };
+  const desk = deskWish(value);
+  if (desk) return desk;
   if (WHO.test(value)) return { who: true };
   if (OFF_ALWAYS.test(value)) return { off: true };
   if (PLAN_OFF.test(value)) return { planOff: true };
@@ -341,6 +401,8 @@ export function stateOf(saved) {
     plan: saved.plan && typeof saved.plan === "object" && /^\d\d:\d\d$/u.test(String(saved.plan.from)) && /^\d\d:\d\d$/u.test(String(saved.plan.to)) ? saved.plan : null,
     mute: Array.isArray(saved.mute) ? saved.mute.filter(item => item && (item.id != null || item.user)).slice(-MUTE_MAX) : [],
     focus: saved.focus && typeof saved.focus === "object" && saved.focus.id != null ? saved.focus : null,
+    // Почта стола близкого: вести, которые не ушли сразу. Поля нет, пока она пуста.
+    ...(Array.isArray(saved.mail) && saved.mail.some(item => item && item.text) ? { mail: saved.mail.filter(item => item && item.text).slice(-DESK_MAIL_MAX) } : {}),
   };
 }
 
