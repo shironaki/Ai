@@ -1,0 +1,287 @@
+/**
+ * Услышать простое.
+ *
+ * 16.11.2026 владелец прислал её список «что ты не поняла?» — 27 коротких фраз,
+ * ушедших модели. Среди них не было ничего трудного: «меня зовут Айдина», «я живу
+ * в Козельске», «ты же тупая», «да пойдёт», «отвечай ночью за меня», «метод
+ * расчёта», «сделай его из лего». Человек представился — и не был услышан.
+ * Здесь каждая из этих фраз доходит до своего дела без модели. Тут же — то, что
+ * выросло из того же письма: статус без вчерашних страхов, забота на другой день
+ * и память о сказанном «к слову».
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { BUILD, heart, message, group, reset, last, calls, chats, says, sdk, source, sourced, toChat, toOwner, reactions, withSister, OWNER, KEY } from "./fixtures/kit.mjs";
+
+const { introRequest, addressDrop, formRequest, addressRequest } = await import("../tgcloud/lib/personal.js");
+const { selfStatement } = await import("../tgcloud/lib/offers.js");
+const { parseSecretary } = await import("../tgcloud/lib/secretary.js");
+const { parsePrayer } = await import("../tgcloud/lib/prayer.js");
+const { parseIntent } = await import("../tgcloud/lib/intents.js");
+const { parseAccent } = await import("../tgcloud/lib/accents.js");
+const { parseMedia } = await import("../tgcloud/lib/media.js");
+const { subjectOf } = await import("../tgcloud/lib/draw.js");
+
+const NOON = Date.parse("2026-11-18T09:00:00Z");
+const HOUR = 3_600_000;
+const style = (id = 5) => JSON.parse(sdk().kv.get(`heart:style:${id}`) ?? "{}");
+const texts = (id = 5) => toChat(id).map(item => item.text);
+
+test("разбор: знакомство, «не называй так», «не выкай» — и то, что этим не является", () => {
+  assert.equal(introRequest("меня зовут айдина"), "Айдина");
+  assert.equal(introRequest("Привет, меня зовут Олег!"), "Олег");
+  assert.equal(introRequest("моё имя — Анна-Мария."), "Анна-Мария");
+  assert.equal(introRequest("зовут меня просто Саша"), "Саша");
+  for (const said of ["меня зовут на свадьбу", "меня зовут обедать", "меня зовут Олег, а тебя?", "зови меня Саша", "как меня зовут", "меня зовут"]) assert.equal(introRequest(said), null, said);
+  // «Зови меня …» остаётся прежней просьбой.
+  assert.equal(addressRequest("зови меня Саша"), "Саша");
+
+  for (const said of ["не называй меня так", "не обращайся так пишу", "Не зови меня так!", "не надо называть меня по имени", "забудь моё имя"]) assert.equal(addressDrop(said), true, said);
+  for (const said of ["не называй меня дурой", "не обращайся ко мне", "называй меня так", "не называй его так"]) assert.equal(addressDrop(said), false, said);
+
+  for (const said of ["давай на ты", "не выкай", "не надо мне выкать", "давай без вы", "не будь вежливый раздражение", "не будь такой официальной", "говори проще", "можно попроще"]) assert.equal(formRequest(said), "ты", said);
+  for (const said of ["давай на вы", "не тыкай", "повежливее", "будь вежливее", "без фамильярности"]) assert.equal(formRequest(said), "вы", said);
+  for (const said of ["не будь дурой", "говори громче", "будь проще и люди потянутся", "вежливость — это важно"]) assert.equal(formRequest(said), null, said);
+});
+
+test("разбор: порядок слов у секретаря, «метод расчёта», «почему ты ночью не отвечала», «режим разговора»", () => {
+  // Слово о повторе можно сказать и после глагола.
+  assert.deepEqual(parseSecretary("отвечай ночью за меня"), parseSecretary("ночью отвечай за меня"));
+  assert.ok(parseSecretary("отвечай ночью за меня")?.plan, "это расписание, а не разовая отлучка");
+  // «Когда меня нет» — условие, а не слова для людей.
+  for (const said of ["отвечай за меня когда меня нет", "отвечай за меня, когда меня нет", "отвечай за меня пока я сплю"]) {
+    const asked = parseSecretary(said);
+    assert.ok(asked, said);
+    assert.equal(asked.words ?? "", "", said);
+    assert.equal(asked.plan, undefined, said);
+  }
+  // Слова для людей — по-прежнему слова.
+  assert.equal(parseSecretary("отвечай за меня: я на совещании").words, "я на совещании");
+
+  for (const said of ["метод расчета", "какой у тебя метод расчёта намаза", "способ расчета намазов", "по какому методу ты считаешь", "как ты считаешь намазы"]) assert.deepEqual(parsePrayer(said), { how: true }, said);
+  assert.equal(parsePrayer("метод Гаусса"), null);
+
+  for (const said of ["почему ты ночью не отвечала", "почему ты вчера молчала", "почему ты не отвечала ночью", "почему ты мне не ответила", "чего молчишь"]) assert.equal(parseIntent(said)?.intent, "whyquiet", said);
+
+  for (const said of ["режим разговора", "можем изменить режим", "можно сменить режим общения", "какой у тебя режим", "как поменять режим", "какие есть режимы"]) assert.deepEqual(parseAccent(said), { show: true }, said);
+  assert.equal(parseAccent("режим дня"), null);
+});
+
+test("разбор: «сделай его из лего» — прошлый рисунок в другой манере; «сделай картинку кота» — обычный рисунок", () => {
+  for (const [said, style] of Object.entries({
+    "сделай его из лего": "из лего", "сделай картинку маслом": "маслом", "сделай фотографию из лего": "из лего", "перерисуй акварелью": "акварелью",
+    "нарисуй это в стиле Ван Гога": "в стиле Ван Гога", "сделай то же самое карандашом": "карандашом", "переделай как аниме": "как аниме",
+  })) {
+    assert.deepEqual(parseMedia(said), { kind: "draw", query: `ещё: ${style}` }, said);
+    assert.deepEqual(subjectOf(`ещё: ${style}`), { again: true, style: style.toLowerCase() }, said);
+  }
+  assert.deepEqual(parseMedia("сделай картинку кота в шляпе"), { kind: "draw", query: "кота в шляпе" });
+  assert.deepEqual(parseMedia("нарисуй кота в стиле Ван Гога"), { kind: "draw", query: "кота в стиле Ван Гога" });
+  assert.deepEqual(parseMedia("нарисуй картину маслом"), { kind: "draw", query: "картину маслом" });
+  assert.deepEqual(subjectOf("ещё"), { again: true });
+});
+
+test("«меня зовут Айдина» — имя запомнено сразу и без модели; «не называй меня так» его убирает", async () => {
+  reset();
+  const h = heart({ PHRASES: true }, { now: () => NOON });
+  await h.onMessage(message("меня зовут айдина"), KEY);
+  assert.equal(last(), "Приятно познакомиться, Айдина. Так и буду к вам обращаться.");
+  assert.equal(style().address, "Айдина");
+  await h.onMessage(message("не называй меня так"), KEY);
+  assert.match(last(), /^Хорошо, больше так не буду\. Как к вам обращаться\? Скажите: «зови меня …»/u);
+  assert.equal(style().address, "");
+  // Имени уже нет — отвечает так же вежливо, но без «больше».
+  await h.onMessage(message("не обращайся так пишу"), KEY);
+  assert.match(last(), /^Хорошо, не буду\./u);
+  assert.equal(chats().length, 0, "модель не понадобилась ни разу");
+  // «Меня зовут на свадьбу» — не знакомство: это разговор.
+  sdk().fetchQueue.push(says("Поздравляю, сходите."));
+  await h.onMessage(message("меня зовут на свадьбу"), KEY);
+  assert.equal(chats().length, 1);
+  assert.equal(style().address, "");
+});
+
+test("«не будь такой вежливой» — переход на «ты»; хозяину — по-прежнему «вы»", async () => {
+  reset();
+  const h = heart({ PHRASES: true }, { now: () => NOON });
+  await h.onMessage(message("не будь вежливый раздражение"), KEY);
+  assert.equal(last(), "Хорошо, давай на «ты».");
+  assert.equal(style().form, "ты");
+  await h.onMessage(message("повежливее"), KEY);
+  assert.equal(last(), "Хорошо, перехожу на «вы».");
+  await h.onMessage(message("не выкай", { id: OWNER }), KEY);
+  assert.equal(last(OWNER), "С вами я всегда на «вы», хозяин: так решено — и мне так нравится.");
+  assert.equal(chats().length, 0);
+});
+
+test("«я живу в Козельске» — город находится со второй пробы справочника, а не уходит модели", async () => {
+  reset();
+  // Справочник знает только начальную форму — как настоящий.
+  source("geocoding-api.open-meteo.com", (url) => (new URL(url).searchParams.get("name") === "козельск"
+    ? { results: [{ name: "Козельск", country: "Россия", admin1: "Калужская область", latitude: 54.03, longitude: 35.78, timezone: "Europe/Moscow", feature_code: "PPL" }] }
+    : { results: [] }));
+  const h = heart({ SOURCES: true, PHRASES: true }, { now: () => NOON });
+  await h.onMessage(message("я живу в козельске"), KEY);
+  assert.match(last(), /^Запомнила: ваш город — Козельск\./u);
+  assert.equal(style().city, "Козельск");
+  assert.deepEqual(sourced().map(url => new URL(url).searchParams.get("name")), ["козельске", "козельск"], "вторая проба — начальная форма мужского рода");
+  assert.equal(chats().length, 0);
+});
+
+test("грубость с частицей («ты же тупая») — её слышит словарь, её задевает; «да пойдёт» — принято, без слов", async () => {
+  reset();
+  const h = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
+  const got = await h.onMessage(message("ты же тупая"), KEY);
+  assert.equal(got.action, "phrase");
+  assert.deepEqual(got.topics, ["оскорбление"]);
+  assert.equal(texts().length, 2, "ответ и одна строка о том, что задело");
+  // Обида слышна и дальше: на вопрос о ней отвечают строки с пометкой «обижена».
+  await h.onMessage(message("ты злишься"), KEY);
+  assert.match(last(), /^(?:Обиделась|Немного|Дуюсь)/u, "отвечает задетая, а не «не злюсь»");
+  // То же голосовым вводом, с лишними словами в начале.
+  reset();
+  const other = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
+  assert.deepEqual((await other.onMessage(message("то что ты меня бесишь"), KEY)).topics, ["оскорбление"]);
+  assert.equal(texts().length, 2);
+
+  reset();
+  const calm = heart({ PHRASES: true }, { now: () => NOON });
+  // Голое «пойдёт» — ответ на «как дела?» (тема словаря «у меня хорошо»); «да пойдёт» — согласие.
+  for (const said of ["да пойдет", "да сойдёт", "ну ладно", "лады", "как скажешь"]) {
+    const before = texts().length;
+    await calm.onMessage(message(said), KEY);
+    assert.equal(texts().length, before, `${said}: без слов`);
+    assert.equal(reactions().at(-1), "👌", said);
+  }
+  assert.equal(chats().length, 0);
+});
+
+test("забота: вчера болел — сегодня, с первым его словом, она спрашивает сама; один раз и только в личке", async () => {
+  reset();
+  let at = NOON;
+  const h = heart({ PHRASES: true }, { now: () => at, random: () => 0 });
+  await h.onMessage(message("я заболел"), KEY);
+  assert.equal(JSON.parse(sdk().kv.get("heart:care:5")).kind, "болел");
+  // В тот же день — ничего сверх ответа.
+  at += HOUR;
+  let before = texts().length;
+  await h.onMessage(message("привет"), KEY);
+  assert.equal(texts().length, before + 1);
+  // На другой день — вопрос вдогонку к ответу, и запись снята.
+  at += 20 * HOUR;
+  before = texts().length;
+  await h.onMessage(message("привет"), KEY);
+  assert.equal(texts().length, before + 2);
+  assert.match(last(), /нездоровилось|получше|самочувствие/u);
+  assert.equal(sdk().kv.get("heart:care:5"), undefined);
+  at += 24 * HOUR;
+  before = texts().length;
+  await h.onMessage(message("привет"), KEY);
+  assert.equal(texts().length, before + 1, "второй раз не спрашивает");
+  // При всех о таком не спрашивают — и не запоминают.
+  await h.onMessage(group("Аи, я заболел"), KEY);
+  assert.equal(sdk().kv.get("heart:care:5"), undefined);
+  assert.equal(chats().length, 0);
+});
+
+test("сказал о себе — она запомнила сама: знак на сообщении, слова один раз, в памяти — его фраза", async () => {
+  for (const said of ["я люблю рыбалку и походы", "А я очень люблю кофе", "у меня двое детей", "мою жену зовут Айдина", "мне 34 года", "мой любимый цвет — синий", "я по профессии сварщик", "я не ем мясо", "я замужем"]) assert.equal(selfStatement(said), said.replace(/[.!…]+$/u, ""), said);
+  for (const said of ["я люблю тебя", "я боюсь вас потерять", "у меня есть шанс?", "я люблю", "я люблю ли я его", "мне кажется, я люблю рыбалку", "он любит рыбалку", "расскажи, что я люблю"]) assert.equal(selfStatement(said), null, said);
+
+  reset();
+  let at = NOON;
+  const h = heart({ PHRASES: true }, { now: () => at });
+  sdk().fetchQueue.push(says("Рыбалка — это терпение."), says("Двое — это шумно и весело."), says("Список."));
+  await h.onMessage(message("я люблю рыбалку и походы"), KEY);
+  assert.deepEqual(texts().slice(-2), ["Рыбалка — это терпение.", "Это я о вас запомнила — сама, без слова «запомни». Что помню — «что ты обо мне помнишь»."]);
+  assert.equal(reactions().at(-1), "✍");
+  // Второй раз — молча: только знак.
+  const before = texts().length;
+  await h.onMessage(message("у меня двое детей"), KEY);
+  assert.equal(texts().length, before + 1);
+  await h.onMessage(message("что ты обо мне помнишь"), KEY);
+  assert.match(last(), /я люблю рыбалку и походы/u);
+  assert.match(last(), /у меня двое детей/u);
+  // В группе сказанное к слову в память не идёт.
+  reset();
+  const loud = heart({ PHRASES: true }, { now: () => at });
+  sdk().fetchQueue.push(says("Понятно."));
+  await loud.onMessage(group("Аи, я люблю рыбалку и походы"), KEY);
+  await loud.onMessage(message("что ты обо мне помнишь"), KEY);
+  assert.doesNotMatch(last(), /рыбалку/u);
+  // «Удали всё обо мне» стирает и эти записи.
+  reset();
+  const gone = heart({ PHRASES: true }, { now: () => at });
+  sdk().fetchQueue.push(says("Понятно."));
+  await gone.onMessage(message("я люблю рыбалку и походы"), KEY);
+  await gone.onMessage(message("я заболел"), KEY);
+  await gone.onMessage(message("удали всё обо мне"), KEY);
+  await gone.onMessage(message("да, удали всё"), KEY);
+  assert.deepEqual([...sdk().kv.keys()].filter(key => /^heart:(?:care|selfnote):5$/u.test(key)), []);
+});
+
+// ── статус: вчерашнее не выглядит сегодняшним ───────────────────────────────
+const ACCOUNT = "0123456789abcdef0123456789abcdef";
+const DRAW_ON = { DRAW_KEY: `${ACCOUNT}:cf-token_ABCDEFGH-1234567890xyz`, DRAW_DIRECTOR: false };
+const PIXELS = Buffer.from(Array.from({ length: 600 }, (_, index) => index % 251));
+const image = () => ({ success: true, result: { image: PIXELS.toString("base64") } });
+const cfError = (status, code, text) => ({ ok: false, status, text: async () => JSON.stringify({ success: false, errors: [{ code, message: text }] }) });
+const status = () => toOwner().map(item => item.text).filter(text => /Проверка сердца/u.test(text)).at(-1) ?? "";
+const lineOf = (text, head) => text.split("\n").find(line => line.startsWith(head)) ?? "";
+
+test("статус: заминка рисования — с днём («вчера в …»), а записанная до публикации этой сборки — не показывается", async () => {
+  reset();
+  source("flux-1-schnell", (url, options) => (/safe for work/u.test(JSON.parse(options.body).prompt) ? image() : cfError(400, 3030, "Input prompt contains NSFW content.")));
+  let at = NOON;
+  const h = heart(DRAW_ON, { now: () => at });
+  await h.onMessage(message("нарисуй кота", { id: OWNER }), KEY);
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(lineOf(status(), "Рисование:"), / · заминка в \d\d:\d\d \(нарисовал FLUX schnell\): /u);
+  // На другой день час без дня читался бы как сегодняшний.
+  at += 20 * HOUR;
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(lineOf(status(), "Рисование:"), / · заминка вчера в \d\d:\d\d \(нарисовал FLUX schnell\): /u);
+  // Сборку опубликовали после заминки: запись о прошлом коде в статусе новой не стоит.
+  sdk().kv.set("heart:build", JSON.stringify({ build: BUILD, at: at - HOUR }));
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.doesNotMatch(lineOf(status(), "Рисование:"), /заминка|400/u);
+  // Запись о другой сборке ничего не прячет: эта ещё не объявилась.
+  sdk().kv.set("heart:build", JSON.stringify({ build: "0.1.0", at }));
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(lineOf(status(), "Рисование:"), /заминка вчера в/u);
+});
+
+test("статус: «Сбои» — то, что было до публикации этой сборки, названо отдельно, а не стоит как свежее", async () => {
+  reset();
+  const { h } = withSister({ alive: false });
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.match(lineOf(status(), "Сбои:"), /^Сбои: нет · к сведению: Мост — .+ \(\d\d:\d\d\)$/u);
+  // Та же запись, но сборка объявилась позже неё.
+  sdk().kv.set("heart:build", JSON.stringify({ build: BUILD, at: Date.now() + 1 }));
+  await h.onMessage(message("статус", { id: OWNER }), KEY);
+  assert.equal(lineOf(status(), "Сбои:"), "Сбои: нет · до обновления было: 1 (к этой сборке не относится)");
+});
+
+test("«сделай его из лего» — тот же сюжет в новой манере; манеры не копятся; рисовать нечего — честно", async () => {
+  reset();
+  source("flux-1-schnell", () => image());
+  source("m2m100", () => ({ success: true, result: { translated_text: "a cat made of lego bricks" } }));
+  const h = heart(DRAW_ON, { now: () => NOON });
+  const drew = () => JSON.parse(sdk().kv.get("heart:drew:5"));
+  await h.onMessage(message("нарисуй кота"), KEY);
+  await h.onMessage(message("сделай его из лего"), KEY);
+  assert.equal(calls("sendPhoto").length, 2);
+  assert.equal(drew().q, "кота, из лего");
+  assert.equal(drew().base, "кота");
+  await h.onMessage(message("сделай картинку маслом"), KEY);
+  assert.equal(calls("sendPhoto").length, 3);
+  assert.equal(drew().q, "кота, маслом", "прежняя манера заменена, а не дописана");
+  // «Ещё» повторяет последний вид — и помнит сюжет.
+  await h.onMessage(message("нарисуй ещё"), KEY);
+  assert.equal(drew().q, "кота, маслом");
+  assert.equal(drew().base, "кота");
+  reset();
+  const empty = heart(DRAW_ON, { now: () => NOON });
+  await empty.onMessage(message("сделай его из лего"), KEY);
+  assert.match(last(), /^Перерисовать пока нечего: я здесь ещё ничего не рисовала\./u);
+});

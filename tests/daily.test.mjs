@@ -283,7 +283,8 @@ test("«запомнить?»: город записывается с часов
   assert.deepEqual((({ city, tz }) => ({ city, tz }))(await h.personal.settings(5)), { city: "Казань", tz: "Europe/Moscow" });
 
   sdk().fetchQueue.push(says("Привет, Лев."), says("Да?"));
-  await h.onMessage(message("меня зовут Лев", { id: 6 }), KEY);
+  // Имя сказано к слову — вопрос «запомнить?»; сказано одним сообщением («меня зовут Лев») — запоминается сразу.
+  await h.onMessage(message("меня зовут Лев, будем знакомы", { id: 6 }), KEY);
   assert.match(last(6), /^Запомнить, что вас зовут Лев\?/u);
   at += 11 * 60_000;
   await h.onMessage(message("да", { id: 6 }), KEY);

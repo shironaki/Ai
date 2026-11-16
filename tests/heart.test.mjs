@@ -295,7 +295,8 @@ test("diagnostics are for the owner and name what is really connected", async ()
 test("memory survives between messages through the same store", async () => {
   reset();
   const h = heart();
-  await h.onMessage(message("меня зовут Ли"), KEY);
+  // Знакомство одним сообщением («меня зовут Ли») она с 0.34.0 принимает сама, без модели; здесь нужен разговор.
+  await h.onMessage(message("меня зовут Ли, а тебя как?"), KEY);
   await h.onMessage(message("как меня зовут?"), KEY);
   const body = JSON.parse(sdk().fetches.at(-1).options.body);
   assert.ok(body.messages.some(item => item.role === "assistant"), "the first answer is in history");

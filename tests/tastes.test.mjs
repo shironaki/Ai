@@ -313,6 +313,7 @@ test("выключено настройкой: анкеты нет, фраза �
   const h = heart({ LIKES: false }, { now: () => NOON });
   sdk().fetchQueue.push(says("Синий — хороший выбор."));
   await h.onMessage(message("мой любимый цвет — синий"), KEY);
-  assert.equal(last(), "Синий — хороший выбор.");
+  // Отвечает модель; следом — одна строка о том, что сказанное о себе она запомнила сама (с 0.34.0).
+  assert.ok(sdk().sent.some(item => item.text === "Синий — хороший выбор."), "ответила модель");
   assert.deepEqual(saved(), {});
 });

@@ -37,6 +37,9 @@ const IRREGULAR = Object.freeze({ ельце: "елец", ельца: "елец"
 /** Беглая гласная: «Орле» → «Орел», «Волочке» → «Волочек». */
 const fleeting = (stem) => (stem.length >= 3 ? `${stem.slice(0, -1)}е${stem.slice(-1)}` : stem);
 
+/** Основа мужского рода: «Козельск», «Белгород», «Оренбург», «Саратов», «Берлин» — начальная форма без окончания. */
+const MASCULINE = /(?:ск|цк|рг|рд|град|город|бург|поль|[ое]в|[иы]н)$/u;
+
 /** Возможные начальные формы одного слова из названия города. */
 function forms(word) {
   const out = [word];
@@ -46,7 +49,9 @@ function forms(word) {
   if (/(?:ой|ей)$/u.test(word)) { const s = word.slice(0, -2); add(`${s}ая`, `${s}яя`); }
   if (/(?:ых|их)$/u.test(word)) { const s = word.slice(0, -2); add(`${s}ые`, `${s}ие`); }
   if (/(?:ах|ях)$/u.test(word)) { const s = word.slice(0, -2); add(`${s}ы`, `${s}и`, `${s}а`); }
-  if (/е$/u.test(word)) { const s = word.slice(0, -1); add(`${s}а`, s, `${s}ь`, `${s}я`, `${s}й`, `${s}о`, fleeting(s)); }
+  // Справочник спрашивают не больше нескольких раз: «Козельске» кончалось на второй пробе («Козельска»),
+  // и до «Козельск» очередь не доходила. У основ мужского рода начальная форма — сама основа, она первая.
+  if (/е$/u.test(word)) { const s = word.slice(0, -1); if (MASCULINE.test(s)) add(s); add(`${s}а`, s, `${s}ь`, `${s}я`, `${s}й`, `${s}о`, fleeting(s)); }
   if (/и$/u.test(word)) { const s = word.slice(0, -1); add(`${s}ь`, `${s}я`, `${s}а`); }
   if (/у$/u.test(word)) add(`${word.slice(0, -1)}а`);
   if (/ю$/u.test(word)) add(`${word.slice(0, -1)}я`);

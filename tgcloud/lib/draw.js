@@ -259,6 +259,9 @@ export function subjectOf(query) {
   if (as) return { own: "self", text: as[1].trim(), look: LOOK };
   if (/^(?:меня|мой\s+портрет|мое\s+лицо|нас|нас\s+с\s+тобой|нас\s+вместе)$/u.test(text)) return { me: true };
   if (/^(?:еще|еще\s+раз|еще\s+одну|еще\s+один|снова|заново|такую\s+же|другую|другой|по-другому|по\s+другому|что-нибудь\s+еще)$/u.test(text)) return { again: true };
+  // «Ещё: маслом» — прошлый сюжет чата в названной манере (так разбор записывает «сделай его из лего»).
+  const styled = text.match(/^еще:\s*(.{2,80})$/u);
+  if (styled) return { again: true, style: styled[1] };
   return { text: String(query).replace(/\s+/gu, " ").trim().slice(0, 300) };
 }
 
