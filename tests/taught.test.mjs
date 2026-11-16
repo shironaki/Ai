@@ -181,7 +181,7 @@ test("128: «предложи ответы» — один вопрос к мод
   assert.equal(last(), "Чебурек кек — и точка.");
   assert.equal(chats().length, calls, "выученное — без модели");
   // Взятое ушло из неузнанного; второе «беру» без нового предложения — обычные слова.
-  assert.deepEqual(Object.keys(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).sort(), ["тыква на подоконнике", "ну ты и булка"]);
+  assert.deepEqual(Object.keys(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).sort(), ["ну ты и булка", "тыква на подоконнике"]);
   sdk().fetchQueue.push(says("Что берёте?"));
   await h.onMessage(own("беру 2"), KEY);
   assert.equal(last(OWNER), "Что берёте?");
