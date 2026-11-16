@@ -146,7 +146,7 @@ test("128: «предложи ответы» — один вопрос к мод
   await h.onMessage(own("предложи ответы"), KEY);
   assert.equal(last(OWNER), "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
   assert.equal(chats().length, 0);
-  for (const said of ["кек чебурек", "кек чебурек", "ну ты и булка", "как оно ничего"]) {
+  for (const said of ["кек чебурек", "кек чебурек", "ну ты и булка", "тыква на подоконнике"]) {
     sdk().fetchQueue.push(says("Ответ модели."));
     await h.onMessage(message(said), KEY);
   }
@@ -164,7 +164,7 @@ test("128: «предложи ответы» — один вопрос к мод
   assert.equal(chats().length, before + 2, "один вопрос к модели на весь список (и один — чужому выше)");
   const sentToModel = JSON.parse(chats().at(-1).options.body).messages.at(-1).content;
   assert.match(sentToModel, /К каждой напиши один короткий ответ в своём характере — до 12 слов\./u);
-  assert.match(sentToModel, /\n\n1\. кек чебурек\n2\. (?:ну ты и булка|как оно ничего)\n3\. (?:ну ты и булка|как оно ничего)$/u);
+  assert.match(sentToModel, /\n\n1\. кек чебурек\n2\. (?:ну ты и булка|тыква на подоконнике)\n3\. (?:ну ты и булка|тыква на подоконнике)$/u);
   // Пока не взято — в словаре пусто: на фразу отвечает модель.
   assert.equal(sdk().kv.get(TAUGHT_KEY) ?? null, null);
 
@@ -181,7 +181,7 @@ test("128: «предложи ответы» — один вопрос к мод
   assert.equal(last(), "Чебурек кек — и точка.");
   assert.equal(chats().length, calls, "выученное — без модели");
   // Взятое ушло из неузнанного; второе «беру» без нового предложения — обычные слова.
-  assert.deepEqual(Object.keys(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).sort(), ["как оно ничего", "ну ты и булка"]);
+  assert.deepEqual(Object.keys(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).sort(), ["тыква на подоконнике", "ну ты и булка"]);
   sdk().fetchQueue.push(says("Что берёте?"));
   await h.onMessage(own("беру 2"), KEY);
   assert.equal(last(OWNER), "Что берёте?");

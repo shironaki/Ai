@@ -13,6 +13,7 @@
  */
 import { SECTIONS } from "./data/phrases.js";
 import { EXCLUSIVES, clean } from "./catalogue.js";
+import { plainWords, squeezed } from "./slang.js";
 
 export { TAGS, parseCatalogue, expandTrigger } from "./catalogue.js";
 
@@ -78,21 +79,38 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
     }
     return null;
   }
+  // Запасной слой (0.36.0, `slang.js`): как написано — не нашлось; тогда «чо делаеш» читается как
+  // «что делаешь», а «привееет» — как «привет». Точное совпадение всегда первее: слой ничего не
+  // отнимает у выписанных фраз и ничего не угадывает «по похожести».
+  function loose(value) {
+    const plain = plainWords(value);
+    if (plain && plain !== value) {
+      const found = lookup(plain);
+      if (found) return found;
+    }
+    for (const candidate of squeezed(plain || value)) {
+      const again = plainWords(candidate);
+      const found = lookup(candidate) ?? (again && again !== candidate ? lookup(again) : null);
+      if (found) return found;
+    }
+    return null;
+  }
 
   /** Реплика целиком → названия тем по порядку, или null: это не из словаря. */
-  function match(text) {
+  function match(text, { strict = false } = {}) {
     const raw = String(text ?? "").trim();
     if (!raw || raw.length > 140) return null;
     const whole = clean(raw);
     if (!whole) return null;
-    const single = lookup(whole);
+    // `strict` — только как написано, без слоя опечаток: так спрашивают «знает ли словарь эту фразу сам».
+    const single = lookup(whole) ?? (strict ? null : loose(whole));
     if (single) return [single];
     // «Привет! Как дела?» — две темы подряд. Узнаны должны быть все части.
     const parts = raw.split(/[.!?;,]+|\s+[—–]\s+/u).map(clean).filter(Boolean);
     if (parts.length < 2 || parts.length > 3) return null;
     const names = [];
     for (const part of parts) {
-      const name = lookup(part);
+      const name = lookup(part) ?? (strict ? null : loose(part));
       if (!name) return null;
       if (names.at(-1) !== name) names.push(name);
     }

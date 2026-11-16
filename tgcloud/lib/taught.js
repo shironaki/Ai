@@ -14,6 +14,7 @@
  *    в словаре не хватает на самом деле, а не по догадке.
  */
 import { clean } from "./catalogue.js";
+import { isLaugh, plainWords, squeezed } from "./slang.js";
 
 export const TAUGHT_KEY = "heart:taught:v1";
 export const UNHEARD_KEY = "heart:unheard:v1";
@@ -63,7 +64,7 @@ export function parseTeach(text) {
 }
 
 /** Слова, которые зависят от разговора: неузнанными их считать бессмысленно. */
-const CONTEXTUAL = new Set(["да", "нет", "неа", "ага", "угу", "почему", "зачем", "что", "чего", "как", "когда", "где", "кто", "какой", "какая", "а", "и", "или", "может", "наверное", "точно", "правда", "конечно", "давай", "хочу", "не хочу", "не знаю", "не надо", "еще", "дальше", "потом", "тоже", "первое", "второе", "третье"]);
+const CONTEXTUAL = new Set(["да", "нет", "неа", "не", "ну", "ну да", "ну и", "и что", "ну и что", "что делать", "ээ", "эээ", "ага", "угу", "почему", "зачем", "что", "чего", "как", "когда", "где", "кто", "какой", "какая", "а", "и", "или", "может", "наверное", "точно", "правда", "конечно", "давай", "хочу", "не хочу", "не знаю", "не надо", "еще", "дальше", "потом", "тоже", "первое", "второе", "третье"]);
 
 export function createTaught({ store = null, now = () => Date.now(), random = Math.random } = {}) {
   const usable = () => Boolean(store?.available);
@@ -136,6 +137,8 @@ export function createTaught({ store = null, now = () => Date.now(), random = Ma
     if (!raw || raw.length > 60 || /\d|@|https?:|www\.|\//iu.test(raw)) return "";
     const key = clean(raw);
     if (!key || key.length < 2 || key.split(" ").length > 6 || CONTEXTUAL.has(key)) return "";
+    // Смех и растянутое «дааа» — не пробел в словаре: смех она узнаёт сама, а «да» ждёт модель по смыслу.
+    if (isLaugh(raw) || CONTEXTUAL.has(plainWords(raw)) || squeezed(raw).some(item => CONTEXTUAL.has(item))) return "";
     return key;
   }
   /** Записать реплику, ушедшую к модели. Без автора: важно, что сказано, а не кем. */
@@ -179,8 +182,22 @@ export function createTaught({ store = null, now = () => Date.now(), random = Ma
       await store.set(UNHEARD_KEY, { ...saved, map, at: now() });
     } catch { /* список подождёт */ }
   }
+  /** Сборка научилась понимать эти реплики сама — из неузнанного они уходят одной записью. Возвращает, сколько ушло. */
+  async function settleAll(list) {
+    const keys = (Array.isArray(list) ? list : []).map(item => clean(item)).filter(Boolean);
+    if (!keys.length || !usable()) return 0;
+    try {
+      const saved = await store.get(UNHEARD_KEY);
+      if (!saved?.map) return 0;
+      const map = { ...saved.map };
+      let gone = 0;
+      for (const key of keys) if (key in map) { delete map[key]; gone += 1; }
+      if (gone) await store.set(UNHEARD_KEY, { ...saved, map, at: now() });
+      return gone;
+    } catch { return 0; }
+  }
   const clearUnheard = async () => (usable() ? store.set(UNHEARD_KEY, { map: {}, since: now(), at: now() }).then(() => true).catch(() => false) : false);
   const count = async () => (await load()).items.length;
 
-  return Object.freeze({ add, list, drop, match, note, unheard, settle, clearUnheard, count, worth });
+  return Object.freeze({ add, list, drop, match, note, unheard, settle, settleAll, clearUnheard, count, worth });
 }

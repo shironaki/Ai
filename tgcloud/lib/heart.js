@@ -65,7 +65,8 @@ import {
   DESKS_KEY, DESKS_MAX, DESK_ASKS_MAX, DESK_MAIL_MAX, deskKey, desksOf, sameNameAny,
 } from "./secretary.js";
 import { createBond, parseJoke } from "./bond.js";
-import { rivalOf, calmsJealousy } from "./jealousy.js";
+import { rivalOf, calmsJealousy, asksAnswer, aboutHer } from "./jealousy.js";
+import { plainWords, isLaugh, emojiOnly, smileMood } from "./slang.js";
 import { profileWish, PROFILE_ABOUT, PROFILE_TEXT } from "./profile.js";
 import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS } from "./chatlog.js";
 import { levelOf } from "./rp.js";
@@ -163,8 +164,18 @@ const TASTE = /(?:любим|нравит|предпочита|обожа|нен
 const ACK_ONLY = /^(?:(?:ну\s+)?(?:ок(?:ей|и|с)?|ok|okay|угу|ага|ясно|ясненько|понятно|понятненько|понял[аи]?|хорошо|ладно|ладненько|лады|добро|договорились|принято|годится|как\s+скаже(?:шь|те)|супер|отлично|класс|круто)|да\s+(?:пойд[её]т|сойд[её]т|годится)|лол|кек|а?(?:ха){2,}х?|а?хах|\)+)[\s!.)]*$/iu;
 /** Доброе слово о ней самой: двигает отношения и радует её на пару часов. */
 const PRAISE = /(?:^|[\s,])(?:молодец|умница|умничка|красава|ты\s+(?:лучшая|чудо|прелесть|золото|супер|классная|хорошая|милая|умная|крутая)|хорошая\s+девочка|горжусь\s+тобой|(?:я\s+)?(?:тебя\s+)?(?:люблю|обожаю)\s+тебя|ты\s+мне\s+нравишься)(?=$|[\s,.!)])/iu;
-const LAUGH = /^(?:лол|кек|а?(?:ха){2,}х?|а?хах|\)\)+)[\s!.)]*$/iu;
-const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:тупая|глупая|никч[её]мная|бесполезная|дура|идиотка|бесишь|достала|задолбала)|(?:ты\s+)?меня\s+(?:бесишь|достала|задолбала|раздражаешь)|бесишь(?:\s+меня)?|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+)(?=$|[\s,.!?])/iu;
+/** «Принято» двумя-тремя словами: «ясно понятно», «ну ок ладно». Слова чата («оке», «лан», «пон») читает `plainWords`. */
+const ACK_WORD = /^(?:ок|угу|ага|ясно|ясненько|понятно|хорошо|ладно|лады|добро|принято|годится|супер|отлично|класс|круто)$/u;
+const ackOnly = (text, plain = plainWords(text)) => {
+  if (ACK_ONLY.test(text) || ACK_ONLY.test(plain)) return true;
+  const words = plain.replace(/^ну /u, "").split(" ");
+  return words.length >= 2 && words.length <= 3 && words.every(word => ACK_WORD.test(word));
+};
+/** Разговор касается её умений — модели называется, что она умеет на деле (17.11.2026: «не умею видеть картинки»). */
+const SKILLS_TALK = /картинк|фото|рисун|рису[ею]|нарису|изображ|видишь|видеть|посмотр|слыш|голосов|умеешь|умеете|можешь|можете|сможешь|способн|найд[иё]|поищ|погугл|интернет|ссылк|напомн|перевед|перевод|стикер|секретар|помощниц|ассистент|нейросет|алис|сири|gpt|гпт/iu;
+/** Когда она последний раз ставила или показывала свой профиль: четверть часа «покажи профиль» значит «свой». */
+const PROFILE_AT_KEY = "heart:profile:at";
+const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:тупая|глупая|никч[её]мная|бесполезная|дура|идиотка|бесишь|достала|задолбала)|(?:ты\s+)?меня\s+(?:бесишь|достала|задолбала|раздражаешь)|бесишь(?:\s+меня)?|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+|пош(?:ла|[её]л)\s+ты|иди\s+(?:ты\s+)?(?:на\s*ху[йи]|на\s*хер|на\s*фиг|в\s+жопу|в\s+задницу)|шлюха|сучка|мразь|сдохни|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:сука|тварь|дебилка|уродина|чмо))(?=$|[\s,.!?])/iu;
 const APOLOGY = /(?:^|[\s,])(?:прости|простите|извини|извините|извиняюсь|сорян|сорри|sorry|виновата?)(?=$|[\s,.!])/iu;
 /** Человек поправляет её ответ: это сигнал ошибки и повод для урока. */
 /**
@@ -478,6 +489,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Настроение меняет поведение: ворчливая — короче, игривая — шутит чаще.
       const way = inflight.get(`${chatId}:${userId}`)?.way ?? "";
       if (way) frames.push(way);
+      // Что она умеет на деле — когда разговор касается умений: характер о них молчал.
+      if (SKILLS_TALK.test(prompt)) frames.push(skillsFrame());
       if (PHRASES && TASTE.test(prompt)) frames.push(...book.pool("+канон"));
       return {
         tier: promptTier(prompt),
@@ -1124,14 +1137,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   async function tryAbility(turn, text) {
     const tool = matchPhrase(text);
     if (!tool) return null;
-    return runAbility(turn, { tool });
+    // «Покажи профиль» от хозяина в личке: карточки людей ведёт сестра; нет её, молчит или не умеет этого здесь —
+    // он получает профиль самой Аи, а не отказ (17.11.2026: «это умение Юи… не выполню» на вопрос о её профиле).
+    const own = tool === "profile" && !turn.dry && owner(turn.actorId) && turn.isPrivate && Boolean(profileWish(text, { loose: true })?.loose);
+    return runAbility(turn, { tool, ...(own ? { instead: () => profileWords(turn, { show: true, instead: true }) } : {}) });
   }
 
   /**
    * Попросить сестру выполнить умение. Она сама решает, можно ли это здесь и
    * этому человеку; сердце не подменяет её решение и не обещает результат.
    */
-  async function runAbility(turn, { tool, args = { args: "" } }) {
+  async function runAbility(turn, { tool, args = { args: "" }, instead = null }) {
     const { chatId, actorId, chatType, dry } = turn;
     const said = (reason, extra = {}) => say(turn, missingAbilityText({
       tool, reason, chatType,
@@ -1141,12 +1157,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       ...extra,
     }));
 
-    if (!abilities.open()) return said("bridge_closed");
+    if (!abilities.open()) return instead ? instead() : said("bridge_closed");
     // The bridge is a signed post into a real channel: a rehearsal asks for
     // nothing, and says only what it would have asked.
     if (dry) return say(turn, `${NAME}: пробный запуск — это умение я попросила бы у ${SISTER}. Ничего не отправлено.`);
     // Сестра уже промолчала: не заставляем человека ждать ещё полминуты.
     if (await abilities.silent()) {
+      if (instead) return instead();
       const health = await abilities.health();
       return say(turn, `${NAME}: ${SISTER} сейчас не отвечает — это её умение, и без неё я его не выполню. Попробую снова после ${clock(health.until)}.`);
     }
@@ -1156,9 +1173,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // when the first happened sends the owner to look for a bot that is already
     // standing right there.
     // Не дождалась или она молчит — без кода ошибки и без «попробуйте ещё раз»: от человека тут ничего не зависит.
-    if (!listed.ok && /^bridge_(?:timeout|waiting|silent|no_answer)$/u.test(String(listed.code))) return say(turn, `${NAME}: это умение ${SISTER}, а она сейчас не отвечает. Без неё я его не выполню.`);
+    if (!listed.ok && /^bridge_(?:timeout|waiting|silent|no_answer)$/u.test(String(listed.code))) return instead ? instead() : say(turn, `${NAME}: это умение ${SISTER}, а она сейчас не отвечает. Без неё я его не выполню.`);
     if (!listed.ok) return say(turn, `${NAME}: ${SISTER} не ответила на запрос умений (${listed.code}). ${you(turn, "Попробуйте", "Попробуй")} ещё раз.`);
-    if (!listed.tools.some(item => item.name === tool)) return said("not_in_chat");
+    if (!listed.tools.some(item => item.name === tool)) return instead ? instead() : said("not_in_chat");
 
     const result = await abilities.call(tool, { actor: actorId, chat: chatId, chatType, args });
     if (result.ok) return say(turn, result.text || "Готово.");
@@ -2114,6 +2131,21 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (owner(turn.actorId)) return true;
     return settings.flirt === true && settings.minor === false && Number(turn.manner?.score) >= 25;
   }
+  /**
+   * Что она умеет на деле — строкой для модели (0.36.0). Характер об умениях молчал, и на слова о картинках
+   * модель ответила «не умею видеть» (17.11.2026), хотя фото Аи рассматривает. Список — из того, что включено.
+   */
+  function skillsFrame() {
+    const can = [
+      SENSES ? "рассматривать присланные фото и слушать голосовые" : "",
+      draw.available ? "рисовать по словам «нарисуй …»" : "",
+      SEARCH ? "искать в сети по словам «найди …»" : "",
+      SENSES ? "читать страницы по ссылке" : "",
+      "напоминать («напомни …»)", "вести списки и заметки", TRANSLATE ? "переводить" : "", "играть", "считать",
+    ].filter(Boolean).join("; ");
+    return `Что ты умеешь на деле (делает это программа по словам человека; сверх списка не выдумывай): ${can}. Просят то, что есть в списке, — не говори «не умею»: подскажи, какими словами попросить. Чего в списке нет — так и скажи.`;
+  }
+
   /** Настроение сейчас и его причина — одно на ход, чтобы слова и модель не разошлись. */
   async function feelFor(turn) {
     if (turn.feel) return turn.feel;
@@ -3332,9 +3364,32 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await taught.clearUnheard();
       return say(turn, "Список неузнанного очищен. Начинаю считать заново.");
     }
-    const rows = await taught.unheard({ limit: 30 });
-    if (!rows.length) return say(turn, "Пока нечего показать: короткого, чего я не узнала бы, не было.");
-    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}\n\nНаучить сразу: на «фраза» отвечай «ответ». Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятое».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+    const { rows, gone } = await unheardNow({ limit: 30 });
+    const cleaned = gone ? `Из списка ${plural(gone, "ушла", "ушли", "ушло")} ${gone} ${plural(gone, "реплика", "реплики", "реплик")}: теперь я понимаю ${gone === 1 ? "её" : "их"} сама.` : "";
+    if (!rows.length) return say(turn, cleaned ? `${cleaned} Больше показать нечего.` : "Пока нечего показать: короткого, чего я не узнала бы, не было.");
+    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятое».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+  }
+
+  /**
+   * Понимает ли нынешняя сборка короткую реплику сама — без модели. Дешёвая сверка разборов, без состояния:
+   * словарь (с опечатками), смех, «принято», «спасибо», намерения, умения сестры, слова секретаря.
+   */
+  function knownNow(text) {
+    try {
+      return Boolean((PHRASES && book.match(text)) || isLaugh(text) || ackOnly(text) || THANKS_ONLY.test(plainWords(text))
+        || parseIntent(text) || matchPhrase(text) || parseSecretary(text));
+    } catch { return false; }
+  }
+  /**
+   * Список неузнанного, сверенный с нынешней сборкой (0.36.0): что она теперь понимает сама, из списка уходит.
+   * До этого он копил и то, чему её уже научили: 17.11.2026 в нём стояли «отвечай ночью за меня» и «почему ты
+   * ночью не отвечала» — обе реплики сборка давно понимала.
+   */
+  async function unheardNow({ limit = 30, sinceMs = 0 } = {}) {
+    const rows = [], known = [];
+    for (const row of await taught.unheard({ limit: 200, sinceMs })) (knownNow(row.text) ? known : rows).push(row);
+    const gone = known.length ? await taught.settleAll(known.map(row => row.text)) : 0;
+    return { rows: rows.slice(0, limit), gone };
   }
 
   // ── сама предлагает ответы для словаря (идея 128) ───────────────────────
@@ -3380,7 +3435,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, `Добавила в словарь: ${added}. Теперь на ${added === 1 ? "эту фразу" : "эти фразы"} отвечаю без модели. Список — «мои фразы», убрать — «забудь фразу 3».${failed.length ? ` Не легли: ${failed.join(", ")}.` : ""}`);
     }
     if (turn.dry) return say(turn, "Предложила бы ответы на неузнанное — репетиция, модель не трачу.");
-    const rows = (await taught.unheard({ limit: 30 })).slice(0, PROPOSE_ROWS);
+    const rows = (await unheardNow({ limit: 30 })).rows.slice(0, PROPOSE_ROWS);
     if (!rows.length) return say(turn, "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
     await typing(turn);
     const answer = await compose(turn, `Ниже — короткие реплики, на которые у тебя нет готового ответа: люди пишут их тебе в чатах. К каждой напиши один короткий ответ в своём характере — до 12 слов. Ответ услышат разные люди, поэтому: без слов «ты» и «вы», без имён, без вопросов о личном, без дат, чисел и фактов, которые устареют. Формат строго такой: номер, точка, ответ — каждая реплика с новой строки. Больше ничего не пиши.\n\n${rows.map((row, index) => `${index + 1}. ${row.text}`).join("\n")}`).catch(() => null);
@@ -5383,9 +5438,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return melted(await bond.mark(actorId, kind).catch(() => null));
     };
 
-    const onlyThanks = THANKS_ONLY.test(prompt);
+    // Как написано — и как человек написал бы без сокращений: «спасибки» — это «спасибо», «оке» — «ок» (`slang.js`).
+    // Фразу, которую словарь знает как написана («сенкс» → «аригато»), слой не трогает: выписанное первее.
+    const plain = PHRASES && book.match(prompt, { strict: true }) ? "" : plainWords(prompt);
+    const onlyThanks = THANKS_ONLY.test(prompt) || THANKS_ONLY.test(plain);
     if (PRAISE.test(prompt)) await deed("praise");
-    if (onlyThanks || THANKS.test(prompt)) {
+    if (onlyThanks || THANKS.test(prompt) || THANKS.test(plain)) {
       pulse.bump("thanked");
       await deed("thanks");
       const trace = await lastTrace();
@@ -5397,8 +5455,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         return { ok: true, action: "thanks" };
       }
     }
-    if (ACK_ONLY.test(prompt)) {
-      const laugh = LAUGH.test(prompt);
+    // Смех — как бы он ни был набран: «аххахаха», «пхпх», «ахах 😂». «))» — тоже улыбка.
+    const laugh = isLaugh(prompt) || /^(?:[:;=]-?[)D]+|\){2,}0*\)*)$/u.test(prompt.trim());
+    if (laugh || ackOnly(prompt, plain)) {
       // «Хорошо» в ответ на её вопрос — это ответ, а не «принято»: если её
       // последняя реплика кончалась вопросом, разговор продолжает модель.
       if (!laugh) {
@@ -5407,6 +5466,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (/\?[\s»")]*$/u.test(String(mine?.content ?? "").trim())) return null;
       }
       return await react(turn, laugh ? "😁" : "👌")
+        ? { ok: true, action: "reaction" }
+        : { ok: true, ignored: true, reason: "acknowledged" };
+    }
+    // Одни смайлы — не вопрос к модели: на смех, сердце и «👍» она отвечает реакцией, на «👋» — приветом.
+    // Грустный, сердитый и незнакомый смайл остаётся разговору: там уместно спросить, что случилось.
+    const smile = smileMood(emojiOnly(prompt));
+    if (smile === "hello") {
+      const greeted = await smallTalk(turn, "привет");
+      if (greeted) return greeted;
+    } else if (smile) {
+      const close = owner(actorId) || Number(turn.manner?.score) >= 25;
+      return await react(turn, ({ laugh: "😁", love: close ? "❤" : "🤗", joy: "👌", hug: "🤗", sleep: "😴", think: "🤔" })[smile])
         ? { ok: true, action: "reaction" }
         : { ok: true, ignored: true, reason: "acknowledged" };
     }
@@ -5428,9 +5499,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const felt = await bond.mark(actorId, "jealous", rival.name).catch(() => null);
         if (felt && !felt.before.jealous && felt.after.jealous) {
           pulse.bump("jealous");
+          // Ревнует она уже в этом ответе, а не со следующего: настроение хода пересчитывается. Иначе модель
+          // отвечала ещё спокойной, а строка ревности шла вдогонку — два голоса в одном ответе (17.11.2026).
+          turn.feel = null;
+          await feelFor(turn).catch(() => null);
           // Реплику целиком знает словарь («Алиса лучше тебя») — ревность уже в его ответе: второй строки не нужно.
           if (!felt.after.hurt && !(PHRASES && book.match(prompt))) {
-            (turn.after ??= []).push((PHRASES ? book.pick(`+ревность:${rival.kind}`, voiceCtx(turn, rival.name ? { "кто": rival.name } : {})) : null) ?? "…Так. Я это запомнила.");
+            const ctx = voiceCtx(turn, rival.name ? { "кто": rival.name } : {});
+            const line = (PHRASES ? (aboutHer(prompt) ? book.pick("+ревность:обо мне", ctx) : null) ?? book.pick(`+ревность:${rival.kind}`, ctx) : null) ?? "…Так. Я это запомнила.";
+            // Просто рассказал («общался с Алисой, она посоветовала…») — отвечает она сама, этой строкой: модели тут
+            // сказать нечего, и она сочиняла. Вопрос, просьба или длинный рассказ остаются модели — строка идёт следом.
+            if (!asksAnswer(prompt) && prompt.length <= 140) {
+              pulse.bump("ruled");
+              const sent = await say(turn, voiced(turn, line));
+              if (sent.ok) await keepThread(turn, prompt, line);
+              return { ...sent, action: "jealous" };
+            }
+            (turn.after ??= []).push(line);
           }
         }
       } else if (turn.jealous && calmsJealousy(prompt)) melted(await bond.mark(actorId, "soothe").catch(() => null));
@@ -6637,7 +6722,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (detail) Object.assign(detail, { auto: cur.away.auto === true, wrote: cur.people.length + (Number(cur.more) || 0) });
       // Хозяин вернулся посреди часов расписания — до конца этого окна она сама не начнёт.
       const window = expired ? null : planWindow(cur.plan, now(), zone);
-      return { ...cur, away: { ...AWAY_OFF }, people: [], more: 0, own: {}, ...(window ? { plan: { ...cur.plan, skip: window.to } } : {}) };
+      return { ...cur, away: { ...AWAY_OFF }, people: [], more: 0, own: {}, last: { at: now() }, ...(window ? { plan: { ...cur.plan, skip: window.to } } : {}) };
     });
     if (!done) return null;
     // Отметки «уже сказано» больше не нужны; не убрались — их сметёт уборка.
@@ -7080,6 +7165,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ? "Это — в личке со мной: там скажите «отвечай за меня», и я начну."
           : (PHRASES ? book.say(["отвечай за меня"], voiceCtx(turn)) : null) ?? "Секретарём я работаю у хозяина и у тех, кому он разрешил. Здесь, в нашем чате, помогу чем смогу.");
       }
+      // «Кто мне писал?» от того, у кого она не секретарь: писем она не видит — и говорит это, а не отдаёт модели,
+      // которая сочинила бы «никто». Короткое «кто писал?» без «мне» — обычные слова.
+      if (SECRETARY && !turn.dry && !mine && turn.isPrivate && asked.who && !asked.bare) {
+        pulse.bump("ruled");
+        return say(turn, you(turn,
+          "Ваших писем я не вижу: к вашему аккаунту я не подключена. Секретарём я работаю у хозяина и у тех, кому он разрешил.",
+          "Твоих писем я не вижу: к твоему аккаунту я не подключена. Секретарём я работаю у хозяина и у тех, кому он разрешил."));
+      }
       return null;
     }
     // Столы близких — слово хозяина: «у кого ты секретарь?», «разреши секретаря», «забери секретаря у …».
@@ -7095,7 +7188,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const zone = zoneOf(turn);
     // «Я тут» и «кто мне писал?» — слова обычные: без подключения и отлучки они не её.
     if (asked.back && !state.away.on) return null;
-    if (asked.who && !state.conn) return null;
+    // «Кто писал?» без «мне» — её слова, только когда она и правда секретарь этого человека: иначе это вопрос
+    // о книге или о чате. С «мне» («кто мне писал?») — её всегда: без подключения отвечает честно, а не моделью,
+    // которая сочинила бы «никто».
+    // Хозяину в личке и на короткое «кто писал?» — тоже честно, в одну строку.
+    if (asked.who && !state.conn) {
+      return asked.bare && !desk.mine ? null : say(turn, "Писем я не вижу: к вашему аккаунту я не подключена. Как подключить — скажите «секретарь».");
+    }
     // Короткое «не отвечай Маше» — её слова, только если такая Маша ей известна; иначе это разговор.
     if (asked.mute && !asked.mute.here && !asked.mute.strict
       && !asked.mute.names.every(name => [...state.people, ...state.mute].some(item => sameName(name, item.name)))) return null;
@@ -7206,7 +7305,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, lines.filter(Boolean).join("\n"));
     }
     if (asked.who) {
-      if (!state.away.on) return say(turn, "Сейчас я за вас не отвечаю и писем не записываю. Включить — «отвечай за меня».");
+      if (!state.away.on) {
+        // Список отдан при возвращении и стёрт: чужие письма она дольше не хранит. Помнит только, когда отдала.
+        const given = Number(state.last?.at) || 0;
+        return say(turn, given && now() - given < 2 * DAY
+          ? `Сейчас я за вас не отвечаю и писем не записываю. Прошлый список я отдала вам ${whenShort(given, zone)} — он выше в этом чате; у себя я чужие письма не храню. Включить снова — «отвечай за меня».`
+          : "Сейчас я за вас не отвечаю и писем не записываю. Включить — «отвечай за меня».");
+      }
       return say(turn, secretaryDigest(state, zone));
     }
     if (asked.off || asked.back) {
@@ -7254,7 +7359,28 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const texts = `О себе:\n${PROFILE_ABOUT}\n\nОписание на стартовой странице:\n${PROFILE_TEXT}`;
     const picture = "Картинку стартовой страницы (640×360) ставит человек: в настройках бота — «Set Welcome Picture».";
     pulse.bump("ruled");
-    if (wish.show) return say(turn, `${texts}\n\nПоставить — «оформи профиль». ${picture}`);
+    await store.set(PROFILE_AT_KEY, { at: now() }).catch(() => false);
+    // Картинки и сами слова — не её руками: говорит прямо, а не ищет «аватарку» в сети и не делает вид, что поменяла.
+    if (wish.picture) return say(turn, "Картинки я себе ставить не умею — это делает человек. Стартовая (640×360): в настройках бота — «Set Welcome Picture»; сам файл — «welcome.jpg» из чата разработки. Аватарка — там же, в настройках бота.");
+    if (wish.change) return say(turn, `Сами слова я менять не умею: они записаны в моём коде, и «оформи профиль» ставит их как есть. Нужны другие — скажите в чате разработки, какими им быть.\n\n${texts}`);
+    if (wish.show) {
+      // Что стоит в Telegram на самом деле: спросить можно — спрашивает, и говорит, совпало ли.
+      let live = null;
+      if (has("getMyDescription") && has("getMyShortDescription")) {
+        try {
+          const about = await api.getMyShortDescription({}), text = await api.getMyDescription({});
+          if (typeof about?.short_description === "string" && typeof text?.description === "string") live = { about: about.short_description, text: text.description };
+        } catch { live = null; }
+      }
+      const same = (a, b) => String(a).replace(/\s+/gu, " ").trim() === String(b).replace(/\s+/gu, " ").trim();
+      const stands = !live ? "Поставить — «оформи профиль»."
+        : same(live.about, PROFILE_ABOUT) && same(live.text, PROFILE_TEXT) ? "В Telegram сейчас стоит именно это."
+          : !live.about.trim() && !live.text.trim() ? "В Telegram сейчас пусто: ни строки «О себе», ни описания. Поставить — «оформи профиль»."
+            : "В Telegram сейчас стоит другое. Поставить эти слова — «оформи профиль».";
+      // Спросили «покажи профиль», а сестра недоступна: её дело — карточки людей, свой профиль Аи показывает сама.
+      const head = wish.instead ? `Карточки людей ведёт ${SISTER} — здесь её сейчас нет. А мой профиль — вот.\n\n` : "";
+      return say(turn, `${head}${texts}\n\n${stands} ${picture}`);
+    }
     if (!has("setMyDescription") || !has("setMyShortDescription")) {
       return say(turn, `Сама поставить не могу: платформа мне этого не даёт. Вот слова — их можно вставить в настройках бота, в поля «About» и «Enter bot description».\n\n${texts}`);
     }
@@ -7342,7 +7468,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!pulse.active(counters) && !study.proposed && !problems.length) return;
     const asked = (Array.isArray(unknown?.items) ? unknown.items : []).filter(item => now() - Number(item.at) < 2 * DAY).slice(-3);
     // Раз в неделю, по понедельникам: чего в словаре не хватило на деле.
-    const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await taught.unheard({ limit: 8, sinceMs: 7 * DAY }).catch(() => []) : [];
+    const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await unheardNow({ limit: 8, sinceMs: 7 * DAY }).then(found => found.rows).catch(() => []) : [];
     const weekLines = localParts(now(), TZ).weekday === 1 ? await weekInNumbers().catch(() => []) : [];
     const unheardLine = weekly.length ? `За неделю не узнала из короткого: ${weekly.map(row => `«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join(", ")}. Весь список — «что ты не поняла?»; ответы могу предложить сама — «предложи ответы».` : "";
     const night = ((await store.get(REFLECT_KEY).catch(() => null))?.entries ?? []).find(item => item.day === yesterday) ?? null;
@@ -7743,6 +7869,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Профиль бота (0.35.0): строка «О себе» и описание на стартовой странице — словом хозяина, в личке.
     const profileAsk = owner(actorId) && turn.isPrivate ? profileWish(prompt) : null;
     if (profileAsk) return ruled(await profileWords(turn, profileAsk));
+    // «Покажи профиль» сразу после слов о её профиле — о нём же: четверть часа контекста (17.11.2026).
+    if (!dry && owner(actorId) && turn.isPrivate && profileWish(prompt, { loose: true })?.loose) {
+      const talked = await store.get(PROFILE_AT_KEY).catch(() => null);
+      if (talked?.at && now() - Number(talked.at) < 15 * 60_000) return ruled(await profileWords(turn, { show: true }));
+    }
 
     // Резервная копия души — только хозяину и только в личке: в ней чужие записи.
     const soulAsk = owner(actorId) && turn.isPrivate ? parseSoul(prompt) : null;
@@ -7887,6 +8018,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // разговору ниже. Команды выше остаются аварийным выходом.
     const viaIntent = await handleIntent(turn, prompt);
     if (viaIntent) return ruled({ ok: true, action: "intent" });
+    // Слова чата: «чо умеешь», «го играть» — те же просьбы, что «что умеешь», «давай играть» (`slang.js`).
+    // Только узнанное целиком и без довеска: в сжатом виде довесок потерял бы регистр и знаки.
+    if (!dry && !parseIntent(prompt)) {
+      const plainAsk = plainWords(prompt);
+      const slang = plainAsk ? parseIntent(plainAsk) : null;
+      if (slang?.confidence === "sure" && slang.arg == null) {
+        const viaSlang = await handleIntent(turn, plainAsk);
+        if (viaSlang) return ruled({ ok: true, action: "intent" });
+      }
+    }
 
     // Счёт, погода, курс, часы, энциклопедия: факт берётся у источника, а не
     // у модели — она бы его придумала. Картинки и жесты — туда же.
@@ -7938,6 +8079,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const phrased = await smallTalk(turn, prompt);
       if (phrased) return ruled(phrased);
     }
+    // «Старт», «начать» словом — то же, что кнопка «Начать»: она представляется.
+    if (!dry && turn.isPrivate && /^(?:старт|start|начать|начнем|запуск)$/u.test(plainWords(prompt))) return ruled(await greeting(turn));
 
     if (!dry) {
       const capped = await overQuota(turn);
