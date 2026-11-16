@@ -23,21 +23,45 @@ export function cleanAddress(value) {
   return name;
 }
 
-const ADDRESS = /(?:^|[\s,.])(?:зови|называй|обращайся(?:\s+ко\s+мне)?)\s+(?:меня\s+)?(?:как\s+)?([^\n]{1,40})$/iu;
+const ADDRESS = /(?:^|[\s,.])(?:зови(?:те)?|называй(?:те)?|обращай(?:ся|тесь)(?:\s+ко\s+мне)?)\s+(?:меня\s+)?(?:как\s+)?([^\n]{1,40})$/iu;
 
 /** «зови меня Алекс», «называй меня просто Лёша» — просьба, а не команда. */
 export function addressRequest(text) {
   const match = String(text ?? "").trim().match(ADDRESS);
   if (!match) return null;
   // «зови меня когда хочешь» — это не имя.
-  if (/\b(?:когда|если|потом|завтра|сюда|туда|так|всегда|никогда|никак)\b/iu.test(match[1])) return null;
+  if (/(?:^|\s)(?:когда|если|потом|завтра|сюда|туда|так|всегда|никогда|никак|на\s+(?:ты|вы))(?=\s|$)/iu.test(match[1])) return null;
   return cleanAddress(match[1].replace(/^(?:просто|пожалуйста)\s+/iu, ""));
 }
 
+/** После «меня зовут» это не имя: «меня зовут на свадьбу», «меня зовут обедать». */
+const NOT_INTRO = /^(?:на|в|во|к|ко|и|а|не|все|всех|друзья|домой|гулять|обедать|ужинать|есть|пить|играть|работать|туда|сюда|так|как|когда|просто|тоже|уже|опять|снова|сегодня|завтра|вчера|обратно|назад|замуж|с|со|никак|по)$/u;
+const INTRO = /^(?:(?:привет|здравствуй(?:те)?|кстати|а|ну|аи)[,!.\s]+)*(?:меня\s+зовут|мо[её]\s+имя(?:\s*[—–-])?|зовут\s+меня)\s+(?:просто\s+)?([\p{L}][\p{L}-]{1,24})$/iu;
+
+/**
+ * «Меня зовут Айдина» — знакомство целиком, без других слов: имя или null.
+ * 16.11.2026 такая фраза ушла модели, а имя осталось вопросом «запомнить?» после ответа:
+ * человек представился — и не был услышан.
+ */
+export function introRequest(text) {
+  const line = String(text ?? "").trim().replace(/\s+/gu, " ").replace(/[.!…)]+$/u, "");
+  if (!line || line.length > 60) return null;
+  const match = line.match(INTRO);
+  if (!match || NOT_INTRO.test(match[1].toLowerCase().replace(/ё/gu, "е"))) return null;
+  return cleanAddress(`${match[1][0].toUpperCase()}${match[1].slice(1)}`);
+}
+
+/** «Не называй меня так», «не обращайся так» — убрать имя-обращение. Хвост в два слова — оговорка голосового ввода. */
+export function addressDrop(text) {
+  const line = String(text ?? "").trim().toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").replace(/[.!…)]+$/u, "");
+  if (!line || line.length > 60) return false;
+  return /^(?:(?:пожалуйста|ну|аи)[,\s]+)*(?:не\s+(?:надо\s+)?(?:называй(?:те)?|зови(?:те)?|обращай(?:ся|тесь)|называть|звать|обращаться)\s+(?:(?:меня|ко\s+мне)\s+)?(?:так|по\s+имени|этим\s+именем)(?:[,\s]+[а-я\s]{0,20})?|забудь\s+(?:мое\s+)?имя|забудь,?\s+как\s+меня\s+зовут)$/u.test(line);
+}
+
 const LENGTH_WORDS = Object.freeze([
-  ["кратко", /(?:говори|пиши|отвечай)\s+(?:мне\s+)?(?:кратко|короче|покороче|без\s+воды)|(?:сделай|давай)\s+(?:ответы\s+)?короче/iu],
-  ["подробно", /(?:говори|пиши|отвечай)\s+(?:мне\s+)?(?:подробно|подробнее|длиннее|развёрнуто)|(?:сделай|давай)\s+(?:ответы\s+)?(?:подробнее|длиннее)/iu],
-  ["обычно", /(?:говори|пиши|отвечай)\s+(?:мне\s+)?(?:как\s+обычно|обычно|нормально)/iu],
+  ["кратко", /(?:говори|пиши|отвечай)(?:те)?\s+(?:мне\s+)?(?:кратко|короче|покороче|без\s+воды)|(?:сделай|давай)(?:те)?\s+(?:ответы\s+)?короче/iu],
+  ["подробно", /(?:говори|пиши|отвечай)(?:те)?\s+(?:мне\s+)?(?:подробно|подробнее|длиннее|развёрнуто)|(?:сделай|давай)(?:те)?\s+(?:ответы\s+)?(?:подробнее|длиннее)/iu],
+  ["обычно", /(?:говори|пиши|отвечай)(?:те)?\s+(?:мне\s+)?(?:как\s+обычно|обычно|нормально)/iu],
 ]);
 
 /** «говори короче», «пиши подробнее» — пожелание к длине ответа. */
@@ -48,7 +72,28 @@ export function lengthRequest(text) {
   return null;
 }
 
-export function createPersonal({ store, now = () => Date.now() } = {}) {
+/**
+ * «Давай на ты» / «обращайтесь на вы» — просьба о форме обращения. «Ты» —
+ * видимый знак близости: оно приходит само, когда отношения потеплели, или
+ * по прямой просьбе. Обратно на «вы» можно попросить всегда.
+ */
+export function formRequest(text) {
+  const line = String(text ?? "").trim().toLowerCase().replace(/ё/gu, "е").replace(/[\s.,!?…]+$/u, "");
+  if (!line || line.length > 60) return null;
+  const ask = "(?:давай(?:те)?|можно|можем|перейдем|перейдемте|говори(?:те)?|обращай(?:ся|тесь)|будем)";
+  const match = line.match(new RegExp(`^(?:${ask}\\s+)?(?:(?:со\\s+мной|ко\\s+мне|мне|лучше|перейти|общаться)\\s+)*на\\s+(ты|вы)$`, "u"));
+  if (match) return match[1];
+  // То же, но по-человечески: «не выкай», «не будь такой вежливой», «говори проще». Хвост — оговорка голосового ввода.
+  const lead = "(?:(?:пожалуйста|ну|да|аи)[,\\s]+)*";
+  if (new RegExp(`^${lead}(?:не\\s+(?:надо\\s+)?(?:мне\\s+)?вык(?:ай|айте|ать)|хватит\\s+(?:мне\\s+)?выкать|перестань(?:те)?\\s+(?:мне\\s+)?выкать|(?:давай(?:те)?\\s+)?без\\s+(?:этого\\s+|этих\\s+)?(?:вы|выканья|официоза|церемоний)|не\\s+будь\\s+(?:(?:такой|слишком|столь|со\\s+мной)\\s+)*(?:вежлив|официальн|формальн)[а-я]*(?:[,\\s]+[а-я\\s]{0,30})?|не\\s+надо\\s+(?:так\\s+)?(?:вежливо|официально|формально)|(?:говори|общайся|разговаривай|пиши)\\s+(?:со\\s+мной\\s+|мне\\s+)?(?:проще|попроще|по-простому|по\\s+простому|неформально|без\\s+официоза)|(?:можно|давай(?:те)?)\\s+(?:проще|попроще|без\\s+церемоний))$`, "u").test(line)) return "ты";
+  if (new RegExp(`^${lead}(?:не\\s+(?:надо\\s+)?(?:мне\\s+)?тык(?:ай|айте|ать)|хватит\\s+(?:мне\\s+)?тыкать|перестань(?:те)?\\s+(?:мне\\s+)?тыкать|без\\s+фамильярност(?:и|ей)|(?:будь|говори|общайся)\\s+(?:со\\s+мной\\s+)?(?:вежливее|повежливее|официальнее|уважительнее)|повежливее)$`, "u").test(line)) return "вы";
+  return null;
+}
+
+const LAST_KEY = userId => `heart:last:${userId}`;
+const DAY_MS = 86_400_000;
+
+export function createPersonal({ store, now = () => Date.now(), dayOf = (at) => new Date(at).toISOString().slice(0, 10) } = {}) {
   async function settings(userId) {
     const value = await store.get(STYLE_KEY(userId));
     return value && typeof value === "object" ? value : {};
@@ -72,9 +117,39 @@ export function createPersonal({ store, now = () => Date.now() } = {}) {
     return save(userId, { address: clean });
   }
 
+  /** «Не называй меня так»: имя-обращение убирается, остальные настройки остаются. */
+  async function clearAddress(userId) { return save(userId, { address: "" }); }
+
   async function setLength(userId, length) {
     if (!LENGTHS.includes(length)) return { ok: false, code: "invalid_length" };
     return save(userId, { length });
+  }
+
+  async function setForm(userId, form) {
+    if (!["ты", "вы"].includes(form)) return { ok: false, code: "invalid_form" };
+    return save(userId, { form });
+  }
+
+  /**
+   * Отметить, что человек пришёл. Возвращает, сколько дней его не было и
+   * первый ли это разговор за календарный день: на этом держатся «давно не
+   * виделись», шаг отношений и годовщины. Пишет не чаще раза в час.
+   */
+  async function seen(userId) {
+    const at = now();
+    const day = dayOf(at);
+    const last = await store.get(LAST_KEY(userId));
+    const known = Number.isFinite(last?.at);
+    const gapDays = known ? Math.max(0, Math.floor((at - last.at) / DAY_MS)) : 0;
+    const newDay = !known || last.day !== day;
+    if (newDay || at - last.at > 3600_000) await store.set(LAST_KEY(userId), { at, day });
+    return { known, gapDays, newDay, day };
+  }
+
+  /** Стереть всё личное: имя, длину, форму обращения, первый и последний день. */
+  async function wipe(userId) {
+    const done = await Promise.all([STYLE_KEY(userId), FIRST_KEY(userId), LAST_KEY(userId)].map(key => store.remove(key)));
+    return { ok: done.every(Boolean) };
   }
 
   /** Сколько дней человек знаком с Аи. Первый день запоминается один раз. */
@@ -94,12 +169,14 @@ export function createPersonal({ store, now = () => Date.now() } = {}) {
    * сколько он про себя рассказал. Никаких шкал и никаких чисел, кроме
    * «сколько дней знакомы»: это не оценка человека, а календарь.
    */
-  function card({ address = "", days = 0, relationship = "", memories = 0, length = "обычно" } = {}) {
+  function card({ address = "", days = 0, relationship = "", memories = 0, length = "обычно", formal = true } = {}) {
     const daysLine = days > 0 ? `Мы знакомы ${days} ${daysPhrase(days)}.` : "Мы только начали разговаривать.";
-    const nameLine = address ? `Ты для меня — ${address}.` : "Как тебя звать, я пока не знаю.";
+    const nameLine = address
+      ? (formal ? `Для меня вы — ${address}.` : `Ты для меня — ${address}.`)
+      : (formal ? "Как к вам обращаться, я пока не знаю." : "Как тебя звать, я пока не знаю.");
     const memoryLine = memories > 0
-      ? `Я помню о тебе ${memories} ${memories === 1 ? "заметку" : memories < 5 ? "заметки" : "заметок"}.`
-      : "Ты пока ничего о себе не рассказывал.";
+      ? `Я помню о ${formal ? "вас" : "тебе"} ${memories} ${memories === 1 ? "заметку" : memories < 5 ? "заметки" : "заметок"}.`
+      : `О ${formal ? "вас" : "тебе"} у меня пока ничего не записано.`;
     return [
       "🤍 Вы и Аи",
       "",
@@ -110,11 +187,13 @@ export function createPersonal({ store, now = () => Date.now() } = {}) {
       "",
       `Отвечаю ${({ кратко: "коротко", обычно: "обычно", подробно: "подробно" })[length] ?? "обычно"}.`,
       "",
-      "Скажи словами: «зови меня …» или «говори короче» — я запомню. Отношения не настраиваются числами и не покупаются: они складываются из разговоров.",
+      formal
+        ? "Скажите словами: «зовите меня …» или «говорите короче» — я запомню. Отношения не настраиваются числами и не покупаются: они складываются из дней и поступков."
+        : "Скажи словами: «зови меня …» или «говори короче» — я запомню. Отношения не настраиваются числами и не покупаются: они складываются из дней и поступков.",
     ].filter(line => line !== "").join("\n");
   }
 
-  return Object.freeze({ settings, save, setAddress, setLength, daysWith, card });
+  return Object.freeze({ settings, save, setAddress, clearAddress, setLength, setForm, seen, wipe, daysWith, card });
 }
 
 function daysPhrase(days) {

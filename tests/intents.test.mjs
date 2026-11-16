@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseIntent, normalize, INTENTS, ABILITY_OF, SPOKEN_HELP } from "../tgcloud/lib/intents.js";
+import { parseIntent, normalize, INTENTS, ABILITY_OF } from "../tgcloud/lib/intents.js";
 
 test("слова, а не команды: одна просьба — одно намерение", () => {
   assert.deepEqual(parseIntent("Запомни, что я люблю кофе без сахара"), {
@@ -23,6 +23,14 @@ test("мягкие формулировки — тот же смысл", () => {
   assert.equal(parseIntent("без флирта").intent, "no_flirt");
   assert.equal(parseIntent("не пиши мне ночью").intent, "no_night");
   assert.equal(parseIntent("почему ты молчала").intent, "whyquiet");
+  // 0.32.1: тот же вопрос без «ты» и другими словами — ответом будет настоящая причина.
+  for (const said of ["почему молчишь", "Чего молчишь?", "что молчишь", "чего ты молчишь", "ты меня игнорируешь?", "игноришь?", "почему ты меня игнорируешь", "ты игнорируешь меня"]) {
+    assert.equal(parseIntent(said)?.intent, "whyquiet", said);
+  }
+  // Та же форма, но это разговор, а не вопрос о её молчании.
+  for (const said of ["что молчишь об этом", "почему молчишь про вчерашнее", "игнорируешь правила", "ты игнорируешь мой вопрос", "молчишь", "он меня игнорирует"]) {
+    assert.notEqual(parseIntent(said)?.intent, "whyquiet", said);
+  }
 });
 
 test("наполовину понятое — один вопрос, а не догадка", () => {
@@ -52,10 +60,14 @@ test("наказания, роли и деньги сердце не испол�
   }
 });
 
-test("список закрыт: каждое намерение либо действие, либо способность сестры", () => {
+test("список закрыт: каждое намерение либо действие, либо способность сестры", async () => {
   assert.equal(new Set(INTENTS).size, INTENTS.length);
-  const handled = new Set([...Object.keys(ABILITY_OF), "remember", "memories", "forget", "relationship", "no_flirt", "no_night", "whyquiet", "not_mine"]);
+  // Обработчики читаются из самого сердца: список в тесте, который правят
+  // руками, расходился бы с кодом при каждом новом намерении.
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../tgcloud/lib/heart.js", import.meta.url), "utf8");
+  const handled = new Set([...Object.keys(ABILITY_OF), ...[...source.matchAll(/case "([a-z_]+)":/gu)].map(match => match[1])]);
   for (const tool of Object.values(ABILITY_OF)) assert.equal(typeof tool, "string");
   for (const intent of INTENTS) assert.ok(handled.has(intent), `нет обработчика: ${intent}`);
-  assert.equal(SPOKEN_HELP.length >= 5, true);
+  // Что из этого показывается человеку — в SKILLS.txt; сверка с кодом — tests/skills.test.mjs.
 });

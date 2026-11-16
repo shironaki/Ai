@@ -3,3 +3,10 @@ node_modules/
 *.log
 .env
 .env.*
+
+# черновые пробы агента
+tests/_*.mjs
+
+# рабочие картинки агента: в коммит не идут
+out/
+Unselected files/

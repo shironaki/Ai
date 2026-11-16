@@ -74,7 +74,7 @@ export async function hmac(secret, payload) {
   return toHex(signature);
 }
 
-export function createBridge({ secret = "", store = null, capabilities, now = () => Date.now(), ttl = BRIDGE_TTL_MS, allowed = null } = {}) {
+export function createBridge({ secret = "", store = null, capabilities, now = () => Date.now(), ttl = BRIDGE_TTL_MS, allowed = null, slack = 0 } = {}) {
   if (!capabilities || typeof capabilities.call !== "function") throw new TypeError("createBridge needs capabilities");
   const enabled = String(secret ?? "").length >= 16;
   const permit = Array.isArray(allowed) ? new Set(allowed) : null;
@@ -111,7 +111,10 @@ export function createBridge({ secret = "", store = null, capabilities, now = ()
     catch { return { ok: false, code: "crypto_unavailable" }; }
     if (!sameBytes(expected, envelope.sig)) return { ok: false, code: "bad_signature" };
     const age = now() - Number(envelope.ts);
-    if (!Number.isFinite(age) || Math.abs(age) > Number(envelope.ttl ?? ttl)) return { ok: false, code: "expired" };
+    // `slack` — допуск на часы: у двух ботов они могут расходиться на минуты (см. abilities.js).
+    // Повтор старого конверта он не пропускает: одноразовый `id` помнится сутки.
+    const limit = Math.max(Number(envelope.ttl ?? ttl), Number(slack) || 0);
+    if (!Number.isFinite(age) || Math.abs(age) > limit) return { ok: false, code: "expired", age };
     return { ok: true };
   }
 

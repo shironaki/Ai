@@ -1,4 +1,6 @@
-import { CHARACTER_PROMPT } from "./ai-character.js";
+import { sleep } from "./timers.js";
+import { CHARACTER_PROMPT, CORE_PROMPT } from "./ai-character.js";
+import { readLimits, DEFAULT_REST_MS } from "./brains.js";
 
 /**
  * OpenAI-compatible provider endpoints.
@@ -11,6 +13,61 @@ export const DEFAULT_AI_BASE_URL = "https://api.groq.com/openai/v1";
 export const GROQ_URL = `${DEFAULT_AI_BASE_URL}/chat/completions`;
 export const AI_REQUEST_TIMEOUT_MS = 25000;
 export const AI_DIAGNOSTIC_TIMEOUT_MS = 15000;
+/** Запасная модель получает меньше времени: человек уже ждал первую. */
+export const AI_FALLBACK_TIMEOUT_MS = 15000;
+/** Сколько моделей подряд можно спросить на одно сообщение. */
+const MAX_ATTEMPTS = 3;
+/** Дольше этого паузу между сообщениями не выжидаем — отвечаем сразу. */
+const MAX_WAIT_MS = 3000;
+/** «Повторите через секунду» дешевле смены модели. */
+const SHORT_RETRY_MS = 2500;
+/** Модели, которые рассуждают перед ответом и принимают параметр усилия. */
+const REASONING_MODEL = /gpt-oss/iu;
+/**
+ * Модели, которым раздумья для разговора не нужны вовсе: у Qwen 3 на основном
+ * ключе параметр `none` их выключает (документация провайдера, 15.11.2026).
+ * Не примет — поле уберётся само, как любое отвергнутое.
+ */
+const NO_REASONING_MODEL = /^qwen\/qwen3/iu;
+/** Поля запроса, без которых можно обойтись, если модель их не принимает. */
+const DROPPABLE = Object.freeze(["temperature", "reasoning_effort", "max_tokens"]);
+
+/**
+ * Тело запроса под конкретную модель. Провайдеры с «совместимым» API
+ * совместимы не до конца: одна модель не берёт `temperature`, другая —
+ * усилие рассуждения, третья зовёт `max_tokens` иначе. `drop` — поля, от
+ * которых эта модель уже отказалась; `max_tokens` при этом не исчезает, а
+ * меняет имя на `max_completion_tokens`.
+ */
+export function shapePayload(brain, base, drop = []) {
+  const payload = { ...base, model: brain.model };
+  // Рассуждающая модель по умолчанию тратит на раздумья сотни токенов до
+  // первого слова ответа. Для разговора хватает малого усилия.
+  const effort = brain.effort || (REASONING_MODEL.test(brain.model) ? "low" : NO_REASONING_MODEL.test(brain.model) ? "none" : "");
+  if (effort) payload.reasoning_effort = effort;
+  for (const field of drop) {
+    if (field === "max_tokens" && payload.max_tokens != null) payload.max_completion_tokens = payload.max_tokens;
+    delete payload[field];
+  }
+  return payload;
+}
+
+/** Какое поле убрать после отказа 400 — или пусто, если дело не в поле. */
+function fieldToDrop(detail, payload, drop) {
+  const named = String(detail?.param ?? "").split(".").pop();
+  if (DROPPABLE.includes(named) && named in payload && !drop.includes(named)) return named;
+  // Поле не названо, а усилие в запросе было: чаще всего дело в нём.
+  if (!named && "reasoning_effort" in payload && !drop.includes("reasoning_effort")) return "reasoning_effort";
+  return "";
+}
+
+/** Сколько осталось до полуночи по UTC: в этот час провайдеры сбрасывают дневной объём. */
+const untilUtcMidnight = (at) => Math.max(5 * 60_000, 86_400_000 - (at % 86_400_000));
+/** От чего отказалась модель: список полей; прежняя отметка `plain` — это «без усилия». */
+const dropsOf = (brain) => (Array.isArray(brain.drop) && brain.drop.length ? brain.drop : brain.plain ? ["reasoning_effort"] : []);
+
+/** Подождать. В изоляте без таймеров ожидание пропускается, а не падает (`timers.js`). */
+export { sleep };
 
 /**
  * AbortSignal.timeout is a web API, not ECMAScript. The Telegram Serverless
@@ -100,6 +157,7 @@ function responseOutcome(response) {
 const HTTP_HINTS = Object.freeze({
   400: "запрос отклонён провайдером (проверьте модель и параметры)",
   401: "ключ неверный или отозван",
+  402: "нужен шаг в кабинете провайдера: подтверждение карты, оплата — или бесплатный объём этой модели закончился",
   403: "доступ запрещён (ключ, регион или ограничение аккаунта)",
   404: "эндпоинт или модель не найдены (проверьте адрес провайдера и модель)",
   413: "запрос слишком большой",
@@ -132,11 +190,30 @@ export function describeProviderFailure({ status, providerCode, providerType, mo
 }
 
 /**
+ * Какой именно лимит упёрся. Из слов провайдера берутся только вид лимита —
+ * токены или запросы, в минуту или в сутки — и три числа: предел, занято,
+ * запрошено. Сам текст ошибки никуда не идёт: в нём бывает имя организации.
+ * «Вернётся через семь секунд» и «дневной объём вышел» — разные вести
+ * владельцу, а код ошибки у них один и тот же.
+ */
+export function limitScope(message) {
+  const text = String(message ?? "").slice(0, 800);
+  const short = /\b([TR]P[MD])\b/u.exec(text)?.[1] ?? "";
+  const long = short ? null : /(token|request)s?[\s_-]*per[\s_-]*(minute|day)/iu.exec(text);
+  const scope = (short || (long ? `${long[1][0]}p${long[2][0]}` : "")).toLowerCase();
+  const number = (word) => {
+    const found = new RegExp(`\\b${word}:?\\s+(\\d{1,12})\\b`, "iu").exec(text);
+    return found ? Number(found[1]) : null;
+  };
+  return { scope, limit: number("Limit"), used: number("Used"), requested: number("Requested") };
+}
+
+/**
  * Read only the machine-readable part of a provider error. The body itself is
  * never returned, logged or sent to Telegram: it can echo the request.
  */
 async function readProviderError(response) {
-  const empty = { code: "", type: "", contentType: "" };
+  const empty = { code: "", type: "", param: "", contentType: "", scope: "", limit: null, used: null, requested: null };
   const headers = response?.headers;
   const getHeader = typeof headers?.get === "function" ? (name) => headers.get(name) : null;
   const contentType = getHeader ? safeSnippet(getHeader("content-type"), 80) : "";
@@ -156,14 +233,89 @@ async function readProviderError(response) {
   try {
     const parsed = JSON.parse(text);
     return {
-      code: safeSnippet(parsed?.error?.code, 64),
+      // Cloudflare отвечает списком: { errors: [{ code, message }] }.
+      code: safeSnippet(parsed?.error?.code ?? parsed?.errors?.[0]?.code, 64),
       type: safeSnippet(parsed?.error?.type, 64),
+      // Имя поля, которое провайдер не принял: по нему запрос упрощается сам.
+      param: safeSnippet(parsed?.error?.param, 48),
       contentType,
+      // Из текста ошибки — только вид лимита и числа, не сам текст.
+      ...limitScope(parsed?.error?.message ?? parsed?.errors?.[0]?.message ?? parsed?.message),
     };
   } catch {
     // Not JSON (an HTML block page, for example): no code to report.
     return { ...empty, contentType };
   }
+}
+
+/**
+ * Почему модель не ответила — одним словом, для владельца: лимит, снята,
+ * ждёт оплаты, ключ не принят, нет связи, сбой, пустой или отфильтрованный ответ.
+ */
+export function stumbleOf(result = {}) {
+  if (result.limited) return "limit";
+  if (result.gone) return "gone";
+  if (result.unpaid) return "payment";
+  if (result.keyRejected) return "key";
+  if (result.code === "provider_network_error") return "network";
+  if (Number(result.status) >= 500) return "down";
+  if (result.code === "empty_response") return "empty";
+  if (result.code === "filtered") return "filtered";
+  return "error";
+}
+
+/**
+ * История для запроса: последние реплики целиком, старые — началом.
+ *
+ * Восемь сообщений по четыре тысячи знаков — это до восьми тысяч токенов на
+ * каждое «привет». Смысл разговора держат последние реплики; от старых
+ * достаточно начала, чтобы нить не терялась.
+ */
+export function compactHistory(history = []) {
+  const items = Array.isArray(history) ? history : [];
+  return items.map((item, index) => {
+    const recent = index >= items.length - 4;
+    const limit = recent ? 700 : 200;
+    const content = String(item.content ?? "");
+    return { role: item.role, content: content.length > limit ? `${truncateSafely(content, limit).trimEnd()}…` : content };
+  });
+}
+
+/** Скрытые рассуждения модели — не часть ответа. */
+export function stripThinking(value) {
+  return String(value ?? "").replace(/<think>[\s\S]*?<\/think>/giu, "").replace(/^[\s\S]*<\/think>/iu, "").trim();
+}
+
+/** Оборванный ответ заканчивается на последней целой фразе. */
+export function trimToSentence(text) {
+  const value = String(text ?? "").trimEnd();
+  const cut = Math.max(value.lastIndexOf(". "), value.lastIndexOf("! "), value.lastIndexOf("? "), value.lastIndexOf("…"), value.lastIndexOf(".\n"), value.lastIndexOf("!\n"), value.lastIndexOf("?\n"));
+  if (/[.!?…»)]$/u.test(value)) return value;
+  // Короткий обрывок честнее оставить с многоточием, чем срезать до нуля.
+  if (cut < value.length * 0.5) return `${value}…`;
+  return value.slice(0, cut + 1).trimEnd();
+}
+
+const BLOCKED_ANSWER = "Внутренние сведения об управлении я не раскрываю. Могу помочь с доступными возможностями и настройками общения.";
+/** Ответ называет, КТО создал или ведёт бота: это и есть утечка. */
+const OWNER_LEAK = [
+  /(?:основател|создател|владел|разработчик|хозя)[а-яё]*\s+(?:этого\s+|данного\s+|нашего\s+)?(?:бота|чат-бота)\s*(?:—|–|-|:|это|является|зовут)/iu,
+  /(?:мо(?:й|его|ему|им|ем|ём)|мо[яею]|мою)\s+(?:создател|основател|владел|разработчик|хозя)[а-яё]*\s*(?:—|–|-|:|это|является|зовут)\s*@?[\p{L}\d]/iu,
+  /меня\s+(?:создал[аи]?|разработал[аи]?|основал[аи]?|сделал[аи]?)\s+@?[\p{Lu}\d]/u,
+  /\bfounder\s+of\s+(?:this|the)\s+bot\b/iu,
+];
+
+/**
+ * Последняя проверка ответа. Раньше любое слово «основатель» заменяло ответ
+ * отказом — и вопрос «кто основал Рим?» получал «внутренние сведения не
+ * раскрываю». Теперь отказ вызывает только фраза о том, кто стоит за ботом,
+ * и числовой ID из закрытого списка. Владельцу в его личке связь признаётся.
+ */
+export function guardAnswer(answer, { confidentialIds = [], trusted = false } = {}) {
+  const text = String(answer ?? "");
+  const leaksId = confidentialIds.some(id => /^[1-9]\d{4,}$/u.test(String(id)) && new RegExp(`(^|[^0-9])${id}([^0-9]|$)`, "u").test(text));
+  const leaksOwner = !trusted && OWNER_LEAK.some(pattern => pattern.test(text));
+  return leaksId || leaksOwner ? { text: BLOCKED_ANSWER, blocked: true } : { text, blocked: false };
 }
 
 export function createAiService({
@@ -184,6 +336,11 @@ export function createAiService({
   intervalFor = null,
   claimRequest = null,
   createSignal = createTimeoutSignal,
+  // Цепочка моделей. Без неё сервис думает одной моделью, как раньше.
+  brains = null,
+  // Где хранить получасовые токены провайдеров с обменом ключа (GigaChat):
+  // `{ get(key), set(key, value) }`. Без него токен живёт в памяти изолята.
+  tokenStore = null,
 } = {}) {
   // Construction must not depend on Node globals: the isolate may expose
   // outbound HTTP only through the platform SDK, which the deployed handler
@@ -216,6 +373,80 @@ export function createAiService({
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * GigaChat не принимает ключ напрямую: ключ авторизации меняется на токен
+   * доступа, который живёт полчаса. Токен хранится в базе — изолят может
+   * смениться, а новый обмен на каждое сообщение был бы лишним запросом.
+   */
+  const tokens = new Map();
+  const uuid = () => {
+    try { if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID(); } catch { /* ниже — запасной */ }
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/gu, (c) => {
+      const r = Math.floor(Math.random() * 16);
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
+  };
+  async function exchangeToken(brain, doFetch, { force = false } = {}) {
+    const slot = `heart:token:${brain.provider}`;
+    const fresh = (item) => item && typeof item.token === "string" && item.token && Number(item.exp) - now() > 60_000;
+    if (!force) {
+      if (fresh(tokens.get(slot))) return { ok: true, token: tokens.get(slot).token };
+      if (tokenStore) {
+        let saved = null;
+        try { saved = await tokenStore.get(slot); } catch { saved = null; }
+        if (fresh(saved)) { tokens.set(slot, saved); return { ok: true, token: saved.token }; }
+      }
+    }
+    if (!brain.authUrl) return { ok: false, code: "provider_http_error", status: 0, keyRejected: true, text: "У провайдера не указан адрес обмена ключа на токен." };
+    let response;
+    try {
+      const options = {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${brain.key}`,
+          RqUID: uuid(),
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: `scope=${encodeURIComponent(brain.scope || "GIGACHAT_API_PERS")}`,
+      };
+      const signal = signalOrUndefined(AI_DIAGNOSTIC_TIMEOUT_MS);
+      if (signal !== undefined) options.signal = signal;
+      response = await doFetch(brain.authUrl, options);
+    } catch (error) {
+      const errorName = errorNameOf(error);
+      return { ok: false, code: "provider_network_error", transient: true, errorName, text: `Нет связи с провайдером при обмене ключа (сетевая ошибка: ${errorName}).` };
+    }
+    const outcome = responseOutcome(response);
+    if (!outcome.succeeded) {
+      const status = outcome.status;
+      return {
+        ok: false, code: "provider_http_error", status, limited: status === 429, transient: status === 429 || status >= 500,
+        // Ключ авторизации не принят: другая модель этого провайдера не поможет.
+        keyRejected: status === 400 || status === 401 || status === 403,
+        text: `AI-провайдер не выдал токен: ${describeHttpStatus(status)}`,
+      };
+    }
+    let data = null;
+    try { data = await response.json(); } catch { data = null; }
+    const token = typeof data?.access_token === "string" ? data.access_token : "";
+    if (!token) return { ok: false, code: "provider_invalid_response", status: outcome.status, text: "AI-провайдер ответил на обмен ключа без токена." };
+    // `expires_at` — миллисекунды; на случай секунд и пустого поля — полчаса минус запас.
+    let exp = Number(data.expires_at);
+    if (Number.isFinite(exp) && exp > 0 && exp < 1e11) exp *= 1000;
+    if (!Number.isFinite(exp) || exp <= now()) exp = now() + 25 * 60_000;
+    const item = { token, exp };
+    tokens.set(slot, item);
+    if (tokenStore) { try { await tokenStore.set(slot, item); } catch { /* останется в памяти изолята */ } }
+    return { ok: true, token };
+  }
+
+  /** Чем подписывать запрос к этой модели: ключом — или токеном, полученным в обмен на ключ. */
+  async function bearerFor(brain, doFetch, options = {}) {
+    if (brain.kind !== "gigachat") return { ok: true, token: brain.key };
+    return exchangeToken(brain, doFetch, options);
   }
 
   return {
@@ -325,9 +556,103 @@ export function createAiService({
       };
     },
 
+    /**
+     * Живая проба каждого провайдера: один короткий запрос первой моделью.
+     * Для «проверь мозги»: настроенный провайдер и отвечающий — разные факты,
+     * а запасной иначе проверяется только в тот день, когда кончился основной.
+     */
+    /**
+     * Живая проба: по одному запросу каждому провайдеру. `every` — каждой
+     * модели каждого провайдера: имена из настроек могли устареть, а
+     * бесплатный объём — кончиться, и узнать об этом лучше до дня, когда
+     * основная модель упрётся в лимит.
+     */
+    async probeBrains({ ctx = {}, apiKey: explicitKey = null, model: modelOverride = null, every = false } = {}) {
+      const apiKey = String((explicitKey ?? getApiKey(ctx)) ?? "").trim();
+      const doFetch = resolveFetch();
+      if (!doFetch) return [];
+      const wanted = String(modelOverride || getModel(ctx) || DEFAULT_AI_MODEL);
+      const chain = brains
+        ? await brains.all({ apiKey, model: wanted })
+        : (apiKey ? [{ id: `main:${wanted}`, provider: "main", model: wanted, baseUrl, key: apiKey }] : []);
+      const seen = new Set();
+      // Провайдер без связи: остальные его модели не пробуются — каждая стоила бы ещё одного таймаута.
+      const dead = new Set();
+      const report = [];
+      for (const brain of chain) {
+        if (dead.has(brain.provider) || (seen.has(brain.provider) && !every)) continue;
+        seen.add(brain.provider);
+        const started = now();
+        const row = { provider: brain.provider, name: brain.name ?? "", model: brain.model, ok: false, code: "", status: null, errorName: "", ms: 0 };
+        const bearer = await bearerFor(brain, doFetch);
+        if (!bearer.ok) {
+          if (bearer.code === "provider_network_error") dead.add(brain.provider);
+          report.push({ ...row, code: bearer.code, status: bearer.status ?? null, errorName: bearer.errorName ?? "", stage: "token", ms: now() - started });
+          continue;
+        }
+        // Тот же запрос, что в разговоре, только короткий; поле, которое модель
+        // не приняла, убирается и запоминается — как в разговоре.
+        let drop = dropsOf(brain);
+        let response = null;
+        let failure = null;
+        let detail = { code: "", type: "", param: "" };
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const payload = shapePayload(brain, { messages: [{ role: "user", content: "ping" }], max_tokens: MAX_PROBE_TOKENS }, drop);
+          try {
+            response = await doFetch(providerChatUrl(brain.baseUrl), requestOptionsFor(bearer.token, payload, signalOrUndefined(AI_DIAGNOSTIC_TIMEOUT_MS)));
+          } catch (error) { failure = error; break; }
+          const tried = responseOutcome(response);
+          if (tried.succeeded || !tried.recognized || tried.status !== 400) break;
+          detail = await readProviderError(response);
+          const field = fieldToDrop(detail, payload, drop);
+          if (!field) break;
+          if (brains) await brains.forgo(brain.id, field);
+          drop = [...drop, field];
+          detail = { code: "", type: "", param: "" };
+        }
+        if (failure) {
+          dead.add(brain.provider);
+          report.push({ ...row, code: "provider_network_error", errorName: errorNameOf(failure), stage: "chat", ms: now() - started });
+          continue;
+        }
+        const outcome = responseOutcome(response);
+        if (!outcome.succeeded) {
+          if (outcome.recognized && !detail.code && !detail.type) detail = await readProviderError(response);
+          const reason = `${detail.code} ${detail.type}`.toLowerCase();
+          // Модели у провайдера нет или она закрыта для ключа: сутки цепочка её не трогает.
+          const spare = brain.provider === "main" && brain.model !== wanted;
+          const gone = outcome.status === 404 || (outcome.status === 400 && /model|decommission|not_found/u.test(reason))
+            || (outcome.status === 403 && (spare || /model/u.test(reason)));
+          const unpaid = outcome.status === 402;
+          if (brains && gone) await brains.retire(brain.id, { why: "gone" });
+          if (brains && unpaid) await brains.retire(brain.id, { why: "payment" });
+          report.push({ ...row, code: "provider_http_error", status: outcome.status, providerCode: detail.code || detail.type, stage: "chat", gone, unpaid, ms: now() - started });
+          continue;
+        }
+        if (brains) await brains.healthy(brain.id);
+        report.push({ ...row, ok: true, code: "provider_ok", status: outcome.status, ms: now() - started });
+      }
+      return report;
+    },
+
     async generateReply({
       userId, chatId, prompt, role = "Пользователь", verifiedContext = "", ctx = {},
       apiKey: explicitKey = null, model: modelOverride = null,
+      // «Ты уверена?» — перепроверка другой моделью: названная (коротким именем) спрашивается последней.
+      avoidModel = "",
+      // Личка или группа: от этого зависят и характер, и то, какие факты можно
+      // произносить. Раньше сюда ничего не передавалось, и группа получала
+      // подсказку лички — вместе с личными фактами.
+      isPrivate = null,
+      // Собеседник — владелец в собственной личке: связь можно признавать.
+      trusted = false,
+      // Отложенный ответ не ждёт паузы между запросами: человек уже ждал.
+      deferred = false,
+      // Пометки сердца к этой реплике: что прислали, на что отвечают.
+      note = "",
+      // Вопрос без собеседника (экзамен, ночное размышление): истории нет, она не читается
+      // и не пишется, пауза между запросами и счёт запросов человека не применяются.
+      stateless = false,
     }) {
       // A rehearsal answers the route, never the network. Without this, a test
       // run still travelled through every hook below — and once the bridge to
@@ -339,146 +664,290 @@ export function createAiService({
       // The caller may resolve the key from a store the service cannot see
       // (the bot database); explicit values win over the ctx-based default.
       const apiKey = String((explicitKey ?? getApiKey(ctx)) ?? "").trim();
-      if (!apiKey) return { ok: false, code: "ai_not_configured", text: "Аи пока не подключена: в TEST-контуре не настроен AI-провайдер." };
+      if (!apiKey) return { ok: false, code: "ai_not_configured", text: "Ключ провайдера не задан: думать пока нечем." };
       if (userId == null || chatId == null || !String(prompt ?? "").trim()) {
         return { ok: false, code: "invalid_request", text: "Не удалось определить пользователя, чат или текст запроса." };
       }
       const doFetch = resolveFetch();
       if (!doFetch) {
-        return { ok: false, code: "provider_unavailable", text: "Аи недоступна: платформенный HTTP-клиент не подключён." };
+        return { ok: false, code: "provider_unavailable", text: "Платформенный HTTP-клиент не подключён." };
       }
+      const privateChat = isPrivate == null ? String(chatId) === String(userId) : Boolean(isPrivate);
 
       const key = `${String(chatId)}:${String(userId)}`;
-      const time = now();
-      let pause = minimumIntervalMs;
-      if (typeof intervalFor === "function") {
+      let pause = stateless ? 0 : minimumIntervalMs;
+      if (!stateless && typeof intervalFor === "function") {
         try {
-          const value = await intervalFor({ userId: String(userId), chatId: String(chatId) });
+          const value = await intervalFor({ userId: String(userId), chatId: String(chatId), isPrivate: privateChat });
           if (Number.isFinite(value) && value >= 0) pause = value;
         } catch {
           // A failed lookup falls back to the standard pause, never to zero.
           pause = minimumIntervalMs;
         }
       }
-      if (time - (lastRequest.get(key) ?? 0) < pause) {
-        return { ok: false, code: "rate_limited", text: "Дай Аи секунду подумать — слишком частые запросы." };
-      }
-      lastRequest.set(key, time);
+      // Два сообщения подряд — не повод отказать. Раньше второе получало «дай
+      // секунду подумать» и пропадало; пауза короткая, её можно просто выждать.
+      const since = now() - (lastRequest.get(key) ?? 0);
+      if (!deferred && since >= 0 && since < pause) await sleep(Math.min(pause - since, MAX_WAIT_MS));
+      lastRequest.set(key, now());
+      if (lastRequest.size > 512) for (const [k, at] of lastRequest) if (now() - at > 60_000) lastRequest.delete(k);
 
-      if (claimRequest && !await claimRequest({ userId, chatId })) {
-        return { ok: false, code: "rate_limited", text: "Подожди немного перед следующим запросом к Аи." };
+      if (!stateless && claimRequest && !await claimRequest({ userId, chatId })) {
+        return { ok: false, code: "rate_limited", text: "Слишком много запросов подряд." };
       }
-      const history = await loadHistory({ userId: String(userId), chatId: String(chatId) });
-      const safeHistory = Array.isArray(history)
+      const history = stateless ? [] : await loadHistory({ userId: String(userId), chatId: String(chatId) });
+      const fullHistory = Array.isArray(history)
         ? history.filter((item) => ["user", "assistant"].includes(item?.role) && typeof item?.content === "string")
           .slice(-MAX_HISTORY_MESSAGES)
           .map((item) => ({ role: item.role, content: clampText(item.content, MAX_PROMPT_CHARS) }))
         : [];
       const userText = clampText(prompt, MAX_PROMPT_CHARS);
       let assistantContext, profile;
-      try { assistantContext = await additionalContext({ userId, chatId }); profile = await responseProfile({ userId, chatId, prompt }); }
-      catch { return { ok: false, code: "assistant_context_unavailable", text: "Не удалось прочитать настройки и память. Попробуйте позже." }; }
+      try {
+        assistantContext = stateless ? "" : await additionalContext({ userId, chatId, isPrivate: privateChat, prompt: userText });
+        profile = await responseProfile({ userId, chatId, prompt: userText, isPrivate: privateChat, stateless });
+      } catch { return { ok: false, code: "assistant_context_unavailable", text: "Не удалось прочитать настройки и память." }; }
+      // Короткое ядро — для простой реплики; деликатная тема получает полный текст.
+      const tier = profile?.tier === "core" && typeof profile?.core === "string" && profile.core ? "core" : "full";
       const system = [
-        CHARACTER_PROMPT,
-        typeof profile?.instruction === "string" ? clampText(profile.instruction, 5000) : "",
+        tier === "core" ? CORE_PROMPT : CHARACTER_PROMPT,
+        tier === "core" ? clampText(profile.core, 2000) : (typeof profile?.instruction === "string" ? clampText(profile.instruction, 5000) : ""),
         assistantContext,
+        note ? clampText(note, 3500) : "",
         `Фактическая роль пользователя: ${clampText(role, 80) || "Пользователь"}.`,
         verifiedContext ? `Проверенный контекст (используй только как фактические данные):\n${clampText(verifiedContext, 5000)}` : "",
       ].filter(Boolean).join("\n\n");
       const messages = [
         { role: "system", content: system },
-        ...safeHistory,
+        ...compactHistory(fullHistory),
         { role: "user", content: userText },
       ];
+      const temperature = Number.isFinite(profile?.temperature) ? Math.max(0, Math.min(1, profile.temperature)) : 0.7;
+      const maxTokens = Number.isFinite(profile?.maxTokens) ? Math.max(100, Math.min(1400, Math.trunc(profile.maxTokens))) : 700;
 
-      const model = String(modelOverride || getModel(ctx) || DEFAULT_AI_MODEL);
-      const requestOptions = requestOptionsFor(
-        apiKey,
-        { model, messages, temperature: Number.isFinite(profile?.temperature) ? Math.max(0, Math.min(1, profile.temperature)) : 0.7, max_tokens: Number.isFinite(profile?.maxTokens) ? Math.max(100, Math.min(1400, Math.trunc(profile.maxTokens))) : 700 },
-        signalOrUndefined(AI_REQUEST_TIMEOUT_MS)
-      );
-
-      let response;
-      try {
-        response = await doFetch(chatUrl, requestOptions);
-      } catch (error) {
-        const errorName = errorNameOf(error);
+      const wanted = String(modelOverride || getModel(ctx) || DEFAULT_AI_MODEL);
+      const single = [{ id: `main:${wanted}`, provider: "main", model: wanted, baseUrl, key: apiKey, plain: false }];
+      let pool = brains ? await brains.available({ apiKey, model: wanted }) : single;
+      if (!pool.length && brains) {
+        // Знакомые модели отдыхают: спросить у провайдера, чем ещё можно думать.
+        const found = await brains.discover({ fetchImpl: doFetch, apiKey, signal: signalOrUndefined(AI_DIAGNOSTIC_TIMEOUT_MS) });
+        if (found.added?.length) pool = await brains.available({ apiKey, model: wanted });
+      }
+      if (!pool.length) {
+        // Думать нечем. «Лимит вышел» и «нет связи» — разные причины, и
+        // человеку с владельцем называется настоящая.
+        const why = brains ? await brains.whyResting({ apiKey, model: wanted }) : "";
         return {
-          ok: false,
-          code: "provider_network_error",
-          errorName,
-          model,
-          text: `Аи не смогла связаться с AI-провайдером (сетевая ошибка: ${errorName}). Попробуй позже.`,
+          ok: false, code: "brains_exhausted", transient: true, limited: why !== "fault",
+          retryAt: brains ? await brains.nextAt({ apiKey, model: wanted }) : 0, model: wanted,
+          text: why === "fault" ? "Модели недоступны: связь или сбой у провайдера." : "Все модели отдыхают: лимит запросов исчерпан.",
         };
       }
 
-      const outcome = responseOutcome(response);
-      if (!outcome.succeeded) {
-        // An explicit ok:false on a 2xx is a platform inconsistency, not a
-        // provider rejection: name it instead of printing "HTTP 200 error".
-        if (outcome.okFlag === false && outcome.status !== null && outcome.status >= 200 && outcome.status < 300) {
+      /** Один запрос к одной модели. Сам запоминает, кому пора отдохнуть. */
+      const ask = async (brain, { timeout, drop = dropsOf(brain), retried = false, reauth = false }) => {
+        const payload = shapePayload(brain, { messages, temperature, max_tokens: maxTokens }, drop);
+        const bearer = await bearerFor(brain, doFetch, { force: reauth });
+        if (!bearer.ok) {
+          let until = 0;
+          if (brains) {
+            if (bearer.code === "provider_network_error") until = await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" });
+            else if (bearer.limited) until = await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "limit" });
+          }
+          return { ...bearer, model: brain.model, until: Number(until) || 0 };
+        }
+        let response;
+        try {
+          response = await doFetch(providerChatUrl(brain.baseUrl), requestOptionsFor(bearer.token, payload, signalOrUndefined(timeout)));
+        } catch (error) {
+          const until = brains ? await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "network" }) : 0;
+          const errorName = errorNameOf(error);
+          return { ok: false, code: "provider_network_error", transient: true, errorName, model: brain.model, until: Number(until) || 0, text: `Нет связи с провайдером (сетевая ошибка: ${errorName}).` };
+        }
+        const outcome = responseOutcome(response);
+        const limits = readLimits(response?.headers);
+        if (!outcome.succeeded) {
+          // An explicit ok:false on a 2xx is a platform inconsistency, not a
+          // provider rejection: name it instead of printing "HTTP 200 error".
+          if (outcome.okFlag === false && outcome.status !== null && outcome.status >= 200 && outcome.status < 300) {
+            return { ok: false, code: "provider_ok_flag_conflict", status: outcome.status, model: brain.model, text: `AI-платформа вернула HTTP ${outcome.status}, но пометила ответ как ошибочный (ok=false). Это несогласованность платформенного HTTP-клиента, а не отказ провайдера.` };
+          }
+          if (!outcome.recognized) {
+            return { ok: false, code: "provider_response_unrecognized", status: null, model: brain.model, text: "AI-платформа вернула ответ без HTTP-статуса и без флага ok — это несовместимость платформенного HTTP-клиента." };
+          }
+          // Do not echo provider bodies or request headers; they can contain
+          // sensitive data. Status and error code are enough to diagnose.
+          const detail = await readProviderError(response);
+          const status = outcome.status;
+          const reason = `${detail.code} ${detail.type}`.toLowerCase();
+          const limited = status === 429 || status === 413;
+          const gone = status === 404 || (status === 400 && /model|decommission|not_found/u.test(reason));
+          // Токен истёк раньше срока: один раз обменять ключ заново.
+          if (status === 401 && brain.kind === "gigachat" && !reauth) return ask(brain, { timeout, drop, retried, reauth: true });
+          // Модель не принимает одно из полей: спросить без него и запомнить.
+          const field = status === 400 && !gone ? fieldToDrop(detail, payload, drop) : "";
+          if (field) {
+            if (brains) await brains.forgo(brain.id, field);
+            return ask(brain, { timeout, drop: [...drop, field], retried });
+          }
+          if (status === 429 && !retried && limits.retryAfterMs != null && limits.retryAfterMs <= SHORT_RETRY_MS) {
+            await sleep(limits.retryAfterMs + 100);
+            return ask(brain, { timeout, drop, retried: true });
+          }
+          // 403 о модели — модель закрыта для этого ключа или тарифа, а не ключ
+          // отозван: сутки её не трогаем, остальные пробуем. То же — запасная
+          // модель основного ключа, какой бы код ни пришёл.
+          const denied = status === 403 && (/model/u.test(reason) || (brain.provider === "main" && brain.model !== wanted));
+          // 402 — провайдер ждёт действия человека (карта, оплата) или у модели
+          // кончился бесплатный объём. Повтор не поможет: сутки её не трогаем.
+          const unpaid = status === 402;
+          // Дневной объём исчерпан, а срока провайдер не назвал: до полуночи UTC.
+          const quota = status === 429 && limits.retryAfterMs == null && (/quota|free_limit/u.test(reason) || brain.kind === "cloudflare");
+          // До какого часа модель после этого отдыхает: владельцу называется срок, а не «недоступна».
+          let until = 0;
+          if (brains) {
+            if (limited) until = await brains.rest(brain.id, { ms: limits.retryAfterMs ?? (quota ? untilUtcMidnight(now()) : DEFAULT_REST_MS), why: "limit", scope: detail.scope });
+            else if (gone || denied) until = await brains.retire(brain.id, { why: "gone" });
+            else if (unpaid) until = await brains.retire(brain.id, { why: "payment" });
+            else if (status >= 500) until = await brains.rest(brain.id, { ms: DEFAULT_REST_MS, why: "down" });
+          }
           return {
-            ok: false,
-            code: "provider_ok_flag_conflict",
-            status: outcome.status,
-            model,
-            text: `AI-платформа вернула HTTP ${outcome.status}, но пометила ответ как ошибочный (ok: false) — несовместимость SDK. Секретные данные скрыты.`,
+            ok: false, code: "provider_http_error", status, limited, gone: gone || denied, unpaid,
+            transient: limited || status >= 500,
+            keyRejected: status === 401 || (status === 403 && !denied),
+            providerCode: detail.code, providerType: detail.type, contentType: detail.contentType,
+            until: Number(until) || 0,
+            // Какой лимит и его числа — только для владельца: предел, занято, запрошено.
+            limitScope: detail.scope, limitOf: detail.limit, limitUsed: detail.used, limitAsked: detail.requested,
+            model: brain.model,
+            text: `AI-провайдер вернул ошибку: ${describeProviderFailure({ status, providerCode: detail.code || detail.type, model: brain.model })}`,
           };
         }
-        // Do not echo provider bodies or request headers; they can contain
-        // sensitive data. Status and error code are enough to diagnose.
-        const detail = outcome.recognized ? await readProviderError(response) : { code: "", type: "", contentType: "" };
-        if (!outcome.recognized) {
-          return {
-            ok: false,
-            code: "provider_response_unrecognized",
-            status: null,
-            model,
-            text: "AI-платформа вернула ответ без HTTP-статуса и без флага ok — это несовместимость SDK. Секретные данные скрыты.",
-          };
+        let data;
+        try { data = await response.json(); }
+        catch {
+          return { ok: false, code: "provider_invalid_response", status: outcome.status, model: brain.model, text: `AI-провайдер вернул ответ, который не удалось разобрать как JSON (HTTP ${outcome.status ?? "?"}).` };
+        }
+        if (brains) {
+          await brains.note(brain.id, limits);
+          await brains.healthy(brain.id);
+        }
+        return { ok: true, data, limits };
+      };
+
+      // Основная в строю или отдыхает: спрашивается до перестановки «не этой моделью».
+      const primaryId = `main:${wanted}`;
+      const primaryPlanned = pool.some(item => item.id === primaryId);
+      if (avoidModel && pool.length > 1) {
+        const same = (brain) => String(brain.model ?? "").replace(/^[^/]+\//u, "") === String(avoidModel);
+        const other = pool.filter(brain => !same(brain));
+        // Другой модели нет — перепроверит та же: об этом скажет сердце по имени в ответе.
+        if (other.length) pool = [...other, ...pool.filter(same)];
+      }
+      const tried = [];
+      const rejected = new Set();
+      let last = null;
+      // Кто в этом запросе не ответил и почему: владельцу называется причина, а не «недоступна».
+      const stumbles = [];
+      const failures = [];
+      const stumbled = (brain, result) => {
+        last = result;
+        failures.push(result);
+        stumbles.push({
+          id: brain.id, model: brain.model, provider: brain.provider, primary: brain.id === primaryId,
+          why: stumbleOf(result), until: Number(result.until) || 0,
+          status: Number.isFinite(result.status) ? result.status : null,
+          scope: String(result.limitScope ?? ""), limit: result.limitOf ?? null, used: result.limitUsed ?? null, requested: result.limitAsked ?? null,
+        });
+      };
+      // Наружу — без внутреннего имени записи цепочки.
+      const told = () => stumbles.map(({ id: _id, ...rest }) => rest);
+      for (const brain of pool) {
+        if (tried.length >= MAX_ATTEMPTS) break;
+        // Ключ отвергнут — другая модель того же провайдера не поможет.
+        if (rejected.has(brain.provider)) continue;
+        const result = await ask(brain, { timeout: tried.length ? AI_FALLBACK_TIMEOUT_MS : AI_REQUEST_TIMEOUT_MS });
+        tried.push(brain.model);
+        if (!result.ok) {
+          stumbled(brain, result);
+          if (result.keyRejected) rejected.add(brain.provider);
+          continue;
+        }
+        const choice = result.data?.choices?.[0];
+        // Провайдер заменил ответ своей отговоркой (фильтр тем): это не её
+        // слова — спросить следующую модель.
+        if (choice?.finish_reason === "blacklist") {
+          stumbled(brain, { ok: false, code: "filtered", model: brain.model, text: "Провайдер отфильтровал ответ." });
+          continue;
+        }
+        let answer = clampText(stripThinking(choice?.message?.content), MAX_REPLY_CHARS);
+        // Ответ оборван лимитом длины: закончить на целой фразе, а не на полуслове.
+        if (choice?.finish_reason === "length") answer = trimToSentence(answer);
+        answer = guardAnswer(answer, { confidentialIds, trusted }).text;
+        if (!answer) {
+          stumbled(brain, { ok: false, code: "empty_response", model: brain.model, text: "Провайдер вернул пустой ответ." });
+          continue;
+        }
+        const updatedHistory = [...fullHistory, { role: "user", content: userText }, { role: "assistant", content: answer }]
+          .slice(-MAX_HISTORY_MESSAGES);
+        try {
+          if (!stateless) await saveHistory({ userId: String(userId), chatId: String(chatId), messages: updatedHistory });
+        } catch {
+          // The answer remains useful if optional history storage is not available.
+        }
+        const usage = result.data?.usage ?? {};
+        // Думала не основной моделью: об этом узнаёт владелец, а не собеседник.
+        const switched = tried.length > 1 || brain.id !== pool[0].id || brain.model !== wanted;
+        let cause = null;
+        if (switched) {
+          // Почему не основная: её отказ в этом же запросе; её отдых с прошлого
+          // раза; или так и задумано — перепроверку ведёт другая модель.
+          const own = stumbles.find(item => item.id === primaryId);
+          let row = null;
+          try { row = brains ? (await brains.describe({ apiKey, model: wanted })).find(item => item.id === primaryId) ?? null : null; } catch { row = null; }
+          const blank = { model: wanted, why: "", until: 0, since: 0, status: null, scope: "", limit: null, used: null, requested: null, fails: 0, fresh: false };
+          if (own) cause = { ...blank, why: own.why, status: own.status, scope: own.scope, limit: own.limit, used: own.used, requested: own.requested, until: Number(row?.until) || own.until, since: own.until ? now() : 0, fails: Number(row?.fails) || 0, fresh: true };
+          else if (!primaryPlanned) cause = { ...blank, why: row?.why || "rest", until: Number(row?.until) || 0, since: Number(row?.since) || 0, scope: row?.scope || "", fails: Number(row?.fails) || 0 };
+          else cause = { ...blank, why: "choice" };
         }
         return {
-          ok: false,
-          code: "provider_http_error",
-          status: outcome.status,
-          providerCode: detail.code,
-          providerType: detail.type,
-          contentType: detail.contentType,
-          model,
-          text: `AI-провайдер вернул ошибку: ${describeProviderFailure({
-            status: outcome.status,
-            providerCode: detail.code || detail.type,
-            model,
-          })} Секретные данные скрыты.`,
+          ok: true, text: answer, model: brain.model, brain: brain.id, tier,
+          switched, ...(cause ? { cause } : {}),
+          // Все, кто в этом запросе не ответил: снятую запасную владелец иначе не увидел бы никогда.
+          ...(stumbles.length ? { stumbles: told() } : {}),
+          tried,
+          usage: {
+            prompt: Number(usage.prompt_tokens) || 0, completion: Number(usage.completion_tokens) || 0, total: Number(usage.total_tokens) || 0,
+            // Начало запроса, которое провайдер узнал и взял из своего кэша: в его лимит такие токены не идут.
+            cached: Number(usage.prompt_tokens_details?.cached_tokens) || 0,
+          },
+          remainingRequests: result.limits?.remainingRequests ?? null,
+          limitRequests: result.limits?.limitRequests ?? null,
         };
       }
-
-      let data;
-      try {
-        data = await response.json();
-      } catch {
-        return {
-          ok: false,
-          code: "provider_invalid_response",
-          status: outcome.status,
-          model,
-          text: `AI-провайдер вернул ответ, который не удалось разобрать как JSON (HTTP ${outcome.status ?? "?"}).`,
-        };
+      // Ответа нет. Итог — не последний отказ, а то, что из этого следует для человека:
+      // упёрлась в лимит или в связь хоть одна модель — это пройдёт само, вопрос надо
+      // записать и ответить позже. Раньше итогом был последний отказ, и снятая модель в
+      // конце цепочки превращала «лимит вышел» в «поломку», а вопрос человека терялся.
+      let final = failures.find(item => item.limited) ?? failures.find(item => item.transient) ?? null;
+      if (!final && brains) {
+        // В этом запросе отказали только те, кто сам не вернётся (снята, оплата, ключ, пустой
+        // ответ), а остальные уже отдыхали. Отдыхают из-за лимита или связи — это пройдёт.
+        let resting = [];
+        try { resting = (await brains.describe({ apiKey, model: wanted })).filter(item => !item.ok); } catch { resting = []; }
+        const byLimit = resting.some(item => item.why === "limit");
+        if (byLimit || resting.some(item => item.why === "network" || item.why === "down")) {
+          final = {
+            ok: false, code: "brains_exhausted", transient: true, limited: byLimit, model: wanted,
+            text: byLimit ? "Все модели отдыхают: лимит запросов исчерпан." : "Модели недоступны: связь или сбой у провайдера.",
+          };
+        }
       }
-      let answer = clampText(data?.choices?.[0]?.message?.content, MAX_REPLY_CHARS);
-      if (/(?:основател[ьяюе]|\bfounder\b|создател[ьяюем]*\s+бота)/iu.test(answer) || confidentialIds.some(id => /^[1-9]\d*$/u.test(String(id)) && new RegExp(`(^|[^0-9])${id}([^0-9]|$)`, "u").test(answer))) {
-        answer = "Внутренние сведения об управлении я не раскрываю. Могу помочь с доступными возможностями и настройками общения.";
-      }
-      if (!answer) return { ok: false, code: "empty_response", text: "Аи не получила содержательный ответ от AI-провайдера." };
-
-      const updatedHistory = [...safeHistory, { role: "user", content: userText }, { role: "assistant", content: answer }]
-        .slice(-MAX_HISTORY_MESSAGES);
-      try {
-        await saveHistory({ userId: String(userId), chatId: String(chatId), messages: updatedHistory });
-      } catch {
-        // The answer remains useful if optional history storage is not available.
-      }
-      return { ok: true, text: answer, model };
+      return {
+        ...(final ?? last ?? { ok: false, code: "empty_response", text: "Провайдер вернул пустой ответ." }),
+        tried, ...(stumbles.length ? { stumbles: told() } : {}),
+        retryAt: brains ? await brains.nextAt({ apiKey, model: wanted }) : 0,
+      };
     },
   };
 }

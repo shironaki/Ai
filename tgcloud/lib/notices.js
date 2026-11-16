@@ -22,6 +22,8 @@
 export const NOTICES_KEY = "notices:registry:v1";
 export const OUTBOX_KEY = "notices:outbox:v1";
 export const FLUSH_KEY = "notices:flush:v1";
+/** Какие вести уже сказаны: «я обновилась» и сводка дня не повторяются. */
+export const TOLD_KEY = "notices:told:v1";
 /** Сколько сообщений о поломках владелец получает за сутки. */
 export const MAX_PER_DAY = 6;
 /** Через сколько одна и та же поломка снова имеет право на сообщение. */
@@ -36,12 +38,14 @@ const DAY = 86_400_000;
 
 /** Что делать — по компоненту, а не по тексту ошибки. */
 const DEFAULT_HINTS = Object.freeze({
-  provider: "Ключ провайдера: /aikey.",
+  provider: "Проверьте строку AI_PROVIDER_KEY в файле ~/.heart.env и опубликуйте заново: bash scripts/phone.sh deploy.",
   telegram: "Telegram не принял сообщение: проверьте, что бот не заблокирован.",
   storage: "Хранилище не отвечает — работаю без памяти.",
-  bridge: "Мост к сестре: канал и секрет в настройках.",
-  handler: "Подробности: /aidiag.",
-  health: "Подробности: /aidiag.",
+  bridge: "Мост к сестре: канал, секрет и её бот. Пока она молчит, я отвечаю сама и её не жду.",
+  // Совет о моделях зависит от причины и передаётся с вестью; это — на случай, если его не передали.
+  brains: "Подробности — скажите мне «статус»: там причина и срок.",
+  handler: "Подробности — скажите мне «статус».",
+  health: "Подробности — скажите мне «статус».",
 });
 
 /**
@@ -74,11 +78,23 @@ export function fingerprintOf(component, code) {
   return `${slug(component)}:${slug(code)}`;
 }
 
+/**
+ * Три тона вести. «Сломалось» — не работает; «работает хуже» — работает, но не
+ * так; «к сведению» — не поломка вовсе: всё работает, владельцу просто стоит
+ * знать (дневной лимит основной модели вышел, отвечает запасная). Раньше третьего
+ * тона не было, и такая весть читалась как ошибка, которую надо чинить.
+ */
+const SEVERITIES = Object.freeze(["fault", "degraded", "info"]);
+const severityOf = (value) => (SEVERITIES.includes(value) ? value : "fault");
+const HEADS = Object.freeze({
+  fault: "🚨 Хозяин, у меня это сломалось",
+  degraded: "△ Хозяин, у меня это работает хуже",
+  info: "ℹ️ Хозяин, к сведению — это не поломка",
+});
+
 /** Текст, который владелец увидит в личке. */
 export function incidentText({ title = "", detail = "", count = 1, hint = "", fingerprint = "", severity = "fault" } = {}) {
-  const head = severity === "degraded"
-    ? "△ Хозяин, у меня это работает хуже"
-    : "🚨 Хозяин, у меня это сломалось";
+  const head = HEADS[severityOf(severity)];
   const lines = [head, "━━━━━━━━━━━━━━━━━━━━", `Где: ${title}`, `Что: ${detail || "без подробностей"}`];
   if (count > 1) lines.push(`Повтор: ${count} ${plural(count)} за сутки`);
   if (hint) lines.push(`Что делать: ${hint}`);
@@ -158,7 +174,8 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
   async function report({ component = "bot", code = "error", title = "", detail = "", severity = "fault", hint = "" } = {}) {
     const fingerprint = fingerprintOf(component, code);
     const at = now();
-    const clean = redactDetail(detail);
+    // 240 знаков: причина, две модели и срок в 160 не помещались — обрезался как раз срок.
+    const clean = redactDetail(detail, 240);
     const label = redactDetail(title || component, 48);
 
     let entry = null;
@@ -171,7 +188,7 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
         title: label,
         code: slug(code),
         detail: clean,
-        severity: severity === "degraded" ? "degraded" : "fault",
+        severity: severityOf(severity),
         firstAt: previous?.firstAt ?? at,
         lastAt: at,
         count: Number(previous?.count ?? 0) + 1,
@@ -256,6 +273,49 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
     return { ok: failed === 0, sent, failed, pending: keep.length };
   }
 
+  /**
+   * Весть, а не поломка: «я обновилась», сводка дня, вопрос об уроке.
+   *
+   * Поломки считаются и ограничиваются шестью в сутки; вести идут отдельно и
+   * не съедают этот счёт. Ключ делает весть одноразовой: два изолята, которые
+   * одновременно заметили новую сборку, скажут о ней один раз. Не дошло —
+   * текст ждёт в той же очереди, что и отчёты о поломках.
+   */
+  async function tell({ key = "", text = "" } = {}) {
+    const clean = String(text ?? "").trim().slice(0, 3800);
+    if (!clean) return { ok: false, code: "empty", sent: 0 };
+    if (key) {
+      let fresh = false;
+      await update(TOLD_KEY, { version: 1, keys: {} }, told => {
+        fresh = false;
+        const keys = told.keys && typeof told.keys === "object" ? told.keys : {};
+        if (keys[key]) return null;
+        fresh = true;
+        keys[key] = now();
+        told.keys = Object.fromEntries(Object.entries(keys).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 80));
+        return told;
+      });
+      if (!fresh) return { ok: true, duplicate: true, sent: 0 };
+    }
+    const later = async () => {
+      await update(OUTBOX_KEY, { version: 1, items: [] }, box => {
+        const items = Array.isArray(box.items) ? box.items : [];
+        items.push({ id: `tell:${key || now()}`, fingerprint: "tell", text: clean, at: now(), tries: 0 });
+        while (items.length > OUTBOX_LIMIT) items.shift();
+        box.items = items;
+        return box;
+      });
+    };
+    if (!owner || typeof send !== "function") { await later(); return { ok: false, code: owner ? "send_unavailable" : "owner_unknown", queued: true, sent: 0 }; }
+    try {
+      const result = await send(owner, clean);
+      return { ok: true, sent: 1, messageId: result?.message_id ?? null };
+    } catch {
+      await later();
+      return { ok: false, code: "send_failed", queued: true, sent: 0 };
+    }
+  }
+
   /** Что сломалось за последние сутки — для /aidiag. */
   async function list({ limit = 8, withinMs = DAY } = {}) {
     const registry = await read(NOTICES_KEY);
@@ -271,7 +331,7 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
     const items = await list({ limit });
     if (!items.length) return "Сбои: нет — за сутки ничего не ломалось.";
     const lines = items.map(item => {
-      const mark = item.severity === "degraded" ? "△" : "✕";
+      const mark = item.severity === "degraded" ? "△" : item.severity === "info" ? "ℹ️" : "✕";
       const times = Number(item.count ?? 1) > 1 ? ` · ${item.count} ${plural(Number(item.count))}` : "";
       return `${mark} ${item.title}: ${item.detail}${times}`;
     });
@@ -288,6 +348,7 @@ export function createNotices({ store = null, send = null, ownerId = null, now =
     configured: persistent,
     ownerKnown: owner != null,
     report,
+    tell,
     flush,
     list,
     text,

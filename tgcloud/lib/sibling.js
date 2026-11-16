@@ -33,7 +33,7 @@ export function missingAbilityText({ tool = null, name = "Аи", sister = "Юи"
     return `${name}: ${ability} не входит в мои умения — этим занимается ${sister}, а её здесь нет.`;
   }
   if (reason === "module_disabled") {
-    return `${ability[0].toUpperCase()}${ability.slice(1)} выключено в этом чате. Владелец включает: /packs.`;
+    return `${ability[0].toUpperCase()}${ability.slice(1)} выключено в этом чате. Включить может владелец чата — в настройках у ${sister}.`;
   }
   if (!link) {
     return byGroup
