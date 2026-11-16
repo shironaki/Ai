@@ -11,6 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { BUILD } from "./fixtures/kit.mjs";
 
 const ROOT = new URL("../", import.meta.url);
@@ -58,4 +59,13 @@ test("проба и проверка разработчика лежат в ре
   assert.equal(scripts.say, "node scripts/say.mjs");
   assert.equal(scripts.verify, "bash scripts/verify.sh");
   assert.match(read("scripts/verify.sh"), /no-undef/u, "eslint с правилом no-undef — обязательная часть проверки");
+});
+
+// Единственный двоичный файл в репозитории. Песочница чата разработки такие файлы портит между ходами,
+// а `git add -A` сохранил бы порчу: тест ловит её до коммита. Упал здесь, а картинку не меняли —
+// `git checkout origin/main -- docs/profile/welcome.jpg`. Перерисовали по слову владельца — вписать новую сумму.
+test("картинка стартовой страницы цела: 640×360, JPEG, сумма та же, что при сохранении", () => {
+  const bytes = readFileSync(new URL("docs/profile/welcome.jpg", ROOT));
+  assert.deepEqual([bytes[0], bytes[1], bytes[2]], [0xff, 0xd8, 0xff], "это не JPEG — файл испорчен");
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "434c22684395cac0592adfec9034eac7580959ea6136dda37d2d980f35b6b42f", "docs/profile/welcome.jpg изменён или испорчен");
 });

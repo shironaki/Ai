@@ -9,12 +9,14 @@ import { heart, message, group, reset, last, calls, chats, says, sdk, OWNER, KEY
 const { profileWish, PROFILE_ABOUT, PROFILE_TEXT, ABOUT_MAX, TEXT_MAX } = await import("../tgcloud/lib/profile.js");
 const own = (text) => message(text, { id: OWNER });
 
-test("профиль: слова умещаются в пределы Telegram; разбор — «оформи профиль», «покажи профиль»", () => {
+test("профиль: слова умещаются в пределы Telegram; разбор — «оформи профиль», «покажи свой профиль»", () => {
   assert.ok(PROFILE_ABOUT.length <= ABOUT_MAX, `«О себе» — ${PROFILE_ABOUT.length} знаков`);
   assert.ok(PROFILE_TEXT.length <= TEXT_MAX, `описание — ${PROFILE_TEXT.length} знаков`);
   assert.doesNotMatch(`${PROFILE_ABOUT}\n${PROFILE_TEXT}`, /хозяин/iu, "эти слова читают все");
   for (const said of ["оформи профиль", "Оформи свой профиль!", "обнови описание", "поставь описание бота", "заполни профиль"]) assert.deepEqual(profileWish(said), { set: true }, said);
-  for (const said of ["покажи профиль", "покажи описание", "какое у тебя описание?"]) assert.deepEqual(profileWish(said), { show: true }, said);
+  for (const said of ["покажи свой профиль", "покажи описание бота", "какое у тебя описание?"]) assert.deepEqual(profileWish(said), { show: true }, said);
+  // «Покажи профиль» и «мой профиль» — карточка самого человека (её ведёт сестра): эти слова не о профиле бота.
+  for (const said of ["покажи профиль", "покажи мой профиль", "оформи мой профиль", "покажи описание"]) assert.equal(profileWish(said), null, said);
   for (const said of ["профиль", "оформи заказ", "покажи мой профиль в игре", "обнови описание товара на сайте", "мой профиль"]) assert.equal(profileWish(said), null, said);
 });
 
@@ -25,7 +27,7 @@ test("«оформи профиль»: ставит себе «О себе» и 
   assert.deepEqual(calls("setMyShortDescription"), [{ short_description: PROFILE_ABOUT }]);
   assert.deepEqual(calls("setMyDescription"), [{ description: PROFILE_TEXT }]);
   assert.match(last(OWNER), /^Готово, хозяин: строка «О себе» и описание на стартовой странице стоят\.\n\nО себе:\n.*Set Welcome Picture/su);
-  await h.onMessage(own("покажи профиль"), KEY);
+  await h.onMessage(own("покажи свой профиль"), KEY);
   assert.match(last(OWNER), /^О себе:\nАи — собеседница с характером/u);
   assert.equal(calls("setMyDescription").length, 1, "«покажи» ничего не ставит");
   // Telegram отказал — слова отдаются для вставки руками.

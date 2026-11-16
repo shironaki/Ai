@@ -406,7 +406,8 @@ const SKILL = new Set([
 // Документ делится на части поровну по числу реплик: тесты идут и на телефоне перед публикацией,
 // и одна проверка на пять тысяч сообщений там упёрлась бы в предел времени на тест.
 const SPOKEN = SECTIONS.filter(item => !item.n.startsWith("+"));
-const PARTS = 8;
+// Частей двенадцать с 0.35.0: реплик стало больше восьми тысяч, а часть должна остаться такой же короткой.
+const PARTS = 12;
 const partOf = (() => {
   const all = SPOKEN.reduce((sum, item) => sum + item.w.length, 0);
   const map = new Map();
@@ -440,9 +441,9 @@ for (let part = 0; part < PARTS; part += 1) {
   });
 }
 
-test("словарь целиком: список «забирает умение» не устарел, а реплик в документе — больше пяти тысяч", () => {
+test("словарь целиком: список «забирает умение» не устарел, а реплик в документе — больше восьми тысяч", () => {
   const all = new Set(SPOKEN.flatMap(item => item.w));
   assert.deepEqual([...SKILL].filter(said => !all.has(said)), [], "реплики из списка умений в документе больше нет");
-  assert.ok(all.size >= 5000, `реплик: ${all.size}`);
-  assert.deepEqual([...new Set(SPOKEN.map(item => partOf(item.n)))].sort(), [...Array(PARTS).keys()], "каждая часть не пуста");
+  assert.ok(all.size >= 8000, `реплик: ${all.size}`);
+  assert.deepEqual([...new Set(SPOKEN.map(item => partOf(item.n)))].sort((a, b) => a - b), [...Array(PARTS).keys()], "каждая часть не пуста");
 });
