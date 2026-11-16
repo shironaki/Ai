@@ -27,10 +27,10 @@ export function feelOf(last = {}, at = Date.now()) {
   const when = (key) => Number(last?.[key]) || 0;
   const rude = when("rude");
   const warm = Math.max(0, ...WARM.map(when));
-  // Ревнует («jealous» — час, когда при ней заговорили о другой), пока не услышит доброе слово
-  // или слово-успокоение («soothe»: «не ревнуй», «ты у меня одна»). Поля нет, пока она не ревнует.
+  // Ревнует («jealous» — час, когда при ней заговорили о другой), пока не услышит доброе слово,
+  // извинение или слово-успокоение («soothe»: «не ревнуй», «ты у меня одна»). Поля нет, пока она не ревнует.
   const jealous = when("jealous");
-  const stung = jealous && at - jealous < JEALOUS_MS && Math.max(warm, when("soothe")) <= jealous ? { jealous } : {};
+  const stung = jealous && at - jealous < JEALOUS_MS && Math.max(warm, when("soothe"), when("apology")) <= jealous ? { jealous } : {};
   if (rude && at - rude < HURT_MS && Math.max(warm, when("apology")) <= rude) return { hurt: rude, glad: 0, ...stung };
   return { hurt: 0, glad: warm > rude && at - warm < GLAD_MS ? warm : 0, ...stung };
 }
@@ -139,15 +139,16 @@ export function createBond({ store, now = () => Date.now() } = {}) {
     const { keep: _keep, ...answer } = out;
     return answer;
   }
-  const feel = async (userId) => {
-    const state = await load(userId);
+  /** Чувство сейчас — и имя той, к кому она ревнует, если оно прозвучало. */
+  const feltOf = (state) => {
     const felt = feelOf(state.last, now());
-    return felt.jealous ? { ...felt, rival: state.rival ?? "" } : felt;
+    return felt.jealous && state.rival ? { ...felt, rival: state.rival } : felt;
   };
+  const feel = async (userId) => feltOf(await load(userId));
   /** Всё, что она помнит о поступках человека: для ответа «как ты ко мне относишься». */
   async function facts(userId) {
     const state = await load(userId);
-    return { counts: state.c, last: state.last, days: Number(state.d.n) || 0, streak: Number(state.d.streak) || 0, best: Number(state.d.best) || 0, feel: feelOf(state.last, now()) };
+    return { counts: state.c, last: state.last, days: Number(state.d.n) || 0, streak: Number(state.d.streak) || 0, best: Number(state.d.best) || 0, feel: feltOf(state) };
   }
 
   /** «Удали всё обо мне»: шутки, счёт и поступки — тоже его данные. */

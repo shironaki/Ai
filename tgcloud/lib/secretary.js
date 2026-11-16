@@ -217,7 +217,13 @@ export function parseSpan(text) {
 /** «Жене», «ей», «этому человеку» — не имя: значит «тому, кто просит» (или единственному). */
 const KIN_WORD = /^(?:(?:моей\s+|моему\s+)?(?:жене|жены|жену|жена|супруге|супруги|мужу|мужа|супругу|супруга)|ей|ему|ее|его|нее|него|этому\s+человеку|этого\s+человека)(?:\s+тоже)?$/u;
 const DESKS = /^(?:а\s+)?(?:у\s+кого\s+(?:ты\s+)?(?:еще\s+)?(?:работаешь\s+)?секретар(?:ь|ем)|(?:чей|кому)\s+ты\s+(?:еще\s+)?секретарь|секретарь\s+у\s+кого|кто\s+(?:еще\s+)?просит\s+секретаря|кто\s+просится\s+в\s+секретари)$/u;
-const DESK_ALLOW = /^(?:да[,\s]+)?(?:разреши|разрешаю|разрешить)\s+секретаря(?:\s+(?:для\s+)?(.{2,40}))?$/u;
+const DESK_ALLOW = /^(?:да[,\s]+)?(?:разреши|разрешаю|разрешить|одобри|одобряю)\s+секретаря(?:\s+(?:для\s+)?(.{2,40}))?$/u;
+// Тот же смысл, другой порядок слов: «разреши жене секретаря», «откажи Айдине в секретаре», «забери у жены секретаря».
+const WHOM = "((?:\\S+\\s+){0,2}\\S+)";
+const DESK_ALLOW_MID = new RegExp(`^(?:да[,\\s]+)?(?:разреши|разрешаю|разрешить|одобри|одобряю)\\s+${WHOM}\\s+(?:секретаря|быть\\s+с\\s+секретарем)$`, "u");
+const DESK_ALLOW_OF = /^(?:будь|стань|поработай)\s+секретарем\s+(?:и\s+|еще\s+и\s+)?((?:моей\s+)?(?:жены|супруги)|(?:моего\s+)?(?:мужа|супруга))$/u;
+const DESK_DENY_MID = new RegExp(`^(?:нет[,\\s]+)?(?:не\\s+разрешай|не\\s+разрешаю|не\\s+давай|откажи|отказать)\\s+${WHOM}\\s+(?:секретаря|в\\s+секретаре)$`, "u");
+const DESK_REVOKE_MID = new RegExp(`^(?:забери|убери|отними|сними)\\s+у\\s+${WHOM}\\s+секретаря$`, "u");
 const DESK_ALLOW_AT = /^(?:будь|стань|поработай)\s+секретарем\s+(?:и\s+|еще\s+и\s+)?(?:у|для)\s+(.{2,40})$/u;
 const DESK_DENY = /^(?:нет[,\s]+)?(?:не\s+разрешай|не\s+разрешаю|не\s+давай|откажи|отказать)\s+(?:секретаря|в\s+секретаре)(?:\s+(?:для\s+)?(.{2,40}))?$/u;
 const DESK_REVOKE = /^(?:забери|убери|отними|сними)\s+секретаря\s+у\s+(.{2,40})$/u;
@@ -226,11 +232,12 @@ const DESK_REVOKE_AT = /^(?:больше\s+)?не\s+будь\s+секретар�
 function deskWish(value) {
   if (DESKS.test(value)) return { desks: true };
   const who = (name) => { const text = String(name ?? "").trim(); return KIN_WORD.test(text) ? "" : text; };
-  let found = value.match(DESK_ALLOW) ?? value.match(DESK_ALLOW_AT);
+  let found = value.match(DESK_ALLOW) ?? value.match(DESK_ALLOW_AT) ?? value.match(DESK_ALLOW_MID);
   if (found) return { allow: who(found[1]) };
-  found = value.match(DESK_DENY);
+  if (DESK_ALLOW_OF.test(value)) return { allow: "" };
+  found = value.match(DESK_DENY) ?? value.match(DESK_DENY_MID);
   if (found) return { deny: who(found[1]) };
-  found = value.match(DESK_REVOKE) ?? value.match(DESK_REVOKE_AT);
+  found = value.match(DESK_REVOKE) ?? value.match(DESK_REVOKE_AT) ?? value.match(DESK_REVOKE_MID);
   if (found) return { revoke: who(found[1]) };
   return null;
 }

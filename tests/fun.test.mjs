@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { heart, message, group, hers, reset, sdk, calls, source, toChat, last, reactions, chats, says, OWNER, KEY, DAY } from "./fixtures/kit.mjs";
 
-const { parseAction, accusative, reactionFor, willingness, ACTIONS } = await import("../tgcloud/lib/rp.js");
+const { parseAction, aboutOwnDay, accusative, reactionFor, willingness, ACTIONS } = await import("../tgcloud/lib/rp.js");
 const { parsePoll } = await import("../tgcloud/lib/polls.js");
 const { parseWhois, registeredAt, registeredText } = await import("../tgcloud/lib/whois.js");
 const { parseChatSetting } = await import("../tgcloud/lib/fun.js");
@@ -24,8 +24,8 @@ test("разбор действия: формы, хвост, адресат; р�
   assert.equal(key("*обнимает*"), "hug");
   assert.equal(key("чмок 😚"), "cheek");
   assert.equal(key("дать пять"), "highfive");
-  assert.deepEqual({ ...parseAction("обняла @Masha_K крепко-крепко"), action: null }, { action: null, tail: "крепко-крепко", mention: "masha_k", asked: false, toMe: false });
-  assert.deepEqual({ ...parseAction("поцелуй меня"), action: null }, { action: null, tail: "", mention: null, asked: true, toMe: true });
+  assert.deepEqual({ ...parseAction("обняла @Masha_K крепко-крепко"), action: null }, { action: null, tail: "крепко-крепко", mention: "masha_k", asked: false, toMe: false, named: false });
+  assert.deepEqual({ ...parseAction("поцелуй меня"), action: null }, { action: null, tail: "", mention: null, asked: true, toMe: true, named: false });
   assert.equal(parseAction("пни его").asked, true);
   // Речь, а не действие.
   for (const text of ["убил бы", "обнять не могу", "похвалить надо", "ударил по больному, да", "побить рекорд", "бью тревогу", "привет как дела", "обнять всех и каждого в этом чате прямо сейчас же"]) {
@@ -322,4 +322,22 @@ test("«мой айди», «айди» ответом на человека, н
   assert.equal(toChat(-10).at(-1).text, "Номер этого чата: -10");
   await h.onMessage(message("айди", { id: OWNER, reply: { message_id: 5, from: { id: OWNER, first_name: "Хозяин" }, forward_origin: { type: "channel", chat: { id: -1001234, title: "Мост" } }, text: "⏰" } }), KEY);
   assert.equal(last(OWNER), "Это переслано из канала «Мост», его номер: -1001234");
+});
+
+test("0.35.0: «кормлю кота», «глажу рубашки», «лечу в Москву», «защитил диплом» — о своём дне, а не действие с ней", async () => {
+  const own = (said) => aboutOwnDay(parseAction(said));
+  for (const said of ["кормлю кота", "глажу рубашки", "лечу в Москву", "лечу зубы", "защитил диплом", "обнял жену", "поцеловал жену", "угощаю друзей", "погладил кота"]) assert.equal(own(said), true, said);
+  // С ней самой: без предмета, с «тебя», с подробностью («по голове», «крепко», «печеньем»).
+  for (const said of ["глажу", "глажу тебя", "глажу по голове", "обнял крепко", "кормлю печеньем", "кормлю тебя печеньем", "целую в щёчку", "лечу тебя", "угощаю чаем", "обними жену"]) assert.equal(own(said), false, said);
+
+  reset();
+  const h = heart({ PHRASES: true, AI_MODELS: [] }, { now: () => Date.parse("2026-11-18T09:00:00Z"), random: () => 0 });
+  // Раньше на это звучало «Ням. Спасибо!» — будто кормят её.
+  const fed = await h.onMessage(message("кормлю кота", { id: 5 }), KEY);
+  assert.equal(fed.action, "phrase");
+  assert.deepEqual(fed.topics, ["звери дома"]);
+  const flight = await h.onMessage(message("лечу в командировку", { id: 5 }), KEY);
+  assert.deepEqual(flight.topics, ["командировка"]);
+  // А действие с ней осталось действием.
+  assert.equal((await h.onMessage(message("глажу по голове", { id: 5 }), KEY)).action, "rp");
 });

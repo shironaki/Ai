@@ -23,7 +23,7 @@ export const INTENTS = Object.freeze([
   "remember", "memories", "forget",
   "profile", "inventory", "relationship", "card",
   "play", "roll", "sister_play", "summon", "news", "sister_news",
-  "no_flirt", "yes_flirt", "no_reactions", "no_night",
+  "no_flirt", "yes_flirt", "no_jealous", "yes_jealous", "no_reactions", "no_night",
   "whyquiet", "not_mine",
   "help", "whoami", "version", "status",
   "teach", "lessons", "unlearn", "judge", "learned", "why_answer",
@@ -226,6 +226,9 @@ export function parseIntent(text) {
   // ── границы ───────────────────────────────────────────────────────────
   if (/^(?:без\s+флирта|не\s+флиртуй(?:\s+со\s+мной)?|хватит\s+флиртовать)$/u.test(value)) return sure("no_flirt");
   if (/^(?:можно\s+(?:флиртовать|флирт|заигрывать)(?:\s+со\s+мной)?|(?:по)?флиртуй\s+со\s+мной|давай\s+(?:по)?флиртовать|можешь\s+(?:со\s+мной\s+)?(?:флиртовать|заигрывать)(?:\s+со\s+мной)?|разрешаю\s+флирт(?:овать)?|верни\s+флирт|с\s+флиртом)$/u.test(value)) return sure("yes_flirt");
+  // Ревность (0.35.0): «не ревнуй» успокаивает на раз (словарь), «без ревности» — выключает совсем.
+  if (/^(?:без\s+ревности|никогда\s+(?:меня\s+|больше\s+)?не\s+ревнуй|не\s+ревнуй\s+(?:меня\s+)?(?:больше\s+)?(?:никогда|совсем|вообще)|больше\s+(?:никогда\s+)?(?:меня\s+)?не\s+ревнуй|перестань\s+(?:меня\s+)?ревновать\s+(?:совсем|навсегда|вообще)|(?:выключи|отключи|убери)\s+ревность)$/u.test(value)) return sure("no_jealous");
+  if (/^(?:можешь\s+(?:меня\s+)?ревновать|можно\s+(?:меня\s+)?ревновать|ревнуй\s+меня|(?:включи|верни)\s+ревность|разрешаю\s+(?:меня\s+)?ревновать|ревнуй\s+на\s+здоровье|с\s+ревностью)$/u.test(value)) return sure("yes_jealous");
   if (/^(?:не\s+реагируй(?:\s+на\s+(?:каждое\s+)?(?:слово|сообщение|все))?|хватит\s+реагировать|не\s+ставь\s+реакции|без\s+реакций)$/u.test(value)) {
     return sure("no_reactions");
   }

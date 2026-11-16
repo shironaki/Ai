@@ -6,7 +6,7 @@
  * в Telegram. Сердце зовёт эти функции из своего порядка разбора и получает
  * либо результат, либо null — «это не моё, иди дальше».
  */
-import { parseAction, lineFor, selfLine, reactionFor, willingness, levelOf, listText, parseEmote, emoteLine, KIND_NAME, dative, ACTIONS as RP_ACTIONS } from "./rp.js";
+import { parseAction, aboutOwnDay, lineFor, selfLine, reactionFor, willingness, levelOf, listText, parseEmote, emoteLine, KIND_NAME, dative, ACTIONS as RP_ACTIONS } from "./rp.js";
 import { parsePoll, pollFromModel } from "./polls.js";
 import { parseWhois, registeredText } from "./whois.js";
 import { safeName } from "./address.js";
@@ -369,6 +369,8 @@ export function createFun({
     if (!parsed) return ownAction(turn, span ? String(prompt).replace(span, " ") : prompt, { self, addressed });
     const target = targetOf(turn, parsed, self);
     const third = target && !target.self ? target : null;
+    // «Кормлю кота», «глажу рубашки», «лечу в Москву» — о своём дне, а не действие с ней: это разговор.
+    if (addressed && !third && aboutOwnDay(parsed)) return null;
     // Между людьми: только изъявительное («обнял»), только с адресатом.
     if (!addressed && (parsed.asked || !third)) return null;
     if (turn.dry) return addressed ? say(turn, "Разобрала бы это как действие — репетиция, ничего не отправляю.") : null;

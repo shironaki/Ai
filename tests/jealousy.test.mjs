@@ -46,6 +46,7 @@ test("чувство: ревнует два часа или до доброго 
   assert.deepEqual(feelOf({ jealous: NOON }, NOON + JEALOUS_MS), { hurt: 0, glad: 0 }, "через два часа отпускает сама");
   assert.deepEqual(feelOf({ jealous: NOON, praise: NOON + 60_000 }, NOON + HOUR), { hurt: 0, glad: NOON + 60_000 }, "доброе слово отпускает — и радует");
   assert.deepEqual(feelOf({ jealous: NOON, soothe: NOON + 60_000 }, NOON + HOUR), { hurt: 0, glad: 0 }, "«не ревнуй» отпускает, но не радует");
+  assert.deepEqual(feelOf({ jealous: NOON, apology: NOON + 60_000 }, NOON + HOUR), { hurt: 0, glad: 0 }, "«прости» отпускает тоже");
   assert.deepEqual(feelOf({ praise: NOON, jealous: NOON + 60_000 }, NOON + HOUR), { hurt: 0, glad: NOON, jealous: NOON + 60_000 }, "прежняя похвала новой ревности не снимает");
   assert.deepEqual(feelOf({ jealous: NOON, rude: NOON + 60_000 }, NOON + HOUR), { hurt: NOON + 60_000, glad: 0, jealous: NOON });
   assert.deepEqual(feelOf({ thanks: NOON }, NOON + HOUR), { hurt: 0, glad: NOON }, "поля «jealous» нет, пока она не ревнует");
@@ -131,4 +132,29 @@ test("не ревнует: к жене и семье, гостя, при все�
   await off.onMessage(own("я спросил у алисы, как варить рис"), KEY);
   assert.equal(bondOf(OWNER)?.last?.jealous, undefined);
   assert.equal(last(OWNER), "Рис варят пятнадцать минут.");
+});
+
+test("«без ревности» выключает её совсем — словом человека; «можешь ревновать» возвращает", async () => {
+  reset();
+  const h = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
+  sdk().fetchQueue.push(says("Рис варят пятнадцать минут."));
+  await h.onMessage(own("я спросил у алисы, как варить рис"), KEY);
+  assert.ok(Number(bondOf(OWNER).last.jealous) > 0);
+  await h.onMessage(own("без ревности"), KEY);
+  assert.equal(last(OWNER), "Хорошо. Ревновать не буду — совсем. Передумаете — скажите «можешь ревновать».");
+  assert.equal(feelOf(bondOf(OWNER).last, NOON + 1000).jealous, undefined, "ревновала — отпустило сразу");
+  // Дальше — обычный разговор: ни чувства, ни строки вдогонку.
+  const before = bondOf(OWNER).last.jealous;
+  sdk().fetchQueue.push(says("Дождя не будет."));
+  await h.onMessage(own("алиса сказала, что будет дождь"), KEY);
+  assert.equal(last(OWNER), "Дождя не будет.");
+  assert.equal(bondOf(OWNER).last.jealous, before);
+  // «Можешь ревновать» — и она снова слышит чужие имена.
+  await h.onMessage(own("можешь ревновать"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин. Тогда я снова слушаю, чьи имена вы называете. Наедине и по-доброму.");
+  const sent = toOwner().length;
+  sdk().fetchQueue.push(says("Понятно."));
+  await h.onMessage(own("спросил у сири дорогу"), KEY);
+  assert.equal(toOwner().length, sent + 2, "ответ и строка вдогонку");
+  assert.ok(bondOf(OWNER).last.jealous > before);
 });

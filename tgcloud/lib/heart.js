@@ -183,12 +183,18 @@ const CARE_TOPICS = Object.freeze({
   "меня никто не понимает": "грустил", "успокой меня": "грустил", "выслушай меня": "грустил",
   "пожелай удачи": "удача", "завтра экзамен": "удача", "не получилось": "неудача", "я ошибся": "неудача",
 });
+/**
+ * Темы словаря, где человек говорит о себе то, что стоит помнить: «у меня двое детей», «у меня есть кот»,
+ * «у меня аллергия на кошек». Словарь отвечает сам, без модели, — а сказанное всё равно идёт в память (0.35.0):
+ * раньше запоминалось только то, на что отвечала модель. Минутное («у меня нет сил») сюда не входит.
+ */
+const FACT_TOPICS = new Set(["у меня дети", "у меня питомец", "у меня есть пара", "у меня нет пары", "аллергия", "удаленка", "ночная смена", "я учу", "я творю", "я на тренировке", "люблю жену"]);
 /** Сколько раз за день она сама запомнила сказанное человеком о себе, и сказала ли об этом. */
 const SELFNOTE_KEY = (userId) => `heart:selfnote:${userId}`;
 const SELFNOTE_DAILY = 3;
 
 /** Темы словаря «где ты, почему долго»: если вопрос человека ждёт в очереди, ответ — о нём. */
-const WAITING_TOPICS = new Set(["ты тут", "ты зависла", "побыстрее", "жду", "пасхалка: где была"]);
+const WAITING_TOPICS = new Set(["ты тут", "ты зависла", "побыстрее", "жду", "пасхалка: где была", "ответь мне", "скажи что-нибудь"]);
 const CORRECTION = /^(?:нет[,.!\s]|неа[,.!\s]|не\s+так|не\s+то[,.!\s]|неправильно|неверно|ты\s+(?:ошиблась|ошибаешься|не\s+права|путаешь|перепутала)|вы\s+(?:ошиблись|ошибаетесь|не\s+правы)|это\s+(?:не\s+так|неправда|неверно|ошибка)|на\s+самом\s+деле|вообще-то|поправлю)/iu;
 /** Она сама призналась, что не знает: вопрос уходит в список «спросить у хозяина». */
 const UNSURE = /(?:^|[\s,])(?:не\s+знаю|не\s+уверена|нет\s+данных|не\s+располагаю|мне\s+неизвестно|не\s+могу\s+сказать\s+точно)(?=$|[\s,.!?:;…)—–-])/iu;
@@ -723,7 +729,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
   /** Что она чувствует к человеку прямо сейчас — по его последним поступкам. Спокойно — пусто. */
   const feltNow = (feel) => (feel?.hurt ? "Сейчас я задета: недавно мне сказали грубое слово. «Прости» или доброе слово это поправит."
-    : feel?.jealous ? "Сейчас я немного ревную: при мне говорили о другой. Доброе слово это поправит."
+    : feel?.jealous ? `Сейчас я немного ревную: ${feel.rival ? `при мне прозвучало имя «${feel.rival}»` : "при мне говорили о другой"}. Доброе слово это поправит.`
       : feel?.glad ? "Сейчас я довольна: недавно мне сказали доброе слово, и оно ещё греет." : "");
   const STAGE_BECAME = Object.freeze({ known: "знакомыми", warm: "приятелями", friend: "друзьями", close: "близкими" });
   /**
@@ -759,7 +765,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const dated = reached.map(([stage, at], index) => `${STAGE_BECAME[stage]}${index ? " —" : " мы стали"} ${feastDay(localParts(at, zoneOf(turn)))}`);
       lines.push(`${dated.join(", ").replace(/^./u, char => char.toUpperCase())}.`);
     }
-    lines.push(feltNow(facts.feel) || (mine ? "Сейчас мне с вами спокойно." : ""));
+    // О ревности — только наедине: при всех особая связь с человеком не звучит.
+    lines.push(feltNow(turn.isPrivate ? facts.feel : { ...facts.feel, jealous: 0 }) || (mine ? "Сейчас мне с вами спокойно." : ""));
     lines.push(mine
       ? "Меня радуют «спасибо» и доброе слово, задевает грубость; а когда вас долго нет — скучаю."
       : `Ближе нас делают дни, когда мы разговариваем, «спасибо», доброе слово и то, чему ${formal ? "вы меня учите" : "ты меня учишь"}; грубость отдаляет.`);
@@ -1379,6 +1386,21 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         return say(turn, saved?.ok
           ? "Хорошо. Флирта не будет — буду говорить тепло, но по-человечески."
           : "Не запомнилось: хранилище не отвечает.");
+      }
+      case "no_jealous": {
+        const saved = await personal.save(actorId, { jealous: false }).catch(() => ({ ok: false }));
+        // Ревновала — отпускает сразу: слово сказано.
+        if (saved?.ok) await bond.mark(actorId, "soothe").catch(() => null);
+        return say(turn, saved?.ok
+          ? `Хорошо. Ревновать не буду — совсем. ${you(turn, "Передумаете — скажите", "Передумаешь — скажи")} «можешь ревновать».`
+          : "Не запомнилось: хранилище не отвечает.");
+      }
+      case "yes_jealous": {
+        const saved = await personal.save(actorId, { jealous: true }).catch(() => ({ ok: false }));
+        return say(turn, !saved?.ok ? "Не запомнилось: хранилище не отвечает."
+          : !JEALOUSY ? "Запомнила. Но ревность у меня сейчас выключена в настройках."
+            : owner(actorId) ? "Хорошо, хозяин. Тогда я снова слушаю, чьи имена вы называете. Наедине и по-доброму."
+              : "Хорошо. Ревную я только наедине и только тех, кто мне близок, — так что посмотрим.");
       }
       case "no_reactions": {
         const saved = await personal.save(actorId, { reactions: false }).catch(() => ({ ok: false }));
@@ -2103,12 +2125,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const tired = await tiredState(turn);
     // Нагрубил — задета, сказал доброе слово — довольна: у каждого человека своё, и у хозяина тоже.
     const felt = await bond.feel(turn.actorId).catch(() => ({ hurt: 0, glad: 0 }));
+    // Ревнует ли она сейчас — отдельно от настроения: усталость и обида его перекрывают, а «не ревнуй» должно сработать.
+    turn.jealous = JEALOUSY && turn.isPrivate === true && turn.manner?.settings?.jealous !== false && Boolean(felt.jealous);
     turn.feel = feelingNow({
       now: now(), timeZone: zoneOf(turn), userId: turn.actorId, gapDays: Number(turn.seen?.gapDays) || 0,
       talks: (Number(day.replies) || 0) + (Number(day.ruled) || 0), limited: Boolean(tired),
       hurt: Boolean(felt.hurt), glad: Boolean(felt.glad),
       // Ревнует она только наедине: при всех особая связь с человеком не звучит.
-      jealous: JEALOUSY && turn.isPrivate === true && Boolean(felt.jealous),
+      jealous: turn.jealous,
     });
     return turn.feel;
   }
@@ -3478,6 +3502,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Человеку плохо, он болеет или идёт на важное дело — она это помнит и на другой день спросит сама.
     const care = sent.ok && turn.isPrivate ? CARE_TOPICS[names.find(name => CARE_TOPICS[name]) ?? ""] : null;
     if (care) await store.set(CARE_KEY(turn.actorId), { kind: care, at: now() }).catch(() => false);
+    // Сказал о себе то, что стоит помнить, — ответил словарь, а в память оно идёт так же, как после ответа модели.
+    const about = sent.ok && turn.isPrivate && !turn.dry && names.some(name => FACT_TOPICS.has(name)) ? selfStatement(prompt) : null;
+    if (about) await keepSelf(turn, about).catch(() => null);
     return { ...sent, action: "phrase", topics: names };
   }
 
@@ -5396,7 +5423,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Ревность (0.35.0): хозяин — или близкий, с кем можно флиртовать, — наедине говорит о другой: о чужой
     // помощнице или о другой девушке. Она это запоминает и немного ревнует: одна строка после ответа,
     // дальше — тон и строки [ревнует]. К жене и семье — никогда: это решает разбор. Доброе слово отпускает.
-    if (JEALOUSY && turn.isPrivate && (owner(actorId) || (flirtOk(turn) && levelOf(turn.manner?.score) === "close"))) {
+    // «Без ревности» — слово человека: не ревнует совсем, пока он не скажет «можешь ревновать».
+    if (JEALOUSY && turn.isPrivate && turn.manner?.settings?.jealous !== false && (owner(actorId) || (flirtOk(turn) && levelOf(turn.manner?.score) === "close"))) {
       const rival = rivalOf(prompt);
       if (rival) {
         const felt = await bond.mark(actorId, "jealous", rival.name).catch(() => null);
@@ -5407,7 +5435,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
             (turn.after ??= []).push((PHRASES ? book.pick(`+ревность:${rival.kind}`, voiceCtx(turn, rival.name ? { "кто": rival.name } : {})) : null) ?? "…Так. Я это запомнила.");
           }
         }
-      } else if (turn.feel?.mood === "ревнивое" && calmsJealousy(prompt)) melted(await bond.mark(actorId, "soothe").catch(() => null));
+      } else if (turn.jealous && calmsJealousy(prompt)) melted(await bond.mark(actorId, "soothe").catch(() => null));
     }
 
     // Поправка считается, только если она к её недавнему ответу.
@@ -6964,7 +6992,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const who = deskLabel(ask);
     if (!allow) {
       try { await api.sendMessage({ chat_id: ask.id, text: "Хозяин не разрешил: секретарём у вас я не работаю. Ваши чаты я не читаю и в них не отвечаю; подключение можно снять в настройках Telegram." }); } catch { /* сказать некуда */ }
-      return `Хорошо, хозяин: отказано — ${who}. Те чаты я не читаю.`;
+      return `Хорошо, хозяин: отказано — ${who}. Те чаты я не читаю. Передумаете — пусть этот человек подключит меня у себя заново, а вы скажите «разреши секретаря».`;
     }
     const desk = guestDesk(ask.id);
     await store.remove(`${ALIEN_PREFIX}${ask.conn}`).catch(() => false);
@@ -7219,7 +7247,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   /**
    * «Оформи профиль»: она сама ставит себе строку «О себе» и описание — то, что человек видит
    * до первого слова. Платформа не дала или Telegram отказал — отдаёт слова, чтобы вставить руками.
-   * Картинку стартовой страницы ставит только человек: такого метода у ботов нет.
+   * Картинку стартовой страницы ставит человек — в настройках бота: метода для неё она не знает.
    */
   async function profileWords(turn, wish) {
     if (turn.dry) return say(turn, "Разобрала бы это как слова о профиле — репетиция.");

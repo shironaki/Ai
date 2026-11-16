@@ -335,3 +335,18 @@ test("вопросы о её характере и чувствах ведут �
   await h.onMessage(message("успокой меня"), KEY);
   assert.equal(JSON.parse(sdk().kv.get("heart:care:5")).kind, "грустил");
 });
+
+test("0.35.0: сказал о себе, а ответил словарь — в память идёт так же: «у меня двое детей», «у меня аллергия на кошек»; минутное — нет", async () => {
+  reset();
+  const h = heart({ PHRASES: true, AI_MODELS: [] }, { now: () => NOON, random: () => 0 });
+  const kids = await h.onMessage(message("у меня двое детей"), KEY);
+  assert.deepEqual([kids.action, kids.topics], ["phrase", ["у меня дети"]], "ответил словарь, модель не тратилась");
+  assert.equal(reactions().at(-1), "✍");
+  await h.onMessage(message("у меня аллергия на кошек"), KEY);
+  // Минутное состояние — не сведение о человеке: «у меня нет сил» в память не идёт.
+  await h.onMessage(message("у меня нет сил"), KEY);
+  await h.onMessage(message("что ты обо мне помнишь"), KEY);
+  assert.match(last(), /у меня двое детей/u);
+  assert.match(last(), /у меня аллергия на кошек/u);
+  assert.doesNotMatch(last(), /нет сил/u);
+});
