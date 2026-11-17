@@ -4,11 +4,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { heart, message, group, reset, last, chats, says, sdk, request, system, OWNER, KEY, DAY } from "./fixtures/kit.mjs";
 
-const { createPhrasebook, parseCatalogue, expandTrigger, fill, partOfDay, TAGS } = await import("../tgcloud/lib/phrasebook.js");
-const { SECTIONS } = await import("../tgcloud/lib/data/phrases.js");
-const { build, sameText, SOURCE, TARGET } = await import("../scripts/phrases.mjs");
+const { createPhrasebook, parseCatalogue, expandTrigger, fill, partOfDay, TAGS, SECTIONS } = await import("../tgcloud/lib/phrasebook.js");
+const { build, fresh, sameText, SOURCE, PARTS: FILES, DIRECTORY } = await import("../scripts/phrases.mjs");
 
 const ON = { PHRASES: true };
 const NOON = Date.parse("2026-11-18T09:00:00Z"); // среда, 12:00 по Москве
@@ -20,8 +20,14 @@ const VARS = { "настроение": "бодрое", "причина": "утр
   "намаз": "магриб", "намаза": "магриба", "время": "16:47", "через": "через 10 мин" };
 
 test("документ: собранный словарь свежий, тем и фраз много, ошибок нет", () => {
-  assert.ok(sameText(build(readFileSync(SOURCE, "utf8")), readFileSync(TARGET, "utf8")), "PHRASES.txt изменён — запустите «npm run phrases»");
+  assert.ok(fresh(readFileSync(SOURCE, "utf8")), "PHRASES.txt изменён — запустите «npm run phrases»");
   assert.ok(sameText("а\r\nб", "а\nб"), "перевод строки Windows — не расхождение");
+  // Словарь лежит двумя модулями (облако принимает код одним запросом): половины близки по весу, а вместе — весь документ по порядку.
+  const made = build(readFileSync(SOURCE, "utf8"));
+  assert.deepEqual(Object.keys(made), [...FILES]);
+  const sizes = FILES.map(name => Buffer.byteLength(readFileSync(join(DIRECTORY, name), "utf8")));
+  assert.ok(Math.abs(sizes[0] - sizes[1]) < 20_000, `половины словаря: ${sizes.join(" и ")} байт`);
+  assert.deepEqual(SECTIONS.map(section => section.n), parseCatalogue(readFileSync(SOURCE, "utf8")).sections.map(section => section.n));
   const stats = book.stats();
   assert.ok(stats.sections >= 130, `тем: ${stats.sections}`);
   assert.ok(stats.lines >= 850, `фраз: ${stats.lines}`);

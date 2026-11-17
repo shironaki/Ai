@@ -2,7 +2,8 @@
  * Словарный запас: разговор без модели.
  *
  * Фразы лежат в текстовом документе PHRASES.txt в корне проекта; из него
- * командой «npm run phrases» собирается data/phrases.js — его и читает сердце.
+ * командой «npm run phrases» собираются data/phrases-1.js и data/phrases-2.js —
+ * их и читает сердце. Модулей два, чтобы ни один не был слишком тяжёл для облака.
  * Модель на «привет», «как дела» и «какой твой любимый цвет» не тратится:
  * реплика узнаётся целиком, ответ берётся из каталога.
  *
@@ -11,11 +12,15 @@
  * модели; ошибка в сторону «не узнала» стоит одного запроса, ошибка в сторону
  * «узнала не то» стоит доверия.
  */
-import { SECTIONS } from "./data/phrases.js";
+import { PART as FIRST } from "./data/phrases-1.js";
+import { PART as SECOND } from "./data/phrases-2.js";
 import { EXCLUSIVES, clean } from "./catalogue.js";
 import { plainWords, squeezed } from "./slang.js";
 
 export { TAGS, parseCatalogue, expandTrigger } from "./catalogue.js";
+
+/** Весь словарь: темы в порядке документа. */
+export const SECTIONS = Object.freeze([...FIRST, ...SECOND]);
 
 const LEAD = /^(?:ну|а|и|о|ой|эй|слушай|слушайте|кстати|так|ладно|блин|хм|эх|ах|вот|давай|скажи|скажите|ответь|ответьте|расскажи|расскажите)\s+(?=\S)/u;
 const TRAIL = /\s+(?:пожалуйста|плиз|пж|а|же|то|ж|вообще|сейчас|сегодня|там|мне|нам|ка|если не секрет|интересно)$/u;

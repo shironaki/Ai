@@ -797,5 +797,8 @@ test("публикация: секреты вписываются одним с�
   assert.match(workflow, /needs: tests\n[\s\S]*Rehearse in the cloud before publishing[\s\S]*name: Publish\n/, "публикации предшествуют тесты и репетиция в облаке");
   assert.match(workflow, /--ctx '\{ tick: true, deployed: true \}'/, "после публикации сердце будят");
   assert.equal((workflow.match(/node scripts\/inject-secrets\.mjs/g) ?? []).length, 2, "секреты вписывает один скрипт — и для публикации, и для будильника");
+  // Кнопка шлёт в облако тот же облегчённый код, что и телефон: в каждой работе, которая его отправляет, и до ключей.
+  assert.equal((workflow.match(/run: node scripts\/slim\.mjs --here\n/g) ?? []).length, 3, "проверка, публикация и будильник — без комментариев");
+  assert.match(workflow, /node scripts\/slim\.mjs --here\n[\s\S]*node scripts\/inject-secrets\.mjs --require-key/, "сначала облегчение, потом ключи");
   assert.equal((workflow.match(/git checkout -- tgcloud\/lib\/secrets\.js/g) ?? []).length, 2, "и оба раза слоты возвращаются пустыми");
 });

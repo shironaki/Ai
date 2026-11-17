@@ -48,6 +48,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # В облако код уходит без комментариев: инструмент шлёт его весь одним
+      # запросом, а слишком тяжёлый запрос облако обрывает (17.11.2026). Копия
+      # здесь одноразовая, поэтому правится на месте. То же делает телефон.
+      - name: Strip comments from the code that goes to the cloud
+        run: node scripts/slim.mjs --here
       - name: Run /start in a no-side-effects context
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
@@ -97,6 +102,11 @@ jobs:
           if [ -z "$TGCLOUD_TOKEN" ]; then
             echo "::error::Add the heart Serverless CLI token as secret TGCLOUD_HEART_TOKEN."; exit 1
           fi
+      # В облако код уходит без комментариев: инструмент шлёт его весь одним
+      # запросом, а слишком тяжёлый запрос облако обрывает (17.11.2026). Копия
+      # здесь одноразовая, поэтому правится на месте. То же делает телефон.
+      - name: Strip comments from the code that goes to the cloud
+        run: node scripts/slim.mjs --here
       # The provider key travels into the deployed module: this platform has no
       # environment variables. The owner's ID is a fallback for config.js, and
       # AI_EXTRA_KEYS ({"name":"key"} for spare providers) is optional.
@@ -189,6 +199,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # В облако код уходит без комментариев: инструмент шлёт его весь одним
+      # запросом, а слишком тяжёлый запрос облако обрывает (17.11.2026). Копия
+      # здесь одноразовая, поэтому правится на месте. То же делает телефон.
+      - name: Strip comments from the code that goes to the cloud
+        run: node scripts/slim.mjs --here
       # Такой запуск исполняет код из этой копии, поэтому ему нужны те же
       # ключи, что и публикации. Нет ключа — сердце проснётся, напомнит и
       # досчитает, но отложенные ответы подождут.

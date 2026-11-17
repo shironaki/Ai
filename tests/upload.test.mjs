@@ -1,0 +1,159 @@
+/**
+ * Вес того, что уходит в облако, и облегчение кода перед отправкой (`scripts/slim.mjs`).
+ *
+ * 17.11.2026 сборки 0.36.0–0.36.2 не опубликовались: инструмент шлёт на репетицию весь код
+ * одним запросом, запрос перешёл за три миллиона байт (0.35.1 — 2 933 903, 0.36.0 — 3 008 694),
+ * и облако обрывало передачу. Телефон узнал об этом раньше агента. Здесь — сторож: вес считается
+ * так же, как его собирает инструмент, и тест падает задолго до предела.
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const { slim, sameProgram, modules, runBody, KEPT } = await import("../scripts/slim.mjs");
+
+/**
+ * Пределы — не «сколько берёт облако» (этого никто не сказал), а «сколько заведомо проходило»:
+ * сборка 0.35.1 опубликована 16.11.2026 с запросом в 2 933 903 байта, самые тяжёлые её модули —
+ * 708 254 и 650 669 байт (`git show origin/main`, посчитано `scripts/slim.mjs --size` и `git cat-file -s`).
+ * Пределы стоят ниже этих чисел с запасом. Тест упал — не поднимать предел, а облегчать код:
+ * следующие рычаги записаны в docs/IDEAS.md («Вес кода для облака»).
+ */
+const BODY_LIMIT = 2_800_000;
+const MODULE_LIMIT = 640_000;
+
+test("облегчение: комментарии уходят, а строки, шаблоны и регулярные выражения с «//» и «/*» — нет", () => {
+  const source = [
+    "/**",
+    " * Шапка модуля.",
+    " */",
+    "const url = \"https://example.org/a//b\"; // хвостовой комментарий",
+    "const text = `строка один // не комментарий",
+    "  /* и это не комментарий */ ${ /* а это комментарий */ url } конец`;",
+    "const pattern = /\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\//gu; // выражение, которое само ищет комментарии",
+    "const slash = /[/*]+/u.test(\"/* не комментарий */\") ? 6 / 3 / 1 : 0;",
+    "  // комментарий с отступом",
+    "export const value = url + text + pattern.source + slash /* посреди строки */ + '// и не это';",
+    "",
+  ].join("\n");
+  const out = slim(source);
+  assert.equal(out.split("\n").length, source.split("\n").length, "номера строк сохраняются");
+  for (const gone of ["Шапка модуля", "хвостовой комментарий", "а это комментарий", "выражение, которое само", "комментарий с отступом", "посреди строки"]) assert.ok(!out.includes(gone), gone);
+  for (const kept of ["\"https://example.org/a//b\"", "строка один // не комментарий", "/* и это не комментарий */", "/\\/\\/[^\\n]*|\\/\\*[\\s\\S]*?\\*\\//gu", "\"/* не комментарий */\"", "'// и не это'", "6 / 3 / 1"]) assert.ok(out.includes(kept), kept);
+  assert.equal(out.split("\n")[3], "const url = \"https://example.org/a//b\";", "пробелы перед убранным комментарием уходят вместе с ним");
+  assert.equal(slim(out), out, "облегчённое второй раз не меняется");
+  assert.ok(sameProgram(source, out));
+});
+
+test("облегчение: соседние слова не склеиваются, перенос строки не теряется — программа та же", () => {
+  // Комментарий между словами без пробелов: без него «a» и «in» слились бы в одно имя.
+  assert.equal(slim("const a = 1; const b = { a: 2 }; export default (\"a\"/**/in/**/b) && a;\n"), "const a = 1; const b = { a: 2 }; export default (\"a\" in b) && a;\n");
+  // Перенос строки внутри комментария кончает оператор «return»: убрать его — получить другую программу.
+  const asi = "export function f() {\n  return /* объяснение\n  на две строки */ 1;\n}\n";
+  assert.equal(slim(asi), "export function f() {\n  return\n 1;\n}\n");
+  // Сверка ловит и то, и другое: лексемы те же, а перенос пропал — уже не та программа.
+  assert.equal(sameProgram("let a = 1\n++a\n", "let a = 1\n\n\n++a\n"), true, "пустые строки программу не меняют");
+  assert.equal(sameProgram("let a = 1; let b = a\n/ 2\n", "let a = 1; let b = a / 2\n"), false, "перенос между лексемами — часть программы");
+  assert.equal(sameProgram("const a = 1; // c\n", "const a = 1; // c\n"), false, "комментарий остался — не облегчено");
+  assert.equal(sameProgram("const a = 1;\n", "const a = 2;\n"), false);
+  assert.throws(() => slim("const a = ;"), /Unexpected token/u, "нечитаемый код не трогается");
+});
+
+test("облегчение: каждый модуль проекта читается, облегчается и остаётся той же программой", () => {
+  const paths = modules(ROOT);
+  assert.ok(paths.includes("handlers/message.js") && paths.includes("lib/heart.js") && paths.includes("schema.js"));
+  assert.ok(paths.includes("lib/data/phrases-1.js") && paths.includes("lib/data/phrases-2.js"), "словарь — двумя модулями");
+  assert.ok(!paths.includes("lib/data/phrases.js"), "прежнего единого модуля словаря нет");
+  const heart = readFileSync(join(ROOT, "tgcloud/lib/heart.js"), "utf8"), light = slim(heart);
+  assert.equal(light.split("\n").length, heart.split("\n").length);
+  assert.match(light, /^export const BUILD = "\d+\.\d+\.\d+";$/mu);
+  assert.ok(sameProgram(heart, light), "та же программа, и комментариев в ней не осталось");
+  assert.ok(!light.includes("Сборка сердца. Её видно в /status"), "комментарий над номером сборки ушёл");
+  assert.ok(Buffer.byteLength(light) < Buffer.byteLength(heart) * 0.85, "сердце легче хотя бы на седьмую часть");
+});
+
+test("сторож веса: запрос репетиции и каждый модуль — под пределом, который заведомо проходил", () => {
+  // Один проход по коду: на телефоне этот тест идёт перед каждой публикацией.
+  const light = {};
+  let before = 0, after = 0;
+  for (const path of modules(ROOT)) {
+    const text = readFileSync(join(ROOT, "tgcloud", path), "utf8");
+    light[path] = KEPT.includes(path) ? text : slim(text);
+    before += Buffer.byteLength(text);
+    after += Buffer.byteLength(light[path]);
+    assert.ok(Buffer.byteLength(light[path]) <= MODULE_LIMIT, `${path}: ${Buffer.byteLength(light[path])} байт после облегчения — больше ${MODULE_LIMIT}. Разделите модуль`);
+  }
+  const body = runBody(light);
+  assert.ok(after < before * 0.9, `комментарии — заметная часть кода: ${before} → ${after} байт`);
+  assert.ok(body <= BODY_LIMIT, `в облако одним запросом уходит ${body} байт — больше ${BODY_LIMIT}. Облегчайте код (docs/IDEAS.md, «Вес кода для облака»), предел не поднимать`);
+  assert.ok(body > 1_000_000, "счёт не пустой: в запросе весь код");
+  // Сам счёт: тело — карта «модуль без .js → текст» одним JSON, как у `tgcloud run`.
+  assert.equal(runBody({ "handlers/message.js": "export default 1;\n" }), Buffer.byteLength("{\"module\":\"handlers/message\",\"sources\":{\"handlers/message\":\"export default 1;\\n\"},\"args\":{\"chat\":{\"id\":1,\"type\":\"private\"},\"from\":{\"id\":1},\"text\":\"/start\"},\"ctx\":{\"testRun\":true}}"));
+});
+
+test("скрипт облегчения: в копии для облака — правит файлы; в репозитории — отказывается; «--size» — только считает", () => {
+  const dir = mkdtempSync(join(tmpdir(), "heart-slim-"));
+  try {
+    mkdirSync(join(dir, "tgcloud/handlers"), { recursive: true });
+    mkdirSync(join(dir, "tgcloud/lib/data"), { recursive: true });
+    mkdirSync(join(dir, "tgcloud/static"), { recursive: true });
+    writeFileSync(join(dir, "tgcloud/schema.js"), "// схема\nexport default {};\n");
+    writeFileSync(join(dir, "tgcloud/lib/heart.js"), "// сердце\nexport const BUILD = \"1.0.0\";\n");
+    writeFileSync(join(dir, "tgcloud/handlers/message.js"), "/** Обработчик. */\nexport default async function () { return 1; } // хвост\n");
+    writeFileSync(join(dir, "tgcloud/lib/data/table.js"), "export const TABLE = [\"// не комментарий\"];\n");
+    writeFileSync(join(dir, "tgcloud/static/page.js"), "// не модуль проекта: инструмент его не берёт\n");
+    const script = join(ROOT, "scripts/slim.mjs");
+    const run = (...args) => spawnSync(process.execPath, [script, ...args], { cwd: dir, encoding: "utf8" });
+
+    const sized = run("--size");
+    assert.equal(sized.status, 0, sized.stderr);
+    assert.match(readFileSync(join(dir, "tgcloud/lib/heart.js"), "utf8"), /сердце/u, "«--size» ничего не меняет");
+    const before = JSON.parse(sized.stdout);
+    assert.equal(before.files, 4);
+
+    const done = run();
+    assert.equal(done.status, 0, done.stderr);
+    assert.deepEqual(JSON.parse(done.stdout), before);
+    assert.equal(readFileSync(join(dir, "tgcloud/lib/heart.js"), "utf8"), "\nexport const BUILD = \"1.0.0\";\n");
+    assert.equal(readFileSync(join(dir, "tgcloud/handlers/message.js"), "utf8"), "\nexport default async function () { return 1; }\n");
+    // Схема базы не облегчается: её текст платформа сравнивает с прежним.
+    assert.deepEqual([...KEPT], ["schema.js"]);
+    assert.equal(readFileSync(join(dir, "tgcloud/schema.js"), "utf8"), "// схема\nexport default {};\n");
+    assert.equal(readFileSync(join(dir, "tgcloud/lib/data/table.js"), "utf8"), "export const TABLE = [\"// не комментарий\"];\n");
+    assert.match(readFileSync(join(dir, "tgcloud/static/page.js"), "utf8"), /не модуль проекта/u);
+    assert.ok(before.after < before.before && before.body < before.bodyBefore);
+
+    // Один нечитаемый модуль — и не тронут ни один: пишется всё или ничего.
+    writeFileSync(join(dir, "tgcloud/lib/heart.js"), "// снова сердце\nexport const BUILD = \"1.0.1\";\n");
+    writeFileSync(join(dir, "tgcloud/lib/broken.js"), "export const = 1;\n");
+    const failed = run();
+    assert.equal(failed.status, 1);
+    assert.match(failed.stderr, /Облегчить код не вышло: lib\/broken\.js: /u);
+    assert.match(readFileSync(join(dir, "tgcloud/lib/heart.js"), "utf8"), /снова сердце/u);
+
+    // В папке с .git — это не копия, а сам репозиторий: комментарии там нужны.
+    rmSync(join(dir, "tgcloud/lib/broken.js"));
+    mkdirSync(join(dir, ".git"));
+    const inRepo = run();
+    assert.equal(inRepo.status, 1);
+    assert.match(inRepo.stderr, /здесь репозиторий/u);
+    assert.match(readFileSync(join(dir, "tgcloud/lib/heart.js"), "utf8"), /снова сердце/u, "в репозитории комментарии остаются");
+    assert.equal(run("--size").status, 0, "а посчитать вес можно и там");
+    // Одноразовая копия (кнопка в GitHub Actions) — папка с .git, но беречь в ней нечего.
+    assert.equal(run("--here").status, 0);
+    assert.equal(readFileSync(join(dir, "tgcloud/lib/heart.js"), "utf8"), "\nexport const BUILD = \"1.0.1\";\n");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("разборщик JavaScript, лежащий рядом со скриптом, — тот самый файл: acorn 8.19.0, без правок", () => {
+  // Сумма — от файла dist/acorn.mjs из пакета acorn@8.19.0 (registry.npmjs.org), снята при добавлении.
+  const sum = createHash("sha256").update(readFileSync(join(ROOT, "scripts/vendor/acorn.mjs"))).digest("hex");
+  assert.equal(sum, "76254fc76529713b4dfd2532972d17a991ffd9aafeebb1f977445b5506b9fb0b");
+  assert.match(readFileSync(join(ROOT, "scripts/vendor/acorn.LICENSE"), "utf8"), /^MIT License/u);
+});
