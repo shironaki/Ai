@@ -8,7 +8,7 @@ import { createAbilities, matchPhrase, BUS_PREFIX } from "./abilities.js";
 import { createEvents } from "./events.js";
 import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
-import { createPersonal, addressRequest, introRequest, addressDrop, lengthRequest, formRequest, nameReply, ASKS_NAME } from "./personal.js";
+import { createPersonal, addressRequest, introRequest, addressDrop, lengthRequest, formRequest, nameReply, nameQuestion, ASKS_NAME } from "./personal.js";
 import { createMemory } from "./memory.js";
 import { parseIntent, normalize, ABILITY_OF, INTENTS } from "./intents.js";
 import { parseSkillAsk, findSkill, shown as skillShown, skillsList, skillText } from "./skills.js";
@@ -3420,7 +3420,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try {
       return Boolean((PHRASES && book.match(text)) || isLaugh(text) || ackOnly(text) || THANKS_ONLY.test(plainWords(text))
         || parseIntent(text) || matchPhrase(text) || parseSecretary(text) || parseTeach(text) || parsePropose(text)
-        || introRequest(text) || addressDrop(text) || addressRequest(text) || lengthRequest(text) || formRequest(text));
+        || introRequest(text) || addressDrop(text) || addressRequest(text) || lengthRequest(text) || formRequest(text) || nameQuestion(text));
     } catch { return false; }
   }
   /**
@@ -7937,6 +7937,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           `Хорошо, ${had ? "больше так не буду" : "не буду"}. Как тебя звать? Скажи: «зови меня …».`)));
       }
       const wanted = addressRequest(prompt);
+      // «Зови меня хозяин» — это слово занято: хозяин у неё один (0.36.1). Самому хозяину менять нечего.
+      if (wanted && /^(?:мо[йя]\s+)?(?:хозяин|хозяйка|владелец|владелица|создатель|господин|госпожа|повелитель|повелительница)$/iu.test(wanted)) {
+        return ruled(await say(turn, owner(actorId)
+          ? "Я и так зову вас хозяином. Другого слова для вас у меня нет."
+          : you(turn, "Хозяин у меня один, и это слово — его. Назовите имя: «зови меня …» — буду звать по имени.", "Хозяин у меня один, и это слово — его. Назови имя: «зови меня …» — буду звать по имени.")));
+      }
       if (wanted) {
         const saved = await personal.setAddress(actorId, wanted).catch(() => ({ ok: false }));
         return ruled(await say(turn, saved.ok
@@ -7950,6 +7956,21 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ? `Договорились, отвечаю ${({ кратко: "коротко", обычно: "обычно", подробно: "подробно" })[length]}.`
           : "Не запомнилось — повторю попытку в следующий раз."));
       }
+    }
+    // «Как меня зовут?», «зови меня по имени» — отвечает тем, что человек сам сказал о себе (0.36.1): раньше это
+    // доставалось модели, а «зови меня по имени» она понимала как имя «по имени».
+    const whoAsk = dry || teaching ? null : nameQuestion(prompt);
+    if (whoAsk) {
+      const called = String(turn.manner?.settings?.address ?? "").trim();
+      const teach = you(turn, "Скажите «меня зовут …» — запомню.", "Скажи «меня зовут …» — запомню.");
+      // «Хозяин» звучит только наедине: при всех он — человек с именем, как остальные.
+      if (owner(actorId) && turn.isPrivate) {
+        return ruled(await say(turn, called ? (whoAsk === "by" ? `Хорошо, хозяин. По имени — ${called}.` : `Вы — мой хозяин. А по имени — ${called}.`) : `Вы — мой хозяин. Имени вы мне не называли. ${teach}`));
+      }
+      if (called) return ruled(await say(turn, whoAsk === "by" ? `Так и зову: ${called}.` : you(turn, `${called}. Так вы просили вас называть.`, `${called}. Так я тебя и зову.`)));
+      return ruled(await say(turn, turn.name
+        ? you(turn, `В Telegram вы — ${turn.name}. А как вас звать? ${teach}`, `В Telegram ты — ${turn.name}. А как тебя звать? ${teach}`)
+        : you(turn, `Имени вы мне не называли. ${teach}`, `Имени ты мне не называл. ${teach}`)));
     }
     // «Давай на ты» — просьба о форме обращения, её можно сказать где угодно.
     const form = dry ? null : formRequest(prompt);

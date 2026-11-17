@@ -309,3 +309,69 @@ test("словарь: её назвали чужим именем («алиса 
   await h.onMessage(group("Аи, алиса давай"), KEY);
   assert.equal(chats().length, 0);
 });
+
+test("«как меня зовут?» — её ответ, а не догадка модели: имя, которое человек назвал сам; хозяину — «хозяин» наедине, имя — при всех", async () => {
+  const { nameQuestion, addressRequest } = await import("../tgcloud/lib/personal.js");
+  for (const said of ["как меня зовут?", "А как меня зовут", "ты помнишь, как меня зовут?", "ты знаешь моё имя?", "как ты меня называешь", "кто я?", "ты знаешь, кто я", "назови моё имя"]) assert.equal(nameQuestion(said), "who", said);
+  for (const said of ["зови меня по имени", "называй меня просто по имени", "обращайся ко мне по имени"]) assert.equal(nameQuestion(said), "by", said);
+  for (const said of ["кто я для тебя", "как меня зовут друзья знаешь", "как зовут твою сестру", "кто я такой чтобы судить", "как тебя зовут"]) assert.equal(nameQuestion(said), null, said);
+  // «Зови меня по имени» раньше становилось именем «по имени».
+  for (const said of ["зови меня по имени", "называй меня как хочешь", "зови меня по-другому"]) assert.equal(addressRequest(said), null, said);
+  assert.equal(addressRequest("зови меня Али"), "Али");
+
+  reset();
+  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  await h.onMessage(message("как меня зовут?"), KEY);
+  assert.equal(last(), "В Telegram вы — Тест. А как вас звать? Скажите «меня зовут …» — запомню.");
+  // Её ответ сам спрашивает имя — и слово следом становится именем.
+  const waited = JSON.parse(sdk().kv.get("heart:askname:5"));
+  await h.onMessage({ message_id: waited.mid + 1, chat: { id: 5, type: "private" }, from: { id: 5, first_name: "Тест", is_bot: false }, text: "Айдина" }, KEY);
+  assert.equal(last(), "Приятно познакомиться, Айдина. Так и буду к вам обращаться.");
+  await h.onMessage(message("ты помнишь, как меня зовут?"), KEY);
+  assert.equal(last(), "Айдина. Так вы просили вас называть.");
+  await h.onMessage(message("зови меня по имени"), KEY);
+  assert.equal(last(), "Так и зову: Айдина.");
+  // Хозяин: наедине — «хозяин»; при всех это слово не звучит.
+  await h.onMessage(own("как меня зовут"), KEY);
+  assert.equal(last(OWNER), "Вы — мой хозяин. Имени вы мне не называли. Скажите «меня зовут …» — запомню.");
+  await h.onMessage(own("меня зовут Али"), KEY);
+  await h.onMessage(own("кто я?"), KEY);
+  assert.equal(last(OWNER), "Вы — мой хозяин. А по имени — Али.");
+  const before = sdk().sent.length;
+  await h.onMessage(group("Аи, как меня зовут?", { id: OWNER }), KEY);
+  assert.equal(sdk().sent.at(-1).text, "Али. Так вы просили вас называть.");
+  assert.equal(sdk().sent.length, before + 1);
+  // «Хозяин» — слово занятое: гостю оно не достаётся, хозяину менять нечего.
+  await h.onMessage(message("зови меня хозяин"), KEY);
+  assert.equal(last(), "Хозяин у меня один, и это слово — его. Назовите имя: «зови меня …» — буду звать по имени.");
+  assert.equal(JSON.parse(sdk().kv.get("heart:style:5")).address, "Айдина", "обращение не тронуто");
+  await h.onMessage(own("зови меня хозяин"), KEY);
+  assert.equal(last(OWNER), "Я и так зову вас хозяином. Другого слова для вас у меня нет.");
+  assert.equal(chats().length, 0);
+});
+
+test("память теми словами, какими спрашивают: «что ты знаешь обо мне», «покажи память», «сотри память», «не запоминай это»", async () => {
+  const { parseIntent } = await import("../tgcloud/lib/intents.js");
+  const { parseAsked } = await import("../tgcloud/lib/asked.js");
+  for (const said of ["что ты знаешь обо мне", "что ты помнишь про меня", "что обо мне помнишь", "покажи память", "покажи мои записи", "что ты запомнила", "покажи, что помнишь"]) assert.equal(parseIntent(said)?.intent, "memories", said);
+  for (const said of ["сотри память", "очисти память", "обнули память", "сбрось всю память"]) assert.deepEqual(parseIntent(said)?.arg, { mode: "all" }, said);
+  for (const said of ["не запоминай это", "не запоминай", "это не запоминай", "не надо это запоминать", "не записывай это"]) assert.deepEqual(parseIntent(said)?.arg, { mode: "last" }, said);
+  assert.equal(parseIntent("не запоминай чат"), null, "это слово админа о памяти чата — не о записях человека");
+  for (const said of ["что ты не знаешь?", "чего не знаешь", "чего ты не знала?"]) assert.deepEqual(parseAsked(said), { list: true }, said);
+
+  reset();
+  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  await h.onMessage(message("запомни: я люблю чай"), KEY);
+  await h.onMessage(message("что ты знаешь обо мне?"), KEY);
+  assert.match(last(), /я люблю чай/u);
+  await h.onMessage(message("не запоминай это"), KEY);
+  assert.equal(last(), "Забыла последнее: «я люблю чай». Осталось 0.");
+  assert.equal(chats().length, 0);
+});
+
+test("словарь: кто дал ей имя, нравится ли оно ей, «буду звать тебя Луна» — имя остаётся её", () => {
+  assert.deepEqual(book.match("кто дал тебе имя?"), ["кто дал тебе имя"]);
+  assert.deepEqual(book.match("тебе нравится твоё имя?"), ["тебе нравится твое имя"]);
+  for (const said of ["буду звать тебя Луна", "можно я буду называть тебя Солнышко", "твоё новое имя Ася", "назову тебя Звёздочка"]) assert.deepEqual(book.match(said), ["дам тебе имя"], said);
+  assert.deepEqual(book.match("как мне тебя называть"), ["как тебя зовут"]);
+});
