@@ -130,11 +130,11 @@ bash scripts/phone.sh
 
 0. **Сначала — та ли сборка.** «Какая версия» должна ответить 0.36.2. Отвечает
    0.35.1 — исправления до бота не дошли: телефон следит за другой веткой.
-   17.11.2026 так и было. Остановить скрипт (Ctrl+C) и в папке с Аи выполнить
-   одной строкой:
+   17.11.2026 так и было. Остановить скрипт (Ctrl+C) и выполнить одной
+   строкой:
 
    ```
-   sed -i '/^HEART_BRANCH=/d' ~/.heart.env; printf '\nHEART_BRANCH=arena/4d5d41a1-ai\n' >> ~/.heart.env; bash scripts/phone.sh
+   sed -i '/^HEART_BRANCH=/d' ~/.heart.env; printf '\nHEART_BRANCH=arena/4d5d41a1-ai\n' >> ~/.heart.env; cd ~/Ai && bash scripts/phone.sh
    ```
 
    Скрипт сам возьмёт новую сборку и пришлёт «🤍 Хозяин, я обновилась: …».
