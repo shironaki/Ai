@@ -139,19 +139,21 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.36.0";
+export const BUILD = "0.36.1";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.36.0 — понимаю, как пишут в чате: «чо делаеш», «кд», «спс», «привееет», «го встр» читаю как обычные слова; опечатки и сокращения больше не нужно выписывать в словарь по одной",
+  "0.36.1 — список «что ты не поняла?» стал правдой на сегодня: перед показом я проверяю каждую реплику собой нынешней и убираю то, что уже понимаю; продолжения разговора и вопросы на знание в него больше не ложатся",
+  "«забудь непонятное», «очисти список», «что не понятно?» — понимаю так, как это пишут; «забудь всё» сразу после списка чистит список, а не память",
+  "«предложи ответы» больше не предлагает эхо и «чем могу помочь»; отказаться — «не беру»; учить можно без кавычек — с двоеточием: на привет отвечай: здравствуй",
+  "спросила «как вас зовут?» — и ответ одним словом («Айдина», «просто Айдина») принимаю как имя; на «как меня зовут?» отвечаю сама; слово «хозяин» чужим не отдаю",
+  "с 0.36.0: понимаю, как пишут в чате, — «чо делаеш», «кд», «спс», «привееет», «го встр» читаю как обычные слова",
   "на смех («аххахаха», «лол», «😂»), на «оке», «лан», «пон» и на сообщение из одних смайлов отвечаю реакцией, а не абзацем от модели",
-  "ревную одним голосом: просто рассказали о другой помощнице — отвечаю сама, одной строкой; в той же реплике вопрос ко мне — отвечаю по делу, уже ревнуя, и строка идёт следом; «Алиса хуже тебя» — успокаивает",
-  "«покажи профиль» от хозяина сразу после слов о моём профиле — мой профиль; Юи рядом нет — тоже мой, а не отказ; показывая, говорю, совпадают ли слова с тем, что стоит в Telegram; «поставь аватарку», «поменяй описание» — честно: это не моими руками",
-  "секретарь: «кто писал?», «были сообщения?» понимаю и без «мне»; не подключена — говорю это прямо, а не сочиняю «никто»; после «я тут» помню, когда отдала список",
-  "«что ты не поняла?» сверяется с нынешней сборкой: что теперь понимаю сама, из списка уходит",
+  "ревную одним голосом: рассказали о другой помощнице — отвечаю сама, одной строкой; в той же реплике вопрос ко мне — отвечаю по делу, уже ревнуя",
+  "«покажи профиль» от хозяина сразу после слов о моём профиле — мой профиль, а не отказ; показывая, говорю, совпадают ли слова с тем, что стоит в Telegram",
+  "секретарь: «кто писал?» понимаю и без «мне»; не подключена — говорю это прямо, а не сочиняю «никто»",
   "знаю, что умею: когда разговор касается моих умений, модель получает их список — и больше не скажет «не умею видеть картинки»",
-  "словарь: 704 → 717 тем, 8326 → 9111 реплик — «скучаешь?», «спишь?», «давай знакомиться», «ты чья?»; на лозунги, просьбы о рецептах вреда и брань отвечаю своими словами",
-  "с 0.35.0: секретарь для близких — человек подключает меня у себя в Telegram, я спрашиваю хозяина и отвечаю за этого человека по его слову; ревность наедине с хозяином; «оформи профиль»",
+  "словарь: 704 → 721 тема, 8326 → 9344 реплики — «скучаешь?», «спишь?», «давай знакомиться», «ты чья?», её имя и чужие имена; на лозунги, просьбы о рецептах вреда и брань отвечаю своими словами",
 ]);
 
 const DAY = 86_400_000;
@@ -1328,7 +1330,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const { actorId, dry, inGroup } = turn;
     // «Статус» и проба провайдеров — только для хозяина; для остальных это обычные слова.
     if (["status", "brains_check"].includes(parsed.intent) && !owner(actorId)) return null;
-    if (parsed.confidence === "maybe") return say(turn, `${NAME}: ${parsed.question}`);
+    // Уточняющий вопрос — её собственные слова: без служебного «Аи:» перед ними.
+    if (parsed.confidence === "maybe") return say(turn, parsed.question);
     // Репетиция ничего не записывает: она проверяет маршрут, а не меняет память.
     if (dry) return say(turn, `Разобрала бы это как «${parsed.intent}» — репетиция, ничего не меняю.`);
 
@@ -3355,10 +3358,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return null;
     }
     if (turn.dry) return say(turn, "Разобрала бы это как урок словаря — репетиция, ничего не пишу.");
-    // Похоже на урок, но без кавычек и двоеточия: где кончается фраза — не угадывает, а показывает, как сказать.
+    // Похоже на урок, но без кавычек и двоеточия («на кек чебурек отвечай чебурек кек»). Фраза стоит в списке
+    // непонятного — значит, это она и есть: граница известна, урок принят. Список только что показан — подсказка,
+    // как сказать. Иначе это обычные слова («на английском отвечай по-английски»): пусть идут своим путём.
     if (asked.hint) {
-      pulse.bump("ruled");
-      return say(turn, `Похоже, вы учите меня фразе, но без знака мне не видно, где кончается фраза и начинается ответ. Поставьте двоеточие — и я запомню:\n\nна ${asked.hint.when} отвечай: ${asked.hint.say}`);
+      const listed = await taught.unheard({ limit: 200 }).then(rows => rows.some(row => row.text === cleanPhrase(asked.hint.when))).catch(() => false);
+      if (listed) asked = { add: asked.hint };
+      else {
+        const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+        if (!(shown?.at && now() - Number(shown.at) < 10 * 60_000)) return null;
+        pulse.bump("ruled");
+        return say(turn, `Похоже, вы учите меня фразе, но без знака мне не видно, где кончается фраза и начинается ответ. Поставьте двоеточие — и я запомню:\n\nна ${asked.hint.when} отвечай: ${asked.hint.say}`);
+      }
     }
     if (asked.add) {
       const done = await taught.add(asked.add.when, asked.add.say);
@@ -3476,7 +3487,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   const PROPOSED_KEY = "heart:proposed:v1";
   const PROPOSE_ROWS = 10;
-  const PROPOSE_ASK = /^(?:(?:предложи|придумай|подбери|сочини|напиши)(?:те)?\s+(?:сама\s+)?(?:мне\s+)?(?:свои\s+)?(?:ответы?|варианты(?:\s+ответов)?)(?:\s+сама)?(?:\s+(?:на\s+(?:них|это|эти\s+фразы|непонят(?:ое|ное|ые|ные)|неузнанное)|к\s+ним|для\s+словаря|в\s+словарь))?|(?:пополни|дополни)\s+словарь(?:\s+сама)?|(?:придумай|предложи|ответь(?:\s+на\s+них)?)\s+сама|сама\s+(?:предложи|придумай))$/u;
+  const PROPOSE_ASK = /^(?:(?:предложи|придумай|подбери|сочини|напиши)(?:те)?\s+(?:сама\s+)?(?:мне\s+)?(?:свои\s+)?(?:ответы?|варианты(?:\s+ответов)?)(?:\s+сама)?(?:\s+(?:на\s+(?:них|это|эти\s+фразы|непонят(?:ое|ное|ые|ные)|неузнанное)|к\s+ним|для\s+словаря|в\s+словарь))?|(?:пополни|дополни)\s+словарь(?:\s+сама)?)$/u;
+  // «Придумай сама», «ответь на них сама» — о списке, только пока он перед глазами: сами по себе это слова о чём угодно.
+  const PROPOSE_ASK_LOOSE = /^(?:(?:придумай|предложи|ответь(?:\s+на\s+них)?)\s+сама|сама\s+(?:предложи|придумай|ответь))$/u;
   const PROPOSE_TAKE = /^(?:беру|бери|возьми|принимаю)\s+(все|(?:\d{1,2}[\s,]*(?:и\s+)?)+)$/u;
   // «Не беру» — прямой отказ; «не надо», «не нравится» — отказ, только пока предложение перед глазами.
   const PROPOSE_DROP = /^(?:ничего\s+)?не\s+(?:беру|бери|возьму)(?:\s+ничего)?$|^ни\s+од(?:ин|ного)$/u;
@@ -3491,6 +3504,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const value = String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
     if (!value || value.length > 80) return null;
     if (PROPOSE_ASK.test(value)) return { ask: true };
+    if (PROPOSE_ASK_LOOSE.test(value)) return { ask: true, loose: true };
     if (PROPOSE_DROP.test(value)) return { drop: true };
     if (PROPOSE_DROP_LOOSE.test(value)) return { drop: true, loose: true };
     const take = value.match(PROPOSE_TAKE);
@@ -3531,6 +3545,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, `Добавила в словарь: ${added}. Теперь на ${added === 1 ? "эту фразу" : "эти фразы"} отвечаю без модели. Список — «мои фразы», убрать — «забудь фразу 3».${failed.length ? ` Не легли: ${failed.join(", ")}.` : ""}`);
     }
     if (turn.dry) return say(turn, "Предложила бы ответы на неузнанное — репетиция, модель не трачу.");
+    if (asked.loose) {
+      const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+      if (!(shown?.at && now() - Number(shown.at) < 10 * 60_000)) return null;
+    }
     const rows = (await unheardNow({ limit: 30 })).rows.slice(0, PROPOSE_ROWS);
     if (!rows.length) return say(turn, "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
     await typing(turn);
@@ -8058,7 +8076,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Знание наизусть («знание: …») — сильнее и умений: «сколько градусов в прямом углу» — не погода,
     // «сколько до Луны» — не счёт дней.
     const byHeart = Boolean(spoken?.some(name => /^!?знание:/u.test(name)));
-    const request = !byHeart && Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt)) || parseSkillAsk(prompt, SKILLS)) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = !byHeart && Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask && !parsePropose(prompt).loose) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt)) || parseSkillAsk(prompt, SKILLS)) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseFast(prompt) || parseQibla(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));

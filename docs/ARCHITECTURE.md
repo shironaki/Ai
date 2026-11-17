@@ -555,3 +555,27 @@ JPEG или PNG → `{ ok, bytes, width, height, cut }`. Сердце кладё
 Порядок для короткой реплики теперь такой: словарь как написано → слой
 опечаток (`slang.js`) → реакция (смех, «ок», смайлы) → модель. Новую опечатку
 или сокращение вписывают в `WORDS`, а не в `PHRASES.txt`.
+
+## Что добавила 0.36.1: где что лежит
+
+| Что | Где |
+|---|---|
+| Слова о списке непонятного: показать, очистить | `UNHEARD`, `UNHEARD_CLEAR`, `UNKNOWN_WORD` в `lib/taught.js` |
+| «Очисти список», «забудь всё» — о списке, пока он показан | `clearsShownList` в `lib/taught.js`; ключ `heart:unheard:shown`, `phraseLesson` в `lib/heart.js` |
+| Что словарю знать не положено | `notForDictionary` (`CONTINUES`, `WORLD`, `REFERENCE`, `TO_HER`) в `lib/taught.js`; длина ответа — `UNHEARD_ANSWER_MAX` в `lib/heart.js` |
+| Сверка списка: разборы и репетиция | `knownByParsers`, `answersAlone`, `unheardNow`, `goneWords` в `lib/heart.js` |
+| Метка «реплика дошла до модели» | `turn.viaModel` в `answerByModel` (`lib/heart.js`) |
+| Репетиция не считается работой за день | `quiet` в `lib/pulse.js` |
+| Урок без кавычек: двоеточие, подсказка | последний образец `TEACH`, `TEACH_BARE`, `NOT_A_PHRASE` в `lib/taught.js` |
+| «Предложи ответы»: эхо, штамп, прочерк; «не беру» | `echoes`, `STOCK_ANSWER`, `PROPOSE_DROP`, `PROPOSE_ASK_LOOSE` в `lib/heart.js` |
+| Она спросила имя → слово человека — имя | `ASKS_NAME`, `nameReply` в `lib/personal.js`; ключ `heart:askname:<id>` пишет `say`, читает блок настроек в `converse` |
+| «Как меня зовут?», «зови меня по имени» | `nameQuestion` в `lib/personal.js` |
+| «Меня Айдина зовут» | `INTRO_TURNED` в `lib/personal.js` |
+
+**Репетиция.** `answersAlone(text, who)` вызывает `converse` с `dry: true` и
+`ctx.testRun` — тот же путь, каким телефон проверяет сборку перед публикацией.
+Правило для каждого нового умения прежнее: в пробном режиме — ни отправки, ни
+записи, ни сети; тест `tests/unheard.test.mjs` прогоняет так все примеры из
+`SKILLS.txt` от гостя и от хозяина. Умение, которое работает только в живом
+ходе (настройки человека: имя, «на ты»), репетиция не видит — его разбор
+вписывается в `knownByParsers`.

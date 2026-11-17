@@ -219,22 +219,42 @@ test("«предложи ответы»: прочерк, эхо и штамп п
     await h.onMessage(own(said), KEY);
     assert.match(last(OWNER), /^Вот что я бы отвечала \(1\):/u, said);
   }
+  // «Придумай сама» — о списке, только пока он перед глазами: через час это слова о чём угодно.
+  const later = heart(ON, { now: () => NOON + 3_600_000, random: () => 0 });
+  sdk().fetchQueue.length = 0;
+  sdk().fetchQueue.push(says("Что придумать?"));
+  await later.onMessage(own("придумай сама"), KEY);
+  assert.equal(last(OWNER), "Что придумать?");
   // «Не надо» — отказ, только пока предложение перед глазами.
   await h.onMessage(own("не надо"), KEY);
   assert.match(last(OWNER), /^Хорошо: в словарь ничего не кладу\./u);
 });
 
-test("учит без кавычек: с двоеточием — запоминает; без знака — показывает, как сказать, и ничего не пишет", async () => {
+test("учит без кавычек: с двоеточием — запоминает; без знака — по списку непонятного знает, где кончается фраза; иначе не гадает", async () => {
   reset();
-  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  seed(["кек чебурек", "ну ты и булка"]);
+  let at = NOON;
+  const h = heart(ON, { now: () => at, random: () => 0 });
+  // Фраза стоит в списке непонятного — граница известна: урок принят и без знака.
   await h.onMessage(own("на кек чебурек отвечай чебурек кек"), KEY);
-  assert.equal(last(OWNER), "Похоже, вы учите меня фразе, но без знака мне не видно, где кончается фраза и начинается ответ. Поставьте двоеточие — и я запомню:\n\nна кек чебурек отвечай: чебурек кек");
-  assert.equal(sdk().kv.get(TAUGHT_KEY) ?? null, null);
-  await h.onMessage(own("на кек чебурек отвечай: чебурек кек"), KEY);
   assert.equal(last(OWNER), "Запомнила: на «кек чебурек» отвечаю «чебурек кек». Забыть — «забудь фразу 1».");
+  assert.deepEqual(left(), ["ну ты и булка"], "выученное из списка ушло");
   await h.onMessage(message("кек чебурек"), KEY);
   assert.equal(last(), "чебурек кек");
+  // Фразы в списке нет, но список только что показан — подсказка, как сказать; в словарь ничего не идёт.
+  await h.onMessage(own("что не понятно?"), KEY);
+  await h.onMessage(own("на тыква отвечай подоконник"), KEY);
+  assert.equal(last(OWNER), "Похоже, вы учите меня фразе, но без знака мне не видно, где кончается фраза и начинается ответ. Поставьте двоеточие — и я запомню:\n\nна тыква отвечай: подоконник");
+  assert.equal(JSON.parse(sdk().kv.get(TAUGHT_KEY)).items.length, 1);
+  await h.onMessage(own("на тыква отвечай: подоконник"), KEY);
+  assert.equal(last(OWNER), "Запомнила: на «тыква» отвечаю «подоконник». Забыть — «забудь фразу 2».");
   assert.equal(chats().length, 0);
+  // Ни списка, ни фразы в нём — обычные слова: «на английском отвечай по-английски» уроком не становится.
+  at += 3_600_000;
+  sdk().fetchQueue.push(says("Хорошо, хозяин."));
+  await h.onMessage(own("на английском отвечай по-английски"), KEY);
+  assert.equal(last(OWNER), "Хорошо, хозяин.");
+  assert.equal(JSON.parse(sdk().kv.get(TAUGHT_KEY)).items.length, 2);
   // Гостю подсказка не положена: учит только хозяин.
   sdk().fetchQueue.push(says("Хорошо."));
   await h.onMessage(message("на привет отвечай здравствуй"), KEY);
