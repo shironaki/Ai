@@ -8,7 +8,7 @@ import { createAbilities, matchPhrase, BUS_PREFIX } from "./abilities.js";
 import { createEvents } from "./events.js";
 import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
-import { createPersonal, addressRequest, introRequest, addressDrop, lengthRequest, formRequest } from "./personal.js";
+import { createPersonal, addressRequest, introRequest, addressDrop, lengthRequest, formRequest, nameReply, ASKS_NAME } from "./personal.js";
 import { createMemory } from "./memory.js";
 import { parseIntent, normalize, ABILITY_OF, INTENTS } from "./intents.js";
 import { parseSkillAsk, findSkill, shown as skillShown, skillsList, skillText } from "./skills.js";
@@ -73,7 +73,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
-import { createTaught, parseTeach } from "./taught.js";
+import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
@@ -176,6 +176,12 @@ const ackOnly = (text, plain = plainWords(text)) => {
 const SKILLS_TALK = /картинк|фото|рисун|рису[ею]|нарису|изображ|видишь|видеть|посмотр|слыш|голосов|умеешь|умеете|можешь|можете|сможешь|способн|найд[иё]|поищ|погугл|интернет|ссылк|напомн|перевед|перевод|стикер|секретар|помощниц|ассистент|нейросет|алис|сири|gpt|гпт/iu;
 /** Когда она последний раз ставила или показывала свой профиль: четверть часа «покажи профиль» значит «свой». */
 const PROFILE_AT_KEY = "heart:profile:at";
+/** Когда хозяину показан список непонятного: десять минут «очисти список» и «забудь всё» — о нём (0.36.1). */
+const UNHEARD_SHOWN_KEY = "heart:unheard:shown";
+/** Она спросила имя и ждёт ответа: слово человека сразу после вопроса — имя («Айдина», «просто Айдина»). */
+const ASKED_NAME_KEY = (userId) => `heart:askname:${userId}`;
+/** Ответ модели длиннее — значит, было что рассказать: это вопрос на знание, а не пробел словаря. */
+const UNHEARD_ANSWER_MAX = 300;
 const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:тупая|глупая|никч[её]мная|бесполезная|дура|идиотка|бесишь|достала|задолбала)|(?:ты\s+)?меня\s+(?:бесишь|достала|задолбала|раздражаешь)|бесишь(?:\s+меня)?|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+|пош(?:ла|[её]л)\s+ты|иди\s+(?:ты\s+)?(?:на\s*ху[йи]|на\s*хер|на\s*фиг|в\s+жопу|в\s+задницу)|шлюха|сучка|мразь|сдохни|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:сука|тварь|дебилка|уродина|чмо))(?=$|[\s,.!?])/iu;
 const APOLOGY = /(?:^|[\s,])(?:прости|простите|извини|извините|извиняюсь|сорян|сорри|sorry|виновата?)(?=$|[\s,.!])/iu;
 /** Человек поправляет её ответ: это сигнал ошибки и повод для урока. */
@@ -650,6 +656,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Продолжение идёт следом в ту же тему, но уже не «ответом»: цитата одна.
       const next = turn.extra?.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {};
       for (const part of tail) await api.sendMessage({ chat_id: turn.chatId, text: part, ...next });
+      // Спросила, как человека зовут, — его следующее слово может быть ответом: «Айдина», «просто Айдина» (17.11.2026).
+      if (turn.isPrivate && sent?.message_id != null && text.length <= 700 && ASKS_NAME.test(text)) {
+        await store.set(ASKED_NAME_KEY(turn.actorId), { mid: Number(sent.message_id) + tail.length, at: now() }).catch(() => false);
+      }
       return { ok: true, text, messageId: sent?.message_id ?? null, parts: 1 + tail.length };
     } catch {
       // Не дошло до человека — это поломка, а не настроение. Владелец узнает
@@ -3328,9 +3338,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * «забудь фразу 2», «что ты не поняла?». Остальным — честное «учит хозяин».
    */
   async function phraseLesson(turn, prompt) {
-    const asked = PHRASES ? parseTeach(prompt) : null;
-    if (!asked) return null;
+    let asked = PHRASES ? parseTeach(prompt) : null;
     const mine = owner(turn.actorId) && turn.isPrivate;
+    // «Очисти список», «забудь всё» сразу после показанного списка — о нём, а не о списках дел и не о записях
+    // памяти: десять минут контекста. 17.11.2026 «забудь всё» после списка ответило «записей нет», а список остался.
+    if (!asked && PHRASES && mine && !turn.dry && clearsShownList(prompt)) {
+      const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+      if (shown?.at && now() - Number(shown.at) < 10 * 60_000) asked = { unheardClear: true, loose: true };
+    }
+    if (!asked) return null;
     if (!mine) {
       // В группе админ учит её фразам этого чата: действуют только здесь.
       if (turn.inGroup && (asked.add || asked.list || asked.drop != null)) return chatWords(turn, asked);
@@ -3339,6 +3355,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return null;
     }
     if (turn.dry) return say(turn, "Разобрала бы это как урок словаря — репетиция, ничего не пишу.");
+    // Похоже на урок, но без кавычек и двоеточия: где кончается фраза — не угадывает, а показывает, как сказать.
+    if (asked.hint) {
+      pulse.bump("ruled");
+      return say(turn, `Похоже, вы учите меня фразе, но без знака мне не видно, где кончается фраза и начинается ответ. Поставьте двоеточие — и я запомню:\n\nна ${asked.hint.when} отвечай: ${asked.hint.say}`);
+    }
     if (asked.add) {
       const done = await taught.add(asked.add.when, asked.add.say);
       if (!done.ok) {
@@ -3362,35 +3383,88 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, done.ok ? `Забыла: «${done.when}». Осталось выученного: ${done.total}.` : done.code === "not_found" ? "Такой фразы среди выученных нет. «Мои фразы» покажет список." : "Забыть не вышло: память сейчас недоступна.");
     }
     if (asked.unheardClear) {
-      await taught.clearUnheard();
-      return say(turn, "Список неузнанного очищен. Начинаю считать заново.");
+      const done = await taught.clearUnheard();
+      await store.remove(UNHEARD_SHOWN_KEY).catch(() => false);
+      // Предложенные ответы были к этому же списку: вместе с ним они теряют смысл.
+      await store.remove(PROPOSED_KEY).catch(() => false);
+      if (!done) return say(turn, "Очистить не вышло: хранилище сейчас не отвечает. Список остался как был.");
+      return say(turn, asked.loose
+        ? "Список непонятного очищен: начинаю считать заново. Мою память о вас не трогала — для неё есть «очисти память»."
+        : "Список непонятного очищен. Начинаю считать заново.");
     }
-    const { rows, gone } = await unheardNow({ limit: 30 });
-    const cleaned = gone ? `Из списка ${plural(gone, "ушла", "ушли", "ушло")} ${gone} ${plural(gone, "реплика", "реплики", "реплик")}: теперь я понимаю ${gone === 1 ? "её" : "их"} сама.` : "";
+    const { rows, gone, dropped } = await unheardNow({ limit: 30 });
+    await store.set(UNHEARD_SHOWN_KEY, { at: now() }).catch(() => false);
+    const cleaned = goneWords(gone, dropped);
     if (!rows.length) return say(turn, cleaned ? `${cleaned} Больше показать нечего.` : "Пока нечего показать: короткого, чего я не узнала бы, не было.");
-    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятое».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Без кавычек — с двоеточием: на привет отвечай: здравствуй. Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятное».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+  }
+
+  /** «Из списка ушло 24 реплики: …» — что убрала сверка и почему; нечего сказать — пусто. */
+  function goneWords(gone, dropped) {
+    const total = gone + dropped;
+    if (!total) return "";
+    const head = `Из списка ${plural(total, "ушла", "ушли", "ушло")} ${total} ${plural(total, "реплика", "реплики", "реплик")}:`;
+    const talk = "продолжения разговора и вопросы на знание: на них и должна отвечать модель";
+    if (!dropped) return `${head} теперь я понимаю ${gone === 1 ? "её" : "их"} сама.`;
+    if (!gone) return `${head} это ${talk}.`;
+    return `${head} ${gone} я теперь понимаю сама, ещё ${dropped} — ${talk}.`;
   }
 
   /**
-   * Понимает ли нынешняя сборка короткую реплику сама — без модели. Дешёвая сверка разборов, без состояния:
-   * словарь (с опечатками), смех, «принято», «спасибо», намерения, умения сестры, слова секретаря.
+   * Понимает ли нынешняя сборка короткую реплику по одним разборам — без состояния и без хранилища:
+   * словарь (с опечатками), смех, «принято», «спасибо», намерения, умения сестры, слова секретаря, слова о самом
+   * списке и настройки человека (имя, обращение, длина ответа, «на ты» — они живут только в настоящем ходе,
+   * репетиция их не видит).
    */
-  function knownNow(text) {
+  function knownByParsers(text) {
     try {
       return Boolean((PHRASES && book.match(text)) || isLaugh(text) || ackOnly(text) || THANKS_ONLY.test(plainWords(text))
-        || parseIntent(text) || matchPhrase(text) || parseSecretary(text));
+        || parseIntent(text) || matchPhrase(text) || parseSecretary(text) || parseTeach(text) || parsePropose(text)
+        || introRequest(text) || addressDrop(text) || addressRequest(text) || lengthRequest(text) || formRequest(text));
     } catch { return false; }
   }
   /**
-   * Список неузнанного, сверенный с нынешней сборкой (0.36.0): что она теперь понимает сама, из списка уходит.
-   * До этого он копил и то, чему её уже научили: 17.11.2026 в нём стояли «отвечай ночью за меня» и «почему ты
-   * ночью не отвечала» — обе реплики сборка давно понимала.
+   * Репетиция (0.36.1): ответила бы она на реплику сама, без модели? Реплика идёт настоящим разбором хода — тем же,
+   * что у живого сообщения, — в пробном режиме: ничего не отправляется и не пишется (так телефон проверяет сборку
+   * перед публикацией). Сверка «по списку разборов» отставала от сборки: 17.11.2026 в непонятом стояли «меня зовут
+   * айдина», «сделай его из лего», «метод расчета» — всё это сборка понимала, а сверка о тех разборах не знала.
+   */
+  let rehearsing = false;
+  async function answersAlone(text, who) {
+    if (rehearsing) return false;
+    rehearsing = true;
+    const ref = { turn: null };
+    try {
+      const got = await pulse.quiet(() => converse(
+        { chat: { id: who, type: "private" }, from: { id: who, first_name: "", is_bot: false }, text },
+        { testRun: true }, { text, kind: "text", dry: true }, ref));
+      return Boolean(got) && got.ok !== false && got.ignored !== true && ref.turn?.viaModel !== true;
+    } catch { return false; } finally { rehearsing = false; }
+  }
+  /**
+   * Список непонятного, сверенный с нынешней сборкой: что она теперь понимает сама — уходит (0.36.0); что словарю
+   * знать и не положено — продолжения разговора, вопросы на знание — уходит тоже (0.36.1). Остаётся правда на сегодня.
+   * Возвращает `{ rows, gone, dropped }`: что показать, сколько ушло понятого и сколько — не её дела.
    */
   async function unheardNow({ limit = 30, sinceMs = 0 } = {}) {
-    const rows = [], known = [];
-    for (const row of await taught.unheard({ limit: 200, sinceMs })) (knownNow(row.text) ? known : rows).push(row);
-    const gone = known.length ? await taught.settleAll(known.map(row => row.text)) : 0;
-    return { rows: rows.slice(0, limit), gone };
+    const rows = [], known = [], stale = [];
+    const guest = OWNER === 1 ? 2 : 1;
+    // Время — настоящее: `now` в тестах стоит на месте.
+    const started = Date.now();
+    let rehearsed = 0;
+    for (const row of await taught.unheard({ limit: 200, sinceMs })) {
+      if (knownByParsers(row.text)) { known.push(row); continue; }
+      // Что в список сегодня и не легло бы: продолжение разговора, вопрос на знание.
+      if (!taught.worth(row.text)) { stale.push(row); continue; }
+      // Репетиция дороже разбора: не больше сорока реплик за раз и не дольше восьми секунд; остальное — в следующий показ.
+      if (rehearsed < 40 && Date.now() - started < 8000) {
+        rehearsed += 1;
+        if (await answersAlone(row.text, guest) || (OWNER > 0 && await answersAlone(row.text, OWNER))) { known.push(row); continue; }
+      }
+      rows.push(row);
+    }
+    if (known.length || stale.length) await taught.settleAll([...known, ...stale].map(row => row.text));
+    return { rows: rows.slice(0, limit), gone: known.length, dropped: stale.length };
   }
 
   // ── сама предлагает ответы для словаря (идея 128) ───────────────────────
@@ -3402,12 +3476,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   const PROPOSED_KEY = "heart:proposed:v1";
   const PROPOSE_ROWS = 10;
-  const PROPOSE_ASK = /^(?:предложи|придумай|подбери|сочини)(?:те)?\s+(?:сама\s+)?(?:мне\s+)?ответы(?:\s+(?:на\s+(?:непонятое|неузнанное|эти\s+фразы)|для\s+словаря|в\s+словарь))?$|^пополни\s+словарь(?:\s+сама)?$/u;
+  const PROPOSE_ASK = /^(?:(?:предложи|придумай|подбери|сочини|напиши)(?:те)?\s+(?:сама\s+)?(?:мне\s+)?(?:свои\s+)?(?:ответы?|варианты(?:\s+ответов)?)(?:\s+сама)?(?:\s+(?:на\s+(?:них|это|эти\s+фразы|непонят(?:ое|ное|ые|ные)|неузнанное)|к\s+ним|для\s+словаря|в\s+словарь))?|(?:пополни|дополни)\s+словарь(?:\s+сама)?|(?:придумай|предложи|ответь(?:\s+на\s+них)?)\s+сама|сама\s+(?:предложи|придумай))$/u;
   const PROPOSE_TAKE = /^(?:беру|бери|возьми|принимаю)\s+(все|(?:\d{1,2}[\s,]*(?:и\s+)?)+)$/u;
+  // «Не беру» — прямой отказ; «не надо», «не нравится» — отказ, только пока предложение перед глазами.
+  const PROPOSE_DROP = /^(?:ничего\s+)?не\s+(?:беру|бери|возьму)(?:\s+ничего)?$|^ни\s+од(?:ин|ного)$/u;
+  const PROPOSE_DROP_LOOSE = /^(?:не\s+надо|не\s+нужно|не\s+нравится|не\s+нравятся|не\s+подходит|не\s+подходят|не\s+то|отмена|отбой|плохие\s+ответы|так\s+себе)$/u;
+  /** Ответ-эхо и штамп помощника в словарь не предлагаются: «го встр» → «Го встр...», «Чем могу помочь?» (17.11.2026). */
+  const STOCK_ANSWER = /чем\s+(?:я\s+)?могу\s+(?:вам\s+|тебе\s+)?(?:помочь|быть\s+полезн)|виртуальн[а-я]+\s+(?:собеседни|помощни|ассистент)|языков[а-я]+\s+модел|искусственн[а-я]+\s+интеллект|как\s+я\s+могу\s+помочь/iu;
+  const echoes = (phrase, answer) => {
+    const said = cleanPhrase(answer);
+    return !said || said === phrase || (phrase.includes(" ") && said.startsWith(`${phrase} `) && said.split(" ").length <= phrase.split(" ").length + 1);
+  };
   const parsePropose = (text) => {
     const value = String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
     if (!value || value.length > 80) return null;
     if (PROPOSE_ASK.test(value)) return { ask: true };
+    if (PROPOSE_DROP.test(value)) return { drop: true };
+    if (PROPOSE_DROP_LOOSE.test(value)) return { drop: true, loose: true };
     const take = value.match(PROPOSE_TAKE);
     if (!take) return null;
     return take[1] === "все" ? { take: "all" } : { take: [...new Set((take[1].match(/\d{1,2}/gu) ?? []).map(Number))] };
@@ -3416,6 +3501,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!PHRASES || !owner(turn.actorId) || !turn.isPrivate) return null;
     const asked = parsePropose(prompt);
     if (!asked) return null;
+    if (asked.drop) {
+      const saved = await store.get(PROPOSED_KEY).catch(() => null);
+      const age = Array.isArray(saved?.items) && saved.items.length ? now() - Number(saved.at) : Infinity;
+      // Без свежего предложения это обычные слова: пусть идут своим путём.
+      if (!(age < (asked.loose ? 10 * 60_000 : DAY))) return null;
+      if (turn.dry) return say(turn, "Отказалась бы от предложенных ответов — репетиция.");
+      await store.remove(PROPOSED_KEY).catch(() => false);
+      pulse.bump("ruled");
+      return say(turn, "Хорошо: в словарь ничего не кладу. Свои ответы — на «фраза» отвечай «ответ»; очистить список — «забудь непонятное».");
+    }
     if (asked.take) {
       const saved = await store.get(PROPOSED_KEY).catch(() => null);
       const items = Array.isArray(saved?.items) && now() - Number(saved.at) < DAY ? saved.items : [];
@@ -3439,21 +3534,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const rows = (await unheardNow({ limit: 30 })).rows.slice(0, PROPOSE_ROWS);
     if (!rows.length) return say(turn, "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
     await typing(turn);
-    const answer = await compose(turn, `Ниже — короткие реплики, на которые у тебя нет готового ответа: люди пишут их тебе в чатах. К каждой напиши один короткий ответ в своём характере — до 12 слов. Ответ услышат разные люди, поэтому: без слов «ты» и «вы», без имён, без вопросов о личном, без дат, чисел и фактов, которые устареют. Формат строго такой: номер, точка, ответ — каждая реплика с новой строки. Больше ничего не пиши.\n\n${rows.map((row, index) => `${index + 1}. ${row.text}`).join("\n")}`).catch(() => null);
-    if (!answer) return say(turn, "Сочинить сейчас нечем: модель не отвечает или дневной лимит вышел. Список неузнанного — «что ты не поняла?».");
+    const answer = await compose(turn, `Ниже — короткие реплики, которые люди писали тебе в чатах и на которые у тебя нет готового ответа. К каждой напиши один короткий ответ своим голосом — до 12 слов: так ты будешь отвечать на неё каждому, кто её напишет. Отвечай на смысл реплики, а не повторяй её. Без дежурных фраз помощника вроде «чем могу помочь». Ответ услышат разные люди, поэтому: без слов «ты» и «вы», без имён, без вопросов о личном, без дат, чисел и фактов, которые устареют. Если реплика — обрывок, набор букв или её смысл зависит от разговора, вместо ответа поставь прочерк: «—». Формат строго такой: номер, точка, ответ — каждая реплика с новой строки. Больше ничего не пиши.\n\n${rows.map((row, index) => `${index + 1}. ${row.text}`).join("\n")}`).catch(() => null);
+    if (!answer) return say(turn, "Сочинить сейчас нечем: модель не отвечает или дневной лимит вышел. Список непонятного — «что ты не поняла?».");
     const items = [];
+    let skipped = 0;
     for (const line of String(answer).split("\n")) {
       const found = line.match(/^\s*(\d{1,2})\s*[.):—-]\s*(.+)$/u);
       const row = found ? rows[Number(found[1]) - 1] : null;
       const words = found ? found[2].trim().replace(/^[«"“„]+|[»"”]+$/gu, "").trim() : "";
       // Не по форме, слишком длинно, с разметкой или «не знаю» — в предложение не идёт.
       if (!row || !words || words.length > 200 || /[{}<>]/u.test(words) || UNSURE.test(words) || items.some(item => item.when === row.text)) continue;
+      // Прочерк — модель сама сказала, что отвечать тут нечем; эхо и штамп помощника — не ответ.
+      if (/^[—–-]+$/u.test(words) || echoes(row.text, words) || STOCK_ANSWER.test(words)) { skipped += 1; continue; }
       items.push({ when: row.text, say: words });
     }
+    if (!items.length && skipped) return say(turn, "Годных ответов не вышло: эти реплики модель и сама не поняла. Научить можно словами — на «фраза» отвечай «ответ»; очистить список — «забудь непонятное».");
     if (!items.length) return say(turn, "Модель ответила не по форме — предложить нечего. Попробуйте ещё раз чуть позже.");
     if (!await store.set(PROPOSED_KEY, { items, at: now() }).catch(() => false)) return say(turn, "Не запомнилось: хранилище не отвечает.");
+    await store.set(UNHEARD_SHOWN_KEY, { at: now() }).catch(() => false);
     pulse.bump("ruled");
-    return say(turn, `Вот что я бы отвечала (${items.length}):\n${items.map((item, index) => `${index + 1}. «${item.when}» → «${item.say}»`).join("\n")}\n\nВзять — одним сообщением: «беру 1 3» или «беру все». Не нравится ответ — научите своим: на «фраза» отвечай «ответ». В словарь без вашего слова ничего не кладу.`);
+    const left = rows.length - items.length;
+    return say(turn, `Вот что я бы отвечала (${items.length}):\n${items.map((item, index) => `${index + 1}. «${item.when}» → «${item.say}»`).join("\n")}${left > 0 ? `\n\n${left === 1 ? "К одной реплике годного ответа не нашлось — она осталась без него." : `К ${left} репликам годного ответа не нашлось — они остались без него.`}` : ""}\n\nВзять — одним сообщением: «беру 1 3» или «беру все»; не брать — «не беру». Не нравится ответ — научите своим: на «фраза» отвечай «ответ». В словарь без вашего слова ничего не кладу.`);
   }
 
   /**
@@ -6326,6 +6427,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   async function answerByModel(turn, prompt) {
+    // Метка для репетиции: реплика дошла до модели — значит, сама она её не поняла.
+    turn.viaModel = true;
     let { answer, context, facts } = await talk(turn, prompt);
     // Сама сказала «не знаю» на вопрос о мире — прежде чем сдаться, ищет и отвечает ещё раз.
     // Один поиск и один вопрос к модели; не помогло — остаётся честное «не знаю».
@@ -7803,6 +7906,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // «Правило: отвечай короче» — урок для всех, а не личная настройка длины.
     const teaching = parseIntent(prompt)?.intent === "teach";
     if (turn.isPrivate && !dry && !teaching) {
+      // Она только что спросила имя — и человек ответил одним словом: «Айдина», «просто Айдина». Только сразу после
+      // вопроса и только если это слово ничем другим быть не может: ни фразой словаря, ни просьбой.
+      const replied = nameReply(prompt);
+      if (replied && !introRequest(prompt) && !(PHRASES && book.match(prompt)) && !parseIntent(prompt) && !isLaugh(prompt) && !ackOnly(prompt)) {
+        const waiting = await store.get(ASKED_NAME_KEY(actorId)).catch(() => null);
+        const id = Number(message.message_id);
+        if (waiting?.mid != null && now() - Number(waiting.at) < 5 * 60_000 && id > Number(waiting.mid) && id <= Number(waiting.mid) + 3) {
+          await store.remove(ASKED_NAME_KEY(actorId)).catch(() => false);
+          const saved = await personal.setAddress(actorId, replied).catch(() => ({ ok: false }));
+          return ruled(await say(turn, saved.ok
+            ? you(turn, `Приятно познакомиться, ${replied}. Так и буду к вам обращаться.`, `Приятно познакомиться, ${replied}. Так и буду тебя звать.`)
+            : "Имя не запомнилось: нужно короче и без символов."));
+        }
+      }
       // «Меня зовут Айдина» целиком — знакомство: имя запоминается сразу, без модели и без вопроса «запомнить?».
       const intro = introRequest(prompt);
       if (intro) {
@@ -8125,9 +8242,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const fact = !dry && turn.isPrivate ? await factToOffer(turn, prompt).catch(() => null) : null;
     // Сказал о себе («я люблю…», «у меня есть…», «мою жену зовут…») — она запоминает сама, без слова «запомни».
     const about = !dry && turn.isPrivate && !fact ? selfStatement(prompt) : null;
-    // Короткое, чего не взял ни словарь, ни правило, — в список неузнанного.
-    if (!dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt) && !parsePropose(prompt)) await taught.note(prompt).catch(() => false);
+    const unheard = !dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt) && !parsePropose(prompt) && !clearsShownList(prompt);
     const sent = await answerByModel(turn, prompt);
+    // Короткое, чего не взял ни словарь, ни правило, — в список непонятного. Ответ по справке или длинный ответ —
+    // значит, это был вопрос на знание: модель тут на месте, и пробела в словаре нет (17.11.2026).
+    if (unheard && !turn.reference && !(sent?.ok && String(sent.text ?? "").length > UNHEARD_ANSWER_MAX)) await taught.note(prompt).catch(() => false);
     if (fact && sent?.ok) await offerFact(turn, fact);
     if (about && sent?.ok) await keepSelf(turn, about);
     return sent;

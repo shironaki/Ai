@@ -157,8 +157,9 @@ test("список непонятого сверяется с нынешней �
   for (const [index, text] of ["кто писал", "аххахаха", "оке", "что делаеш", "почему ты ночью не отвечала", "отвечай ночью за меня", "если отказывается", "кек чебурек"].entries()) map[text] = { n: 1, at: NOON - index * 1000 };
   sdk().kv.set(UNHEARD_KEY, JSON.stringify({ map, since: NOON - 86_400_000, at: NOON }));
   await h.onMessage(own("что ты не поняла?"), KEY);
-  assert.match(last(OWNER), /не узнала и отдала модели \(2\):\n1\. «если отказывается»\n2\. «кек чебурек»\n\nИз списка ушло 6 реплик: теперь я понимаю их сама\./u);
-  assert.deepEqual(Object.keys(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).sort(), ["если отказывается", "кек чебурек"]);
+  // «Если отказывается» — обрывок разговора: словарю его знать не положено, из списка он уходит тоже (0.36.1).
+  assert.match(last(OWNER), /не узнала и отдала модели \(1\):\n1\. «кек чебурек»\n\nИз списка ушло 7 реплик: 6 я теперь понимаю сама, ещё 1 — продолжения разговора и вопросы на знание: на них и должна отвечать модель\./u);
+  assert.deepEqual(Object.keys(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).sort(), ["кек чебурек"]);
   // Второй раз — уже без слов об уборке.
   await h.onMessage(own("что ты не поняла?"), KEY);
   assert.doesNotMatch(last(OWNER), /Из списка/u);
@@ -171,7 +172,7 @@ test("список непонятого сверяется с нынешней �
 test("в неузнанное не ложатся смех и растянутые «дааа», «нееет»: первое она узнаёт, второе — ответ по смыслу", () => {
   const taught = createTaught({ store: { available: true, get: async () => null, set: async () => true } });
   for (const said of ["ахахпхах", "дааа", "нееет", "дада", "ну да", "и че", "хз", "ээ"]) assert.equal(taught.worth(said), "", said);
-  for (const said of ["кек чебурек", "ну ты и булка", "если отказывается"]) assert.equal(taught.worth(said), said, said);
+  for (const said of ["кек чебурек", "ну ты и булка", "тыква на подоконнике"]) assert.equal(taught.worth(said), said, said);
 });
 
 test("модель знает, что Аи умеет на деле, — когда разговор касается умений; на обычную реплику — нет", async () => {
