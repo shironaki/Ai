@@ -128,6 +128,109 @@ test("сверка — репетицией настоящего разбора:
   assert.equal(sdk().fetches.length, 0);
 });
 
+test("репетиция — очередью: за показ сорок реплик, в списке только проверенное, о непроверенном сказано числом; через сутки — заново, первыми те, кто ждал дольше", async () => {
+  const { BUILD } = await import("./fixtures/kit.mjs");
+  const DAY = 86_400_000;
+  reset();
+  // Сорок пять непонятных и одна понятная в самом конце очереди (самая давняя): до неё первый показ не дойдёт.
+  const odd = Array.from({ length: 45 }, (_, index) => `тыква подоконник ${["раз", "два", "три", "пять", "семь"][index % 5]} ${"абвгдежзик"[Math.floor(index / 5)]}`);
+  seed([...odd, "сделай его из лего"]);
+  let clock = NOON;
+  const h = heart(ON, { now: () => clock, random: () => 0 });
+  const rowsOf = () => JSON.parse(sdk().kv.get(UNHEARD_KEY)).map;
+  const checkedAt = (when) => Object.values(rowsOf()).filter(row => row.b === BUILD && row.c === when).length;
+  /** Показ списка; возвращает, сколько раз за него читали настройки гостя-репетитора: ноль — репетиций не было. */
+  const show = async () => {
+    const kv = sdk().kv, real = kv.get.bind(kv);
+    let rehearsals = 0;
+    kv.get = (key) => { if (String(key) === "heart:style:1") rehearsals += 1; return real(key); };
+    try { await h.onMessage(own("что не понятно?"), KEY); } finally { kv.get = real; }
+    return rehearsals;
+  };
+
+  // Показ первый: проверены первые сорок, непонятные отмечены сборкой и временем. Шесть ждут — и она это говорит.
+  assert.ok(await show() > 0, "репетиция была");
+  assert.match(last(OWNER), /^Короткое, чего я не узнала и отдала модели \(30\):/u);
+  assert.doesNotMatch(last(OWNER), /Из списка/u, "до понятной реплики очередь не дошла");
+  assert.match(last(OWNER), /\n\nЕщё 6 реплик проверить не успела: за раз — не больше 40\. Спросите ещё раз — дойду и до них\.\n\n/u);
+  assert.doesNotMatch(last(OWNER), /сделай его из лего/u, "непроверенное в списке не показывается");
+  assert.equal(checkedAt(NOON), 40);
+  assert.equal(rowsOf()["сделай его из лего"].b, undefined);
+
+  // Показ второй, тут же: отмеченные не репетируются, очередь доходит до остальных — и понятная уходит.
+  assert.ok(await show() > 0);
+  assert.match(last(OWNER), /Из списка ушла 1 реплика: теперь я понимаю её сама\./u);
+  assert.doesNotMatch(last(OWNER), /не успела/u);
+  assert.equal(Object.keys(rowsOf()).length, 45);
+  assert.equal(checkedAt(NOON), 45);
+
+  // Показ третий, тут же: проверять нечего — ни одной репетиции, список тот же.
+  assert.equal(await show(), 0, "в те же сутки второй раз не проверяет");
+  assert.match(last(OWNER), /^Короткое, чего я не узнала и отдала модели \(30\):/u);
+  assert.doesNotMatch(last(OWNER), /не успела|Из списка/u);
+
+  // Реплику сказали ещё раз — счёт растёт, отметка остаётся.
+  sdk().fetchQueue.push(says("Что?"));
+  await h.onMessage(message(odd[0]), KEY);
+  assert.deepEqual([rowsOf()[odd[0]].n, rowsOf()[odd[0]].b, rowsOf()[odd[0]].c], [2, BUILD, NOON]);
+
+  // Через сутки отметки устарели: её могли научить и между сборками. Проверяются снова сорок, пять ждут.
+  // Эти пять сборка уже проверяла: они остаются в списке, и «не успела» о них не говорится.
+  clock = NOON + DAY + 1;
+  assert.ok(await show() > 0, "через сутки проверяет заново");
+  assert.deepEqual([checkedAt(clock), checkedAt(NOON)], [40, 5]);
+  assert.doesNotMatch(last(OWNER), /не успела/u);
+  const waiting = Object.entries(rowsOf()).filter(([, row]) => row.c === NOON).map(([text]) => text);
+
+  // Ещё через сутки устарели все — и первыми идут те пять, кого не проверяли дольше всех: никто не заслонён навсегда.
+  clock += DAY + 1;
+  assert.ok(await show() > 0);
+  for (const text of waiting) assert.equal(rowsOf()[text].c, clock, text);
+  assert.equal(checkedAt(clock), 40);
+
+  // Другая сборка проверяет всё заново, не дожидаясь суток: отметка чужой сборки ей не указ, и пять ждут опять.
+  const map = rowsOf();
+  for (const row of Object.values(map)) row.b = "0.0.1";
+  sdk().kv.set(UNHEARD_KEY, JSON.stringify({ map, since: NOON, at: clock }));
+  assert.ok(await show() > 0);
+  assert.equal(checkedAt(clock), 40);
+  assert.match(last(OWNER), /Ещё 5 реплик проверить не успела/u);
+  // «Предложи ответы» берёт только проверенное — и продвигает очередь сама.
+  sdk().fetchQueue.push(says("1. —"));
+  await h.onMessage(own("предложи ответы"), KEY);
+  assert.equal(checkedAt(clock), 45);
+});
+
+test("репетиция — не дольше восьми секунд за показ: на чём время вышло, то ждёт следующего показа", async () => {
+  const { BUILD } = await import("./fixtures/kit.mjs");
+  reset();
+  const odd = Array.from({ length: 12 }, (_, index) => `тыква подоконник ${["раз", "два", "три", "пять"][index % 4]} ${"абв"[Math.floor(index / 4)]}`);
+  seed(odd);
+  // Часы, по которым каждая репетиция «длится» секунду: скорость устройства тут ни при чём.
+  let ticks = 0;
+  const h = heart(ON, { now: () => NOON, random: () => 0, wall: () => (ticks += 1) * 1000 });
+  const marked = () => Object.values(JSON.parse(sdk().kv.get(UNHEARD_KEY)).map).filter(row => row.b === BUILD).length;
+  await h.onMessage(own("что не поняла?"), KEY);
+  assert.equal(marked(), 7, "на восьмой секунде остановилась");
+  assert.match(last(OWNER), /^Короткое, чего я не узнала и отдала модели \(7\):/u);
+  assert.match(last(OWNER), /Ещё 5 реплик проверить не успела/u);
+  assert.equal(left().length, 12, "непроверенное из хранилища не пропадает");
+  await h.onMessage(own("что не поняла?"), KEY);
+  assert.equal(marked(), 12, "остальные пять — во второй показ");
+  assert.match(last(OWNER), /^Короткое, чего я не узнала и отдала модели \(12\):/u);
+  assert.doesNotMatch(last(OWNER), /не успела/u);
+
+  // Время вышло раньше первой репетиции: показать нечего, но и «нечего показать» — неправда.
+  reset();
+  seed(["тыква подоконник раз", "тыква подоконник два"]);
+  const slow = heart(ON, { now: () => NOON, random: () => 0, wall: () => (ticks += 1) * 9000 });
+  await slow.onMessage(own("что не поняла?"), KEY);
+  assert.equal(last(OWNER), "Ещё 2 реплики проверить не успела: за раз — не больше 40. Спросите ещё раз — дойду и до них.");
+  await slow.onMessage(own("предложи ответы"), KEY);
+  assert.equal(last(OWNER), "Пока предлагать не к чему. Ещё 2 реплики проверить не успела: за раз — не больше 40. Спросите ещё раз — дойду и до них.");
+  assert.equal(chats().length, 0, "модель не спрашивали");
+});
+
 test("репетиция ничего не трогает: все примеры умений, от гостя и от хозяина, — ни Telegram, ни сеть, ни хранилище", async () => {
   const examples = [...new Set([...readFileSync(new URL("../SKILLS.txt", import.meta.url), "utf8").matchAll(/«([^«»\n]{2,80})»/gu)].map(found => found[1].replace(/…/gu, "кота").trim()))];
   assert.ok(examples.length > 250, `примеров — ${examples.length}`);

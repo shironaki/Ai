@@ -215,7 +215,8 @@ export function createTaught({ store = null, now = () => Date.now(), random = Ma
     try { saved = await store.get(UNHEARD_KEY); } catch { saved = null; }
     const map = saved?.map && typeof saved.map === "object" ? { ...saved.map } : {};
     const before = map[key];
-    map[key] = { n: (Number(before?.n) || 0) + 1, at: now() };
+    // Отметка сверки (`b` — какой сборкой проверено, `c` — когда) переживает повтор реплики: модель ответила на неё снова.
+    map[key] = { ...(before?.b ? { b: before.b, c: Number(before.c) || 0 } : {}), n: (Number(before?.n) || 0) + 1, at: now() };
     const keys = Object.keys(map);
     if (keys.length > MAX_UNHEARD) {
       // Лишнее — самое редкое и самое давнее.
@@ -232,7 +233,7 @@ export function createTaught({ store = null, now = () => Date.now(), random = Ma
     const map = saved?.map && typeof saved.map === "object" ? saved.map : {};
     return Object.entries(map)
       .filter(([, row]) => !sinceMs || Number(row?.at) >= now() - sinceMs)
-      .map(([text, row]) => ({ text, n: Number(row?.n) || 0, at: Number(row?.at) || 0 }))
+      .map(([text, row]) => ({ text, n: Number(row?.n) || 0, at: Number(row?.at) || 0, b: typeof row?.b === "string" ? row.b : "", c: Number(row?.c) || 0 }))
       .sort((a, b) => (b.n - a.n) || (b.at - a.at))
       .slice(0, limit);
   }
@@ -262,8 +263,27 @@ export function createTaught({ store = null, now = () => Date.now(), random = Ma
       return gone;
     } catch { return 0; }
   }
+  /**
+   * Итог сверки списка одной записью: `drop` — реплики уходят; `mark` — проверены сборкой `build` и не поняты:
+   * в записи остаются сборка (`b`) и время проверки (`c`), чтобы сутки не проверять их заново, а очередь дошла до
+   * остальных. Возвращает, сколько ушло.
+   */
+  async function sift({ drop = [], mark = [], build = "" } = {}) {
+    const gone = drop.map(item => clean(item)).filter(Boolean), kept = mark.map(item => clean(item)).filter(Boolean);
+    if ((!gone.length && !kept.length) || !usable()) return 0;
+    try {
+      const saved = await store.get(UNHEARD_KEY);
+      if (!saved?.map) return 0;
+      const map = { ...saved.map };
+      let removed = 0, touched = false;
+      for (const key of gone) if (key in map) { delete map[key]; removed += 1; }
+      if (build) for (const key of kept) if (key in map) { map[key] = { ...map[key], b: build, c: now() }; touched = true; }
+      if (removed || touched) await store.set(UNHEARD_KEY, { ...saved, map, at: now() });
+      return removed;
+    } catch { return 0; }
+  }
   const clearUnheard = async () => (usable() ? store.set(UNHEARD_KEY, { map: {}, since: now(), at: now() }).then(() => true).catch(() => false) : false);
   const count = async () => (await load()).items.length;
 
-  return Object.freeze({ add, list, drop, match, note, unheard, settle, settleAll, clearUnheard, count, worth });
+  return Object.freeze({ add, list, drop, match, note, unheard, settle, settleAll, sift, clearUnheard, count, worth });
 }

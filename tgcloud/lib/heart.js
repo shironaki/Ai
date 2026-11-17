@@ -139,11 +139,11 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.36.1";
+export const BUILD = "0.36.2";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.36.1 — список «что ты не поняла?» стал правдой на сегодня: перед показом я проверяю каждую реплику собой нынешней и убираю то, что уже понимаю; продолжения разговора и вопросы на знание в него больше не ложатся",
+  "0.36.2 — список «что ты не поняла?» стал правдой на сегодня: перед показом я сверяю его с собой нынешней и убираю то, что уже понимаю; за раз проверяю сорок реплик — не успела всё, скажу сколько осталось и попрошу спросить ещё раз; продолжения разговора и вопросы на знание в список больше не ложатся",
   "«забудь непонятное», «очисти список», «что не понятно?» — понимаю так, как это пишут; «забудь всё» сразу после списка чистит список, а не память",
   "«предложи ответы» больше не предлагает эхо и «чем могу помочь»; отказаться — «не беру»; учить можно без кавычек — с двоеточием: на привет отвечай: здравствуй",
   "спросила «как вас зовут?» — и ответ одним словом («Айдина», «просто Айдина») принимаю как имя; на «как меня зовут?» отвечаю сама; слово «хозяин» чужим не отдаю",
@@ -231,7 +231,7 @@ function senseOf(message = {}) {
 
 const MEDIA_WORD = Object.freeze({ photo: "фото", video: "видео", file: "файл", voice: "голосовое", gif: "гифку", sticker: "стикер" });
 
-export function createHeart({ db = null, api = null, fetchImpl = null, InputFile = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
+export function createHeart({ db = null, api = null, fetchImpl = null, InputFile = null, now = () => Date.now(), config = CONFIG, random = Math.random, wall = () => Date.now() } = {}) {
   const store = createHeartStore({ db, now });
   // A deployment that predates these keys still gets sensible names, never
   // "undefined" in a sentence addressed to a person.
@@ -3403,13 +3403,29 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         ? "Список непонятного очищен: начинаю считать заново. Мою память о вас не трогала — для неё есть «очисти память»."
         : "Список непонятного очищен. Начинаю считать заново.");
     }
-    const { rows, gone, dropped } = await unheardNow({ limit: 30 });
+    const { rows, gone, dropped, waiting } = await unheardNow({ limit: 30 });
     await store.set(UNHEARD_SHOWN_KEY, { at: now() }).catch(() => false);
     const cleaned = goneWords(gone, dropped);
-    if (!rows.length) return say(turn, cleaned ? `${cleaned} Больше показать нечего.` : "Пока нечего показать: короткого, чего я не узнала бы, не было.");
-    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Без кавычек — с двоеточием: на привет отвечай: здравствуй. Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятное».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+    // В списке — только проверенное. Чего проверить не успела, не показывает, а называет числом (0.36.2).
+    const later = waitingWords(waiting);
+    if (!rows.length) {
+      if (later) return say(turn, [cleaned, later].filter(Boolean).join(" "));
+      return say(turn, cleaned ? `${cleaned} Больше показать нечего.` : "Пока нечего показать: короткого, чего я не узнала бы, не было.");
+    }
+    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}${later ? `\n\n${later}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Без кавычек — с двоеточием: на привет отвечай: здравствуй. Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятное».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
   }
 
+  /**
+   * Сколько реплик списка репетируется за один показ и сколько на это времени: остальные ждут следующего показа.
+   * Время меряется настоящими часами (`wall`), а не `now`: в тестах `now` стоит на месте, а `wall` подменяется,
+   * чтобы тест не зависел от скорости устройства.
+   */
+  const UNHEARD_REHEARSALS = 40;
+  const UNHEARD_REHEARSE_MS = 8000;
+  /** «Ещё 12 реплик проверить не успела…» — сколько записей ждёт следующего показа; ждать некому — пусто. */
+  const waitingWords = (waiting) => (waiting > 0
+    ? `Ещё ${waiting} ${plural(waiting, "реплику", "реплики", "реплик")} проверить не успела: за раз — не больше ${UNHEARD_REHEARSALS}. Спросите ещё раз — дойду и до них.`
+    : "");
   /** «Из списка ушло 24 реплики: …» — что убрала сверка и почему; нечего сказать — пусто. */
   function goneWords(gone, dropped) {
     const total = gone + dropped;
@@ -3455,27 +3471,38 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   /**
    * Список непонятного, сверенный с нынешней сборкой: что она теперь понимает сама — уходит (0.36.0); что словарю
    * знать и не положено — продолжения разговора, вопросы на знание — уходит тоже (0.36.1). Остаётся правда на сегодня.
-   * Возвращает `{ rows, gone, dropped }`: что показать, сколько ушло понятого и сколько — не её дела.
+   * Возвращает `{ rows, gone, dropped, waiting }`: что показать, сколько ушло понятого, сколько — не её дела и
+   * сколько записей эта сборка ещё не проверяла (в `rows` их нет: показывается только проверенное).
    */
   async function unheardNow({ limit = 30, sinceMs = 0 } = {}) {
-    const rows = [], known = [], stale = [];
+    const kept = [], known = [], stale = [], checked = [];
     const guest = OWNER === 1 ? 2 : 1;
-    // Время — настоящее: `now` в тестах стоит на месте.
-    const started = Date.now();
-    let rehearsed = 0;
     for (const row of await taught.unheard({ limit: 200, sinceMs })) {
-      if (knownByParsers(row.text)) { known.push(row); continue; }
+      if (knownByParsers(row.text)) known.push(row);
       // Что в список сегодня и не легло бы: продолжение разговора, вопрос на знание.
-      if (!taught.worth(row.text)) { stale.push(row); continue; }
-      // Репетиция дороже разбора: не больше сорока реплик за раз и не дольше восьми секунд; остальное — в следующий показ.
-      if (rehearsed < 40 && Date.now() - started < 8000) {
-        rehearsed += 1;
-        if (await answersAlone(row.text, guest) || (OWNER > 0 && await answersAlone(row.text, OWNER))) { known.push(row); continue; }
-      }
-      rows.push(row);
+      else if (!taught.worth(row.text)) stale.push(row);
+      else kept.push(row);
     }
-    if (known.length || stale.length) await taught.settleAll([...known, ...stale].map(row => row.text));
-    return { rows: rows.slice(0, limit), gone: known.length, dropped: stale.length };
+    // Репетиция дороже разбора: не больше сорока реплик за показ и не дольше восьми секунд. Что эта сборка проверила
+    // и не поняла, получает отметку в записи (`b` — сборка, `c` — когда) и сутки заново не репетируется. Очередь:
+    // сначала те, кого эта сборка не проверяла вовсе, потом — кого не проверяли дольше всех; иначе сорок непонятных
+    // в начале списка заслоняли бы остальные навсегда (0.36.2). Сутки, а не «раз на сборку»: понимание зависит не
+    // только от сборки — её учат и между сборками.
+    const mine = (row) => row.b === BUILD;
+    const checkedToday = (row) => mine(row) && now() >= row.c && now() - row.c < DAY;
+    const queue = kept.filter(row => !checkedToday(row)).sort((a, b) => (Number(mine(a)) - Number(mine(b))) || (a.c - b.c));
+    const understood = new Set(), marked = new Set();
+    const started = wall();
+    for (const row of queue.slice(0, UNHEARD_REHEARSALS)) {
+      if (wall() - started >= UNHEARD_REHEARSE_MS) break;
+      if (await answersAlone(row.text, guest) || (OWNER > 0 && await answersAlone(row.text, OWNER))) { understood.add(row.text); known.push(row); }
+      else { marked.add(row.text); checked.push(row.text); }
+    }
+    if (known.length || stale.length || checked.length) await taught.sift({ drop: [...known, ...stale].map(row => row.text), mark: checked, build: BUILD });
+    // Показывается только то, что эта сборка проверила и не поняла; непроверенное ждёт и называется числом.
+    const proven = kept.filter(row => !understood.has(row.text) && (mine(row) || marked.has(row.text)));
+    const waiting = kept.length - understood.size - proven.length;
+    return { rows: proven.slice(0, limit), gone: known.length, dropped: stale.length, waiting };
   }
 
   // ── сама предлагает ответы для словаря (идея 128) ───────────────────────
@@ -3549,8 +3576,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
       if (!(shown?.at && now() - Number(shown.at) < 10 * 60_000)) return null;
     }
-    const rows = (await unheardNow({ limit: 30 })).rows.slice(0, PROPOSE_ROWS);
-    if (!rows.length) return say(turn, "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
+    const sifted = await unheardNow({ limit: 30 });
+    const rows = sifted.rows.slice(0, PROPOSE_ROWS);
+    if (!rows.length) return say(turn, sifted.waiting ? `Пока предлагать не к чему. ${waitingWords(sifted.waiting)}` : "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
     await typing(turn);
     const answer = await compose(turn, `Ниже — короткие реплики, которые люди писали тебе в чатах и на которые у тебя нет готового ответа. К каждой напиши один короткий ответ своим голосом — до 12 слов: так ты будешь отвечать на неё каждому, кто её напишет. Отвечай на смысл реплики, а не повторяй её. Без дежурных фраз помощника вроде «чем могу помочь». Ответ услышат разные люди, поэтому: без слов «ты» и «вы», без имён, без вопросов о личном, без дат, чисел и фактов, которые устареют. Если реплика — обрывок, набор букв или её смысл зависит от разговора, вместо ответа поставь прочерк: «—». Формат строго такой: номер, точка, ответ — каждая реплика с новой строки. Больше ничего не пиши.\n\n${rows.map((row, index) => `${index + 1}. ${row.text}`).join("\n")}`).catch(() => null);
     if (!answer) return say(turn, "Сочинить сейчас нечем: модель не отвечает или дневной лимит вышел. Список непонятного — «что ты не поняла?».");
@@ -5330,6 +5358,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       notes.wipe(actorId).then(result => result.ok).catch(() => false),
       habits.wipe(actorId).then(result => result.ok).catch(() => false),
       store.remove(OFFER_KEY(actorId)).catch(() => false),
+      store.remove(ASKED_NAME_KEY(actorId)).catch(() => false),
       store.remove(CARE_KEY(actorId)).catch(() => false),
       store.remove(SELFNOTE_KEY(actorId)).catch(() => false),
       store.remove(`heart:trace:${turn.chatId}:${actorId}`).catch(() => false),
@@ -7685,6 +7714,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await store.sweep("heart:again:", DAY);
       await store.sweep(LOG_PREFIX, LOG_TTL_MS);
       await store.sweep("heart:said:", 7 * DAY);
+      // Вопрос об имени ждёт ответа пять минут; забытые отметки убираются.
+      await store.sweep("heart:askname:", DAY);
       await store.sweep("heart:credit:", 7 * DAY);
       await store.sweep("heart:offer:", 30 * DAY);
       await store.sweep("heart:score:", 90 * DAY);
