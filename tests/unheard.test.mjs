@@ -498,3 +498,41 @@ test("словарь: кто дал ей имя, нравится ли оно е
   for (const said of ["буду звать тебя Луна", "можно я буду называть тебя Солнышко", "твоё новое имя Ася", "назову тебя Звёздочка"]) assert.deepEqual(book.match(said), ["дам тебе имя"], said);
   assert.deepEqual(book.match("как мне тебя называть"), ["как тебя зовут"]);
 });
+
+test("скриншот 18.11.2026: «уверена» и «не лишнее» — не пробел словаря: в список не ложатся, а лежавшие уходят при показе", async () => {
+  reset();
+  // Как на его телефоне: в списке остались две реплики — и рядом настоящая непонятая.
+  seed(["не лишнее", "уверена", "тыква на подоконнике"]);
+  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  await h.onMessage(own("Что не понятно"), KEY);
+  assert.match(last(OWNER), /^Короткое, чего я не узнала и отдала модели \(1\):\n1\. «тыква на подоконнике»/u);
+  assert.match(last(OWNER), /Из списка ушли 2 реплики: 1 я теперь понимаю сама, ещё 1 — /u);
+  assert.deepEqual(left(), ["тыква на подоконнике"]);
+  assert.equal(chats().length, 0);
+
+  // Живой ход: отклики на её слова уходят модели — и следа в списке не оставляют; непонятая фраза — оставляет.
+  reset();
+  const live = heart(ON, { now: () => NOON });
+  const said = ["уверена", "Уверена?", "ты точно уверена", "не лишнее", "Не помешает.", "не факт", "вряд ли", "в смысле?", "поясни", "подробнее", "как хочешь",
+    "само собой", "ещё раз", "по-разному", "как-то так", "чуть-чуть", "тебе виднее", "кек чебурек"];
+  sdk().fetchQueue.push(...said.map(() => says("Коротко.")));
+  for (const text of said) await live.onMessage(message(text), KEY);
+  assert.equal(chats().length, said.length, "все ушли модели: готового ответа у словаря на них нет");
+  assert.deepEqual(left(), ["кек чебурек"]);
+});
+
+test("отклики по контексту: перечень не пересекается со словарём — на что есть свой ответ, то откликом не считается", () => {
+  const taught = createTaught({ store: { available: true, get: async () => null, set: async () => true } });
+  // Слово из перечня, которое словарь знает, было бы мёртвой строкой: до записи в непонятое оно не доходит.
+  const source = readFileSync(new URL("../tgcloud/lib/taught.js", import.meta.url), "utf8");
+  const remarks = source.match(/const REMARKS = "([^"]+)"/u)[1].split("|");
+  assert.ok(remarks.length >= 130, `откликов ${remarks.length}`);
+  assert.equal(new Set(remarks).size, remarks.length, "без повторов");
+  for (const word of remarks) {
+    assert.equal(clean(word), word, `«${word}» записано не так, как его видит разбор`);
+    assert.equal(taught.worth(word), "", word);
+    assert.equal(book.match(word, { strict: true }), null, `«${word}» знает словарь — в перечне откликов ему не место`);
+  }
+  // Просьбы к ней самой — не отклик: их словарю знать положено.
+  for (const word of ["не грусти", "не бойся", "не спорь", "тыква на подоконнике"]) assert.equal(taught.worth(word), word, word);
+});

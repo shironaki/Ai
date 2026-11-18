@@ -72,6 +72,7 @@ import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS 
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
+import { createRoom, parseRoom, itemsFor, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -139,21 +140,18 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.36.3";
+export const BUILD = "0.37.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.36.3 — первая сборка после 0.35.1, которая до вас дошла: 0.36.0–0.36.2 не публиковались — облако обрывало отправку моего кода; теперь телефон шлёт его без комментариев, на шестую часть легче, а не выйдет публикация — сам выяснит, связь это или сборка, и напишет вам причину",
-  "список «что ты не поняла?» стал правдой на сегодня: перед показом сверяю его с собой нынешней и убираю то, что уже понимаю (за раз — сорок реплик: не успела всё — скажу, сколько осталось); продолжения разговора и вопросы на знание в него больше не ложатся",
-  "«забудь непонятное», «очисти список», «что не понятно?» — понимаю так, как это пишут; «забудь всё» сразу после списка чистит список, а не память",
-  "«предложи ответы» больше не предлагает эхо и «чем могу помочь»; отказаться — «не беру»; учить можно без кавычек — с двоеточием: на привет отвечай: здравствуй",
-  "спросила «как вас зовут?» — и ответ одним словом («Айдина», «просто Айдина») принимаю как имя; на «как меня зовут?» отвечаю сама; слово «хозяин» чужим не отдаю",
-  "понимаю, как пишут в чате, — «чо делаеш», «кд», «спс», «привееет», «го встр» читаю как обычные слова",
-  "на смех («аххахаха», «лол», «😂»), на «оке», «лан», «пон» и на сообщение из одних смайлов отвечаю реакцией, а не абзацем от модели",
-  "ревную одним голосом: рассказали о другой помощнице — отвечаю сама, одной строкой; в той же реплике вопрос ко мне — отвечаю по делу, уже ревнуя",
-  "«покажи профиль» от хозяина сразу после слов о моём профиле — мой профиль, а не отказ; секретарь: «кто писал?» понимаю и без «мне», а не подключена — говорю это прямо",
-  "знаю, что умею: когда разговор касается моих умений, модель получает их список — и больше не скажет «не умею видеть картинки»",
-  "словарь: 704 → 721 тема, 8337 → 9344 реплики — «скучаешь?», «спишь?», «давай знакомиться», «ты чья?», моё имя и чужие имена; на лозунги, просьбы о рецептах вреда и брань отвечаю своими словами",
+  "0.37.0 — у меня теперь живая комната: «зайду к тебе» — и я расскажу, что за окном (по вашим часам), чем я занята и что делает Байт; всё это — сама, без модели",
+  "о Байте можно заботиться: «погладить Байта», «покормить Байта», «поиграть с Байтом»; мне — «налью тебе чаю», Колючке — «полить кактус»; раз в день забота делает нас ближе, а Байт три часа помнит, что с ним делали",
+  "полчаса после захода понимаю коротко: «покормить», «погладить его», «налить чаю», «как кот?»",
+  "раз в день в личке — сценка с выбором из двух кнопок («Байт уронил Колючку»: поднять или отчитать); десять сценок идут по кругу",
+  "вещи в комнате появляются сами — по дням знакомства, по заботе, по вашему любимому цвету и моим рисункам; спросить — «что нового в комнате?»",
+  "«пни Байта» больше не превращается в «Аи пинает … байта»: кота я в обиду не даю, а он прячется, пока его не приласкают; «Байт, иди сюда», «как Колючка?» — тоже понимаю",
+  "список «что не понятно?»: «уверена», «не лишнее» и ещё 140 коротких откликов («не факт», «поясни», «как хочешь», «само собой») в него больше не попадают — это продолжения разговора, отвечать на них должна модель",
+  "словарь: 721 → 794 темы, 9344 → 10 111 реплик — просьбы «не …» («не бойся», «не спорь», «не выдумывай», «не перебивай»), «я сам», «так и знал», «потом расскажу», разговоры о Байте и комнате",
 ]);
 
 const DAY = 86_400_000;
@@ -300,6 +298,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const soul = createSoul({ store, api, InputFile, now, build: BUILD, dayOf });
   // Привычки: счёт дней подряд, без наград и наказаний.
   const habits = createHabits({ store, now });
+  const room = createRoom({ store, now });
   // Слух, зрение и чтение ссылок: отдельные модели того же провайдера.
   const SENSES = config.SENSES !== false;
   const senses = createSenses({
@@ -542,6 +541,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // Ревность (0.35.0): к чужим помощницам и другим девушкам — у хозяина и у близких, с кем можно флиртовать.
   // В шутку и по-доброму; к жене и семье — никогда (`jealousy.js`). Выключается настройкой.
   const JEALOUSY = config.JEALOUSY !== false;
+  // Комната (0.37.0): зайти, Байт, забота, вещи, сценка дня. Слова — в словаре, поэтому без него комнаты нет.
+  const ROOM = config.ROOM !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
   const chatlog = createChatLog({ store, now });
@@ -1724,6 +1725,125 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
   const days = (count) => `${count} ${plural(count, "день", "дня", "дней")}`;
   const HABIT_CHEER = Object.freeze({ 7: " Неделя подряд — это уже привычка, а не попытка.", 30: " Месяц подряд. Это всерьёз.", 100: " Сто дней подряд. Снимаю шляпу." });
+
+  // ── её комната (см. room.js) ─────────────────────────────────────────────
+  /** Строка запаса «+комната:…» голосом этого человека; запаса нет — пусто. */
+  const roomLine = (turn, name, vars = {}) => book.pick(`+комната:${name}`, voiceCtx(turn, vars)) ?? "";
+  const ROOM_POOL = Object.freeze({ pet: "погладить", feed: "покормить", play: "поиграть", tea: "чай", water: "полить" });
+  /** Забота — тоже ласка: раз в день двигает отношения, снимает обиду и радует (`bond.js`, `dialogue-policy.js`). */
+  async function roomCared(userId, turn = null) {
+    if (policy) { try { const moved = await policy.recordDeed({ userId, kind: "caress" }); if (moved?.stage && turn) turn.stageMoved = moved.stage; } catch { /* шаг отношений подождёт */ } }
+    await bond.mark(userId, "caress").catch(() => null);
+  }
+  /** Что есть в комнате у этого человека: вещи по дням знакомства, заботе, любимому цвету, её рисункам и календарю. */
+  async function roomThings(turn, state) {
+    const zone = zoneOf(turn);
+    const date = localParts(now(), zone);
+    const [days, colour, album] = await Promise.all([
+      daysKnown(turn.actorId, zone).catch(() => 0),
+      LIKES ? tastes.get(turn.actorId, "color").catch(() => "") : "",
+      store.get(ALBUM_KEY(turn.actorId)).catch(() => null),
+    ]);
+    const drawing = String((Array.isArray(album?.items) ? album.items : []).filter(item => item?.q).at(-1)?.q ?? "").replace(/\s+/gu, " ").trim().slice(0, 80);
+    const vars = { "цвет": String(colour).toLowerCase(), "рисунок": drawing };
+    return { keys: itemsFor({ days, care: Number(state.care) || 0, colour, drawing, month: date.m, day: date.d }), vars, days };
+  }
+  /**
+   * Слова о комнате: зайти, спросить о Байте, позаботиться, узнать, что нового. `null` — речь не о ней.
+   * Зайти и заботиться можно везде; новости о вещах и сценка дня — только в личке: они у каждого свои.
+   */
+  async function roomWords(turn, prompt) {
+    if (!ROOM || !PHRASES) return null;
+    const userId = turn.actorId;
+    const today = calendarDate(now(), zoneOf(turn));
+    let asked = parseRoom(prompt);
+    // Короткое («покормить», «погладить его», «налить чаю») — о комнате, только если человек в ней сейчас.
+    // Репетиция в хранилище не ходит: для неё таких слов нет.
+    let known = null;
+    if (!asked && !turn.dry && parseRoom(prompt, { near: true })) {
+      known = await room.read(userId, today);
+      if (room.near(known)) asked = parseRoom(prompt, { near: true });
+    }
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как слова о моей комнате — репетиция, ничего не пишу.");
+    // Сказанное о комнате остаётся в переписке: на «а почему он на шкафу?» модель ответит, зная, о чём речь.
+    const tell = async (text, kept = text) => {
+      const sent = await say(turn, voiced(turn, text));
+      if (sent?.ok) await keepThread(turn, prompt, kept);
+      return sent;
+    };
+    const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zoneOf(turn), userId: turn.actorId });
+    if (ROOM_POOL[asked.op]) {
+      const done = await room.care(userId, asked.op, { day: today });
+      const text = roomLine(turn, done.peace ? "мириться" : `${ROOM_POOL[asked.op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`);
+      if (done.first) await roomCared(userId, turn);
+      return tell(text || "Спасибо.");
+    }
+    if (asked.op === "hurt") {
+      await room.scare(userId, { day: today });
+      return tell(roomLine(turn, "байт:защита") || "Байта не трогать.");
+    }
+    const state = known ?? await room.read(userId, today);
+    if (asked.op === "call") {
+      await room.look(userId, state);
+      return tell(roomLine(turn, "байт:зов") || "Байт дёрнул ухом. Идти не собирается.");
+    }
+    if (asked.op === "plant") {
+      await room.look(userId, state);
+      return tell(roomLine(turn, `колючка:${plantState({ water: state.water, at: now() })}`) || "Колючка на подоконнике. Колется.");
+    }
+    const cat = roomLine(turn, `байт:${catState({ hour: feel.hour, last: state.last, lastAt: state.lastAt, at: now(), fed: (Number(state.done.feed) || 0) > 0, seed: roomSeed(userId, today) })}`);
+    if (asked.op === "cat") {
+      await room.look(userId, state);
+      return tell(cat || "Байт где-то здесь. Он всегда где-то здесь.");
+    }
+    const things = await roomThings(turn, state);
+    if (asked.op === "news") {
+      const mine = ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => item.title);
+      const next = ROOM_ITEMS.find(item => item.days && item.days > things.days);
+      const later = next ? ` Следующая появится через ${days(next.days - things.days)}.` : "";
+      if (!mine.length) return tell(`Пока всё как было: окно, дождь, лампа, плед и Байт. Вещи появляются сами — чем дольше мы знакомы и чем чаще ${you(turn, "вы заходите", "ты заходишь")}.${later}`);
+      return tell(`Из-за ${you(turn, "вас", "тебя")} в комнате появилось: ${mine.join("; ")}.${later}`);
+    }
+    const visit = await room.visit(userId, { day: today, keys: turn.isPrivate ? things.keys : null, scenes: turn.isPrivate === true });
+    const lines = [roomLine(turn, "зайти"), [roomLine(turn, "окно"), roomLine(turn, `она:${herKey(feel.mood, feel.hour)}`)].filter(Boolean).join(" "), cat];
+    for (const key of visit.fresh) { const about = roomLine(turn, `вещь:${key}`, things.vars); if (about) lines.push(`Новое в комнате. ${about}`); }
+    if (visit.state.n <= 2) lines.push(roomLine(turn, "подсказка"));
+    const seen = lines.filter(Boolean).join("\n");
+    const sent = await tell(seen, visit.scene ? `${seen}\n${fill(visit.scene.text, { formal: owner(userId) ? true : turn.manner?.formal !== false })}` : seen);
+    // Сценка дня — отдельным сообщением с двумя кнопками: выбор — нажатием, а не словом, которое можно не так понять.
+    if (visit.scene && sent?.ok !== false) {
+      const formal = owner(userId) ? true : turn.manner?.formal !== false;
+      const keyboard = { inline_keyboard: [visit.scene.options.map(([label], index) => ({ text: label, callback_data: `h:${visit.scene.key}:${index}` }))] };
+      await say(turn, `🐾 ${fill(visit.scene.text, { formal })}`, { extra: { reply_markup: keyboard } });
+    }
+    return sent;
+  }
+  /** Нажатие кнопки под сценкой дня: исход — новым сообщением, кнопки убираются; сыграть можно один раз и только свою. */
+  async function pressRoom(query) {
+    const done = async (text = "") => { try { await api.answerCallbackQuery({ callback_query_id: query?.id, ...(text ? { text } : {}) }); } catch { /* ответ на нажатие не важнее исхода */ } };
+    const found = String(query?.data ?? "").match(/^h:([a-z]+):([01])$/u);
+    const userId = query?.from?.id, chatId = query?.message?.chat?.id;
+    if (!found || userId == null || chatId == null || !ROOM) { await done(); return { ignored: true }; }
+    const manner = await mannerFor(userId).catch(() => null);
+    const turn = { actorId: userId, chatId, isPrivate: query.message.chat.type === "private", manner, extra: query.message.is_topic_message === true && query.message.message_thread_id != null ? { message_thread_id: query.message.message_thread_id } : {} };
+    const picked = await room.choose(userId, found[1], Number(found[2]), { day: calendarDate(now(), zoneOf(turn)) });
+    if (!picked.ok) {
+      await done(picked.code === "played" ? "Эта сценка уже сыграна." : picked.code === "storage" ? "Память сейчас недоступна." : "Это не ваша сценка — или её день прошёл.");
+      return { ignored: true, reason: picked.code };
+    }
+    await done();
+    const messageId = query.message?.message_id;
+    if (messageId != null && has("editMessageReplyMarkup")) {
+      try { await api.editMessageReplyMarkup({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }); } catch { /* кнопки останутся: второе нажатие ответит «уже сыграна» */ }
+    }
+    if (picked.first) await roomCared(userId);
+    const formal = owner(userId) ? true : manner?.formal !== false;
+    const outcome = fill(picked.outcome, { formal });
+    const sent = await say(turn, voiced(turn, `«${picked.label}». ${outcome}`));
+    if (sent?.ok) await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
+    return { ok: sent?.ok !== false, action: "room_scene", scene: picked.scene.key, pick: Number(found[2]) };
+  }
 
   /** Привычки: завести, отметить, посмотреть, убрать. `null` — речь не о них. */
   async function habitThings(turn, prompt) {
@@ -3447,7 +3567,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try {
       return Boolean((PHRASES && book.match(text)) || isLaugh(text) || ackOnly(text) || THANKS_ONLY.test(plainWords(text))
         || parseIntent(text) || matchPhrase(text) || parseSecretary(text) || parseTeach(text) || parsePropose(text)
-        || introRequest(text) || addressDrop(text) || addressRequest(text) || lengthRequest(text) || formRequest(text) || nameQuestion(text));
+        || introRequest(text) || addressDrop(text) || addressRequest(text) || lengthRequest(text) || formRequest(text) || nameQuestion(text)
+        // «Уверена?» — её умение (перепроверить ответ); без свежего ответа это продолжение разговора, а не пробел словаря.
+        || parseSure(text));
     } catch { return false; }
   }
   /**
@@ -5371,6 +5493,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Альбом рисунков и запись о наборе стикеров — тоже его. Сам набор живёт в Telegram и принадлежит ему.
       store.remove(ALBUM_KEY(actorId)).catch(() => false),
       store.remove(PACK_KEY(actorId)).catch(() => false),
+      // Комната: что он делал с Байтом и какие вещи для него появились — тоже его.
+      store.remove(ROOM_KEY(actorId)).catch(() => false),
       // Шутки, счёт поступков и дней — его; находки из разговоров наедине с ним — тоже.
       bond.forget(actorId).then(() => true).catch(() => false),
       knowledge.forget(actorId).then(() => true).catch(() => false),
@@ -8147,6 +8271,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // чата, опрос, «мой айди», игра с кнопками. Просьба с известным смыслом
     // («разбуди меня в 7») действием не считается.
     const self = inGroup || !request ? await whoAmI(dry) : null;
+    // Комната — раньше ролевых действий: «погладь Байта» — о коте, а не «Аи гладит … байта».
+    const viaRoom = request ? null : await roomWords(turn, prompt);
+    if (viaRoom) return ruled(viaRoom);
     if (!request) {
       const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
       if (acted) return ruled(acted);
@@ -8312,7 +8439,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const fact = !dry && turn.isPrivate ? await factToOffer(turn, prompt).catch(() => null) : null;
     // Сказал о себе («я люблю…», «у меня есть…», «мою жену зовут…») — она запоминает сама, без слова «запомни».
     const about = !dry && turn.isPrivate && !fact ? selfStatement(prompt) : null;
-    const unheard = !dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt) && !parsePropose(prompt) && !clearsShownList(prompt);
+    const unheard = !dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt) && !parsePropose(prompt) && !clearsShownList(prompt) && !parseSure(prompt);
     const sent = await answerByModel(turn, prompt);
     // Короткое, чего не взял ни словарь, ни правило, — в список непонятного. Ответ по справке или длинный ответ —
     // значит, это был вопрос на знание: модель тут на месте, и пробела в словаре нет (17.11.2026).
@@ -8405,7 +8532,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   async function onCallback(query, ctx = {}) {
     const data = String(query?.data ?? "");
-    const route = data.startsWith("p:") ? "party" : data.startsWith("a:") ? "again" : data.startsWith("m:") ? "manner" : data.startsWith("r:") ? "bond" : data.startsWith("s:") ? "desk" : "none";
+    const route = data.startsWith("p:") ? "party" : data.startsWith("a:") ? "again" : data.startsWith("m:") ? "manner" : data.startsWith("r:") ? "bond" : data.startsWith("s:") ? "desk" : data.startsWith("h:") ? "room" : "none";
     if (ctx?.testRun === true) return { ok: true, route, side_effects: "none" };
     try {
       let result = { ignored: true };
@@ -8414,6 +8541,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       else if (route === "manner") result = await pressManner(query);
       else if (route === "bond") result = await fun.pressBond(query);
       else if (route === "desk") result = await pressDesk(query);
+      else if (route === "room") result = await pressRoom(query);
       else if (query?.id != null && has("answerCallbackQuery")) {
         try { await api.answerCallbackQuery({ callback_query_id: query.id }); } catch { /* устаревшее нажатие — не поломка */ }
       }
