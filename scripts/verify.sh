@@ -6,6 +6,8 @@
 #   bash scripts/verify.sh lint     только eslint: необъявленные имена, повторы ключей
 #   bash scripts/verify.sh ci       только тесты
 #   bash scripts/verify.sh node24   только прогон на Node 24
+#   bash scripts/verify.sh page     страница комнаты в настоящем браузере: каждое место нажато
+#                                   (после любой правки в miniapp/; вторым словом — куда положить снимок)
 #
 # Зависимостей у проекта нет и не будет (на платформе нет npm), поэтому eslint и
 # Node 24 ставятся во временную папку (VERIFY_TMP, по умолчанию /tmp) при первом
@@ -21,6 +23,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="${VERIFY_TMP:-/tmp}"
 LINT="$TMP/lint"
 N24="$TMP/n24"
+PAGE="$TMP/page"
 
 lint() {
   if [ ! -x "$LINT/node_modules/.bin/eslint" ]; then
@@ -36,9 +39,13 @@ export default [{
   languageOptions: { ecmaVersion: "latest", sourceType: "module", globals: { ...globals.node } },
   linterOptions: { reportUnusedDisableDirectives: false },
   rules: { "no-undef": "error", "no-dupe-keys": "error", "no-const-assign": "error", "no-redeclare": "error" },
+}, {
+  // Страница мини-приложения исполняется в браузере: у неё свои встроенные имена.
+  files: ["miniapp/**/*.js"],
+  languageOptions: { ecmaVersion: "latest", sourceType: "module", globals: { ...globals.browser } },
 }];
 CONFIG
-  (cd "$ROOT" && "$LINT/node_modules/.bin/eslint" --no-config-lookup -c "$LINT/eslint.config.mjs" tgcloud scripts tests)
+  (cd "$ROOT" && "$LINT/node_modules/.bin/eslint" --no-config-lookup -c "$LINT/eslint.config.mjs" tgcloud scripts tests miniapp)
   echo "eslint: чисто"
 }
 
@@ -70,11 +77,25 @@ node24() {
   report "$TMP/n24.log" "тесты (Node $("$N24/node_modules/node/bin/node" --version))" "$status"
 }
 
+# Страница мини-приложения в браузере без экрана. Браузер — во временной папке, как eslint: зависимостью
+# проекта он не становится. Сам сценарий — scripts/room-check.mjs; он запускается из этой папки, чтобы
+# найти браузер рядом с собой.
+page() {
+  if [ ! -d "$PAGE/node_modules/puppeteer-core" ] || [ ! -d "$PAGE/node_modules/@sparticuz/chromium" ]; then
+    echo "браузер: ставлю в $PAGE (около минуты)…"
+    mkdir -p "$PAGE"
+    (cd "$PAGE" && npm install --no-audit --no-fund --silent puppeteer-core @sparticuz/chromium)
+  fi
+  cp "$ROOT/scripts/room-check.mjs" "$PAGE/room-check.mjs"
+  (cd "$PAGE" && node room-check.mjs "$ROOT/miniapp" "${1:-}")
+}
+
 case "${1:-quick}" in
   quick) lint; ci ;;
   all) lint; ci; node24 ;;
   lint) lint ;;
   ci) ci ;;
   node24) node24 ;;
-  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  page) page "${2:-}" ;;
+  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

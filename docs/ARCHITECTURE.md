@@ -10,6 +10,7 @@ tgcloud/handlers/callback_query.js       вход: нажатие кнопки �
 tgcloud/handlers/business_connection.js  вход: хозяин подключил её к своему аккаунту (секретарь)
 tgcloud/handlers/business_message.js     вход: письмо из личного чата хозяина — не разговор с ней
 tgcloud/handlers/my_chat_member.js       вход: её добавили в чат, сделали админом, сняли, убрали
+tgcloud/endpoints/room.js                вход: функция комнаты — её зовёт страница мини-приложения (miniapp/)
         │
 tgcloud/lib/instance.js        одно сердце на изолят — для всех обработчиков
         │
@@ -83,7 +84,9 @@ tgcloud/lib/heart.js           решения: к ней ли это, прави
 Рядом с сердцем — то, что его публикует и будит: `scripts/phone.sh` (телефон
 следит за веткой, публикует и будит — основной путь, см. [PHONE.md](PHONE.md)),
 `.github/workflows/heart.yml` (то же самое кнопкой, само не запускается) и
-`scripts/inject-secrets.mjs` (ключи на время запуска).
+`scripts/inject-secrets.mjs` (ключи на время запуска). С 0.38.0 рядом лежит и
+страница мини-приложения «Комната» — папка `miniapp/` (публикуется отдельно от
+кода; что в ней и как она говорит с сердцем — «Что добавила 0.38.0»).
 
 Ни один слой не знает про роли и права: это чужая работа.
 
@@ -666,3 +669,69 @@ water, seen, scene }`: первый заход и последнее слово 
 
 **Вес.** Запрос репетиции — 2 627 770 байт (сторож — 2 800 000). Следующий
 шаг — рычаг 2 из [IDEAS.md](IDEAS.md), «Вес кода для облака».
+
+## Что добавила 0.38.0: где что лежит
+
+Второй шаг блока комнаты (идеи 41, 112): мини-приложение «Комната» — первое в
+проекте. Правила и слова комнаты не менялись: к ним добавился второй вход.
+
+```
+miniapp/index.html ──┐                       страница: разметка и стили; грузит telegram-web-app.js и app.js
+miniapp/app.js       │  браузер, Telegram    нажатия, связь, раскладка по разметке
+miniapp/logic.js     │  чистые функции       что показать по ответу сердца; витрина вне Telegram
+miniapp/scene.js ────┘  чистые функции       рисунок: SVG по описанию «что сейчас в комнате»
+        │  Telegram.WebApp.Serverless.call("room", { do, … })  →  POST /api/room (подпись проверяет платформа)
+tgcloud/endpoints/room.js                    тонкая обёртка: не бросает
+        │
+tgcloud/lib/heart.js  onRoom(input, ctx)     те же правила и те же слова, что у `roomWords` в чате
+        ├── lib/room.js                      запись `heart:room:<id>`, забота, сценки, вещи; поза по её фразе
+        └── словарь, запасы «+комната:…»     её слова
+```
+
+| Что | Где |
+|---|---|
+| Рисунок комнаты: слои, свет по часу, она, Байт, вещи | `miniapp/scene.js`: `drawBackdrop(part)` — небо, город, дождь; `drawInside(view)` — комната и слой нажатий; `drawRoom` — оба сразу (для тестов и снимков) |
+| Слой нажатий поверх рисунка | там же: `tap`, `CARE_ZONES`, `THING_ZONES`, `FRONT_THINGS`, `besideCare`. Рисунок нажатий не ловит (`pointer-events="none"`); порядок слоя — окно, вещи, она и Байт, вещи переднего плана, забота |
+| Что показать по ответу сердца | `miniapp/logic.js`: `applyLook`, `applyCare`, `applyPick`, `applyTap`, `refused`, `explain`, `unwrap`, `viewOf`; витрина — `demoLook`, `demoCare`, `demoPick` |
+| Нажатия, связь, перерисовка только изменившегося | `miniapp/app.js`: `call`, `enter`, `act`, `pick`, `paint` |
+| Функция комнаты | `tgcloud/endpoints/room.js` → `onRoom` в `lib/heart.js`: `look`, забота (`pet`, `feed`, `play`, `tea`, `water`), `pick` |
+| Поза на рисунке — из её же фразы | `herPose`, `catPose`, `catAfter`, `HER_POSES`, `CAT_SHAPES`, `CAT_PLACES`, `colourHex` в `lib/room.js` |
+| Слова «открой комнату», «убери / верни комнату в меню» | правила `open`, `menuoff`, `menuon` в `lib/room.js`; `ROOM_DOOR`, `roomFirst` в `lib/heart.js` — раньше прочих разборов |
+| Адрес страницы: запись `heart:page`, кнопка меню | `keepPage`, `pageRecord`, `roomPage`, `roomMenu` в `lib/heart.js`; адрес приходит в `tick` (`ctx.page` вместе с `ctx.deployed`) |
+| Кнопка «🚪 Открыть комнату» под ответом и запасной путь без неё | `roomWords` в `lib/heart.js` |
+| Строка «Комната: …» в «статус» и «я обновилась» | `roomStatus` в `lib/heart.js` |
+| Настройки проекта для инструмента публикации | `tgcloud.jsonc`: `{ "static": { "source": "miniapp" } }` и ничего больше |
+| Публикация функции и страницы | `publish_steps`, `page_url`, `drop_room`, `wake_new_build` в `scripts/phone.sh`; шаги `room`, `publish`, `page` в `.github/workflows/heart.yml` |
+| Проверка | `tests/miniapp.test.mjs`; `tests/phone.test.mjs` («мини-приложение…»); в браузере — `bash scripts/verify.sh page` (`scripts/room-check.mjs`) |
+
+**Ответ функции.** `look`: `{ ok, do, build, formal, clock { hour, part, day },
+greet, window, her { key, pose, line }, cat { key, shape, place, line },
+plant { state }, done { pet, feed, play, tea, water }, cared, things [{ key,
+title, line }], lamp, drawing, fresh [], next { days } | null, scene { key,
+text, options [2], pick, outcome } | null, first }`. Забота: `{ ok, do, build,
+line, again, early, peace, counted, cat?, plant, done, cared, note? }`. Выбор в
+сценке: `{ ok, do, build, line, counted, scene, cared, note? }`. Отказ:
+`{ ok: false, code, text, build }`; коды — `auth` (нет проверенного человека),
+`off` (выключено), `storage`, `closed` (человеку отказано), `unknown`, `played`,
+`gone`, `runtime_error`. Репетиция (`ctx.testRun`): `{ ok, route: "room", do,
+build, side_effects: "none" }` — без чтения и записи.
+
+**Почему функция не бросает.** Исключение на платформе — «ошибка 500» без
+текста. Отказ обычным ответом доходит до страницы словами, и человек видит её
+реплику («Комната сейчас закрыта»), а не пустой экран.
+
+**Почему рисунок — два слоя и почему нажатия отдельно.** За окном меняется
+только час: если перерисовывать его при каждом нажатии, дождь «прыгает» назад.
+А порядок рисования и порядок нажатий — разные вещи: свет лампы рисуется
+поверх чайника, но нажатие должен получить чайник. Поэтому рисунок нажатий не
+ловит, а прозрачные области лежат отдельным слоем поверх.
+
+**Почему адрес страницы приходит с пробуждением.** Его знает только платформа
+и называет в ответ на отправку страницы; в коде и настройках его нет. Телефон
+передаёт адрес сердцу тем же вызовом, которым будит новую сборку, — и «я
+обновилась» уже знает, открылось ли мини-приложение.
+
+**Вес.** Запрос репетиции — 2 664 676 байт (сторож — 2 800 000); `heart.js` —
+586 227 при пределе модуля 640 000. Страница в этот вес не входит: 102 КБ
+отдельной отправкой. Следующий шаг — рычаг 2 из [IDEAS.md](IDEAS.md), «Вес
+кода для облака»; следующее большое умение — отдельным модулем, а не в сердце.

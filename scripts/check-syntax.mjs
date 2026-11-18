@@ -4,7 +4,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const DIRECTORIES = ["tgcloud", "tests", "scripts"];
+const DIRECTORIES = ["tgcloud", "tests", "scripts", "miniapp"];
 const EXTENSIONS = new Set([".js", ".mjs"]);
 const IGNORED = new Set(["node_modules", ".git"]);
 

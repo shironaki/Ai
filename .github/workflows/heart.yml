@@ -71,6 +71,12 @@ jobs:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
         run: |
           npx --yes @tgcloud/cli@0.2.0 run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'
+      # Функция комнаты: её зовёт страница мини-приложения (miniapp/). В репетиции она ничего не читает и не пишет.
+      - name: Run the room endpoint in a no-side-effects context
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          npx --yes @tgcloud/cli@0.2.0 run endpoints/room '{ do: "look" }' --ctx '{ testRun: true }'
       - name: Inspect deployed state (read-only)
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
@@ -125,14 +131,46 @@ jobs:
           npx --yes @tgcloud/cli@0.2.0 run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }'
           npx --yes @tgcloud/cli@0.2.0 run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }'
           npx --yes @tgcloud/cli@0.2.0 run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'
+      # Мини-приложение «Комната» — надстройка над ботом: что бы с ним ни вышло,
+      # сам бот публикуется, а комната отвечает словами. Поэтому репетиция функции
+      # комнаты мягкая: отказ — предупреждение, а не остановка.
+      - name: Rehearse the room endpoint (a refusal does not stop the publish)
+        id: room
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+        run: |
+          set +e
+          if npx --yes @tgcloud/cli@0.2.0 run endpoints/room '{ do: "look" }' --ctx '{ testRun: true }'; then
+            echo "ok=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::The room endpoint did not pass the rehearsal: the bot is published without the Mini App."
+            echo "- мини-приложение «Комната»: функция комнаты не прошла репетицию — комната отвечает словами" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
       - name: Re-check deployed state
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
         run: npx --yes @tgcloud/cli@0.2.0 fetch
+      # `endpoints` — функция комнаты. Не приняла платформа код вместе с ней —
+      # бот важнее: он уходит без неё.
       - name: Publish
+        id: publish
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
-        run: npx --yes @tgcloud/cli@0.2.0 push handlers lib schema
+          ROOM_OK: ${{ steps.room.outputs.ok }}
+        run: |
+          if [ "$ROOM_OK" = "1" ]; then
+            if npx --yes @tgcloud/cli@0.2.0 push handlers lib schema endpoints; then
+              echo "room=1" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::warning::The platform refused the code together with the room endpoint — publishing without it."
+            echo "- мини-приложение «Комната»: платформа не приняла функцию комнаты — комната отвечает словами" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Без комнаты — значит, и без её функции в копии: инструмент проверяет
+          # все модули папки, а не только отправляемые.
+          rm -rf tgcloud/endpoints
+          npx --yes @tgcloud/cli@0.2.0 push handlers lib schema
       # Publishing a schema is not applying it. Without this step the heart ran
       # against a database with no tables: reads returned null, writes failed,
       # and «запомни, …» answered «хранилище не отвечает» while /status said the
@@ -164,15 +202,48 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           rm -f webhook.txt
           exit 0
-      # Опубликованный код просыпается только от сообщения. Этот шаг будит его
-      # сразу: сердце само пишет владельцу «я обновилась» с самопроверкой — и
-      # не нужно спрашивать /status, чтобы узнать, доехал ли код.
-      - name: Wake the heart on the new build
+      # Страница комнаты (папка miniapp/, см. tgcloud.jsonc) — отдельной отправкой
+      # и после кода: её неудача бота не трогает. Адрес страницы называет
+      # платформа; инструмент кладёт её ответ в .tgcloud/static.json. В адрес
+      # попадают только безопасные знаки: он уходит сердцу внутри строки настроек.
+      - name: Publish the room page (a refusal does not stop the publish)
+        id: page
+        if: ${{ steps.publish.outputs.room == '1' }}
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
         run: |
           set +e
-          out=$(npx --yes @tgcloud/cli@0.2.0 run handlers/message '{}' --ctx '{ tick: true, deployed: true }' 2>&1)
+          npx --yes @tgcloud/cli@0.2.0 push miniapp
+          pushed=$?
+          url=$(node -e 'try { const url = JSON.parse(require("node:fs").readFileSync(".tgcloud/static.json", "utf8")).url; if (typeof url === "string" && url.length <= 200 && /^https:\/\/[A-Za-z0-9._~:\/-]+$/.test(url)) console.log(url); } catch { /* адреса нет */ }')
+          if [ -n "$url" ]; then echo "url=$url" >> "$GITHUB_OUTPUT"; fi
+          if [ "$pushed" -ne 0 ]; then
+            rest="комната отвечает словами"
+            if [ -n "$url" ]; then rest="кнопки открывают прежнюю страницу"; fi
+            echo "::warning::The room page was not published. The bot itself is on the new build."
+            echo "- мини-приложение «Комната»: страница не опубликована — $rest" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -z "$url" ]; then
+            echo "::warning::The platform accepted the room page but did not name its address."
+            echo "- мини-приложение «Комната»: платформа не назвала адрес страницы — комната отвечает словами" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- мини-приложение «Комната»: страница опубликована" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
+      # Опубликованный код просыпается только от сообщения. Этот шаг будит его
+      # сразу: сердце само пишет владельцу «я обновилась» с самопроверкой — и
+      # не нужно спрашивать /status, чтобы узнать, доехал ли код. Вместе с
+      # пробуждением сердце узнаёт адрес страницы комнаты: по нему ставятся кнопки.
+      - name: Wake the heart on the new build
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_HEART_TOKEN }}
+          PAGE_URL: ${{ steps.page.outputs.url }}
+        run: |
+          set +e
+          if [ -n "$PAGE_URL" ]; then
+            out=$(npx --yes @tgcloud/cli@0.2.0 run handlers/message '{}' --ctx "{ tick: true, deployed: true, page: \"$PAGE_URL\" }" 2>&1)
+          else
+            out=$(npx --yes @tgcloud/cli@0.2.0 run handlers/message '{}' --ctx '{ tick: true, deployed: true }' 2>&1)
+          fi
           echo "$out"
           build=$(node -e 'const found = require("node:fs").readFileSync("tgcloud/lib/heart.js", "utf8").match(/export const BUILD = "([^"]+)"/u); console.log(found ? found[1] : "?")')
           if echo "$out" | grep -Eq "ok: ?true"; then

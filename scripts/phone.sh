@@ -339,9 +339,11 @@ main() {
   stage() {
     unstage
     mkdir -p "$STAGE" || return 1
-    # Настройки проекта для инструмента (tgcloud.jsonc) — если они есть в коммите.
+    # Настройки проекта для инструмента (tgcloud.jsonc) и страница мини-приложения
+    # (miniapp/) — если они есть в коммите.
     local extra=""
     git -C "$REPO" cat-file -e "$1:tgcloud.jsonc" 2>/dev/null && extra="tgcloud.jsonc"
+    git -C "$REPO" cat-file -e "$1:miniapp/index.html" 2>/dev/null && extra="$extra miniapp"
     # shellcheck disable=SC2086
     git -C "$REPO" archive "$1" tgcloud scripts package.json $extra 2>/dev/null | tar -x -C "$STAGE" 2>/dev/null || return 1
     [ -f "$STAGE/tgcloud/handlers/message.js" ] && [ -f "$STAGE/tgcloud/lib/secrets.js" ] || { echo "в коммите нет tgcloud/handlers/message.js или tgcloud/lib/secrets.js"; return 1; }
@@ -618,9 +620,30 @@ main() {
     fi
     return 0
   }
+  # Мини-приложение «Комната» — надстройка над ботом: что бы с ним ни вышло,
+  # сам бот публикуется. APP — функция комнаты прошла репетицию и уходит вместе
+  # с кодом; APP_WHY — почему мини-приложения в этой публикации нет (пусто —
+  # всё на месте); PAGE_URL — адрес страницы, каким его назвала платформа.
+  local APP=0 APP_WHY="" PAGE_URL=""
+  # Адрес страницы знает только платформа: инструмент кладёт её ответ в
+  # .tgcloud/static.json копии. В адрес попадают только безопасные знаки — он
+  # уходит сердцу внутри строки настроек.
+  page_url() {
+    local url
+    url="$(sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${WORK:-$REPO}/.tgcloud/static.json" 2>/dev/null | head -n 1)"
+    case "$url" in https://*) ;; *) return 0 ;; esac
+    case "$url" in *[!A-Za-z0-9._~:/-]*) return 0 ;; esac
+    [ "${#url}" -le 200 ] || return 0
+    printf '%s' "$url"
+  }
+  # Комната не идёт — её функции в копии для облака не место: инструмент
+  # проверяет все модули копии, а не только отправляемые. Бот важнее комнаты.
+  drop_room() { rm -rf "$STAGE/tgcloud/endpoints" 2>/dev/null; return 0; }
   wake_new_build() {
-    local out
-    out="$(tg run handlers/message '{}' --ctx '{ tick: true, deployed: true }' 2>&1)"
+    local out ctx='{ tick: true, deployed: true }'
+    # Адрес страницы комнаты сердце узнаёт отсюда: по нему ставятся кнопки.
+    [ -z "$PAGE_URL" ] || ctx="{ tick: true, deployed: true, page: \"$PAGE_URL\" }"
+    out="$(tg run handlers/message '{}' --ctx "$ctx" 2>&1)"
     printf '%s\n' "$out"
     printf '%s' "$out" | grep -Eq "ok: ?true"
   }
@@ -630,7 +653,7 @@ main() {
   publish_steps() {
     local head build lack kind
     head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"; build="$(build_of)"
-    WHY=""; CAUSE=""; WORK=""
+    WHY=""; CAUSE=""; WORK=""; APP=0; APP_WHY=""; PAGE_URL=""
     lack="$(lacking)"
     if [ -n "$lack" ]; then
       [ "$lack" = "$LACK_SAID" ] || log "✗ Публикации нет, бот на прежней сборке: $lack."
@@ -703,8 +726,30 @@ main() {
         fi
         return 1
       }
-    if ! step "публикация" tg push handlers lib schema; then
-      log "✗ Публикация не прошла.$(hint) Подробности: $DEPLOY_LOG"; return 1
+    # Функция комнаты (её зовёт страница мини-приложения) — мягкая репетиция:
+    # обрыв связи — как у прочих репетиций, а отказ платформы оставляет комнату
+    # словами и публикации не мешает.
+    if [ -f "$STAGE/tgcloud/endpoints/room.js" ]; then
+      if retry_step "репетиция: комната" tg run endpoints/room '{ do: "look" }' --ctx '{ testRun: true }'; then
+        APP=1
+      elif cut_off; then
+        no_cloud "$head"; WHY="нет связи с платформой Telegram"; return 2
+      else
+        APP_WHY="функция комнаты не прошла репетицию в облаке"; WHY=""
+        drop_room
+      fi
+    fi
+    local targets="handlers lib schema"
+    [ "$APP" = 1 ] && targets="$targets endpoints"
+    # shellcheck disable=SC2086
+    if ! step "публикация" tg push $targets; then
+      # Платформа не приняла код вместе с функцией комнаты (а не связь пропала):
+      # бот важнее комнаты — он уходит без неё.
+      if [ "$APP" = 1 ] && ! cut_off && drop_room && step "публикация без комнаты" tg push handlers lib schema; then
+        APP=0; APP_WHY="платформа не приняла функцию комнаты"; WHY=""
+      else
+        log "✗ Публикация не прошла.$(hint) Подробности: $DEPLOY_LOG"; return 1
+      fi
     fi
     # С этой строки новый код уже в боте: дальнейшие неудачи — не «откат».
     local warn=""
@@ -713,6 +758,24 @@ main() {
     if [ -n "$WEBHOOK_MISSING" ]; then
       log "⚠ Бот не подписан на события:$WEBHOOK_MISSING — то, что на них держится (кнопки, секретарь, список её чатов), работать не будет. Пришлите эту строку в чат разработки."
       tell_owner "⚠️ Телефон: сборка $build опубликована, но бот не подписан на события:$WEBHOOK_MISSING. То, что на них держится (кнопки, секретарь, список её чатов), работать не будет. Перешлите эту строку в чат разработки."
+    fi
+    # Страница комнаты — отдельной отправкой и после кода: её неудача бота не
+    # трогает. Адрес берётся из ответа платформы; не вышло отправить, а прежняя
+    # страница есть — сердцу называется она.
+    if [ "$APP" = 1 ]; then
+      if [ -f "$STAGE/tgcloud.jsonc" ] && [ -f "$STAGE/miniapp/index.html" ]; then
+        if retry_step "страница комнаты" tg push miniapp; then
+          PAGE_URL="$(page_url)"
+          [ -n "$PAGE_URL" ] || APP_WHY="платформа приняла страницу комнаты, но не назвала её адрес"
+        else
+          PAGE_URL="$(page_url)"
+          if cut_off; then APP_WHY="страница комнаты не отправилась: пропала связь с платформой"
+          else APP_WHY="платформа не приняла страницу комнаты"; fi
+        fi
+        WHY=""
+      else
+        APP_WHY="в коммите нет страницы комнаты (miniapp/index.html и tgcloud.jsonc)"
+      fi
     fi
     if step "пробуждение" wake_new_build; then :; else [ -z "$warn" ] && warn="пробуждение не подтвердилось"; fi
     WORK=""
@@ -728,6 +791,15 @@ main() {
       tell_owner "⚠️ Телефон: сборка $build опубликована, но $warn. Скажите Аи «статус»."
     else
       log "✓ Сборка $build опубликована. Аи сама напишет «я обновилась»."
+    fi
+    if [ -n "$APP_WHY" ]; then
+      # Прежняя страница жива — кнопки открывают её; нет — комната отвечает словами, как в 0.37.0.
+      local rest="Комната пока отвечает словами."
+      [ -z "$PAGE_URL" ] || rest="Кнопки открывают прежнюю страницу."
+      log "⚠ Мини-приложение «Комната» не опубликовано: $APP_WHY. Сам бот на сборке $build. $rest Подробности: $DEPLOY_LOG"
+      tell_owner "⚠️ Телефон: сборка $build опубликована, но мини-приложение «Комната» — нет: $APP_WHY. $rest Перешлите эту строку в чат разработки."
+    elif [ -n "$PAGE_URL" ]; then
+      log "✓ Мини-приложение «Комната» опубликовано: кнопка под ответом на «зайду к тебе» и в меню бота."
     fi
     WHY=""
     return 0

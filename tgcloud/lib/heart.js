@@ -72,7 +72,7 @@ import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS 
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
-import { createRoom, parseRoom, itemsFor, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY } from "./room.js";
+import { createRoom, parseRoom, itemsFor, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -140,18 +140,18 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.37.0";
+export const BUILD = "0.38.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.37.0 — у меня теперь живая комната: «зайду к тебе» — и я расскажу, что за окном (по вашим часам), чем я занята и что делает Байт; всё это — сама, без модели",
-  "о Байте можно заботиться: «погладить Байта», «покормить Байта», «поиграть с Байтом»; мне — «налью тебе чаю», Колючке — «полить кактус»; раз в день забота делает нас ближе, а Байт три часа помнит, что с ним делали",
-  "полчаса после захода понимаю коротко: «покормить», «погладить его», «налить чаю», «как кот?»",
-  "раз в день в личке — сценка с выбором из двух кнопок («Байт уронил Колючку»: поднять или отчитать); десять сценок идут по кругу",
-  "вещи в комнате появляются сами — по дням знакомства, по заботе, по вашему любимому цвету и моим рисункам; спросить — «что нового в комнате?»",
-  "«пни Байта» больше не превращается в «Аи пинает … байта»: кота я в обиду не даю, а он прячется, пока его не приласкают; «Байт, иди сюда», «как Колючка?» — тоже понимаю",
-  "список «что не понятно?»: «уверена», «не лишнее» и ещё 140 коротких откликов («не факт», «поясни», «как хочешь», «само собой») в него больше не попадают — это продолжения разговора, отвечать на них должна модель",
-  "словарь: 721 → 794 темы, 9344 → 10 111 реплик — просьбы «не …» («не бойся», «не спорь», «не выдумывай», «не перебивай»), «я сам», «так и знал», «потом расскажу», разговоры о Байте и комнате",
+  "0.38.0 — мою комнату можно открыть картинкой: скажите «открой комнату» или «зайду к тебе» — под ответом будет кнопка «🚪 Открыть комнату», а в меню бота, слева от поля ввода, — «Комната». Это мини-приложение Telegram",
+  "в нём комната нарисована и живёт по вашим часам: утро, день, вечер, ночь, за окном дождь; я и Байт — там же, где были бы по моим словам в чате",
+  "всё можно трогать: Байта — погладить, миску — покормить, клубок — поиграть, чайник — налить мне чаю, Колючку — полить; нажмите на меня, на окно или на вещь — расскажу. Те же пять дел — кнопками под картинкой",
+  "сценка дня там — карточкой с двумя кнопками; забота и выбор считаются по тем же правилам, что словами: покормили в комнате — в чате Байт уже сыт",
+  "кнопка — только в личке: в группах Telegram таких не даёт, там на «открой комнату» отвечу словами",
+  "хозяину: «убери комнату из меню» и «верни комнату в меню»; открылось ли мини-приложение — строка «Комната» в самопроверке ниже и в «статус»",
+  "страница комнаты публикуется отдельно от меня: не вышло — телефон напишет «мини-приложение «Комната» — нет» с причиной, а я останусь на словах, как в 0.37.0",
+  "словарь: 794 → 805 тем, 10 111 → 10 243 реплики — «что такое мини-приложение?», «что можно в комнате?», «комната не открывается», «почему ты там маленькая?», «зайду позже», «заходи в гости»",
 ]);
 
 const DAY = 86_400_000;
@@ -543,6 +543,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const JEALOUSY = config.JEALOUSY !== false;
   // Комната (0.37.0): зайти, Байт, забота, вещи, сценка дня. Слова — в словаре, поэтому без него комнаты нет.
   const ROOM = config.ROOM !== false;
+  // Мини-приложение «Комната» (0.38.0): кнопка под ответом на «зайду к тебе» и кнопка в меню бота. Адрес страницы
+  // называет телефон при публикации (`tick`, поле `page`): пока его нет, комната отвечает словами, как раньше.
+  const ROOM_APP = ROOM && config.ROOM_APP !== false;
+  const ROOM_MENU = config.ROOM_MENU !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
   const chatlog = createChatLog({ store, now });
@@ -642,7 +646,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
   // One place that sends, so every path reports the same shape: what was said,
   // and whether it reached Telegram at all.
-  async function say(turn, text, { extra = {} } = {}) {
+  async function say(turn, text, { extra = {}, quiet = false } = {}) {
     // A test run proves the route without touching Telegram: the platform's own
     // contract, and the reason a green test cannot be mistaken for delivery.
     if (turn.dry) return { ok: true, text, side_effects: "none" };
@@ -666,8 +670,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return { ok: true, text, messageId: sent?.message_id ?? null, parts: 1 + tail.length };
     } catch {
       // Не дошло до человека — это поломка, а не настроение. Владелец узнает
-      // сам, а собеседник всё равно получит текст в ответе ниже.
-      try { await notices.report({ component: "telegram", code: "send_failed", detail: "сообщение не ушло в чат", severity: "degraded" }); } catch { /* отчёт не должен ломать ответ */ }
+      // сам, а собеседник всё равно получит текст в ответе ниже. `quiet` — о неудаче
+      // скажет тот, кто звал: он знает причину точнее («кнопку не приняли») и повторит без неё.
+      if (!quiet) { try { await notices.report({ component: "telegram", code: "send_failed", detail: "сообщение не ушло в чат", severity: "degraded" }); } catch { /* отчёт не должен ломать ответ */ } }
       return { ok: false, code: "send_failed", text };
     }
   }
@@ -1127,6 +1132,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Чувства: ${SENSES ? `слух — ${senses.models.hearing}, зрение — ${senses.models.vision}, ссылки читаю` : "выключены настройкой"}`,
       `Словарь: ${PHRASES ? (({ sections, lines }) => `${sections} ${plural(sections, "тема", "темы", "тем")}, ${lines} ${plural(lines, "фраза", "фразы", "фраз")} — на них модель не трачу`)(book.stats()) : "выключен настройкой"}${taughtCount ? ` · выучено от хозяина: ${taughtCount}` : ""} · манеры — ${MANNERS ? "включены" : "выключены"} · память чата — ${CHAT_MEMORY ? "двое суток" : "выключена"}`,
       `Рисование: ${await drawLine(today)}`,
+      `Комната: ${await roomStatus()}`,
       `Будильник: ${await clockLine()}`,
       `Чаты и намазы: ${await roundsLine()}`,
       `Праздники: ${await feastStatus()}`,
@@ -1730,6 +1736,69 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   /** Строка запаса «+комната:…» голосом этого человека; запаса нет — пусто. */
   const roomLine = (turn, name, vars = {}) => book.pick(`+комната:${name}`, voiceCtx(turn, vars)) ?? "";
   const ROOM_POOL = Object.freeze({ pet: "погладить", feed: "покормить", play: "поиграть", tea: "чай", water: "полить" });
+  /** Забота из мини-приложения — теми же словами, какими её сказали бы в чате: так она остаётся в переписке. */
+  const ROOM_SAID = Object.freeze({ pet: "погладить Байта", feed: "покормить Байта", play: "поиграть с Байтом", tea: "налить тебе чаю", water: "полить Колючку" });
+
+  // Страница мини-приложения. Адрес знает только платформа: телефон берёт его из ответа на публикацию и передаёт
+  // с первым пробуждением новой сборки. Запись одна на бота; читается не чаще раза в десять минут.
+  const PAGE_KEY = "heart:page";
+  // Адрес помнится десять минут, «адреса нет» — одну: сразу после публикации телефон называет его
+  // через несколько секунд после того, как новый код уже отвечает.
+  const PAGE_MEMO_MS = 10 * 60_000;
+  const PAGE_NONE_MS = 60_000;
+  let pageMemo = null;
+  const pageUrlOk = (url) => typeof url === "string" && url.length <= 200 && /^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[\w./~-]*)?$/iu.test(url);
+  async function pageRecord({ fresh = false } = {}) {
+    if (!fresh && pageMemo && now() - pageMemo.at >= 0 && now() - pageMemo.at < (pageMemo.value ? PAGE_MEMO_MS : PAGE_NONE_MS)) return pageMemo.value;
+    let saved = null;
+    try { saved = await store.get(PAGE_KEY); } catch { saved = null; }
+    const value = saved && typeof saved === "object" && pageUrlOk(saved.url) ? saved : null;
+    pageMemo = { at: now(), value };
+    return value;
+  }
+  /** Адрес страницы комнаты; пусто — мини-приложения нет (не опубликовано или выключено). */
+  async function roomPage() {
+    if (!ROOM_APP || !PHRASES) return "";
+    return (await pageRecord())?.url ?? "";
+  }
+  const ROOM_MENU_TEXT = "Комната";
+  /** Слова о самом мини-приложении: открыть его, убрать и вернуть кнопку в меню. */
+  const ROOM_DOOR = new Set(["open", "menuoff", "menuon"]);
+  /** Кнопка в меню бота (слева от поля ввода, в личке у каждого): открывает комнату. `on: false` — вернуть обычное меню. */
+  async function roomMenu(url, { on = true } = {}) {
+    if (!has("setChatMenuButton")) return false;
+    try {
+      await api.setChatMenuButton({ menu_button: on ? { type: "web_app", text: ROOM_MENU_TEXT, web_app: { url } } : { type: "default" } });
+      return true;
+    } catch {
+      try { await notices.report({ component: "room", code: "menu_failed", detail: "кнопка комнаты в меню не поставилась — комната открывается кнопкой под ответом на «зайду к тебе»", severity: "degraded" }); } catch { /* отчёт не важнее публикации */ }
+      return false;
+    }
+  }
+  /**
+   * Телефон назвал адрес страницы (после публикации): запомнить и поставить кнопку в меню. Кнопку, которую хозяин
+   * убрал словом («убери комнату из меню»), новая сборка не возвращает.
+   */
+  async function keepPage(url) {
+    if (!pageUrlOk(url) || !store.available) return false;
+    const before = await pageRecord({ fresh: true });
+    const wanted = ROOM_APP && ROOM_MENU && before?.menu !== "off";
+    let menu = before?.menu ?? null;
+    if (wanted && (before?.url !== url || before?.menu !== "on")) menu = await roomMenu(url) ? "on" : menu;
+    const value = { url, build: BUILD, at: now(), menu };
+    await store.set(PAGE_KEY, value).catch(() => false);
+    pageMemo = { at: now(), value };
+    return true;
+  }
+  /** Строка «Комната» в «статус» и в «я обновилась»: по ней видно, открылось ли мини-приложение. */
+  async function roomStatus() {
+    if (!ROOM) return "выключена настройкой";
+    if (!PHRASES) return "нет словаря — комнаты нет";
+    if (!ROOM_APP) return "словами; мини-приложение выключено настройкой";
+    const page = await pageRecord({ fresh: true });
+    if (!page) return "словами («зайду к тебе»); мини-приложение не опубликовано — телефон не назвал адрес страницы";
+    return `мини-приложение открыто — кнопка под ответом на «зайду к тебе»${page.menu === "on" ? " и в меню" : page.menu === "off" ? "; из меню убрана" : "; в меню не поставилась"}${page.build && page.build !== BUILD ? ` · страница от сборки ${page.build}` : ""}`;
+  }
   /** Забота — тоже ласка: раз в день двигает отношения, снимает обиду и радует (`bond.js`, `dialogue-policy.js`). */
   async function roomCared(userId, turn = null) {
     if (policy) { try { const moved = await policy.recordDeed({ userId, kind: "caress" }); if (moved?.stage && turn) turn.stageMoved = moved.stage; } catch { /* шаг отношений подождёт */ } }
@@ -1767,11 +1836,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как слова о моей комнате — репетиция, ничего не пишу.");
     // Сказанное о комнате остаётся в переписке: на «а почему он на шкафу?» модель ответит, зная, о чём речь.
-    const tell = async (text, kept = text) => {
-      const sent = await say(turn, voiced(turn, text));
+    const tell = async (text, kept = text, extra = null) => {
+      const sent = await say(turn, voiced(turn, text), extra ? { extra, quiet: true } : {});
       if (sent?.ok) await keepThread(turn, prompt, kept);
       return sent;
     };
+    // Кнопка комнаты в меню бота — слово хозяина: убрать и вернуть.
+    if (asked.op === "menuoff" || asked.op === "menuon") {
+      if (!owner(userId)) return turn.isPrivate ? say(turn, "Что стоит в меню, решает хозяин.") : null;
+      const page = await pageRecord({ fresh: true });
+      if (!page) return say(turn, "Мини-приложения пока нет: телефон ещё не опубликовал страницу комнаты. Кнопку ставить не на что.");
+      const on = asked.op === "menuon";
+      if (!await roomMenu(page.url, { on })) return say(turn, "Не вышло: Telegram не принял смену кнопки меню. Попробуйте чуть позже.");
+      const value = { ...page, menu: on ? "on" : "off" };
+      await store.set(PAGE_KEY, value).catch(() => false);
+      pageMemo = { at: now(), value };
+      return say(turn, on ? "Вернула: кнопка «Комната» снова в меню, слева от поля ввода. У кого чат уже открыт — увидят после того, как откроют его заново." : "Убрала: в меню снова обычная кнопка. Комната открывается по-прежнему — кнопкой под ответом на «зайду к тебе». Вернуть — «верни комнату в меню».");
+    }
     const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zoneOf(turn), userId: turn.actorId });
     if (ROOM_POOL[asked.op]) {
       const done = await room.care(userId, asked.op, { day: today });
@@ -1806,11 +1887,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return tell(`Из-за ${you(turn, "вас", "тебя")} в комнате появилось: ${mine.join("; ")}.${later}`);
     }
     const visit = await room.visit(userId, { day: today, keys: turn.isPrivate ? things.keys : null, scenes: turn.isPrivate === true });
-    const lines = [roomLine(turn, "зайти"), [roomLine(turn, "окно"), roomLine(turn, `она:${herKey(feel.mood, feel.hour)}`)].filter(Boolean).join(" "), cat];
+    // Мини-приложение: кнопка под ответом — только в личке (в группах Telegram таких кнопок не даёт).
+    const page = turn.isPrivate === true ? await roomPage() : "";
+    const door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
+    // «Открой комнату», а открыть нечем: сказать об этом — и рассказать словами.
+    const lead = asked.op !== "open" || door ? "" : roomLine(turn, turn.isPrivate === true ? "дверь:нет" : "дверь:личка");
+    const lines = [lead, roomLine(turn, "зайти"), [roomLine(turn, "окно"), roomLine(turn, `она:${herKey(feel.mood, feel.hour)}`)].filter(Boolean).join(" "), cat];
     for (const key of visit.fresh) { const about = roomLine(turn, `вещь:${key}`, things.vars); if (about) lines.push(`Новое в комнате. ${about}`); }
     if (visit.state.n <= 2) lines.push(roomLine(turn, "подсказка"));
     const seen = lines.filter(Boolean).join("\n");
-    const sent = await tell(seen, visit.scene ? `${seen}\n${fill(visit.scene.text, { formal: owner(userId) ? true : turn.manner?.formal !== false })}` : seen);
+    const kept = visit.scene ? `${seen}\n${fill(visit.scene.text, { formal: owner(userId) ? true : turn.manner?.formal !== false })}` : seen;
+    let sent = await tell(seen, kept, door);
+    // С кнопкой не ушло — ответ важнее кнопки: то же самое без неё. Ушло — значит, дело было в кнопке:
+    // хозяин узнает, а кнопка отдыхает до следующей проверки адреса. Не ушло и так — об этом скажет `say`.
+    if (door && sent?.ok === false) {
+      sent = await tell(seen, kept);
+      if (sent?.ok) {
+        pageMemo = { at: now(), value: null };
+        try { await notices.report({ component: "room", code: "button_refused", detail: "Telegram не принял кнопку мини-приложения под сообщением — комната пока отвечает словами", severity: "degraded" }); } catch { /* отчёт не важнее ответа */ }
+      }
+    }
     // Сценка дня — отдельным сообщением с двумя кнопками: выбор — нажатием, а не словом, которое можно не так понять.
     if (visit.scene && sent?.ok !== false) {
       const formal = owner(userId) ? true : turn.manner?.formal !== false;
@@ -1843,6 +1939,106 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const sent = await say(turn, voiced(turn, `«${picked.label}». ${outcome}`));
     if (sent?.ok) await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
     return { ok: sent?.ok !== false, action: "room_scene", scene: picked.scene.key, pick: Number(found[2]) };
+  }
+
+  /**
+   * Мини-приложение «Комната» (страница `miniapp/`, функция `endpoints/room`): то же, что `roomWords`, но для
+   * картинки. Кто зашёл — `ctx.initData.user`: его проверяет платформа, без верных данных функция не запускается.
+   * `input.do`: look — зайти и получить всё, что видно; pet, feed, play, tea, water — забота; pick — выбор в сценке
+   * дня (`key`, `pick`). Ответ — всегда объект: отказ — тоже ответ (`ok: false`, `code`, `text`), страница скажет
+   * его словами. Правила — те же, что в чате (`room.js`): забота двигает отношения раз в день, сценка играется раз.
+   */
+  async function onRoom(input, ctx = {}) {
+    const op = String(input?.do ?? "look").slice(0, 16);
+    if (ctx?.testRun === true) return { ok: true, route: "room", do: op, build: BUILD, side_effects: "none" };
+    const refuse = (code, text) => ({ ok: false, code, text, build: BUILD });
+    try {
+      const parsed = (value) => { if (typeof value !== "string") return value; try { return JSON.parse(value); } catch { return null; } };
+      const user = parsed(parsed(ctx?.initData)?.user);
+      const userId = Number(user?.id);
+      if (!Number.isSafeInteger(userId) || userId <= 0 || user?.is_bot === true) return refuse("auth", "Не вижу, кто зашёл. Откройте комнату кнопкой в чате со мной.");
+      if (!ROOM_APP || !PHRASES) return refuse("off", "Комната сейчас закрыта.");
+      if (!store.available) return refuse("storage", "Память сейчас недоступна — загляните чуть позже.");
+      const manner = await mannerFor(userId).catch(() => null);
+      if (manner?.blocked) return refuse("closed", "Дверь закрыта. Это решение можно обсудить с владельцем.");
+      // Мини-приложение открывается только в личке: здесь можно всё, что можно наедине.
+      const turn = { actorId: userId, chatId: userId, isPrivate: true, inGroup: false, manner, extra: {}, app: true };
+      const zone = zoneOf(turn);
+      const today = calendarDate(now(), zone);
+      const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zone, userId });
+      const formal = owner(userId) ? true : manner?.formal !== false;
+      const spoken = (raw) => (raw ? voiced(turn, raw) : "");
+      /**
+       * Байт и Колючка сейчас. `after` — забота, которую только что сделали: погладили, покормили, поиграли — Байт
+       * занят этим (слова о нём — в самом ответе); чай и вода его не касаются — он остаётся, где был.
+       */
+      const picture = (state, { after = null, again = false } = {}) => {
+        const key = catState({ hour: feel.hour, last: state.last, lastAt: state.lastAt, at: now(), fed: (Number(state.done?.feed) || 0) > 0, seed: roomSeed(userId, today) });
+        const raw = after ? "" : roomLine(turn, `байт:${key}`);
+        const moved = after ? catAfter(after, { again }) : null;
+        return {
+          ...(after ? (moved ? { cat: { key, ...moved } } : {}) : { cat: { key, ...catPose(raw, key), line: raw } }),
+          plant: { state: plantState({ water: state.water, at: now() }) === "полита" ? "wet" : "dry" },
+          done: Object.fromEntries(Object.keys(ROOM_POOL).map(name => [name, Number(state.done?.[name]) || 0])),
+          cared: state.cared === today,
+        };
+      };
+      const sceneOf = (state) => {
+        const record = state?.scene;
+        const scene = record?.day === today ? sceneByKey(record.key) : null;
+        if (!scene) return null;
+        const pick = record.pick === 0 || record.pick === 1 ? record.pick : null;
+        return { key: scene.key, text: fill(scene.text, { formal }), options: scene.options.map(([label]) => label), pick, outcome: pick == null ? null : fill(scene.options[pick][1], { formal }) };
+      };
+      /** Отношения перешли на другую ступень — она говорит об этом и здесь. */
+      const stageNote = () => { if (!turn.stageMoved) return {}; const note = stageLine(turn, turn.stageMoved); turn.stageMoved = null; return note ? { note } : {}; };
+
+      if (op === "look") {
+        const before = await room.read(userId, today);
+        const things = await roomThings(turn, before);
+        const visit = await room.visit(userId, { day: today, keys: things.keys, scenes: true });
+        const her = herKey(feel.mood, feel.hour);
+        const herRaw = roomLine(turn, `она:${her}`);
+        const next = ROOM_ITEMS.find(item => item.days && item.days > things.days);
+        return {
+          ok: true, do: op, build: BUILD, formal,
+          clock: { hour: feel.hour, part: partOfDay(feel.hour), day: today },
+          greet: spoken(roomLine(turn, "зайти")), window: roomLine(turn, "окно"),
+          her: { key: her, pose: herPose(herRaw, her), line: herRaw },
+          ...picture(visit.state),
+          things: ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => ({ key: item.key, title: item.title, line: roomLine(turn, `вещь:${item.key}`, things.vars) })),
+          lamp: things.keys.includes("абажур") ? colourHex(things.vars["цвет"]) : "",
+          drawing: things.keys.includes("рисунок") ? things.vars["рисунок"] : "",
+          fresh: visit.fresh,
+          next: next ? { days: next.days - things.days } : null,
+          scene: visit.saved === false ? null : sceneOf(visit.state),
+          first: visit.first,
+        };
+      }
+      if (ROOM_POOL[op]) {
+        const done = await room.care(userId, op, { day: today });
+        const raw = roomLine(turn, done.peace ? "мириться" : `${ROOM_POOL[op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`) || "Спасибо.";
+        if (done.first) await roomCared(userId, turn);
+        // Первая такая забота за день остаётся в переписке: на «он наелся?» модель ответит, зная, что его кормили.
+        if (!done.again && !done.early) await keepThread(turn, ROOM_SAID[op], raw);
+        return {
+          ok: true, do: op, build: BUILD, line: spoken(raw), again: Boolean(done.again), early: Boolean(done.early), peace: Boolean(done.peace), counted: Boolean(done.first),
+          ...picture(done.state, { after: done.peace ? "pet" : op, again: Boolean(done.again) }), ...stageNote(),
+        };
+      }
+      if (op === "pick") {
+        const picked = await room.choose(userId, String(input?.key ?? "").slice(0, 24), Number(input?.pick), { day: today });
+        if (!picked.ok) return refuse(picked.code, picked.code === "played" ? "Эта сценка уже сыграна." : picked.code === "storage" ? "Память сейчас недоступна — выбор не записался." : "Этой сценки уже нет: её день прошёл.");
+        if (picked.first) await roomCared(userId, turn);
+        const outcome = fill(picked.outcome, { formal });
+        await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
+        return { ok: true, do: op, build: BUILD, line: spoken(outcome), counted: Boolean(picked.first), scene: sceneOf(picked.state), cared: picked.state.cared === today, ...stageNote() };
+      }
+      return refuse("unknown", "Такого в комнате не делают.");
+    } catch (error) {
+      try { await reportCrash(error, ctx); } catch { /* отчёт не должен стать второй поломкой */ }
+      return refuse("runtime_error", "Что-то сломалось. Хозяин уже знает — загляните чуть позже.");
+    }
   }
 
   /** Привычки: завести, отметить, посмотреть, убрать. `null` — речь не о них. */
@@ -6783,6 +6979,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Способности: ${await bridgeLine()}`,
       `Источники: ${await sourcesLine()}`,
       `Рисование: ${await drawLine()}`,
+      `Комната: ${await roomStatus()}`,
       `Будильник: ${await clockLine()}`,
     ];
     await notices.tell({ key: `build:${BUILD}`, text: lines.join("\n") });
@@ -7815,6 +8012,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const seen = await store.get("heart:build").catch(() => null);
     if (!deployed && seen?.build && seen.build !== BUILD) return { ok: false, code: "build_mismatch", build: BUILD, published: seen.build };
     await beat(deployed ? "deploy" : "run");
+    // Телефон назвал адрес страницы мини-приложения — запомнить раньше, чем она скажет «я обновилась».
+    let pageKept = null;
+    if (deployed && typeof ctx?.page === "string" && ctx.page) { try { pageKept = await keepPage(ctx.page); } catch { pageKept = false; } }
     await wake(ctx, { announce: deployed });
     try { await secretaryClock(); } catch { /* срок отлучки проверится со следующим ударом */ }
     try { await secretaryPlan(); } catch { /* расписание проверится со следующим ударом */ }
@@ -7865,6 +8065,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return {
       ok: true, code: "tick", build: BUILD,
       queue: await queue.size().catch(() => 0), reminders: await reminders.size().catch(() => 0),
+      // Принят ли адрес страницы мини-приложения: по этой строке в журнале телефона видно, узнала ли она о комнате.
+      ...(pageKept == null ? {} : { page: pageKept }),
     };
   }
 
@@ -8272,7 +8474,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // («разбуди меня в 7») действием не считается.
     const self = inGroup || !request ? await whoAmI(dry) : null;
     // Комната — раньше ролевых действий: «погладь Байта» — о коте, а не «Аи гладит … байта».
-    const viaRoom = request ? null : await roomWords(turn, prompt);
+    // «Открой комнату», «убери комнату из меню» — слова о мини-приложении: они сказаны целиком и точно,
+    // поэтому идут и поперёк догадки («покажи …» — не поиск картинки, «убери …» — не заметка).
+    const roomFirst = ROOM && PHRASES && ROOM_DOOR.has(parseRoom(prompt)?.op);
+    const viaRoom = request && !roomFirst ? null : await roomWords(turn, prompt);
     if (viaRoom) return ruled(viaRoom);
     if (!request) {
       const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
@@ -8794,6 +8999,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   return Object.freeze({
     onMessage,
     onCallback,
+    onRoom,
     onBusinessConnection,
     onBusinessMessage,
     onMyChatMember,

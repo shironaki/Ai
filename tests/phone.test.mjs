@@ -25,7 +25,7 @@ const TOKEN = "app123:SECRET-PLATFORM-TOKEN";
 const KEYS = { model: "gsk-SECRET-MODEL-KEY", giga: "GIGA-SECRET-KEY", voice: "777:VOICE-SECRET" };
 
 const FAKE_CLI = `
-import { appendFileSync, readFileSync, existsSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve, basename } from "node:path";
 const args = process.argv.slice(2);
@@ -66,13 +66,27 @@ if (process.env.FAKE_MEANWHILE && args[0] === "fetch") {
 // Сбои: FAKE_FAIL — имена вызовов через запятую; FAKE_FAIL_IN — только из этой папки («stage», «live»);
 // FAKE_FAIL_FROM — только начиная с вызова с таким номером. FAKE_HANG — вызов, на который платформа молчит.
 const fail = String(process.env.FAKE_FAIL || "").split(",").filter(Boolean);
-const name = args[0] === "run" ? "run:" + args[1] : args[0];
+// Отправку можно уронить и прицельно: «push:app» — код вместе с функцией комнаты, «push:page» — страницу комнаты.
+const name = args[0] === "run" ? "run:" + args[1] : args[0] === "push" && args.includes("miniapp") ? "push:page" : args[0] === "push" && args.includes("endpoints") ? "push:app" : args[0];
 const here = !process.env.FAKE_FAIL_IN || process.env.FAKE_FAIL_IN === basename(root);
 const since = order >= Number(process.env.FAKE_FAIL_FROM || 1);
 if ((process.env.FAKE_HANG === args[0] || process.env.FAKE_HANG === name) && here && since) await new Promise((done) => setInterval(done, 600_000));
 const slow = String(process.env.FAKE_SLOW || "").split(":");
 if (slow[0] === args[0] || slow[0] === name) await new Promise((done) => setTimeout(done, Number(slow[1]) * 1000));
 if (here && since && (fail.includes(args[0]) || fail.includes(name))) { console.log(process.env.FAKE_SAYS || "✗ boom"); process.exit(1); }
+// FAKE_ROOM_FATAL — платформа не терпит саму функцию комнаты: пока её файл лежит в копии, отказ на любой отправке
+// («push») и, если значение другое, ещё и на её репетиции. Инструмент проверяет все модули копии, а не только цели.
+if (process.env.FAKE_ROOM_FATAL && existsSync("tgcloud/endpoints/room.js") && (args[0] === "push" || (process.env.FAKE_ROOM_FATAL !== "push" && name === "run:endpoints/room"))) {
+  console.log('Error: tgcloud/endpoints/room.js: "room" is not a valid module name in endpoints/.'); process.exit(1);
+}
+// Как настоящий инструмент: цель, которой нет в проекте, — отказ.
+if (args[0] === "push" && args.includes("endpoints") && !existsSync("tgcloud/endpoints/room.js")) { console.log("Error: Cannot deploy: endpoints — not found"); process.exit(1); }
+if (args[0] === "push" && args.includes("miniapp") && !(existsSync("tgcloud.jsonc") && existsSync("miniapp/index.html"))) { console.log("Error: Cannot deploy: miniapp — not found"); process.exit(1); }
+// Мини-приложение: на отправку страницы платформа отвечает её адресом, и инструмент кладёт ответ в .tgcloud/static.json.
+// FAKE_PAGE_LIVE — страница опубликована раньше: её адрес приходит и с «fetch».
+if ((args[0] === "push" && args.includes("miniapp")) || (args[0] === "fetch" && process.env.FAKE_PAGE_LIVE)) {
+  writeFileSync(".tgcloud/static.json", JSON.stringify({ hash: "abc", url: process.env.FAKE_PAGE_URL ?? "https://app123.tgcloud.ai/", config: {}, manifest: { "index.html": { hash: "x", size: 1 } } }, null, 2) + "\\n");
+}
 // Настоящий инструмент печатает «allowed updates:» с выравниванием и цветом; список — через запятую.
 if (args[0] === "webhook") console.log("  url: https://secret.example/hook\\n  \\u001b[2mallowed updates:\\u001b[22m   " + (process.env.FAKE_UPDATES || "message, channel_post"));
 if (args[0] === "run") console.log(args.includes("{ tick: true }") && process.env.FAKE_MISMATCH ? "{ ok: false, code: 'build_mismatch' }" : "{ ok: true }");
@@ -166,7 +180,7 @@ function sh(cwd, command, env = {}) {
 }
 
 /** Песочница: «GitHub», папка на телефоне, файл ключей, поддельные инструменты. */
-function sandbox({ lines = null, slim = true } = {}) {
+function sandbox({ lines = null, slim = true, app = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "heart-phone-"));
   const seed = join(dir, "seed"), phone = join(dir, "phone"), home = join(dir, "home"), bin = join(dir, "bin");
   for (const path of [join(seed, "scripts"), join(seed, "tgcloud/lib"), join(seed, "tgcloud/handlers"), home, bin]) mkdirSync(path, { recursive: true });
@@ -181,6 +195,14 @@ function sandbox({ lines = null, slim = true } = {}) {
   }
   writeFileSync(join(seed, "tgcloud/lib/heart.js"), 'export const BUILD = "1.0.0";\n');
   writeFileSync(join(seed, "tgcloud/handlers/message.js"), "/** Обработчик: этот комментарий облаку не нужен. */\nexport default async function () {} // и этот комментарий тоже\n");
+  // `app: true` — в коммите есть мини-приложение: функция комнаты, страница и настройки проекта для инструмента.
+  if (app) {
+    mkdirSync(join(seed, "tgcloud/endpoints"), { recursive: true });
+    mkdirSync(join(seed, "miniapp"), { recursive: true });
+    writeFileSync(join(seed, "tgcloud/endpoints/room.js"), "/** Функция комнаты: комментарий облаку не нужен. */\nexport default async function () { return { ok: true }; }\n");
+    writeFileSync(join(seed, "miniapp/index.html"), "<!doctype html><title>Комната</title>\n");
+    writeFileSync(join(seed, "tgcloud.jsonc"), '// страница мини-приложения\n{ "static": { "source": "miniapp" } }\n');
+  }
   writeFileSync(join(seed, "package.json"), JSON.stringify({ name: "x", private: true, type: "module", scripts: { ci: "env > \"$FAKE_LOG.ci\"; [ -z \"$FAKE_CI_OUT\" ] || cat \"$FAKE_CI_OUT\"; exit ${FAKE_CI:-0}" } }));
   sh(dir, "git init -q --bare remote.git");
   sh(seed, `git init -q && git checkout -q -b work && git add -A && git commit -q -m one && git remote add origin "${join(dir, "remote.git")}" && git push -q origin work`);
@@ -299,6 +321,148 @@ test("первый круг публикует: репетиция → публ�
     assert.equal(second.code, 0, second.out);
     assert.equal(box.cli().length, calls.length, "та же сборка второй раз не публикуется");
     assert.ok(box.curl().at(-1).includes("editMessageText") && box.curl().at(-1).includes("message_id=77"));
+  } finally { box.clean(); }
+});
+
+// ── мини-приложение «Комната» (0.38.0) ──────────────────────────────────────
+const PAGE = "https://app123.tgcloud.ai/";
+/** Вызовы инструмента коротко: отправки — со всеми целями, пробуждение — с тем, что ему передали. */
+const steps = (calls) => calls.map(item => (item.args[0] === "run" ? `run:${item.args[1]}${item.args.at(-1).includes("deployed: true") ? `:${item.args.at(-1)}` : ""}` : item.args.join(" ")));
+const toldOwner = (box) => box.curl().filter(line => line.includes("chat_id=42")).map(line => decodeURIComponent(line));
+
+test("мини-приложение: функция репетируется, уходит с кодом, страница — отдельно, адрес — сердцу с пробуждением", { skip }, () => {
+  const box = sandbox({ app: true });
+  try {
+    const done = box.run("once");
+    assert.equal(done.code, 0, done.out);
+    const calls = box.cli();
+    assert.deepEqual(steps(calls), [
+      "webhook", "run:handlers/message", "run:handlers/channel_post", "fetch", "run:endpoints/room",
+      "push handlers lib schema endpoints", "migrate --yes", "webhook", "push miniapp",
+      `run:handlers/message:{ tick: true, deployed: true, page: "${PAGE}" }`,
+    ]);
+    const rehearsal = calls.find(item => item.args[1] === "endpoints/room");
+    assert.deepEqual(rehearsal.args.slice(2), ['{ do: "look" }', "--ctx", "{ testRun: true }"], "репетиция комнаты ничего не пишет");
+    assert.ok(calls.slice(1).every(item => item.where === "stage" && item.key && item.slim), "всё — из копии для облака");
+    assert.match(done.out, /✓ Сборка 1\.0\.0 опубликована/u);
+    assert.match(done.out, /✓ Мини-приложение «Комната» опубликовано: кнопка под ответом на «зайду к тебе» и в меню бота\./u);
+    assert.deepEqual(toldOwner(box), [], "всё вышло — телефон молчит: о сборке Аи пишет сама");
+    assert.equal(box.status(), "", "в папке не менялось ничего");
+    // Слепок опубликованного: страница в нём есть, комментариев и ключей — нет.
+    const live = join(box.home, ".heart/live");
+    assert.ok(existsSync(join(live, "miniapp/index.html")));
+    assert.ok(!readFileSync(join(live, "tgcloud/endpoints/room.js"), "utf8").includes("комментарий"), "функция комнаты тоже уходит без комментариев");
+    assert.ok(!readFileSync(join(live, "tgcloud/lib/secrets.js"), "utf8").includes(KEYS.model));
+    // Обычный удар будильника адреса не несёт: сердце помнит его само.
+    box.run("once");
+    assert.ok(box.cli().slice(calls.length).every(item => !item.args.join(" ").includes("page:")));
+  } finally { box.clean(); }
+});
+
+test("мини-приложение — надстройка: отказ платформы на любом его шаге бота не держит, владелец узнаёт причину", { skip }, () => {
+  // 1. Функция комнаты не прошла репетицию: код уходит как раньше, страницы нет.
+  let box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_FAIL: "run:endpoints/room" });
+    const calls = box.cli();
+    assert.deepEqual(steps(calls).slice(4), ["run:endpoints/room", "push handlers lib schema", "migrate --yes", "webhook", "run:handlers/message:{ tick: true, deployed: true }"]);
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+    assert.match(done.out, /⚠ Мини-приложение «Комната» не опубликовано: функция комнаты не прошла репетицию в облаке\. Сам бот на сборке 1\.0\.0\. Комната пока отвечает словами\./u);
+    assert.match(box.state("published"), /\n1\.0\.0\n/u);
+    assert.equal(toldOwner(box).length, 1);
+    assert.match(toldOwner(box)[0], /text=⚠️ Телефон: сборка 1\.0\.0 опубликована, но мини-приложение «Комната» — нет: функция комнаты не прошла репетицию в облаке\. Комната пока отвечает словами\. Перешлите эту строку в чат разработки\./u);
+    // Та же сборка второй раз не публикуется — и владельцу второй раз не пишут.
+    box.run("once");
+    assert.equal(toldOwner(box).length, 1);
+  } finally { box.clean(); }
+
+  // 2. Платформа не приняла код вместе с функцией: вторая отправка — без неё.
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_FAIL: "push:app" });
+    assert.deepEqual(steps(box.cli()).slice(5), ["push handlers lib schema endpoints", "push handlers lib schema", "migrate --yes", "webhook", "run:handlers/message:{ tick: true, deployed: true }"]);
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+    assert.match(done.out, /Мини-приложение «Комната» не опубликовано: платформа не приняла функцию комнаты\./u);
+    assert.match(box.state("deploy.log"), /== публикация без комнаты ==/u);
+  } finally { box.clean(); }
+
+  // 2а. Платформа не терпит саму функцию комнаты — ни в репетиции, ни в копии при отправке бота: функция из копии
+  // убирается, и бот уходит как в сборках без комнаты. В папке с Аи при этом ничего не меняется.
+  for (const [fatal, why, sent] of [
+    ["all", "функция комнаты не прошла репетицию в облаке", ["run:endpoints/room", "push handlers lib schema"]],
+    ["push", "платформа не приняла функцию комнаты", ["run:endpoints/room", "push handlers lib schema endpoints", "push handlers lib schema"]],
+  ]) {
+    box = sandbox({ app: true });
+    try {
+      const done = box.run("once", { FAKE_ROOM_FATAL: fatal });
+      assert.deepEqual(steps(box.cli()).slice(4), [...sent, "migrate --yes", "webhook", "run:handlers/message:{ tick: true, deployed: true }"], fatal);
+      assert.match(done.out, /✓ Сборка 1\.0\.0 опубликована/u, fatal);
+      assert.ok(done.out.includes(`Мини-приложение «Комната» не опубликовано: ${why}.`), done.out);
+      assert.match(box.state("published"), /\n1\.0\.0\n/u);
+      assert.ok(!existsSync(join(box.home, ".heart/live/tgcloud/endpoints")), "в слепке опубликованного функции комнаты нет: её не публиковали");
+      assert.ok(existsSync(join(box.home, ".heart/live/tgcloud/handlers/message.js")));
+      assert.equal(box.status(), "", "в папке не менялось ничего");
+      assert.ok(existsSync(join(box.phone, "tgcloud/endpoints/room.js")), "сам файл в папке с Аи цел");
+    } finally { box.clean(); }
+  }
+
+  // 3. Страницу платформа не приняла: бот опубликован, сердце об адресе не слышит.
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_FAIL: "push:page" });
+    assert.deepEqual(steps(box.cli()).slice(5), ["push handlers lib schema endpoints", "migrate --yes", "webhook", "push miniapp", "run:handlers/message:{ tick: true, deployed: true }"]);
+    assert.match(done.out, /Мини-приложение «Комната» не опубликовано: платформа не приняла страницу комнаты\./u);
+    assert.match(box.state("published"), /\n1\.0\.0\n/u);
+  } finally { box.clean(); }
+
+  // 4. То же, но прежняя страница жива: сердцу называется её адрес.
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_FAIL: "push:page", FAKE_PAGE_LIVE: "1" });
+    assert.equal(steps(box.cli()).at(-1), `run:handlers/message:{ tick: true, deployed: true, page: "${PAGE}" }`);
+    assert.match(done.out, /платформа не приняла страницу комнаты\. Сам бот на сборке 1\.0\.0\. Кнопки открывают прежнюю страницу\./u);
+    assert.match(toldOwner(box).at(-1), /— нет: платформа не приняла страницу комнаты\. Кнопки открывают прежнюю страницу\. Перешлите/u);
+  } finally { box.clean(); }
+
+  // 5. Связь оборвалась на странице: шаг повторяется один раз; не вышло — причина названа.
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_FAIL: "push:page", FAKE_SAYS: "Error: Could not reach the platform" });
+    assert.equal(steps(box.cli()).filter(name => name === "push miniapp").length, 2, "обрыв — один повтор");
+    assert.match(done.out, /страница комнаты не отправилась: пропала связь с платформой\./u);
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+  } finally { box.clean(); }
+});
+
+test("мини-приложение: обрыв связи на репетиции комнаты — как на любой репетиции; странный адрес сердцу не уходит", { skip }, () => {
+  let box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_FAIL: "run:endpoints/room", FAKE_SAYS: "Error: Could not reach the platform" });
+    assert.ok(!box.cli().some(item => item.args[0] === "push"), "до публикации дело не дошло");
+    assert.equal(box.state("published"), "");
+    assert.match(done.out, /не отвечает — публикация подождёт связи\. Бот на прежней сборке\./u);
+  } finally { box.clean(); }
+
+  // Адрес уходит сердцу внутри строки настроек: в него попадают только безопасные знаки.
+  for (const url of ['https://x.example/" }, evil: { a: "1', "http://app123.tgcloud.ai/", "https://app123.tgcloud.ai/?a=$(id)", ""]) {
+    box = sandbox({ app: true });
+    try {
+      const done = box.run("once", { FAKE_PAGE_URL: url });
+      assert.equal(steps(box.cli()).at(-1), "run:handlers/message:{ tick: true, deployed: true }", url);
+      assert.match(done.out, /платформа приняла страницу комнаты, но не назвала её адрес/u, url);
+      assert.match(done.out, /Сборка 1\.0\.0 опубликована/u);
+    } finally { box.clean(); }
+  }
+});
+
+test("мини-приложение: сборка без него публикуется по-прежнему; настройки без страницы — причина названа", { skip }, () => {
+  // Функция есть, а страницы в коммите нет: функция уходит, владелец узнаёт, чего не хватает.
+  const box = sandbox({ app: true });
+  try {
+    sh(box.seed, "git rm -q -r miniapp && git commit -q -m nopage && git push -q origin work");
+    const done = box.run("once");
+    assert.deepEqual(steps(box.cli()).slice(4), ["run:endpoints/room", "push handlers lib schema endpoints", "migrate --yes", "webhook", "run:handlers/message:{ tick: true, deployed: true }"]);
+    assert.match(done.out, /не опубликовано: в коммите нет страницы комнаты \(miniapp\/index\.html и tgcloud\.jsonc\)/u);
   } finally { box.clean(); }
 });
 
