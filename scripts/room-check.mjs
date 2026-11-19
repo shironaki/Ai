@@ -31,6 +31,13 @@
  *      нажатия не начинается. Вечером у каждого состояния — картинки в свитере (0.42.0), и поз в нём столько же,
  *      сколько в куртке (0.43.0): нажатие меняет позу, а куртка вечером не появляется ни на миг; где у картинки
  *      есть «веки», она моргает; у «сна» поза одна — нажатие её не меняет и ничего не ломает.
+ *   8. своя жизнь, погода, смена часа (0.44.0): она и Байт сами, по очереди, переходят к следующему занятию и
+ *      доходят до нового места шагом, а слова под рисунком — о нынешней картинке; нажали на неё — следующее
+ *      занятие сразу; погладили Байта второй раз — «перевернулся на спину», и на рисунке он на спине; сценка дня
+ *      видна на рисунке и уходит с него после выбора; семь видов неба — струи, хлопья или пусто, гроза сверкает;
+ *      час сменился при открытой странице — свет перетекает, а если она при этом переодевается, то уходит к
+ *      шкафу, на её месте надпись «*переодевается*», и возвращается она в другом. В 0.43.0 открытая в 17:59
+ *      комната в 18:00 не менялась, а слова «Байт перевернулся на спину» стояли под сидящим Байтом.
  *   6. её картинка не загрузилась: папки `her/` на сервере нет — или файл пришёл, а картинка в нём не читается
  *      (браузер не знает формата, страница не даёт её показать). Комната открывается, она нарисована кодом,
  *      забота нажимается. Второй случай без проверки оставил бы её невидимой: ссылка на картинку в рисунке
@@ -327,6 +334,8 @@ try {
       if (!target || animation.playState !== "running") continue;
       out.total += 1;
       if (target.id === "rainFar" || target.id === "rainNear") continue;
+      // Сам слой дождя может гаснуть и проступать (погода сменилась при открытой странице): это прозрачность, а не сдвиг.
+      if (target.matches(".rainbox") && animation.transitionProperty === "opacity") continue;
       // Внутри слоя дождя не движется ничего: слой едет целиком. Иначе сдвиги сложатся.
       if (target.closest(".rainbox")) { out.stray.push(`${name(target)} — «${animation.animationName}»: внутри слоя дождя`); continue; }
       if (target.closest("#room, #sky")) { for (const cls of (target.getAttribute("class") ?? "").split(/\s+/u)) if (cls) out.moving[cls] = (out.moving[cls] ?? 0) + 1; continue; }
@@ -373,8 +382,8 @@ try {
     }
   }
   // Вечером при всех вещах в комнате движутся: лампочки гирлянды, Байт (моргает), капли на стекле, пар над её
-  // кружкой. Сама она с 0.40.0 — картинка и стоит неподвижно; дышит и моргает только нарисованная кодом (шаг 6).
-  for (const [cls, least] of [["bulb", 20], ["blink", 1], ["slide", 1], ["steam", 1]]) {
+  // кружкой. Сама она с 0.40.0 — картинка; с 0.44.0 картинка дышит (`alive`).
+  for (const [cls, least] of [["bulb", 20], ["blink", 1], ["slide", 1], ["steam", 1], ["alive", 1]]) {
     if ((motion.moving[cls] ?? 0) < least) fail(`не движется «${cls}»: частей ${motion.moving[cls] ?? 0}, а должно быть не меньше ${least}`);
   }
   // Кто просил движение не показывать, тот не видит никакого: ни в комнате, ни за окном.
@@ -461,7 +470,7 @@ try {
     const broken = [];
     tab.on("pageerror", (error) => broken.push(String(error)));
     tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
-    // День, «уют», у окна: поз три (с кружкой, пьёт, сидит на пуфе), у первой есть «веки».
+    // День, «уют», у окна: поз три (с кружкой, пьёт, сидит в кресле), у первой есть «веки».
     const day = `${origin}/index.html#part=${encodeURIComponent("день")}&key=${encodeURIComponent("уют")}&scene=0`;
     const failed = failures.length;
     await tab.goto(day, { waitUntil: "load", timeout: 30_000 });
@@ -470,7 +479,7 @@ try {
       used: [...document.querySelectorAll("#inside > .art use")].map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
       // Прежняя поза остаётся в рисунке до следующей перерисовки, но уже растаявшей: что на ней сейчас ВИДНО —
       // это ссылки без тех, чья группа «тает» дошла до прозрачности.
-      seen: [...document.querySelectorAll("#inside > .art use")].filter(node => { const gone = node.closest(".leave"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
+      seen: [...document.querySelectorAll("#inside > .art use")].filter(node => { const gone = node.closest(".leave, .stride"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
         .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
       kept: [...document.querySelectorAll("#store image")].map(node => node.id),
       leave: document.querySelectorAll("#inside .leave").length, arrive: document.querySelectorAll("#inside .arrive").length,
@@ -501,7 +510,8 @@ try {
     await tapHer();
     await pause(700);
     const third = await shownNow();
-    if (!third.used.includes("#r-her-tea3") || !third.pouf) fail(`третья поза — сидит на пуфе: ${JSON.stringify(third.used)}, пуфов — ${third.pouf}`);
+    // С 0.44.0 она сидит в кресле комнаты: пуфа, который появлялся вместе с ней, больше нет.
+    if (!third.used.includes("#r-her-tea3") || third.pouf) fail(`третья поза — сидит в кресле: ${JSON.stringify(third.used)}, пуфов — ${third.pouf}`);
     if (new Set(third.kept).size !== third.kept.length) fail(`картинки в кладовой повторяются: ${JSON.stringify(third.kept)}`);
     // Сама — без нажатия: срок назван в адресе (на странице в Telegram он — от 24 до 40 секунд).
     await tab.goto(`${day}&turn=700`, { waitUntil: "load", timeout: 30_000 });
@@ -608,6 +618,131 @@ try {
     if (broken.length) fail(`позы и звук — ошибка на странице: ${broken[0].slice(0, 200)}`);
     if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний: поз в нём — ${eveningPoses}, сменяются от нажатия, куртка не показывается; моргает на ${eveningLids} из них`);
     if (failures.length === failed) console.log(`  позы сменяются от нажатия и сами, прежняя тает; моргает (заплаток — ${start.wink}); звук включается нажатием, запоминается, без касания не начинается; снег — хлопьями в двух слоях; торт, свеча и фонарь на месте`);
+    await tab.close();
+  }
+
+  // ── 8. своя жизнь, погода, смена часа (0.44.0) ─────────────────────────────
+  console.log("8. Своя жизнь, погода, смена часа, сценка на рисунке");
+  {
+    const tab = await browser.newPage();
+    const broken = [];
+    const failed = failures.length;
+    tab.on("pageerror", (error) => broken.push(String(error)));
+    tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
+    const open = async (hash) => { await tab.goto(`${origin}/index.html#${hash}`, { waitUntil: "load", timeout: 30_000 }); await tab.reload({ waitUntil: "load" }); await pause(700); };
+    const now = () => tab.evaluate(() => {
+      const visible = (node) => { for (let at = node; at && at.id !== "inside"; at = at.parentElement) if (Number(getComputedStyle(at).opacity) <= 0.02) return false; return true; };
+      const hers = [...document.querySelectorAll("#inside > .art use")].filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !href.endsWith("-blink"));
+      const strides = [...document.querySelectorAll("#inside .stride")];
+      return {
+        say: document.getElementById("say").textContent, light: document.getElementById("app").dataset.light, hers: [...new Set(hers)],
+        kept: [...document.querySelectorAll("#store image")].map(node => node.id),
+        herWalks: strides.filter(node => node.querySelector("use")).length, catWalks: strides.filter(node => node.querySelector(".cat")).length,
+        cat: [...document.querySelectorAll("#inside .cat")].filter(visible).map(node => node.getAttribute("class").replace(/^cat\s*/u, "")),
+        note: document.querySelectorAll("#inside .changing").length, fading: document.querySelectorAll("#sky .fading, #room .fading").length,
+        fx: [...document.querySelectorAll("#inside .fx")].map(node => node.getAttribute("class").replace(/^fx fx-/u, "")),
+        alive: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside .alive")).length,
+      };
+    });
+    const until = async (test, ms = 8000, step = 150) => { for (let spent = 0; spent <= ms; spent += step) { const seen = await now(); if (test(seen)) return seen; await pause(step); } return null; };
+    const demo = await tab.evaluate(async () => { const logic = await import("./logic.js"); const day = logic.demoLook(13, { part: "день" }), dusk = logic.demoLook(19, { part: "вечер" }); return { her: day.her.beats, cat: day.cat.beats, wardrobe: dusk.wardrobe, dusk: dusk.her.beats }; }).catch(() => null);
+    await open(`part=${encodeURIComponent("день")}`);
+    const plan = demo ?? await tab.evaluate(async () => { const logic = await import("./logic.js"); const day = logic.demoLook(13, { part: "день" }), dusk = logic.demoLook(19, { part: "вечер" }); return { her: day.her.beats, cat: day.cat.beats, wardrobe: dusk.wardrobe, dusk: dusk.her.beats }; });
+
+    // Своя жизнь: по очереди она и Байт переходят к следующему занятию; слова под рисунком — о нынешней картинке.
+    await open(`part=${encodeURIComponent("день")}&turn=1500&scene=0`);
+    const first = await until(seen => seen.kept.includes("r-her-walk") && seen.kept.includes("r-her-play2"), 6000);
+    if (!first) fail("своя жизнь: картинки «идёт» и следующей позы не подгрузились заранее");
+    if (first && !first.alive) fail("она не дышит: картинка неподвижна");
+    const moved = await until(seen => seen.say === plan.her[1].line, 7000, 100);
+    if (!moved) fail(`своя жизнь: сама она к следующему занятию не перешла (ждали слова «${plan.her[1].line.slice(0, 40)}…»)`);
+    else {
+      if (!moved.herWalks) fail("своя жизнь: она сменила место рывком — картинки «идёт» на рисунке нет");
+      const settledHer = await until(seen => seen.hers.join() === "#r-her-play2", 6000, 150);
+      if (!settledHer) fail(`своя жизнь: дошла — а на рисунке не та поза: ${JSON.stringify((await now()).hers)}`);
+    }
+    const trot = await until(seen => seen.say === plan.cat[1].line, 7000, 100);
+    if (!trot) fail(`своя жизнь: сам Байт на новое место не пошёл (ждали слова «${plan.cat[1].line.slice(0, 40)}…»)`);
+    else if (!trot.catWalks) fail("своя жизнь: Байт сменил место рывком — идущего Байта на рисунке нет");
+
+    // Нажали на неё — следующее занятие сразу, и слова о нём.
+    await open(`part=${encodeURIComponent("день")}&turn=600000&scene=0`);
+    await until(seen => seen.kept.includes("r-her-play2"), 6000);
+    const point = await tab.evaluate(() => { const box = document.querySelector('#room .zones [data-act="her"]')?.getBoundingClientRect(); return box ? { x: box.left + box.width / 2, y: box.top + box.height * 0.6 } : null; });
+    if (point) await tab.touchscreen.tap(point.x, point.y);
+    const tapped = await until(seen => seen.say === plan.her[1].line, 2000, 100);
+    if (!tapped) fail(`нажали на неё, а слова не о следующем занятии: «${(await now()).say.slice(0, 60)}»`);
+
+    // Забота: во второй раз Байт «перевернулся на спину» — и на рисунке он на спине.
+    await tab.tap('#actions button[data-act="pet"]');
+    await pause(500);
+    await tab.tap('#actions button[data-act="pet"]');
+    const belly = await until(seen => /на спину/u.test(seen.say) && seen.cat.includes("belly"), 3000, 150);
+    if (!belly) { const seen = await now(); fail(`погладили второй раз: слова «${seen.say.slice(0, 50)}», а Байт на рисунке — ${JSON.stringify(seen.cat)}`); }
+
+    // Сценка дня видна на рисунке и уходит с него после выбора; Байт — там, где сказано.
+    await open(`part=${encodeURIComponent("день")}&turn=600000`);
+    const staged = await now();
+    if (!staged.fx.includes("sock")) fail(`сценка «носок»: носка на рисунке нет (${JSON.stringify(staged.fx)})`);
+    await tab.tap('#sceneChoice button[data-pick="0"]');
+    const played = await until(seen => !seen.fx.includes("sock") && seen.cat.includes("curl"), 3000, 150);
+    if (!played) { const seen = await now(); fail(`сценка сыграна («унёс носок в коробку»), а на рисунке: носок — ${seen.fx.includes("sock")}, Байт — ${JSON.stringify(seen.cat)}`); }
+
+    // Погода: семь видов неба. Дождь и гроза — струи, снег — хлопья, в сухую погоду слои пусты; гроза сверкает.
+    const skies = [];
+    for (const sky of ["clear", "clouds", "overcast", "fog", "rain", "storm", "snow"]) {
+      await open(`part=${encodeURIComponent(sky === "clear" ? "ночь" : "день")}&sky=${sky}&turn=600000&scene=0`);
+      // Пока сердце не ответило, за окном серо и сухо; ответило — небо перетекает, дождь проступает через секунду.
+      for (let spent = 0; spent < 3000; spent += 150) { if (await tab.evaluate(() => document.querySelector(".rainbox")?.dataset.sky ?? "") === sky) break; await pause(150); }
+      const seen = await tab.evaluate(() => ({
+        sky: document.querySelector(".rainbox")?.dataset.sky ?? "", label: document.getElementById("room").getAttribute("aria-label"),
+        lines: document.querySelectorAll(".rainbox path").length, flakes: document.querySelectorAll(".rainbox .snow circle").length,
+        flash: document.querySelectorAll("#sky .flash").length, stars: document.querySelectorAll("#sky .star").length, drift: document.querySelectorAll("#sky .drift").length,
+        moving: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.closest?.("#sky")).map(animation => animation.animationName),
+      }));
+      const wet = sky === "rain" || sky === "storm";
+      if (seen.sky !== sky) fail(`погода «${sky}»: слой дождя думает, что за окном «${seen.sky}»`);
+      if (wet !== seen.lines > 0) fail(`погода «${sky}»: струй дождя — ${seen.lines}`);
+      if ((sky === "snow") !== seen.flakes > 0) fail(`погода «${sky}»: хлопьев — ${seen.flakes}`);
+      if ((sky === "storm") !== seen.flash > 0 || (sky === "storm" && !seen.moving.includes("flash"))) fail(`погода «${sky}»: молний — ${seen.flash}, движется — ${JSON.stringify(seen.moving)}`);
+      if (sky === "clear" && (!seen.stars || !seen.moving.includes("star"))) fail(`ясная ночь: звёзд, которые мерцают, — ${seen.stars}, движется — ${JSON.stringify(seen.moving)}`);
+      if (sky === "clouds" && (!seen.drift || !seen.moving.includes("drift"))) fail(`облака: плывущих слоёв — ${seen.drift}, движется — ${JSON.stringify(seen.moving)}`);
+      if (/дожд/u.test(seen.label) !== (sky === "rain")) fail(`погода «${sky}»: подпись рисунка — «${seen.label}»`);
+      skies.push(sky);
+    }
+
+    // Смена часа при открытой странице: день → вечер. Она уходит к шкафу, на её месте — «*переодевается*», свет
+    // перетекает, и она возвращается в свитере. Сроки названы в адресе: час «кончается» через секунду.
+    await open(`part=${encodeURIComponent("день")}&left=800&then=${encodeURIComponent("вечер")}&change=900&turn=600000&scene=0`);
+    const story = [];
+    for (let spent = 0; spent < 16_000; spent += 120) {
+      const seen = await now();
+      const last = story[story.length - 1];
+      if (!last || last.say !== seen.say || last.light !== seen.light || last.hers.join() !== seen.hers.join() || last.note !== seen.note) story.push(seen);
+      if (seen.say.startsWith(plan.wardrobe.back) && seen.hers.length === 1 && seen.hers[0].startsWith("#r-her-home-") && !seen.hers[0].endsWith("-walk")) break;
+      await pause(120);
+    }
+    const told = (test) => story.findIndex(test);
+    const left = told(seen => seen.say === plan.wardrobe.leave), away = told(seen => seen.say === "*переодевается*"), back = told(seen => seen.say.startsWith(plan.wardrobe.back));
+    const sequence = story.map(seen => `${seen.light}/${seen.hers.map(href => href.slice(7)).join("+") || "—"}/«${seen.say.slice(0, 18)}»`).join(" → ");
+    if (left < 0 || away < 0 || back < 0 || !(left < away && away < back)) fail(`смена часа: ждали «уходит → *переодевается* → вернулась», а было: ${sequence}`);
+    else {
+      if (story[left].light !== "day") fail(`смена часа: уходит она ещё при дневном свете, а свет — ${story[left].light}`);
+      if (!story.slice(left, away).some(seen => seen.hers.includes("#r-her-walk"))) fail(`смена часа: к шкафу она не идёт — картинки «идёт» не было: ${sequence}`);
+      if (story[away].light !== "evening" || !story[away].note || story[away].hers.length) fail(`смена часа: пока она переодевается — свет ${story[away].light}, надписей на её месте — ${story[away].note}, её картинок — ${JSON.stringify(story[away].hers)}`);
+      if (story.slice(away).some(seen => seen.hers.some(href => !href.startsWith("#r-her-home-")))) fail(`смена часа: после шкафа показалась куртка: ${sequence}`);
+      if (!story.slice(back).some(seen => seen.hers.includes("#r-her-home-walk"))) fail(`смена часа: от шкафа она не идёт — картинки «идёт» в свитере не было: ${sequence}`);
+      const end = story[story.length - 1];
+      if (!(end.hers.length === 1 && end.hers[0].startsWith("#r-her-home-") && !end.hers[0].endsWith("-walk"))) fail(`смена часа: в конце на рисунке ${JSON.stringify(end.hers)}`);
+    }
+    // Час сменился без переодевания (утро → день): свет перетекает, прежний слой тает, она остаётся.
+    await open(`part=${encodeURIComponent("утро")}&left=800&then=${encodeURIComponent("день")}&turn=600000&scene=0`);
+    const noon = await until(seen => seen.light === "day", 9000, 100);
+    if (!noon) fail("утро → день: свет при открытой странице не сменился");
+    else if (!noon.fading) fail("утро → день: свет сменился рывком — прежний слой не тает");
+    else if (noon.note) fail("утро → день: она ушла переодеваться, хотя наряд тот же");
+    if (broken.length) fail(`своя жизнь и смена часа — ошибка на странице: ${broken[0].slice(0, 200)}`);
+    if (failures.length === failed) console.log(`  она и Байт сами переходят к следующему занятию и доходят шагом, слова — о нынешней картинке; погода: ${skies.length} видов неба; сценка видна на рисунке; день → вечер: ${sequence}`);
     await tab.close();
   }
 

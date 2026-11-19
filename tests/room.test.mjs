@@ -7,7 +7,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { heart, message, group, reset, last, chats, says, sdk, toChat, toOwner, calls, OWNER, KEY, DAY } from "./fixtures/kit.mjs";
 
-const { parseRoom, itemsFor, sceneFor, herKey, catState, plantState, createRoom, SCENES, ITEMS, ROOM_KEY, WATER_EVERY_MS, FRESH_MS, NEWS_AT_ONCE, CONTEXT_MS } = await import("../tgcloud/lib/room.js");
+const { parseRoom, itemsFor, sceneFor, herKey, catState, plantState, createRoom, SCENES, ITEMS, ROOM_KEY, WATER_EVERY_MS, FRESH_MS, NEWS_AT_ONCE, CONTEXT_MS,
+  SKIES, skyOfCode, randomSky, SKY_SPAN_MS, seedOf, sceneLook, SCENE_FX, nominative, catPose, herPose, catAfter, CAT_STILL, CAT_SHAPES, CAT_PLACES, HER_POSES, TEA_WARM_MS } = await import("../tgcloud/lib/room.js");
 const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
 const { FIRST_KEY } = await import("../tgcloud/lib/personal.js");
 
@@ -17,13 +18,19 @@ const NOON = Date.parse("2026-11-18T11:00:00Z");
 const HOUR = 3_600_000;
 const own = (text) => message(text, { id: OWNER });
 const book = createPhrasebook({ random: () => 0 });
-const VARS = { "цвет": "синий", "рисунок": "кот в шляпе", "лет": "2 года", "праздник": "Рамадан", "трофеи": "носок неизвестного происхождения, бумажный кораблик", "число": "2" };
+const VARS = { "цвет": "синий", "рисунок": "кот в шляпе", "что нарисовать": "кота в шляпе", "лет": "2 года", "праздник": "Рамадан", "трофеи": "носок неизвестного происхождения, бумажный кораблик", "число": "2" };
 const pool = (name, ctx = {}) => book.pool(`+комната:${name}`, { formal: true, vars: VARS, ...ctx });
 const roomOf = (id) => JSON.parse(sdk().kv.get(ROOM_KEY(id)) ?? "null");
 const bondOf = (id) => JSON.parse(sdk().kv.get(`heart:bond:${id}`) ?? "null");
 const relationOf = (id) => JSON.parse(sdk().kv.get(`ai:relationship:${id}`) ?? "null");
 const press = (data, from = 5, { chat = from, type = "private", id = 900 } = {}) => ({ id: `q${data}${from}`, from: { id: from, first_name: "Тест" }, data, message: { message_id: id, chat: { id: chat, type } } });
 const inPool = (name, text, ctx) => pool(name, ctx).some(line => text.includes(line));
+/** Запас слов об окне — по небу (0.44.0): за её окном погода города человека, а не вечный дождь. */
+const WINDOW = Object.freeze({ clear: "окно:ясно", clouds: "окно:облачно", overcast: "окно:пасмурно", fog: "окно:туман", rain: "окно", storm: "окно:гроза", snow: "окно:снег" });
+/** Строки запаса, годные сейчас: с пометками часа и неба — как их слышит человек (`pool` отдаёт запас целиком). */
+const fitting = (name, ctx = {}) => book.all(`+комната:${name}`, { formal: true, isPrivate: true, vars: VARS, ...ctx });
+/** Небо, которое она выдумывает сама, когда города человека не знает: одно на шесть часов, у каждого своё. */
+const madeUpSky = (id, at = NOON, month = 11) => randomSky({ seed: seedOf(id, "sky"), at, month });
 /** Часы, которые можно переводить. */
 const clock = (start = NOON) => { let at = start; return { now: () => at, add: (ms) => { at += ms; }, set: (value) => { at = value; } }; };
 
@@ -167,12 +174,14 @@ test("гость в личке: зашёл — окно, она, Байт, по�
   const lines = scene.text.split("\n");
   assert.equal(lines.length, 4, scene.text);
   assert.ok(inPool("зайти", lines[0]), lines[0]);
-  assert.ok(pool("окно").filter(line => /^(?:День|За окном — город|Дневной)/u.test(line)).some(line => lines[1].startsWith(line)), `окно дневное: ${lines[1]}`);
+  // Окно — дневное и по погоде (0.44.0): города гость не называл — погоду она выдумала сама; слова — о ней.
+  const sky = madeUpSky(5);
+  assert.ok(fitting(WINDOW[sky], { part: "день", sky }).some(line => lines[1].startsWith(line)), `окно, ${sky}: ${lines[1]}`);
   assert.ok(inPool("она:дело", lines[1]) || inPool("она:уют", lines[1]) || inPool("она:игра", lines[1]), lines[1]);
   assert.ok(["голоден", "шалит", "спит"].some(state => inPool(`байт:${state}`, lines[2])), lines[2]);
   assert.equal(lines[3], "Можно погладить Байта, покормить его, поиграть с ним, налить мне чаю или полить Колючку — просто скажите.");
   // Сценка — та, что положена этому человеку сегодня; кнопки — её два решения.
-  const today = sceneFor(5, "2026-11-18");
+  const today = sceneFor(5, "2026-11-18", sky);
   assert.equal(offer.text, `🐾 ${today.text.replace(/\{[^|}]*\|([^}]*)\}/gu, "$1")}`);
   assert.deepEqual(offer.reply_markup, { inline_keyboard: [[{ text: today.options[0][0], callback_data: `h:${today.key}:0` }, { text: today.options[1][0], callback_data: `h:${today.key}:1` }]] });
   assert.deepEqual([roomOf(5).n, roomOf(5).scene], [1, { day: "2026-11-18", key: today.key, pick: null }]);
@@ -371,7 +380,8 @@ test("вещи: появляются по дням знакомства — не
   assert.match(first, /Новое в комнате\. На полке появилась вторая кружка\. Ваша\.\nНовое в комнате\. У двери — тапочки для гостя\. Размер я угадала\./u);
   assert.deepEqual(roomOf(5).seen, ["кружка", "тапочки"]);
   await h.onMessage(message("зайду к тебе"), KEY);
-  assert.match(last(), /Новое в комнате\. На подоконнике — вторая подушка: смотреть на дождь вдвоём\.\nНовое в комнате\. На полке — рамка: наш первый разговор\./u);
+  // Подушка — «смотреть в окно вдвоём»: до 0.44.0 было «на дождь», но за окном теперь погода его города.
+  assert.match(last(), /Новое в комнате\. На подоконнике — вторая подушка: смотреть в окно вдвоём\.\nНовое в комнате\. На полке — рамка: наш первый разговор\./u);
   await h.onMessage(message("зайду к тебе"), KEY);
   assert.doesNotMatch(last(), /Новое в комнате/u, "всё показано — повторов нет");
 
@@ -388,7 +398,7 @@ test("вещи: появляются по дням знакомства — не
   reset();
   const fresh = heart(ON, { now: () => NOON, random: () => 0 });
   await fresh.onMessage(message("что нового в комнате"), KEY);
-  assert.equal(last(), "Пока всё как было: окно, дождь, лампа, плед и Байт. Вещи появляются сами — чем дольше мы знакомы и чем чаще вы заходите. Следующая появится через 3 дня.");
+  assert.equal(last(), "Пока всё как было: окно, лампа, плед и Байт. Вещи появляются сами — чем дольше мы знакомы и чем чаще вы заходите. Следующая появится через 3 дня.");
   assert.equal(chats().length, 0);
 });
 

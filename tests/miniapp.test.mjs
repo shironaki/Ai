@@ -31,7 +31,20 @@ const ON = { PHRASES: true };
 const NOON = Date.parse("2026-11-18T11:00:00Z");
 const PAGE = "https://app123.tgcloud.ai/";
 const book = createPhrasebook({ random: () => 0 });
-const pool = (name, ctx = {}) => book.pool(`+комната:${name}`, { formal: true, vars: { "цвет": "синий", "рисунок": "кот в шляпе" }, ...ctx });
+const pool = (name, ctx = {}) => book.pool(`+комната:${name}`, { formal: true, vars: { "цвет": "синий", "рисунок": "кот в шляпе", "что нарисовать": "кота в шляпе" }, ...ctx });
+/** Запас слов об окне — по небу (0.44.0): за её окном погода города человека, а не вечный дождь. */
+const WINDOW = Object.freeze({ clear: "окно:ясно", clouds: "окно:облачно", overcast: "окно:пасмурно", fog: "окно:туман", rain: "окно", storm: "окно:гроза", snow: "окно:снег" });
+/**
+ * Строки запаса, годные сейчас: пометки словаря по небу — «[дождь] …» звучит под дождём и в грозу, «[снег] …» — в
+ * снег, «[без осадков] …» — в сухую погоду. `pool` отдаёт запас целиком, как он записан; `fitting` — как его слышно.
+ */
+const fitting = (name, ctx = {}) => book.all(`+комната:${name}`, { formal: true, isPrivate: true, vars: { "цвет": "синий", "рисунок": "кот в шляпе", "что нарисовать": "кота в шляпе" }, ...ctx });
+/** Небо, которое она выдумывает сама, когда города человека не знает: одно на шесть часов, у каждого своё. */
+/** Классы, которые приносит небо (0.44.0): что движется — облака, звёзды, молния, туман; и что стоит — солнце, луна. */
+const SKY_CLASSES = Object.freeze(["drift", "flash", "mote", "o0", "o1", "o2", "snow", "star", "t0", "t1", "t2"]);
+/** Первый из трёх ритмов (облака тумана, пылинки, звёзды) — без своего правила: у него ритм самого класса. */
+const SKY_STILL = Object.freeze(["m0", "o0", "t0"]);
+const madeUpSky = (id, at, month = 11) => room.randomSky({ seed: room.seedOf(id, "sky"), at, month });
 const roomOf = (id) => JSON.parse(sdk().kv.get(room.ROOM_KEY(id)) ?? "null");
 const pageOf = () => JSON.parse(sdk().kv.get("heart:page") ?? "null");
 const clock = (start = NOON) => { let at = start; return { now: () => at, add: (ms) => { at += ms; } }; };
@@ -370,11 +383,13 @@ test("словарь 0.40.0: о картинке она отвечает сам�
   for (const said of ["что у тебя в руках на фото", "почему ты стоишь на остановке", "красивые ботинки купил брат", "ты зеваешь на уроке", "что в кружке у начальника"]) assert.equal(book.match(said), null, said);
 
   // Темы о рисунке не обещают того, чего картинка не делает. С 0.41.0 она моргает (там, где у картинки есть веки) и
-  // меняет позы — но не дышит; и уже не маленькая.
+  // меняет позы; с 0.44.0 — дышит и ходит (до того слова «дышу» здесь не было и быть не могло); и уже не маленькая.
   const said = (name, ctx = {}) => book.pool(name, { formal: true, ...ctx }).join(" ");
   for (const owner of [false, true]) {
-    assert.doesNotMatch(said("ты моргаешь", { owner }), /[Дд]ышу|стою смирно|[Нн]е моргаю/u);
+    assert.doesNotMatch(said("ты моргаешь", { owner }), /стою смирно|[Нн]е моргаю|пуф/u);
     assert.match(said("ты моргаешь", { owner }), /[Мм]оргаю/u);
+    assert.match(said("ты моргаешь", { owner }), /[Дд]ышу/u);
+    assert.match(said("ты моргаешь", { owner }), /[Хх]ожу/u);
     assert.doesNotMatch(said("ты чиби", { owner }), /я маленькая|все маленькие|до размеров кружки/u);
     assert.doesNotMatch(said("кто нарисовал комнату", { owner }), /ни одной картинки/u);
     assert.doesNotMatch(said("ты подросла", { owner }), /не достаю|с чайник/u);
@@ -382,42 +397,79 @@ test("словарь 0.40.0: о картинке она отвечает сам�
   }
   assert.match(said("кто нарисовал комнату"), /картинкой, по моему портрету/u);
 
-  // Её слова в комнате — о том, что видно. Строка звучит всё время, пока позы состояния сменяют друг друга (с
-  // 0.41.0 их две-три, с 0.43.0 — в обоих нарядах), поэтому называет только общее для них: что у неё в руках. И
-  // ни одна не говорит того, чего нет на какой-то из поз: «сижу», «лежу», «читаю».
-  const shown = {
-    "дело": /блокнот/u, "уют": /кружк|чай/iu, "игра": /ленточк|[Дд]ирижирую/u, "сон": /плед/u,
-    "устала": /плед|[Зз]еваю|[Оо]тдыхаю/u, "обида": /спиной|[Оо]твернулась|скрестив/u, "ревность": /[Сс]крести|[Рр]азглядываю/u,
+  // Её слова в комнате — о том, что видно. С 0.44.0 у каждой реплики своя картинка: место сердце читает из самих
+  // слов (`herPose`), картинку по состоянию и месту даёт рисунок (`lookOf`), страница показывает их вместе. До того
+  // слова и позы шли двумя списками по кругу и расходились: «разглядываю гирлянду» — а глаза закрыты (владелец
+  // увидел это на Байте: «в тексте перевернулся на спину, а по факту нет»). Поэтому здесь: у каждой реплики — при
+  // любом небе, хозяину и гостю — есть картинка, и реплика говорит то, что на этой картинке видно.
+  const SEEN = {
+    work: /блокнот/u, work2: /блокнот.*[Рр]учка — у губ/u, tea: /[Сс] кружкой/u, tea2: /[Пп]ью чай/u, tea3: /[Чч]ай, кресло/u,
+    play: /[Дд]ирижирую/u, play2: /[Тт]анцую/u, play3: /ленточкой/u, sleep: /плед/u, tired: /[Зз]ева/u, tired2: /плед/u,
+    pout: /спиной|[Оо]твернулась/u, pout2: /скрестив руки/u, jealous: /скрестив руки|[Рр]азглядываю/u, jealous2: /[Сс]крестила руки/u,
   };
+  // И ни одна не говорит того, чего на её картинке нет: «сижу» (сидит она только с кружкой — и там слова «кресло»),
+  // «лежу», «читаю».
   const absent = /(?:^|[^а-яё])(?:сижу|лежу|читаю|листаю|переставляю|поправляю|завариваю)(?:[^а-яё]|$)|я в кресле|на подоконнике с|под пледом/iu;
-  for (const [key, rule] of Object.entries(shown)) for (const owner of [true, false]) for (const line of pool(`она:${key}`, { owner, level: owner ? "close" : "known" })) {
-    assert.match(line, rule, `${key}: «${line}» — не о том, что на картинке`);
-    assert.doesNotMatch(line, absent, `${key}: «${line}» — этого на картинке нет`);
+  const drawnFor = new Set();
+  for (const key of Object.keys(MOODS)) for (const sky of room.SKIES) for (const owner of [true, false]) {
+    const lines = fitting(`она:${key}`, { owner, level: owner ? "close" : "known", sky, part: "день" });
+    // При любой погоде ей есть что сказать, а если она не спит — то и чем заняться: реплик несколько.
+    assert.ok(lines.length >= (key === "сон" ? 1 : 3), `${key}, ${sky}: реплик ${lines.length}`);
+    for (const line of lines) {
+      const pose = room.herPose(line, key), name = scene.lookOf(key, pose);
+      assert.ok(name && SEEN[name], `${key}: «${line}» — место «${pose}», а картинки для него нет`);
+      assert.match(line, SEEN[name], `${key}: «${line}» — не о том, что на картинке «${name}»`);
+      assert.doesNotMatch(line, absent, `${key}: «${line}» — этого на картинке нет`);
+      // Слова о погоде — только при этой погоде.
+      if (sky !== "rain" && sky !== "storm") assert.doesNotMatch(line, /дожд|капл/iu, `${sky}: ${line}`);
+      if (sky !== "snow") assert.doesNotMatch(line, /снег|снежин/iu, `${sky}: ${line}`);
+      drawnFor.add(name);
+    }
   }
+  // И наоборот: каждая поза в куртке кому-то нужна — картинки, о которой нет ни одной реплики, не осталось.
+  assert.deepEqual([...drawnFor].sort(), Object.keys(HER_SPRITES).filter(name => !name.includes("-") && HER_SPRITES[name].kind !== "walk").sort());
+  // Незнакомое место или состояние — картинки нет: страница тогда берёт первую позу состояния.
+  assert.deepEqual([scene.lookOf("уют", "dance"), scene.lookOf("constructor", "desk"), scene.lookOf("уют", "constructor")], [null, null, null]);
   // Спит она на полу, в пледе: кресло в словах о сне не названо.
   for (const line of pool("она:сон")) assert.doesNotMatch(line, /кресл/u, line);
   // Витрина говорит теми же словами, что и словарь: её строки — из тех же запасов.
-  for (const hour of [8, 14, 20]) {
+  for (const hour of [8, 14, 20, 2]) {
     const look = logic.demoLook(hour);
     assert.ok(pool(`она:${look.her.key}`).includes(look.her.line), `витрина, ${hour} ч: «${look.her.line}» — такой строки в словаре нет`);
     assert.equal(room.herPose(look.her.line, look.her.key), look.her.pose, look.her.line);
+    // И её распорядок на витрине — те же реплики с теми же местами, какие прислало бы сердце.
+    assert.deepEqual(look.her.beats[0], { pose: look.her.pose, line: look.her.line });
+    for (const beat of look.her.beats) {
+      assert.ok(pool(`она:${look.her.key}`).includes(beat.line), `витрина, ${hour} ч: «${beat.line}»`);
+      assert.equal(room.herPose(beat.line, look.her.key), beat.pose, beat.line);
+    }
   }
 });
 
 test("словарь 0.43.0: слова сходятся с картинками — числа в словах те же, что в папке, вечером она меняет позы; о новом видимом отвечает сама", () => {
   const said = (name) => book.pool(name, { formal: true }).join(" ");
-  const names = Object.keys(HER_SPRITES), jackets = names.filter(name => !name.includes("-")), lidded = names.filter(name => SPRITES[name].blink);
+  // Позы — картинки состояний; «идёт» (0.44.0) — не поза: ею она переходит от места к месту, и считается отдельно.
+  const strides = Object.keys(HER_SPRITES).filter(name => HER_SPRITES[name].kind === "walk");
+  const names = Object.keys(HER_SPRITES).filter(name => !strides.includes(name)), jackets = names.filter(name => !name.includes("-")), lidded = names.filter(name => SPRITES[name].blink);
   // Числа, которые она называет вслух, — из папки с картинками. Прибавилась картинка — тест напомнит перечитать
-  // темы (их список — в шапке блока «СБОРКА 0.43.0» в PHRASES.txt) и назвать новое число здесь.
-  const WORDS = { 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 30: /[Тт]ридцат/u };
+  // темы (их список — в шапке блока «СБОРКА 0.44.0» в PHRASES.txt) и назвать новое число здесь.
+  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 18: /восемнадцат/u, 30: /[Тт]ридцат/u };
   const word = (count, what) => { assert.ok(WORDS[count], `${what}: ${count} — этого числа словами здесь нет: перечитать темы о картинках и дописать`); return WORDS[count]; };
   for (const topic of ["сколько у тебя поз", "кто тебя рисует"]) {
     assert.match(said(topic), word(names.length, "картинок"), topic);
     assert.match(said(topic), word(jackets.length, "поз в куртке"), topic);
+    assert.match(said(topic), word(strides.length, "картинок «идёт»"), topic);
   }
   assert.match(said("как часто ты моргаешь"), word(lidded.length, "картинок с веками"));
   // Где она моргает — названо словами: у каждой картинки с веками есть своё слово в теме. Новые веки — новое слово.
-  const LIDS = { tea: /кружк/u, tea3: /пуф/u, work: /блокнот/u, work2: /блокнот/u, jealous: /скрещ[её]нными руками/u };
+  // С 0.44.0 веки есть у каждой картинки с открытыми глазами; сидит она в кресле — пуфа в словах больше нет.
+  const LIDS = { tea: /кружк/u, tea3: /в кресле/u, work: /блокнот/u, work2: /блокнот/u, jealous: /скрещ[её]нными руками/u, play: /ленточк/u, play3: /ленточк/u, pout2: /дуюсь/u, tired2: /тру глаз/u };
+  for (const topic of ["как часто ты моргаешь", "ты моргаешь", "на чём ты сидишь", "позы вечером", "ты меняешь позы", "почему ты стоишь", "длина волос"]) {
+    assert.doesNotMatch(said(topic).replace(/Пуфа больше нет[^.]*\.|Пуф убрали[^.]*\./gu, ""), /пуф/iu, `${topic}: пуфа в комнате нет — она сидит в кресле`);
+  }
+  assert.match(said("на чём ты сидишь"), /[Вв] кресле/u);
+  // Волосы сидя не длиннее, чем стоя (владелец: «когда она сидит, у неё волосы становятся в разы длиннее»).
+  assert.doesNotMatch(said("длина волос"), /[Дд]о пола|на ковре/u);
   for (const name of lidded.filter(item => !item.includes("-"))) {
     assert.ok(LIDS[name], `${name}: веки есть, а слова о них в темах «как часто ты моргаешь» и «ты моргаешь» нет — дописать`);
     assert.match(said("как часто ты моргаешь"), LIDS[name], name);
@@ -483,11 +535,11 @@ test("она картинкой: у каждого состояния своя �
     assert.ok(Number.isInteger(sprite.w) && Number.isInteger(sprite.h) && sprite.w >= 200 && sprite.h >= 400 && sprite.h <= 1000, `${name}: ${sprite.w}×${sprite.h}`);
     assert.ok(sprite.cx > 0.3 && sprite.cx < 0.7, `${name}: ось тела ${sprite.cx}`);
     assert.match(sprite.src, /^data:image\/webp;base64,[A-Za-z0-9+/]+=*$/u, name);
-    // Стоит — картинка высокая (её рост на рисунке — три четверти); присела, сидит, спит на полу — ниже и шире.
-    const data = HER_SPRITES[name], stands = (data.kind ?? "stand") === "stand";
+    // Стоит или идёт — картинка высокая (её рост на рисунке — три четверти); присела, сидит, спит на полу — ниже и шире.
+    const data = HER_SPRITES[name], stands = ["stand", "walk"].includes(data.kind ?? "stand");
     assert.equal(sprite.h >= 800, stands, `${name}: ${sprite.w}×${sprite.h}`);
     assert.ok(stands ? data.tall >= 370 && data.tall <= 400 : data.tall >= 150 && data.tall <= 340, `${name}: рост на рисунке ${data.tall}`);
-    assert.ok(["stand", "crouch", "seat", "floor"].includes(data.kind ?? "stand"), name);
+    assert.ok(["stand", "crouch", "seat", "floor", "walk"].includes(data.kind ?? "stand"), name);
     // Что движется рядом и где голова — в долях картинки: внутри неё.
     for (const [fx, fy] of [data.mark?.slice(1), data.head].filter(Boolean)) assert.ok(fx > 0 && fx < 1 && fy > 0 && fy < 1, `${name}: ${fx}, ${fy}`);
     if (sprite.blink) {
@@ -520,7 +572,10 @@ test("она картинкой: у каждого состояния своя �
       for (const item of list) used.add(item);
     }
   }
-  assert.deepEqual([...used].sort(), Object.keys(HER_SPRITES).sort());
+  // «Идёт» — не поза состояния: ею она переходит от места к месту (0.44.0). В списки поз она не попадает.
+  const strides = Object.keys(HER_SPRITES).filter(name => HER_SPRITES[name].kind === "walk");
+  assert.deepEqual(strides.sort(), ["home-walk", "walk"]);
+  assert.deepEqual([...used].sort(), Object.keys(HER_SPRITES).filter(name => !strides.includes(name)).sort());
   assert.equal(first.size, Object.keys(MOODS).length, "у двух состояний одна первая картинка — их не отличить");
   // Наряд: вечером и ночью — домашний, но только там, где у него есть картинка этого состояния; названный
   // сердцем — сильнее часа; незнакомый — как не названный. Ей налили чай за делом — кружка, а куртка та же.
@@ -571,10 +626,11 @@ test("она картинкой: у каждого состояния своя �
 
   // Определение картинки: один тег, только из проверенных частей.
   assert.equal(drawSprite("tea2", SPRITES.tea2), `<image id="r-her-tea2" width="${SPRITES.tea2.w}" height="${SPRITES.tea2.h}" preserveAspectRatio="none" href="${SPRITES.tea2.src}"/>`);
-  // Веки — у десяти картинок (0.43.0; в 0.42.0 — у пяти): с кружкой, с блокнотом (обе позы), на пуфе и со
-  // скрещёнными руками — в куртке и в свитере. У картинок с закрытыми глазами их нет и не будет.
+  // Веки — у восемнадцати картинок (0.44.0; в 0.43.0 — у десяти, в 0.42.0 — у пяти): у каждой, где глаза открыты, —
+  // в куртке и в свитере. У картинок с закрытыми глазами (пьёт, танцует, зевает, спит, отвернулась, «мне всё
+  // равно») их нет и не будет; «идёт» смотрит в сторону — ей они не нужны.
   const lidded = Object.keys(SPRITES).filter(name => SPRITES[name].blink).sort();
-  assert.deepEqual(lidded, ["home-jealous", "home-tea", "home-tea3", "home-work", "home-work2", "jealous", "tea", "tea3", "work", "work2"]);
+  assert.deepEqual(lidded, ["home-jealous", "home-play", "home-play3", "home-pout2", "home-tea", "home-tea3", "home-tired2", "home-work", "home-work2", "jealous", "play", "play3", "pout2", "tea", "tea3", "tired2", "work", "work2"]);
   // Моргает в куртке — моргает и в свитере: веки пары переносятся без новой картинки (`blink … by=head`).
   for (const name of lidded.filter(item => !item.includes("-"))) assert.ok(lidded.includes(`home-${name}`), `home-${name}: веки есть у пары в куртке — перенести`);
   // У картинки с «веками» определений два: она сама и заплатка на глаза — в точках самой картинки.
@@ -627,7 +683,7 @@ test("она картинкой: у каждого состояния своя �
     assert.ok(zones.some(zone => zone.id === "box" && zone.act === "box"), label);
   }
   // Каждая картинка встаёт в комнату: на рисунке, с местом нажатия выше полосы с её словами.
-  for (const part of PARTS) for (const name of Object.keys(HER_SPRITES)) {
+  for (const part of PARTS) for (const name of Object.keys(HER_SPRITES).filter(item => HER_SPRITES[item].kind !== "walk")) {
     const key = Object.keys(MOODS).find(mood => [false, true].some(tea => ["jacket", "home"].some(wear => spritesOf({ part, her: { pose: "desk", key: mood, wear }, tea }).includes(name))));
     assert.ok(key, name);
     const wear = name.includes("-") ? name.split("-")[0] : "jacket", tea = !spritesOf({ part, her: { pose: "desk", key, wear } }).includes(name);
@@ -636,8 +692,9 @@ test("она картинкой: у каждого состояния своя �
     const markup = drawInside(view, PAINTED), zones = zonesOf(markup), her = zones.find(zone => zone.id === "her");
     assert.equal(wellFormed(markup), "", `${part}/${name}`);
     assert.ok(markup.includes(`<use href="#r-her-${name}" `) && her && her.y >= 0 && her.y + her.h <= 500 && her.x >= 0 && her.x + her.w <= WIDTH, `${part}/${name}: ${JSON.stringify(her)}`);
-    // Сидит на пуфе — пуф нарисован; у остальных его нет.
-    assert.equal(markup.includes("r-pouf"), HER_SPRITES[name].kind === "seat", `${part}/${name}`);
+    // Пуфа, который появлялся вместе с сидящей, больше нет (0.44.0): сидит она в кресле комнаты — ровно посреди него.
+    assert.ok(!markup.includes("pouf"), `${part}/${name}`);
+    if (HER_SPRITES[name].kind === "seat") assert.ok(Math.abs(her.x + her.w / 2 - 196) <= 8, `${part}/${name}: сидит на ${her.x + her.w / 2}, а кресло — на 196`);
   }
   // Смена позы: прежняя картинка тает, новая проявляется; рисунок целиком несёт определения обеих.
   {
@@ -645,14 +702,14 @@ test("она картинкой: у каждого состояния своя �
     const dusk = { part: "вечер", her: { pose: "desk", key: "дело" }, cat, plant: "wet", things: [] };
     const changed = drawInside(dusk, { ...PAINTED, was: { name: "work", x: 252 } });
     assert.equal(wellFormed(changed), "");
-    assert.ok(changed.includes('<g class="leave"><use href="#r-her-work" ') && changed.includes('<g class="arrive"><use href="#r-her-home-work" ') && changed.includes('<mask id="r-herMaskWas" '));
+    assert.ok(changed.includes('<g class="leave"><use href="#r-her-work" ') && changed.includes('<g class="arrive"><g class="alive"><use href="#r-her-home-work" ') && changed.includes('<mask id="r-herMaskWas" '));
     assert.deepEqual(zonesOf(changed), zonesOf(drawInside(dusk, PAINTED)));
 
     const view = { part: "день", her: { pose: "desk", key: "дело", turn: 1 }, cat, plant: "wet", things: [] };
     const plain = drawInside(view, PAINTED), smooth = drawInside(view, { ...PAINTED, was: { name: "work", x: 252 } });
     assert.ok(!plain.includes('class="leave"') && !plain.includes('class="arrive"'));
     assert.equal(wellFormed(smooth), "");
-    assert.ok(smooth.includes('<g class="leave"><use href="#r-her-work" ') && smooth.includes('<g class="arrive"><use href="#r-her-work2" ') && !smooth.includes('<mask id="r-herMaskWas" '));
+    assert.ok(smooth.includes('<g class="leave"><use href="#r-her-work" ') && smooth.includes('<g class="arrive"><g class="alive"><use href="#r-her-work2" ') && !smooth.includes('<mask id="r-herMaskWas" '));
     assert.deepEqual(zonesOf(smooth), zonesOf(plain));
     // Прежняя — та же самая, незнакомая, не загруженная или без места: тогда смена — без перехода.
     for (const was of [{ name: "work2", x: 252 }, { name: "constructor", x: 252 }, { name: "чужая", x: 252 }, { name: "work", x: "252" }, null, "work", { name: "work" }]) assert.equal(drawInside(view, { ...PAINTED, was }), plain, JSON.stringify(was));
@@ -712,18 +769,19 @@ test("она картинкой: Байта она собой не закрыв�
     const head = zones.find(zone => zone.id === "pat");
     assert.ok(head && head.y + head.h <= 480 && head.x >= 0 && head.x + head.w <= WIDTH, `${label}: голова ${JSON.stringify(head)}`);
     assert.ok(pet.y + pet.h / 2 < 490 && pet.w >= 20 && pet.h >= 12, `${label}: место Байта ${JSON.stringify(pet)}`);
-    const home = { desk: 252, shelf: 160, map: 160, chair: 190, lie: 190, nap: 224, sill: 226, back: 226, garland: 226, dance: 226, ribbon: 226 }[pose];
+    const home = { desk: 252, shelf: 160, map: 160, chair: 196, lie: 224, nap: 218, sill: 226, back: 226, garland: 226, dance: 226, ribbon: 226 }[pose];
     // Счёт «ушла со своего места» — по стоящей прямо: широкие и низкие картинки (танцует, присела, сидит на пуфе, спит
     // в пледе) занимают больше пола и подвигаются чаще.
     const data = HER_SPRITES[stand.name];
     if (stand.x !== home && (data.kind ?? "stand") === "stand" && !data.legs) moved.add(place);
   }
   // Встаёт она у того, о чём её слова: мест несколько, и все они в середине комнаты — миска, шкаф, стол и чайник открыты.
-  assert.deepEqual([...seen].sort((a, b) => a - b), [160, 190, 224, 226, 252]);
-  // Со своего места она (стоящая прямо) уходит, только когда иначе закрыла бы Байта: он в кресле, под ним, под
-  // пледом или на подоконнике. Миска, стол, коробка, шкаф и его подушка в стороне — из-за них она не двигается;
-  // «у её ног» он садится с той стороны, где свободно.
-  assert.deepEqual([...moved].sort(), ["chair", "plaid", "sill", "under"], `всего рисунков ${total}`);
+  // Кресло (196) — там она сидит; середина ковра (218) — там спит, закутавшись в плед.
+  assert.deepEqual([...seen].sort((a, b) => a - b), [160, 196, 218, 226, 252]);
+  // Со своего места она (стоящая прямо) уходит, только когда иначе закрыла бы Байта: он в кресле, под пледом или
+  // на подоконнике. Миска, стол, коробка, шкаф и его подушка в стороне — из-за них она не двигается; «у её ног» он
+  // садится с той стороны, где свободно; под большим креслом (0.44.0) места хватает — глаза видны сбоку от её ног.
+  assert.deepEqual([...moved].sort(), ["chair", "plaid", "sill"], `всего рисунков ${total}`);
   // Одна и та же комната — одно и то же место: от перерисовки она не прыгает.
   const same = { part: "день", her: { pose: "sill", key: "уют" }, cat: { shape: "sit", place: "sill", key: "сыт" }, things: [] };
   assert.deepEqual(spriteStand(same), spriteStand(structuredClone(same)));
@@ -740,10 +798,14 @@ test("страница: ответ сердца раскладывается п�
 
   const seen = logic.applyLook(start, LOOK);
   assert.equal(seen.ready, true);
-  assert.deepEqual(logic.viewOf(seen), { part: "вечер", her: { pose: "chair", key: "уют" }, cat: { shape: "sit", place: "bowl", key: "голоден" }, plant: "dry", things: ["кружка", "тапочки"], lamp: "#3f6fd8", fed: false, tea: false });
+  // Луна — по дню из ответа: 18 ноября 2026 — девятый день после новолуния (0.44.0). Прежнее сердце неба не
+  // называет — за окном дождь, как и было; слово «rain» рисунку не передаётся.
+  assert.deepEqual(logic.viewOf(seen), { part: "вечер", her: { pose: "chair", key: "уют" }, cat: { shape: "sit", place: "bowl", key: "голоден" }, plant: "dry", things: ["кружка", "тапочки"], lamp: "#3f6fd8", fed: false, tea: false, moon: 0.3 });
   // В разговоре — приветствие, она, Байт и новая вещь; незнакомая вещь («рояль») не показывается и не называется.
   assert.equal(seen.said, "Заходите. Тапочки у двери.\nЯ в кресле у окна, под пледом.\nБайт сидит у миски.\nНовое в комнате. На столе — вторая кружка.");
-  assert.deepEqual(seen.scene, { key: "sock", text: "Байт принёс носок.", options: ["Похвалить", "Отобрать"], pick: null, outcome: "" });
+  // У сценки с 0.44.0 — ещё и то, что она меняет на рисунке (`fx`), и куда встаёт она сама (`her`); прежнее сердце
+  // их не шлёт — пусто.
+  assert.deepEqual(seen.scene, { key: "sock", text: "Байт принёс носок.", options: ["Похвалить", "Отобрать"], pick: null, outcome: "", fx: [], her: "" });
   assert.deepEqual([seen.build, seen.next, seen.tone, seen.retry], ["0.38.0", 4, "", false]);
   // То, что отдано рисунку, рисуется.
   assert.equal(wellFormed(drawRoom(logic.viewOf(seen))), "");
@@ -757,7 +819,8 @@ test("страница: ответ сердца раскладывается п�
 
   // Забота: слова, Байт у миски ест, миска полна; чай — у неё в руках; повтор — тоже слова.
   const fed = logic.applyCare({ ...seen, busy: "feed" }, "feed", { ok: true, do: "feed", line: "Байт ест.", again: false, cat: { key: "сыт", shape: "eat", place: "bowl" }, plant: { state: "dry" }, done: { feed: 1 }, cared: true, note: "Мы стали ближе." });
-  assert.deepEqual([fed.said, fed.busy, fed.fed, fed.cat, fed.done.feed, fed.lines.cat], ["Байт ест.\nМы стали ближе.", "", true, { shape: "eat", place: "bowl", key: "сыт" }, 1, "Байт ест."]);
+  // После заботы Байт — там, куда его поставили её слова (`beat: -1`); распорядка прежнее сердце не шлёт — он на месте.
+  assert.deepEqual([fed.said, fed.busy, fed.fed, fed.cat, fed.done.feed, fed.lines.cat], ["Байт ест.\nМы стали ближе.", "", true, { shape: "eat", place: "bowl", key: "сыт", beats: [], beat: -1, still: true }, 1, "Байт ест."]);
   const tea = logic.applyCare(fed, "tea", { ok: true, do: "tea", line: "Спасибо.", plant: { state: "wet" }, done: { feed: 1, tea: 1 } });
   assert.deepEqual([tea.tea, tea.fed, tea.plant, tea.cat], [true, true, "wet", fed.cat], "чай Байта не касается: он остаётся, где был");
 
@@ -778,7 +841,7 @@ test("страница: ответ сердца раскладывается п�
 
   // Мусор в ответе не ломает страницу: всё незнакомое заменяется известным.
   const odd = logic.applyLook(start, { ok: true, clock: { hour: "поздно" }, her: { pose: "на люстре" }, cat: "кот", things: [null, 5, { key: "ёлка" }], lamp: "javascript:alert(1)", scene: { key: "x", text: "y", options: ["одна"] }, done: { pet: -3, feed: "2", play: null }, next: { days: -1 } });
-  assert.deepEqual(logic.viewOf(odd), { part: "ночь", her: { pose: "desk", key: "" }, cat: null, plant: "wet", things: ["ёлка"], lamp: "", fed: true, tea: false });
+  assert.deepEqual(logic.viewOf(odd), { part: "ночь", her: { pose: "desk", key: "" }, cat: null, plant: "wet", things: ["ёлка"], lamp: "", fed: true, tea: false, moon: 0.3 });
   assert.deepEqual([odd.scene, odd.next, odd.done, odd.said], [null, null, { pet: 0, feed: 2, play: 0, tea: 0, water: 0 }, "Заходите."]);
   assert.equal(wellFormed(drawRoom(logic.viewOf(odd))), "");
 });
@@ -808,7 +871,9 @@ test("витрина: страница, открытая не из Telegram, п�
   }
   // Настройки снимка: час, поза, Байт, вещи, цвет; незнакомое — как обычно.
   const shot = logic.applyLook(logic.blank(12), logic.demoLook(12, { part: "ночь", her: "dance", cat: "curl.pillow.спит", things: "all", lamp: "#7fd0c8", plant: "wet", scene: "0" }));
-  assert.deepEqual(logic.viewOf(shot), { part: "ночь", her: { pose: "dance", key: shot.her.key }, cat: { shape: "curl", place: "pillow", key: "спит" }, plant: "wet", things: [...THINGS], lamp: "#7fd0c8", fed: false, tea: false });
+  assert.deepEqual(logic.viewOf(shot), { part: "ночь", her: { pose: "dance", key: shot.her.key }, cat: { shape: "curl", place: "pillow", key: "спит" }, plant: "wet", things: [...THINGS], lamp: "#7fd0c8", fed: false, tea: false, moon: 0.3 });
+  // Названная поза — без распорядка: снимок остаётся таким, каким его попросили; Байт, названный в адресе, с места не ходит.
+  assert.deepEqual([shot.her.beats, shot.cat.beats, shot.cat.still], [[], [], true]);
   assert.equal(shot.scene, null);
   const odd = logic.applyLook(logic.blank(12), logic.demoLook(12, { her: "tea", cat: "loaf.moon", things: "рояль,кружка" }));
   assert.deepEqual([odd.cat.shape, odd.cat.place, odd.things], ["sit", "rug", ["кружка"]]);
@@ -842,18 +907,36 @@ test("функция комнаты: зайти — всё, что видно; �
   const seen = await h.onRoom({ do: "look" }, from(5));
   assert.equal(seen.ok, true);
   assert.deepEqual([seen.do, seen.build, seen.formal, seen.first], ["look", BUILD, true, true]);
-  assert.deepEqual(seen.clock, { hour: 14, part: "день", day: "2026-11-18" });
+  // Часы человека — и сколько осталось до вечера (0.44.0): открытая страница сама спросит комнату, когда час сменится.
+  assert.deepEqual(seen.clock, { hour: 14, part: "день", day: "2026-11-18", left: 4 * 3_600_000 });
   assert.ok(pool("зайти").includes(seen.greet), seen.greet);
-  assert.ok(pool("окно").some(line => seen.window === line), seen.window);
+  // За окном — не вечный дождь: города гость не называл — погоду она выдумывает сама, и слова об окне — о ней.
+  assert.equal(seen.sky, madeUpSky(5, NOON));
+  assert.equal(seen.city, false, "погода выдумана: это не погода его города");
+  const air = { sky: seen.sky, part: seen.clock.part };
+  assert.ok(fitting(WINDOW[seen.sky], air).includes(seen.window), `${seen.sky}: ${seen.window}`);
   // Она и Байт: строка — из словаря, поза — из этой строки.
-  assert.ok(pool(`она:${seen.her.key}`).includes(seen.her.line), seen.her.line);
+  assert.ok(fitting(`она:${seen.her.key}`, air).includes(seen.her.line), seen.her.line);
   assert.equal(seen.her.pose, room.herPose(seen.her.line, seen.her.key));
-  assert.ok(pool(`байт:${seen.cat.key}`).includes(seen.cat.line), seen.cat.line);
+  assert.ok(fitting(`байт:${seen.cat.key}`, air).includes(seen.cat.line), seen.cat.line);
   assert.deepEqual({ shape: seen.cat.shape, place: seen.cat.place }, room.catPose(seen.cat.line, seen.cat.key));
+  // Распорядок: все реплики её состояния, каждая со своим местом; первая — та, что сказана. То же у Байта. Строки —
+  // только те, что годятся при этом небе: «следит за каплями» под ясным небом не звучит.
+  assert.deepEqual(seen.her.beats[0], { pose: seen.her.pose, line: seen.her.line });
+  assert.deepEqual(seen.her.beats.map(beat => beat.line).sort(), [...fitting(`она:${seen.her.key}`, air)].sort());
+  for (const beat of seen.her.beats) assert.equal(beat.pose, room.herPose(beat.line, seen.her.key), beat.line);
+  assert.deepEqual(seen.cat.beats[0], { shape: seen.cat.shape, place: seen.cat.place, line: seen.cat.line });
+  assert.deepEqual(seen.cat.beats.map(beat => beat.line).sort(), [...fitting(`байт:${seen.cat.key}`, air)].sort());
+  for (const beat of seen.cat.beats) assert.deepEqual({ shape: beat.shape, place: beat.place }, room.catPose(beat.line, seen.cat.key), beat.line);
+  assert.equal(typeof seen.cat.still, "boolean");
   assert.deepEqual([seen.plant, seen.done, seen.cared, seen.things, seen.lamp, seen.fresh, seen.next], [{ state: "dry" }, { pet: 0, feed: 0, play: 0, tea: 0, water: 0 }, false, [], "", [], { days: 3 }]);
   // Сценка дня — та же, что пришла бы в чат; её кнопки — два решения.
-  const today = room.sceneFor(5, "2026-11-18");
-  assert.deepEqual(seen.scene, { key: today.key, text: today.text.replace(/\{[^|}]*\|([^}]*)\}/gu, "$1"), options: today.options.map(option => option[0]), pick: null, outcome: null });
+  // С 0.44.0 сценка выбирается под погоду (о луже под окном в сухой день не будет) и видна на рисунке: `fx` — что она
+  // изменила в комнате, пока не сыграна.
+  const today = room.sceneFor(5, "2026-11-18", seen.sky);
+  const shown = room.sceneLook({ day: "2026-11-18", key: today.key, pick: null }, { today: "2026-11-18", at: NOON });
+  assert.deepEqual(seen.scene, { key: today.key, text: today.text.replace(/\{[^|}]*\|([^}]*)\}/gu, "$1"), options: today.options.map(option => option[0]), pick: null, outcome: null, fx: shown?.fx ?? [], ...(shown?.her ? { her: shown.her } : {}) });
+  assert.deepEqual(seen.scene.fx, today.show?.fx ?? []);
   // Заход считается заходом; в чат при этом ничего не уходит, модель не спрошена.
   assert.deepEqual([roomOf(5).n, toChat(5).length, chats().length], [1, 0, 0]);
   // Страница раскладывает этот ответ и рисует его.
@@ -911,21 +994,34 @@ test("функция комнаты: забота и сценка — по те�
   const pet = await h.onRoom({ do: "pet" }, from(5));
   assert.deepEqual([pet.ok, pet.again, pet.early, pet.counted, pet.cared], [true, false, false, true, true]);
   assert.ok(pool("погладить").includes(pet.line), pet.line);
-  assert.deepEqual(pet.cat, { key: "ласка", shape: "sit", place: "near" }, "погладили — Байт рядом");
+  // Где Байт и какой — по словам самого ответа; у слов без примет — по таблице заботы (0.44.0). С ним — его
+  // распорядок: реплики нового состояния, каждая со своей картинкой.
+  const air = { sky: seen.sky, part: seen.clock.part };
+  const where = (cat) => ({ key: cat.key, shape: cat.shape, place: cat.place });
+  assert.deepEqual(where(pet.cat), { key: "ласка", shape: "sit", place: "near" }, "погладили — Байт рядом");
+  assert.deepEqual(pet.cat.beats.map(beat => beat.line), fitting("байт:ласка", air));
+  for (const beat of pet.cat.beats) assert.deepEqual({ shape: beat.shape, place: beat.place }, room.catPose(beat.line, "ласка"), beat.line);
+  assert.equal(pet.cat.still, false);
   assert.equal(pet.done.pet, 1);
   const again = await h.onRoom({ do: "pet" }, from(5));
   assert.deepEqual([again.again, again.counted, again.done.pet], [true, false, 2]);
   assert.ok(pool("погладить:ещё").includes(again.line), again.line);
 
   const fed = await h.onRoom({ do: "feed" }, from(5));
-  assert.deepEqual([fed.cat, fed.counted, fed.done.feed], [{ key: "сыт", shape: "eat", place: "bowl" }, false, 1], "забота за день считается один раз");
-  assert.deepEqual((await h.onRoom({ do: "feed" }, from(5))).cat, { key: "сыт", shape: "sit", place: "bowl" });
+  assert.deepEqual([where(fed.cat), fed.counted, fed.done.feed], [{ key: "сыт", shape: "eat", place: "bowl" }, false, 1], "забота за день считается один раз");
+  assert.deepEqual(where((await h.onRoom({ do: "feed" }, from(5))).cat), { key: "сыт", shape: "sit", place: "bowl" });
   const play = await h.onRoom({ do: "play" }, from(5));
-  assert.deepEqual(play.cat, { key: "игра", shape: "play", place: "rug" });
+  assert.deepEqual(where(play.cat), { key: "игра", shape: "play", place: "rug" });
   // Чай и вода Байта не касаются: о нём в ответе ничего — он остаётся, где был.
   const tea = await h.onRoom({ do: "tea" }, from(5));
   assert.deepEqual(["cat" in tea, tea.done.tea], [false, 1]);
   assert.ok(pool("чай").includes(tea.line), tea.line);
+  // Зато чай касается её: час после него она с кружкой — блокнот и ленточка ждут (0.44.0). Ответ несёт её заново.
+  assert.notEqual(seen.her.key, "уют");
+  assert.equal(tea.her.key, "уют");
+  assert.deepEqual(tea.her.beats[0], { pose: tea.her.pose, line: tea.her.line });
+  assert.deepEqual(tea.her.beats.map(beat => beat.line).sort(), [...fitting("она:уют", air)].sort());
+  assert.ok(!("her" in pet) && !("her" in fed) && !("her" in play), "о ней — только в ответе на чай");
   const water = await h.onRoom({ do: "water" }, from(5));
   assert.deepEqual([water.plant, water.early, "cat" in water], [{ state: "wet" }, false, false]);
   const soon = await h.onRoom({ do: "water" }, from(5));
@@ -945,12 +1041,13 @@ test("функция комнаты: забота и сценка — по те�
   assert.deepEqual([look.done.feed, look.cared, look.plant.state], [3, true, "wet"]);
 
   // Сценка: выбор — один раз; исход — те же слова, что под кнопкой в чате.
-  const today = room.sceneFor(5, "2026-11-18");
+  const today = room.sceneFor(5, "2026-11-18", seen.sky);
   const picked = await h.onRoom({ do: "pick", key: today.key, pick: 1 }, from(5));
   assert.deepEqual([picked.ok, picked.scene.pick, picked.counted], [true, 1, false]);
   assert.equal(picked.line, today.options[1][1].replace(/\{[^|}]*\|([^}]*)\}/gu, "$1"));
   assert.equal(picked.scene.outcome, picked.line);
-  assert.deepEqual(roomOf(5).scene, { day: "2026-11-18", key: today.key, pick: 1 });
+  // Когда выбрано — записано: исход виден на рисунке три часа (0.44.0).
+  assert.deepEqual(roomOf(5).scene, { day: "2026-11-18", key: today.key, pick: 1, at: NOON });
   assert.deepEqual(await h.onRoom({ do: "pick", key: today.key, pick: 0 }, from(5)), { ok: false, code: "played", text: "Эта сценка уже сыграна.", build: BUILD });
   // Вчерашняя или чужая сценка — «её день прошёл»: страница убирает карточку. Сценки, которой нет вовсе, — тоже нет.
   const other = room.SCENES.find(scene => scene.key !== today.key).key;
@@ -1034,7 +1131,8 @@ test("комната 0.41.0: её гладят по голове — своим 
   // Хозяин: рада. Первый раз за день — шаг в отношениях (как ласка в чате), слова остаются в переписке;
   // второй — другие слова и без счёта. Байта это не касается: он остаётся, где был.
   const look = await h.onRoom({ do: "look" }, from(OWNER));
-  assert.deepEqual([look.patted, look.sky, look.box.count], [false, "rain", 0]);
+  // Города хозяин здесь не называл — небо она выдумала сама (0.44.0; до того за окном всегда шёл дождь).
+  assert.deepEqual([look.patted, look.sky, look.box.count], [false, madeUpSky(OWNER, NOON), 0]);
   assert.ok(near("коробка:пусто", look.box.line, { owner: true }), look.box.line);
   const pat = await h.onRoom({ do: "pat" }, from(OWNER));
   assert.deepEqual([pat.ok, pat.shy, pat.again, pat.counted], [true, false, false, true]);
@@ -1071,7 +1169,7 @@ test("комната 0.41.0: её гладят по голове — своим 
   assert.equal((await h.onRoom({ do: "hug" }, from(OWNER))).ok, false);
 });
 
-test("комната 0.41.0: день рождения гостя — торт, годовщина — свеча, Рамадан и байрамы — фонарь; снег в его городе — снег за окном", async () => {
+test("комната 0.41.0: день рождения гостя — торт, годовщина — свеча, Рамадан и байрамы — фонарь; погода его города — погода за окном (0.44.0)", async () => {
   // Правила дат.
   assert.deepEqual(room.feastsOf(), { list: [], islam: "", years: 0 });
   assert.deepEqual(room.feastsOf({ birthday: true, days: 730, hijri: { hm: 9, hd: 14 } }), { list: ["birthday", "anniversary", "lantern"], islam: "ramadan", years: 2 });
@@ -1125,11 +1223,11 @@ test("комната 0.41.0: день рождения гостя — торт, 
   now = NOON + 366 * DAY;
   assert.ok(!keysOf(await long.onRoom({ do: "look" }, from(5))).includes("свеча"));
 
-  // Снег: идёт в городе человека — идёт и за её окном (и слова об окне — о снеге); дождь — как всегда; города нет
-  // или источник молчит — дождь, и комната открывается.
+  // Погода (0.44.0, слово владельца): какая в городе человека — такая и за её окном, и слова об окне — о ней. До
+  // 0.44.0 за окном шёл дождь, а из погоды города брался один снег («снег в его городе — снег за окном», 0.41.0).
   const forecast = (code) => ({ current: { temperature_2m: -3, apparent_temperature: -7, weather_code: code, wind_speed_10m: 3 }, daily: { temperature_2m_max: [-1, 0, 1], temperature_2m_min: [-6, -5, -3], weather_code: [code, 3, 3], precipitation_probability_max: [80, 10, 5] } });
   const moscow = () => source("geocoding-api.open-meteo.com", { results: [{ name: "Москва", country: "Россия", admin1: "Москва", latitude: 55.7558, longitude: 37.6173, timezone: "Europe/Moscow", feature_code: "PPLC" }] });
-  for (const [code, sky] of [[73, "snow"], [85, "snow"], [61, "rain"], [3, "rain"]]) {
+  for (const [code, sky] of [[0, "clear"], [1, "clear"], [2, "clouds"], [3, "overcast"], [45, "fog"], [61, "rain"], [80, "rain"], [73, "snow"], [85, "snow"], [95, "storm"]]) {
     reset();
     moscow();
     source("api.open-meteo.com/v1/forecast", forecast(code));
@@ -1137,18 +1235,37 @@ test("комната 0.41.0: день рождения гостя — торт, 
     const winter = heart({ ...ON, SOURCES: true }, { now: () => now, random: () => 0 });
     await winter.onMessage(own("мой город — Москва"), KEY);
     const out = await winter.onRoom({ do: "look" }, from(OWNER));
-    assert.equal(out.sky, sky, String(code));
-    assert.equal(pool("окно:снег", { owner: true, part: out.clock.part }).includes(out.window), sky === "snow", out.window);
-    if (sky === "snow") {
-      // И в чате: зашёл словами — за окном снег.
-      await winter.onMessage(own("зайду к тебе"), KEY);
-      assert.ok(pool("окно:снег", { owner: true, part: out.clock.part }).some(line => last(OWNER).includes(line)), last(OWNER));
+    assert.deepEqual([out.sky, out.city], [sky, true], String(code));
+    const air = { owner: true, part: out.clock.part, sky };
+    assert.ok(fitting(WINDOW[sky], air).includes(out.window), `${code}: ${out.window}`);
+    // Слова о дожде — только под дождём: «за окном дождь» при ясном небе владелец и увидел.
+    assert.equal(pool("окно", air).includes(out.window), sky === "rain", `${code}: ${out.window}`);
+    // И она, и Байт говорят о той же погоде: строки с пометкой другой погоды молчат.
+    for (const line of [out.her.line, out.cat.line, ...out.her.beats.map(beat => beat.line), ...out.cat.beats.map(beat => beat.line)]) {
+      if (sky !== "rain" && sky !== "storm") assert.doesNotMatch(line, /дожд|капл/iu, `${code}: ${line}`);
+      if (sky !== "snow") assert.doesNotMatch(line, /снег|снежин/iu, `${code}: ${line}`);
     }
+    // И в чате: зашёл словами — за окном то же.
+    await winter.onMessage(own("зайду к тебе"), KEY);
+    assert.ok(fitting(WINDOW[sky], air).some(line => last(OWNER).includes(line)), `${code}: ${last(OWNER)}`);
   }
+  // Города нет — погоду она выдумывает сама: зимой чаще снег, одна и та же шесть часов подряд; комната открывается.
   reset();
   now = Date.parse("2027-01-15T10:00:00Z");
-  const silent = await heart({ ...ON, SOURCES: true }, { now: () => now, random: () => 0 }).onRoom({ do: "look" }, from(5));
-  assert.deepEqual([silent.ok, silent.sky], [true, "rain"], "города нет — дождь");
+  const alone = heart({ ...ON, SOURCES: true }, { now: () => now, random: () => 0 });
+  const silent = await alone.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([silent.ok, silent.sky, silent.city], [true, madeUpSky(5, now, 1), false], "города нет — погода выдумана");
+  now += 20 * 60_000;
+  assert.equal((await alone.onRoom({ do: "look" }, from(5))).sky, silent.sky, "через двадцать минут небо то же");
+  // Город назван, а служба погоды молчит — то же самое: выдуманная погода, а не отказ.
+  reset();
+  moscow();
+  source("api.open-meteo.com/v1/forecast", new Error("сеть"));
+  now = Date.parse("2027-01-15T10:00:00Z");
+  const deaf = heart({ ...ON, SOURCES: true }, { now: () => now, random: () => 0 });
+  await deaf.onMessage(own("мой город — Москва"), KEY);
+  const blind = await deaf.onRoom({ do: "look" }, from(OWNER));
+  assert.deepEqual([blind.ok, blind.sky, blind.city], [true, madeUpSky(OWNER, now, 1), false], "служба молчит — погода выдумана");
 });
 
 test("дверь под «добрым утром» и «спокойной ночи» (0.41.0): кнопка комнаты — когда мини-приложение опубликовано; нет страницы — привет без кнопки", async () => {
@@ -1181,19 +1298,25 @@ test("дверь под «добрым утром» и «спокойной но
 
 test("страница 0.41.0: позы, погладить, коробка, снег — ответ сердца раскладывается по состоянию страницы", () => {
   const start = logic.blank(12);
-  assert.deepEqual([start.turn, start.patted, start.sky, start.lines.box], [0, false, "rain", ""]);
-  const look = logic.demoLook(13, { part: "день" });
+  // Пока сердце не ответило, за окном — ровное серое небо (0.44.0): какая там погода, ещё неизвестно.
+  assert.deepEqual([start.turn, start.patted, start.sky, start.lines.box], [0, false, "overcast", ""]);
+  // Ответ без распорядка (так отвечает сердце до 0.44.0 и витрина с позой, названной в адресе): позы идут по кругу сами.
+  const look = logic.demoLook(13, { part: "день", her: "desk", cat: "sit.rug.сыт", scene: "0" });
   const seen = logic.applyLook(start, { ...look, sky: "snow", patted: true, her: { ...look.her, wear: "home" }, box: { count: 1, line: "В коробке — носок." } });
   assert.deepEqual([seen.sky, seen.patted, seen.lines.box, seen.her.wear, seen.turn], ["snow", true, "В коробке — носок.", "home", 0]);
-  // Незнакомое небо и незнакомый наряд — как не названные.
+  // Незнакомое небо и незнакомый наряд — как не названные; неба в ответе нет вовсе (прежнее сердце) — дождь, как был.
   const odd = logic.applyLook(start, { ...look, sky: "град", her: { ...look.her, wear: "constructor" } });
   assert.deepEqual([odd.sky, "wear" in odd.her], ["rain", false]);
-  // Рисунку: счёт позы — только когда он не ноль; снег — только когда снег (иначе вид комнаты прежний, и лишней
-  // перерисовки нет).
-  assert.deepEqual(logic.viewOf(odd), { part: odd.part, her: odd.her, cat: odd.cat, plant: odd.plant, things: odd.things, lamp: odd.lamp, fed: odd.fed, tea: odd.tea });
+  const { sky: _, ...skyless } = look;
+  assert.equal(logic.applyLook(start, skyless).sky, "rain");
+  for (const sky of logic.SKIES) assert.equal(logic.applyLook(start, { ...look, sky }).sky, sky);
+  assert.deepEqual([...logic.SKIES].sort(), [...room.SKIES].sort(), "страница и сердце знают одни и те же виды неба");
+  // Рисунку: счёт позы — только когда он не ноль; небо — только когда это не дождь (иначе вид комнаты прежний, и
+  // лишней перерисовки нет); луна — по дню.
+  assert.deepEqual(logic.viewOf(odd), { part: odd.part, her: { pose: "desk", key: odd.her.key }, cat: { shape: "sit", place: "rug", key: "сыт" }, plant: odd.plant, things: odd.things, lamp: odd.lamp, fed: odd.fed, tea: odd.tea, moon: 0.3 });
   const turned = logic.nextTurn(logic.nextTurn(seen));
   assert.equal(turned.turn, 2);
-  assert.deepEqual(logic.viewOf(turned).her, { ...seen.her, turn: 2 });
+  assert.deepEqual(logic.viewOf(turned).her, { pose: "desk", key: seen.her.key, wear: "home", turn: 2 });
   assert.equal(logic.viewOf(turned).sky, "snow");
   assert.equal(logic.nextTurn({ ...seen, turn: "много" }).turn, 1);
   // Новый заход — поза снова первая.
@@ -1215,7 +1338,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "6");
+  assert.equal(logic.PAGE, "7");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1405,9 +1528,10 @@ test("страница: папка уходит на платформу как �
   const page = ["app.js", "index.html", "logic.js", "scene.js"];
   const total = page.reduce((sum, name) => sum + statSync(new URL(name, folder)).size, 0);
   // Мера — о скорости, а не о платформе: эти четыре файла нужны, чтобы комната открылась. С 0.41.0 в них позы,
-  // веки, наряд, новые места нажатий, снег и праздники — предел поднят с 220 до 270 КБ; звук и её картинки в него
-  // не входят: они догружаются по ходу дела.
-  assert.ok(total < 270_000, `страница весит ${total} байт — открываться должна сразу`);
+  // веки, наряд, новые места нажатий, снег и праздники — предел поднят с 220 до 270 КБ; с 0.44.0 — небо семи видов,
+  // кресло, шаги её и Байта, сценка дня на рисунке, своя жизнь и смена часа — с 270 до 340 КБ (по сети это около
+  // 90 КБ: текст сжимается вчетверо). Звук и её картинки в предел не входят: они догружаются по ходу дела.
+  assert.ok(total < 340_000, `страница весит ${total} байт — открываться должна сразу`);
   assert.ok(statSync(new URL("sound.js", folder)).size < 16_000, "звук — маленький модуль: шум и тон делает сам телефон");
   // Её картинки (0.40.0) — по модулю на спрайт, и ничего больше. Грузится только та, что нужна сейчас (и следующая
   // поза — заранее), поэтому мера у каждой своя; все вместе — чтобы папка не разбухала незаметно: предел растёт
@@ -1433,7 +1557,10 @@ test("страница: папка уходит на платформу как �
   // рывками или вылезал на стену.
   assert.match(html, /<svg id="sky" viewBox="0 0 400 520"[^>]*><g id="backdrop"><\/g><\/svg>/u);
   const pct = (value) => String(Number(value.toFixed(4)));
-  assert.ok(html.includes(`.rainbox { position: absolute; left: ${pct(WIN.x / WIDTH * 100)}%; top: ${pct(WIN.y / HEIGHT * 100)}%; width: ${pct(WIN.w / WIDTH * 100)}%; height: ${pct(WIN.h / HEIGHT * 100)}%; overflow: hidden; pointer-events: none; }`), "дождь — по стеклу");
+  assert.ok(html.includes(`.rainbox { position: absolute; left: ${pct(WIN.x / WIDTH * 100)}%; top: ${pct(WIN.y / HEIGHT * 100)}%; width: ${pct(WIN.w / WIDTH * 100)}%; height: ${pct(WIN.h / HEIGHT * 100)}%; overflow: hidden; pointer-events: none; transition: opacity 0.7s; }`), "дождь — по стеклу");
+  // Погода сменилась при открытой странице — слой дождя гаснет и проявляется уже другим (0.44.0); у тех, кто просил
+  // не показывать движение, — сразу.
+  assert.ok(html.includes(".rainbox.dim { opacity: 0; }") && html.includes(".rainbox { transition: none !important; }"));
   for (const plane of ["far", "near"]) {
     const { x, y, seconds } = RAIN_SHIFT[plane];
     assert.match(html, new RegExp(`<svg class="plane ${plane}" id="rain${plane === "far" ? "Far" : "Near"}" viewBox="0 0 ${WIN.w} ${WIN.h}"`, "u"), plane);
@@ -1469,10 +1596,32 @@ test("страница: папка уходит на платформу как �
   const gather = (view, options = PAINTED) => { for (const found of drawRoom(view, options).matchAll(/class="([^"]+)"/gu)) for (const name of found[1].split(" ")) classes.add(name); };
   for (const part of ["день", "ночь"]) for (const key of Object.keys(MOODS)) for (const turn of [0, 1, 2]) gather({ part, her: { pose: "chair", key, turn }, cat: { shape: "sit", place: "near", key: "сыт" }, things: [...THINGS] });
   gather({ part: "день", her: { pose: "desk", key: "дело", turn: 1 }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 } });
-  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["arrive", "leave", "wink"]);
-  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "snow", "far", "near", "b0", "s0", ...CAT_SHAPES]);
+  // С 0.44.0 — ещё «alive»: картинка дышит.
+  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["alive", "arrive", "leave", "wink"]);
+  // Своя жизнь (0.44.0): она идёт от места к месту, входит и уходит к шкафу; Байт идёт сам; на её месте — надпись.
+  const lived = new Set(classes);
+  gather({ part: "день", her: { pose: "shelf", key: "дело", beat: true }, cat: { shape: "sit", place: "bowl", key: "сыт" }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 }, catWas: { x: 300, y: 456, shape: "sit", mirror: false, k: 1 } });
+  gather({ part: "вечер", her: { pose: "chair", key: "уют", beat: true }, things: [] }, { ...PAINTED, enter: true });
+  gather({ part: "вечер", her: { pose: "desk", key: "дело", away: true }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 } });
+  assert.deepEqual([...classes].filter(name => !lived.has(name)).sort(), ["changing", "late", "step", "stride", "trot"]);
+  // Сценка дня на рисунке и небо по погоде: у каждой перемены и у каждого неба — свои классы.
+  const staged = new Set(classes);
+  for (const name of scene.SCENE_FX) gather({ part: "день", her: { pose: "desk", key: "дело" }, cat: { shape: "belly", place: "near", key: "ласка" }, things: [...THINGS], fx: [name] });
+  const shown = [...classes].filter(name => !staged.has(name)).sort();
+  // Лампочка, что «решила жить своей жизнью», — класс на самой лампочке; плед, который Байт утащил, просто исчезает с
+  // кресла; остальные перемены — своей группой. Что в них движется: кораблик покачивается, пар от чайника плывёт.
+  assert.deepEqual(shown, ["fx", ...scene.SCENE_FX.filter(name => name !== "blink" && name !== "noplaid").map(name => `fx-${name}`), "rogue", "float", "mist", "m0", "m1", "m2"].sort());
+  const plaid = (fx) => zonesOf(drawInside({ part: "день", her: { pose: "desk", key: "дело" }, things: [...THINGS], fx }, PAINTED)).some(zone => zone.act === "thing:плед");
+  assert.deepEqual([plaid([]), plaid(["noplaid"])], [true, false], "плед унесён — на кресле его нет, и нажать на него нельзя");
+  const skied = new Set(classes);
+  for (const part of PARTS) for (const sky of scene.SKIES) gather({ part, sky, her: null, things: [] });
+  assert.deepEqual([...classes].filter(name => !skied.has(name)).sort(), SKY_CLASSES);
+  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "snow", "far", "near", "b0", "s0", "fx", ...scene.SCENE_FX.map(name => `fx-${name}`), ...SKY_STILL, ...CAT_SHAPES]);
   assert.deepEqual([...classes].filter(name => !styled.has(name) && !still.has(name)).sort(), [], "класс в рисунке есть, а правила в стилях нет");
-  assert.deepEqual([...styled].filter(name => !classes.has(name)).sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
+  // «fading» ставит не рисунок, а сама страница — на копию прежнего слоя: она тает поверх нового, когда час или
+  // погода сменились при открытой комнате (0.44.0).
+  assert.match(read("miniapp/app.js"), /copy\.setAttribute\("class", "fading"\)/u);
+  assert.deepEqual([...styled].filter(name => !classes.has(name) && name !== "fading").sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
   for (const name of ["breath", "blink", "slide", "bulb", "tailwag", "steam", "zzz"]) assert.ok(classes.has(name) && styled.has(name), name);
   // Правило с классом из рисунка действует только внутри рисунка (`#room`, `#sky`) — или на сам слой дождя
   // (`.plane.far`, `.plane.near`). У струй внутри слоя те же классы `far` и `near`: правило `.rainbox .far` двигало
@@ -1480,8 +1629,9 @@ test("страница: папка уходит на платформу как �
   for (const rule of css.replace(/\/\*[\s\S]*?\*\//gu, "").matchAll(/([^{}@]+)\{[^{}]*\}/gu)) for (const selector of rule[1].split(",")) {
     const used = [...selector.matchAll(/\.([a-z][a-z0-9]*)/gu)].map(found => found[1]).filter(name => classes.has(name));
     if (!used.length || /#room|#sky/u.test(selector)) continue;
-    // Снег (0.41.0) — те же два слоя: правило по-прежнему только для самого слоя, а не для хлопьев внутри него.
-    assert.match(selector.trim(), /^\.rainbox(?:\[data-sky="snow"\])? \.plane\.(?:far|near)$/u, `правило «${selector.trim()}» заденет части рисунка с классом «${used.join("», «")}»`);
+    // Снег (0.41.0) и гроза (0.44.0) — те же два слоя: правило по-прежнему только для самого слоя, а не для хлопьев
+    // и струй внутри него.
+    assert.match(selector.trim(), /^\.rainbox(?:\[data-sky="(?:snow|storm)"\])? \.plane\.(?:far|near)$/u, `правило «${selector.trim()}» заденет части рисунка с классом «${used.join("», «")}»`);
   }
   // Класс движения не стоит на части с собственным сдвигом: стиль заменил бы сдвиг, и часть уехала бы в угол.
   const moving = [...styled].filter(name => name !== "tap" && name !== "cat");
@@ -1545,13 +1695,23 @@ test("страница: папка уходит на платформу как �
   assert.match(app, /if \(!\(image\.naturalWidth > 0\)\) \{ resolve\(false\); return; \}/u);
   assert.match(app, /if \(!\(await decoded\(sprite\)\)\) throw new Error\("unreadable"\);/u);
   assert.match(read("scripts/room-check.mjs"), /"картинка пришла, но не читается"/u);
-  assert.match(app, /\$\("inside"\)\.innerHTML = drawInside\(view, canPaint \? \{ sprites, \.\.\.\(was \? \{ was \} : \{\}\) \} : undefined\);/u);
+  // Рисунку отдаётся, что уже загружено и кто где был на прежнем рисунке (0.44.0: до нового места она и Байт доходят
+  // шагом); страница без картинок (рядом прежний `scene.js`) рисует её кодом.
+  assert.match(app, /const options = canPaint \? \{\s+sprites, \.\.\.\(before\?\.her \? \{ was: before\.her \} : \{\}\), \.\.\.\(before\?\.cat \? \{ catWas: before\.cat \} : \{\}\), \.\.\.\(state\.entering \? \{ enter: true \} : \{\}\),\s+\} : undefined;/u);
+  assert.match(app, /\$\("inside"\)\.innerHTML = drawInside\(view, options\);/u);
   assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js`"], "страница грузит по ходу дела только её картинки и звук");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).
   assert.match(app, /const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";/u);
   assert.match(app, /if \(!sprites\[next\]\) \{ fetchSprite\(next\); return false; \}/u);
-  assert.match(app, /const stood = canPaint && typeof spriteStand === "function" \? spriteStand\(view\) : null;/u);
+  // Кто где на рисунке — у нового рисунка (`castOf`, 0.44.0: она и Байт); у прежнего — только она (`spriteStand`).
+  assert.match(app, /if \(typeof castOf === "function"\) return castOf\(view, \{ sprites \}\);\s+const stood = typeof spriteStand === "function" \? spriteStand\(view\) : null;/u);
+  // Своя жизнь и смена часа (0.44.0): новые имена логики и рисунка перед вызовом проверяются — рядом может лежать
+  // прежняя копия любого из файлов, и тогда комната живёт по-старому, но открывается.
+  assert.match(app, /const canBeat = typeof nextBeat === "function";/u);
+  assert.match(app, /const canTick = typeof applyTick === "function" && typeof changeOf === "function";/u);
+  assert.match(app, /const strider = canPaint && typeof walkOf === "function" \? walkOf\(viewOf\(state\)\) : null;/u);
+  assert.match(app, /const SKY_NAMES = Array\.isArray\(logic\.SKIES\) \? logic\.SKIES : \["rain", "snow"\];/u);
   assert.match(app, /if \(typeof applyPat !== "function" \|\| typeof demoPat !== "function"\) \{ act\("her"\); return; \}/u);
   // Звук (0.41.0): по умолчанию тихо; включается нажатием; модуль грузится тогда же; чего нет в прежней разметке
   // (кнопки звука, кнопки «на главный экран», строки с ними) — того страница не трогает.

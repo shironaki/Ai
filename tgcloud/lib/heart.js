@@ -72,7 +72,8 @@ import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS 
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
-import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex } from "./room.js";
+import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex,
+  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, FRESH_MS as ROOM_FRESH_MS } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -1745,6 +1746,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // ── её комната (см. room.js) ─────────────────────────────────────────────
   /** Строка запаса «+комната:…» голосом этого человека; запаса нет — пусто. */
   const roomLine = (turn, name, vars = {}) => book.pick(`+комната:${name}`, voiceCtx(turn, vars)) ?? "";
+  /** Все строки запаса «+комната:…», годные этому человеку сейчас: из них складывается распорядок (0.44.0). */
+  const roomLines = (turn, name, vars = {}) => (typeof book.all === "function" ? book.all(`+комната:${name}`, voiceCtx(turn, vars)) : []);
+  /** Запас слов об окне — по небу: дождь лежит в «окно» (так он назывался, когда дождь был всегда). */
+  const WINDOW_POOL = Object.freeze({ clear: "окно:ясно", clouds: "окно:облачно", overcast: "окно:пасмурно", fog: "окно:туман", rain: "окно", storm: "окно:гроза", snow: "окно:снег" });
+  const windowLine = (turn, sky) => roomLine(turn, WINDOW_POOL[sky] ?? "окно") || roomLine(turn, "окно");
   const ROOM_POOL = Object.freeze({ pet: "погладить", feed: "покормить", play: "поиграть", tea: "чай", water: "полить" });
   /** Забота из мини-приложения — теми же словами, какими её сказали бы в чате: так она остаётся в переписке. */
   const ROOM_SAID = Object.freeze({ pet: "погладить Байта", feed: "покормить Байта", play: "поиграть с Байтом", tea: "налить тебе чаю", water: "полить Колючку" });
@@ -1830,17 +1836,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Праздники и даты: день рождения гостя (он называл его сам), годовщина знакомства, Рамадан и оба байрама.
     const born = String(turn.manner?.settings?.birthday ?? "").trim();
     const feast = feastsOf({ birthday: Boolean(born) && born === feastDay({ d: date.d, m: date.m }), days, hijri: hijriOf(date.y, date.m, date.d) });
+    // Подпись — название, а не просьба: «нарисуй Мекку» → «Мекка». Не уверена в падеже — скажет «просили нарисовать Мекку».
+    const title = drawing ? nominative(drawing) : null;
     const vars = {
-      "цвет": String(colour).toLowerCase(), "рисунок": drawing,
+      "цвет": String(colour).toLowerCase(), "рисунок": title ?? "", "что нарисовать": title ? "" : drawing,
       "праздник": { ramadan: "Рамадан", fitr: "Ураза-байрам", adha: "Курбан-байрам" }[feast.islam] ?? "", "лет": feast.years ? `${feast.years} ${plural(feast.years, "год", "года", "лет")}` : "",
     };
-    return { keys: itemsFor({ days, care: Number(state.care) || 0, colour, drawing, month: date.m, day: date.d, feasts: feast.list }), vars, days };
+    return { keys: itemsFor({ days, care: Number(state.care) || 0, colour, drawing, month: date.m, day: date.d, feasts: feast.list }), vars, days, drawing: title ?? drawing };
   }
-  /** Что за её окном: дождь, как всегда, — или снег, когда он идёт в городе человека (город он называл сам). */
+  /**
+   * Что за её окном (0.44.0): погода города человека — город он называл сам; города нет или служба молчит — она
+   * выдумывает погоду (одна на шесть часов, по времени года). Вид неба — слово из `SKIES` (`room.js`); оно же
+   * остаётся в `turn.sky` — для пометок словаря. `turn.skyReal` — настоящая ли это погода.
+   */
   async function roomSky(turn) {
+    if (turn.sky) return turn.sky;
     const city = String(turn.manner?.settings?.city ?? "").trim();
-    if (!city || !sources.available()) return "rain";
-    return (await sources.snowing(city).catch(() => null)) === true ? "snow" : "rain";
+    let sky = null;
+    if (city && sources.available() && typeof sources.skyNow === "function") sky = skyOfCode((await sources.skyNow(city).catch(() => null))?.code);
+    turn.skyReal = Boolean(sky);
+    turn.sky = sky ?? randomSky({ seed: roomSeed(turn.actorId, "sky"), at: now(), month: localParts(now(), zoneOf(turn)).m });
+    return turn.sky;
   }
   /** Коробка Байта: что он в неё натаскал — по трофею с каждой сыгранной сценки. */
   function roomBox(turn, state) {
@@ -1885,6 +1901,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, on ? "Вернула: кнопка «Комната» снова в меню, слева от поля ввода. У кого чат уже открыт — увидят после того, как откроют его заново." : "Убрала: в меню снова обычная кнопка. Комната открывается по-прежнему — кнопкой под ответом на «зайду к тебе». Вернуть — «верни комнату в меню».");
     }
     const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zoneOf(turn), userId: turn.actorId });
+    // Что за её окном: строки запасов с пометками погоды говорятся только под своё небо.
+    await roomSky(turn);
     if (ROOM_POOL[asked.op]) {
       const done = await room.care(userId, asked.op, { day: today });
       const text = roomLine(turn, done.peace ? "мириться" : `${ROOM_POOL[asked.op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`);
@@ -1918,10 +1936,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const mine = ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => item.title);
       const next = ROOM_ITEMS.find(item => item.days && item.days > things.days);
       const later = next ? ` Следующая появится через ${days(next.days - things.days)}.` : "";
-      if (!mine.length) return tell(`Пока всё как было: окно, дождь, лампа, плед и Байт. Вещи появляются сами — чем дольше мы знакомы и чем чаще ${you(turn, "вы заходите", "ты заходишь")}.${later}`);
+      if (!mine.length) return tell(`Пока всё как было: окно, лампа, плед и Байт. Вещи появляются сами — чем дольше мы знакомы и чем чаще ${you(turn, "вы заходите", "ты заходишь")}.${later}`);
       return tell(`Из-за ${you(turn, "вас", "тебя")} в комнате появилось: ${mine.join("; ")}.${later}`);
     }
-    const visit = await room.visit(userId, { day: today, keys: turn.isPrivate ? things.keys : null, scenes: turn.isPrivate === true });
+    const sky = turn.sky;
+    const visit = await room.visit(userId, { day: today, keys: turn.isPrivate ? things.keys : null, scenes: turn.isPrivate === true, sky });
     // Мини-приложение: кнопка под ответом — только в личке (в группах Telegram таких кнопок не даёт).
     const page = turn.isPrivate === true ? await roomPage() : "";
     let door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
@@ -1934,8 +1953,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const self = await whoAmI().catch(() => null);
       if (/^[A-Za-z0-9_]{4,40}$/u.test(String(self?.username ?? ""))) door = { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату — в личке", url: `https://t.me/${self.username}?start=room` }]] } };
     }
-    const snow = await roomSky(turn) === "snow";
-    const lines = [lead, roomLine(turn, "зайти"), [(snow && roomLine(turn, "окно:снег")) || roomLine(turn, "окно"), roomLine(turn, `она:${herKey(feel.mood, feel.hour)}`)].filter(Boolean).join(" "), cat];
+    const lines = [lead, roomLine(turn, "зайти"), [windowLine(turn, sky), roomLine(turn, `она:${herKey(feel.mood, feel.hour, { tea: visit.state?.tea, at: now() })}`)].filter(Boolean).join(" "), cat];
     for (const key of visit.fresh) { const about = roomLine(turn, `вещь:${key}`, things.vars); if (about) lines.push(`Новое в комнате. ${about}`); }
     if (visit.state.n <= 2) lines.push(roomLine(turn, "подсказка"));
     const seen = lines.filter(Boolean).join("\n");
@@ -2011,16 +2029,36 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zone, userId });
       const formal = owner(userId) ? true : manner?.formal !== false;
       const spoken = (raw) => (raw ? voiced(turn, raw) : "");
+      // Небо — первым: от него зависят слова об окне и все строки с пометками погоды.
+      const sky = await roomSky(turn);
+      /** Что сценка дня меняет на рисунке сейчас (`sceneLook`): Байт, она, сама комната. */
+      const staged = (state) => sceneLook(state?.scene, { today, at: now() });
+      /** Распорядок Байта: реплики его состояния — каждая со своей картинкой. Спит или прячется — с места не ходит. */
+      const catBeats = (key) => (CAT_STILL.includes(key) ? [] : roomLines(turn, `байт:${key}`).map(line => ({ ...catPose(line, key), line })));
       /**
        * Байт и Колючка сейчас. `after` — забота, которую только что сделали: погладили, покормили, поиграли — Байт
-       * занят этим (слова о нём — в самом ответе); чай и вода его не касаются — он остаётся, где был.
+       * занят этим; `line` — слова о нём из самого ответа: где он и какой, решают они («перевернулся на спину» —
+       * значит, лежит на спине), и только у слов без примет — таблица `catAfter`. Чай и вода его не касаются.
+       * Сценка дня держит Байта там, где сказано в ней, — пока после неё о нём не позаботились.
        */
-      const picture = (state, { after = null, again = false } = {}) => {
+      const picture = (state, { after = null, again = false, line = "" } = {}) => {
         const key = catState({ hour: feel.hour, last: state.last, lastAt: state.lastAt, at: now(), fed: (Number(state.done?.feed) || 0) > 0, seed: roomSeed(userId, today) });
-        const raw = after ? "" : roomLine(turn, `байт:${key}`);
+        const scene = staged(state);
+        // Несыгранная сценка держит его весь день (её слова — на странице); исход — пока после него о Байте не позаботились.
+        const caredAfter = Boolean(state.last) && Number(state.lastAt) > (scene?.since ?? 0) && now() - Number(state.lastAt) < ROOM_FRESH_MS;
+        const held = scene?.cat && (scene.since === 0 || !caredAfter) ? scene.cat : null;
+        const raw = after || held ? "" : roomLine(turn, `байт:${key}`);
         const moved = after ? catAfter(after, { again }) : null;
+        const beats = held ? [] : catBeats(key);
+        // Распорядок начинается с той реплики, что сказана: остальные — за ней по кругу.
+        const from = raw ? beats.findIndex(beat => beat.line === raw) : -1;
+        const order = from > 0 ? [...beats.slice(from), ...beats.slice(0, from)] : beats;
+        const cat = after
+          ? (moved ? { key, ...catPose(line, key, moved), beats: order, still: order.length < 2 } : null)
+          : held ? { key, ...held, line: "", beats: [], still: true }
+            : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2 };
         return {
-          ...(after ? (moved ? { cat: { key, ...moved } } : {}) : { cat: { key, ...catPose(raw, key), line: raw } }),
+          ...(cat ? { cat } : {}),
           plant: { state: plantState({ water: state.water, at: now() }) === "полита" ? "wet" : "dry" },
           done: Object.fromEntries(Object.keys(ROOM_POOL).map(name => [name, Number(state.done?.[name]) || 0])),
           cared: state.cared === today,
@@ -2031,29 +2069,60 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const scene = record?.day === today ? sceneByKey(record.key) : null;
         if (!scene) return null;
         const pick = record.pick === 0 || record.pick === 1 ? record.pick : null;
-        return { key: scene.key, text: fill(scene.text, { formal }), options: scene.options.map(([label]) => label), pick, outcome: pick == null ? null : fill(scene.options[pick][1], { formal }) };
+        const look = staged(state);
+        return {
+          key: scene.key, text: fill(scene.text, { formal }), options: scene.options.map(([label]) => label), pick, outcome: pick == null ? null : fill(scene.options[pick][1], { formal }),
+          // Что сценка меняет в самой комнате (окно открыто, шторы задёрнуты…) и где она сама.
+          fx: look?.fx ?? [], ...(look?.her ? { her: look.her } : {}),
+        };
       };
       /** Отношения перешли на другую ступень — она говорит об этом и здесь. */
       const stageNote = () => { if (!turn.stageMoved) return {}; const note = stageLine(turn, turn.stageMoved); turn.stageMoved = null; return note ? { note } : {}; };
+      /**
+       * Она сейчас: чем занята (`key`), первая реплика и распорядок — все реплики её состояния, каждая со своим местом
+       * (`herPose`); страница ведёт её от одной к другой и показывает слова той, что сейчас на рисунке.
+       */
+      const herNow = (state = null) => {
+        const key = herKey(feel.mood, feel.hour, { tea: state?.tea, at: now() });
+        const raw = roomLine(turn, `она:${key}`);
+        const lines = roomLines(turn, `она:${key}`);
+        const from = lines.indexOf(raw);
+        const order = from > 0 ? [...lines.slice(from), ...lines.slice(0, from)] : lines;
+        return { key, pose: herPose(raw, key), line: raw, beats: order.map(line => ({ pose: herPose(line, key), line })) };
+      };
+      /**
+       * Часы человека для страницы: час, часть суток и сколько осталось до следующей (`left`, мс) — открытая страница
+       * сама спросит комнату заново, когда утро сменится днём, а день — вечером. `wardrobe` — её слова, когда она при
+       * этом переодевается: перед уходом к шкафу и по возвращении.
+       */
+      const clockNow = () => {
+        const local = localParts(now(), zone), part = partOfDay(feel.hour);
+        const edge = [5, 12, 18, 23].find(hour => hour > local.hh) ?? 29;
+        const wear = part === "вечер" || part === "ночь" ? "вечер" : "утро";
+        return {
+          clock: { hour: feel.hour, part, day: today, left: Math.max(30_000, ((edge - local.hh) * 60 - local.mm) * 60_000 - (now() % 60_000)) },
+          wardrobe: { leave: roomLine(turn, `шкаф:${wear}`), back: roomLine(turn, `переоделась:${wear}`) },
+        };
+      };
 
       if (op === "look") {
+        // `again` — страница уже открыта и спрашивает заново (сменился час, прошло время): это не новый заход —
+        // счёт заходов, новости о вещах и приветствие не трогаются.
+        const again = input?.again === true;
         const before = await room.read(userId, today);
         const things = await roomThings(turn, before);
-        const visit = await room.visit(userId, { day: today, keys: things.keys, scenes: true });
-        const her = herKey(feel.mood, feel.hour);
-        const herRaw = roomLine(turn, `она:${her}`);
+        const visit = again ? { state: before, fresh: [], first: false, saved: true } : await room.visit(userId, { day: today, keys: things.keys, scenes: true, sky });
         const next = ROOM_ITEMS.find(item => item.days && item.days > things.days);
-        const sky = await roomSky(turn);
         return {
-          ok: true, do: op, build: BUILD, formal,
-          clock: { hour: feel.hour, part: partOfDay(feel.hour), day: today },
-          greet: spoken(roomLine(turn, "зайти")), window: (sky === "snow" && roomLine(turn, "окно:снег")) || roomLine(turn, "окно"), sky,
+          ok: true, do: op, build: BUILD, formal, ...(again ? { again: true } : {}),
+          ...clockNow(),
+          greet: again ? "" : spoken(roomLine(turn, "зайти")), window: windowLine(turn, sky), sky, city: turn.skyReal === true,
           box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
-          her: { key: her, pose: herPose(herRaw, her), line: herRaw },
+          her: herNow(visit.state),
           ...picture(visit.state),
           things: ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => ({ key: item.key, title: item.title, line: roomLine(turn, `вещь:${item.key}`, things.vars) })),
           lamp: things.keys.includes("абажур") ? colourHex(things.vars["цвет"]) : "",
-          drawing: things.keys.includes("рисунок") ? things.vars["рисунок"] : "",
+          drawing: things.keys.includes("рисунок") ? things.drawing : "",
           fresh: visit.fresh,
           next: next ? { days: next.days - things.days } : null,
           scene: visit.saved === false ? null : sceneOf(visit.state),
@@ -2068,7 +2137,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (!done.again && !done.early) await keepThread(turn, ROOM_SAID[op], raw);
         return {
           ok: true, do: op, build: BUILD, line: spoken(raw), again: Boolean(done.again), early: Boolean(done.early), peace: Boolean(done.peace), counted: Boolean(done.first),
-          ...picture(done.state, { after: done.peace ? "pet" : op, again: Boolean(done.again) }), ...stageNote(),
+          // Налили чай — она берёт кружку: страница получает её заново (чем занята, где, распорядок).
+          ...(op === "tea" ? { her: herNow(done.state) } : {}),
+          ...picture(done.state, { after: done.peace ? "pet" : op, again: Boolean(done.again), line: raw }), ...stageNote(),
         };
       }
       if (op === "pat") {
@@ -2090,7 +2161,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (picked.first) await roomCared(userId, turn);
         const outcome = fill(picked.outcome, { formal });
         await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
-        return { ok: true, do: op, build: BUILD, line: spoken(outcome), counted: Boolean(picked.first), scene: sceneOf(picked.state), cared: picked.state.cared === today, box: roomBox(turn, picked.state), ...stageNote() };
+        // Рисунок идёт за словами исхода: Байт — туда, где сказано, комната — такой, как сказано.
+        const shown = picture(picked.state);
+        return { ok: true, do: op, build: BUILD, line: spoken(outcome), counted: Boolean(picked.first), scene: sceneOf(picked.state), ...(shown.cat ? { cat: shown.cat } : {}), cared: picked.state.cared === today, box: roomBox(turn, picked.state), ...stageNote() };
       }
       return refuse("unknown", "Такого в комнате не делают.");
     } catch (error) {
@@ -2624,6 +2697,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       formal: mine ? true : turn.manner?.formal !== false, name: turn.manner?.settings?.address || "",
       // Состояние для пометок словаря: [устала], [обижена], [довольна].
       tired: Boolean(turn.tired), hurt: feel.mood === "обиженное", glad: feel.mood === "довольное", jealous: feel.mood === "ревнивое",
+      // Что за её окном: названо только там, где речь о комнате (`roomSky`), — для пометок [дождь], [снег], [ясно]…
+      sky: turn.sky ?? "",
       vars: { "час": feel.clock, "сборка": BUILD, ...vars },
     };
   }

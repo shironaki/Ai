@@ -15,7 +15,7 @@
  */
 import { PART as FIRST } from "./data/phrases-1.js";
 import { PART as SECOND } from "./data/phrases-2.js";
-import { EXCLUSIVES, clean } from "./catalogue.js";
+import { EXCLUSIVES, SKY_TAGS, clean } from "./catalogue.js";
 import { unpack } from "./pack.js";
 import { plainWords, squeezed } from "./slang.js";
 
@@ -125,7 +125,9 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
   }
 
   const fits = (tag, ctx) => (
-    tag === "хозяин" ? ctx.owner === true
+    // Небо за её окном: пометка годится, только когда небо названо (в комнате) и оно такое.
+    Object.hasOwn(SKY_TAGS, tag) ? SKY_TAGS[tag].includes(ctx.sky)
+    : tag === "хозяин" ? ctx.owner === true
       : tag === "не хозяин" ? ctx.owner !== true
         : tag === "близко" ? ctx.owner === true || ctx.level === "close"
           : tag === "тепло" ? ctx.owner === true || ctx.level === "close" || ctx.level === "warm"
@@ -162,6 +164,24 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
     return pool.at(-1).text;
   }
 
+  /**
+   * Все строки запаса, годные этому человеку сейчас, — по одной на каждую (0.44.0): из них комната собирает
+   * распорядок, где у каждой реплики своя картинка. Отбор тот же, что у `pick`; порядок — как в словаре.
+   */
+  function all(name, ctx = {}) {
+    const section = byName.get(keyOf(name));
+    if (!section) return [];
+    let found = [];
+    for (const [tagText, body] of section.l) {
+      const tags = tagText ? tagText.split(",") : [];
+      if (!tags.every(tag => fits(tag, ctx))) continue;
+      const text = fill(body, ctx);
+      if (text) found.push({ text, exclusive: tags.some(tag => EXCLUSIVES.includes(tag)) });
+    }
+    if (found.some(item => item.exclusive)) found = found.filter(item => item.exclusive);
+    return [...new Set(found.map(item => item.text))];
+  }
+
   /** Все строки запаса как есть (для манер и канона): без пометок и подстановок имени. */
   function pool(name, ctx = {}) {
     const section = byName.get(keyOf(name));
@@ -185,5 +205,5 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
     lines: sections.reduce((sum, section) => sum + section.l.length, 0),
   });
 
-  return Object.freeze({ match, pick, pool, say, stats, has: (name) => byName.has(keyOf(name)), names: () => [...byName.keys()] });
+  return Object.freeze({ match, pick, all, pool, say, stats, has: (name) => byName.has(keyOf(name)), names: () => [...byName.keys()] });
 }

@@ -14,6 +14,8 @@
 #                                   спрайт Аи: картинка на зелёном фоне → модуль miniapp/her/<имя>.js
 #   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя> [win=ШxВ] [at=x,y] [by=head]
 #                                   моргание: заплатка «веки» в модуль спрайта (она же картинка, глаза закрыты)
+#   bash scripts/verify.sh squeeze <картинка.png> <куда.png> <от 0–1> <до 0–1> <во сколько раз>
+#                                   сжать по высоте полосу картинки (голени сидящей): до `sprite` и `blink`
 #   bash scripts/verify.sh ref <имя>[,<имя>…] <куда.png> [высота] [closed]
 #                                   образец для средства рисования: её картинка из модуля — на зелёном фоне
 #                                   (closed — с закрытыми глазами: перенести веки на ту же позу в другом наряде)
@@ -154,6 +156,17 @@ blink() {
   (cd "$PAGE" && node room-blink.mjs "$ROOT" "$input" "$@")
 }
 
+# Сжать по высоте полосу картинки (голени сидящей): сценарий — scripts/room-squeeze.mjs.
+squeeze() {
+  if [ -z "${5:-}" ]; then echo "Нужно: bash scripts/verify.sh squeeze <картинка.png> <куда.png> <от 0–1> <до 0–1> <во сколько раз, 0.2–1>"; return 1; fi
+  browser
+  cp "$ROOT/scripts/room-squeeze.mjs" "$PAGE/room-squeeze.mjs"
+  local input="$1" out="$2"; shift 2
+  case "$input" in /*) ;; *) input="$PWD/$input" ;; esac
+  case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
+  (cd "$PAGE" && node room-squeeze.mjs "$input" "$out" "$@")
+}
+
 # Образец для средства рисования: её картинка из модуля на зелёном фоне — сценарий scripts/room-ref.mjs.
 ref() {
   if [ -z "${2:-}" ]; then echo "Нужно: bash scripts/verify.sh ref <имя>[,<имя>…] <куда.png> [высота] [closed]"; return 1; fi
@@ -175,5 +188,6 @@ case "${1:-quick}" in
   sprite) shift; sprite "$@" ;;
   blink) shift; blink "$@" ;;
   ref) shift; ref "$@" ;;
+  squeeze) shift; squeeze "$@" ;;
   *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

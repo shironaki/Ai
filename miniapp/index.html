@@ -7,7 +7,7 @@
 <meta name="robots" content="noindex">
 <title>Комната Аи</title>
 <!--
-  Комната Аи — мини-приложение Telegram (сборка 0.43.0).
+  Комната Аи — мини-приложение Telegram (сборка 0.44.0).
   Страница — четыре файла без сборки: index.html (разметка и стили), scene.js (рисунок), logic.js (что показать),
   app.js (нажатия и связь); по ходу дела догружаются её картинки (her/) и звук (sound.js). С сердцем говорит через функцию endpoints/room:
   Telegram.WebApp.Serverless.call("room", { do: "look" }, …). Открытая не из Telegram — показывает витрину.
@@ -36,7 +36,9 @@ main { max-width: 520px; margin: 0 auto; min-height: 100%; background: var(--bg)
 #room .tap { cursor: pointer; outline: none; }
 #room .tap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Дождь лежит ровно по стеклу (те же числа — WIN в scene.js) и съезжает целиком: комната не перерисовывается. */
-.rainbox { position: absolute; left: 31%; top: 8.4615%; width: 66%; height: 41.9231%; overflow: hidden; pointer-events: none; }
+.rainbox { position: absolute; left: 31%; top: 8.4615%; width: 66%; height: 41.9231%; overflow: hidden; pointer-events: none; transition: opacity 0.7s; }
+/* Погода сменилась при открытой странице: дождь гаснет, сменяется и проступает снова. */
+.rainbox.dim { opacity: 0; }
 .rainbox .plane { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; will-change: transform; }
 /* Нижний край рисунка тает в фон страницы: полоса с её словами лежит на нём, а не на срезе. */
 .stage::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none; transition: opacity 0.4s; }
@@ -103,6 +105,21 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 .rainbox[data-sky="snow"] .plane.near { animation: snow-near 5s linear infinite; }
 @keyframes snow-far { to { transform: translate(-4.5455%, 25%); } }
 @keyframes snow-near { to { transform: translate(-8.3333%, 33.3333%); } }
+/* Гроза: тот же дождь, но гуще и быстрее. */
+.rainbox[data-sky="storm"] .plane.far { animation-duration: 0.7s; }
+.rainbox[data-sky="storm"] .plane.near { animation-duration: 0.45s; }
+/* Небо (с 0.44.0 — погода города человека): облака плывут, звёзды мерцают, в грозу над башней сверкает. Облака
+   нарисованы дважды, второй раз — на ширину окна правее: слой, съехав на неё, начинает сначала без шва. */
+#sky .drift { animation: drift 120s linear infinite; }
+@keyframes drift { to { transform: translateX(-264px); } }
+#sky .star { animation: star 4.2s ease-in-out infinite; }
+#sky .star.t1 { animation-duration: 5.6s; animation-delay: -2.1s; } #sky .star.t2 { animation-duration: 6.8s; animation-delay: -4.4s; }
+@keyframes star { 50% { opacity: 0.25; } }
+#sky .flash { animation: flash 11s steps(1) infinite; }
+@keyframes flash { 0%, 100% { opacity: 0; } 61% { opacity: 1; } 61.8% { opacity: 0; } 63% { opacity: 0.8; } 64.4% { opacity: 0; } 87% { opacity: 0.7; } 87.9% { opacity: 0; } }
+/* Час или погода сменились при открытой странице: прежний слой лежит копией поверх нового и тает (app.js: FADE_MS). */
+#sky .fading, #room .fading { animation: fading 1.6s ease-in-out forwards; }
+@keyframes fading { to { opacity: 0; } }
 /* Капли сползают по стеклу. */
 #room .slide { animation: slide 8s linear infinite; }
 #room .slide.s1 { animation-duration: 10s; animation-delay: -3.4s; } #room .slide.s2 { animation-duration: 12.5s; animation-delay: -7s; }
@@ -130,6 +147,36 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 @keyframes leave { from { opacity: 1; } 45% { opacity: 1; } to { opacity: 0; } }
 #room .arrive { animation: arrive 0.5s ease-out; }
 @keyframes arrive { from { opacity: 0; } 70% { opacity: 1; } }
+/* Она и Байт идут (с 0.44.0): картинка «идёт» едет от прежнего места к новому (`--dx`, `--dy` — откуда, `--t` — за
+   сколько секунд) и покачивается в такт шагам; новая поза проявляется, когда дошли (`.late`). Без движения идущего
+   не видно вовсе, а новая поза стоит сразу. */
+#room .stride { opacity: 0; animation: stride var(--t, 1.5s) linear; }
+@keyframes stride { from { transform: translate(var(--dx, 0px), var(--dy, 0px)); opacity: 1; } 90% { opacity: 1; } to { transform: translate(0px, 0px); opacity: 0; } }
+#room .step { transform-box: fill-box; transform-origin: 50% 100%; animation: step 0.62s ease-in-out infinite; }
+#room .step.trot { animation-duration: 0.34s; }
+@keyframes step { 0%, 50%, 100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-2.6px) rotate(-0.7deg); } 75% { transform: translateY(-2.6px) rotate(0.7deg); } }
+#room .arrive.late { animation: arrive 0.5s ease-out backwards; animation-delay: calc(var(--t, 1.5s) - 0.3s); }
+/* Она дышит: картинка чуть растёт и опадает от ступней. */
+#room .alive { transform-box: fill-box; transform-origin: 50% 100%; animation: alive 4.8s ease-in-out infinite; }
+@keyframes alive { 50% { transform: scale(1.003, 1.008); } }
+/* Надпись на её месте, пока она переодевается. */
+#room .changing { animation: changing 1.6s ease-in-out infinite; }
+@keyframes changing { 50% { opacity: 0.55; } }
+/* Сценка дня на рисунке: туман от чайника плывёт, одна лампочка гирлянды мигает не в лад, кораблик качается. */
+#room .mist { animation: mist 14s ease-in-out infinite alternate; }
+#room .mist.m1 { animation-duration: 18s; animation-delay: -6s; } #room .mist.m2 { animation-duration: 22s; animation-delay: -11s; }
+@keyframes mist { from { transform: translateX(-22px); } to { transform: translateX(22px); } }
+#room .bulb.rogue { animation: rogue 2.9s steps(1) infinite; }
+@keyframes rogue { 0%, 100% { opacity: 1; } 8% { opacity: 0.1; } 14% { opacity: 1; } 20% { opacity: 0.1; } 26% { opacity: 1; } 46% { opacity: 0.1; } 64% { opacity: 1; } 70% { opacity: 0.1; } 76% { opacity: 1; } }
+#room .float { transform-box: fill-box; transform-origin: 50% 100%; animation: afloat 2.8s ease-in-out infinite alternate; }
+@keyframes afloat { from { transform: translateX(-1.6px) rotate(-4deg); } to { transform: translateX(1.6px) rotate(4deg); } }
+/* Байт на спине перебирает лапами. */
+#room .paws { transform-box: fill-box; transform-origin: 50% 100%; animation: paws 1.9s ease-in-out infinite alternate; }
+@keyframes paws { from { transform: rotate(-4deg); } to { transform: rotate(5deg); } }
+/* Пылинки в солнечном свете — в ясный день. */
+#room .mote { animation: mote 9s ease-in-out infinite; }
+#room .mote.o1 { animation-duration: 12s; animation-delay: -4s; } #room .mote.o2 { animation-duration: 15s; animation-delay: -9s; }
+@keyframes mote { from { transform: translate(0, 6px); opacity: 0; } 30% { opacity: 0.7; } 70% { opacity: 0.6; } to { transform: translate(9px, -16px); opacity: 0; } }
 /* Она и Байт: дыхание, моргание, хвост. */
 #room .breath { animation: breath 4.4s ease-in-out infinite; }
 @keyframes breath { 50% { transform: translateY(-0.8px); } }
@@ -152,19 +199,20 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 @keyframes swing { from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
 @media (prefers-reduced-motion: reduce) {
   #room *, #sky *, .rainbox *, .heart, #say.fresh, .actions button.busy { animation: none !important; }
+  .rainbox { transition: none !important; }
 }
 </style>
 </head>
 <body>
 <main id="app" data-light="day" data-state="loading">
   <div class="stage" id="stage">
-    <!-- Три слоя (scene.js): за окном — меняется только с часом; дождь — движется сам; комната со слоем нажатий. -->
+    <!-- Три слоя (scene.js): за окном — меняется с часом и погодой; дождь и снег — движутся сами; комната со слоем нажатий. -->
     <svg id="sky" viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g id="backdrop"></g></svg>
     <div class="rainbox" aria-hidden="true">
       <svg class="plane far" id="rainFar" viewBox="0 0 264 218" xmlns="http://www.w3.org/2000/svg"></svg>
       <svg class="plane near" id="rainNear" viewBox="0 0 264 218" xmlns="http://www.w3.org/2000/svg"></svg>
     </div>
-    <svg id="room" viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Комната Аи: окно во всю стену, за ним дождь и город"><defs id="store"></defs><g id="inside"></g></svg>
+    <svg id="room" viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Комната Аи: окно во всю стену, за ним город"><defs id="store"></defs><g id="inside"></g></svg>
   </div>
   <div class="talk" id="talk" aria-live="polite">
     <span class="who" id="who">Аи</span>
@@ -192,7 +240,7 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
       <button type="button" class="chip" id="sound" aria-pressed="false" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.6L8 3v10L4.6 10H2z" fill="currentColor"/><path class="wave" d="M10.4 5.4a3.6 3.6 0 0 1 0 5.2M12.4 3.6a6.2 6.2 0 0 1 0 8.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Включить звук</span></button>
       <button type="button" class="chip" id="home" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.4 7.6 8 2.6l5.6 5v5.8H9.6V9.8H6.4v3.6H2.4z" fill="currentColor"/></svg><span>На главный экран</span></button>
     </div>
-    <p class="hint" id="hint">Нажимать можно и на сам рисунок: на неё (по голове — погладить), на Байта и его коробку, на миску, клубок, чайник, Колючку, на окно и на вещи.</p>
+    <p class="hint" id="hint">Нажимать можно и на сам рисунок: на неё (по голове — погладить), на Байта и его коробку, на миску, клубок, чайник, Колючку, на окно и на вещи. Она и Байт живут и сами: посидите — увидите.</p>
     <p class="foot" id="foot"></p>
   </section>
 </main>

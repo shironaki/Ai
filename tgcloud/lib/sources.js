@@ -653,10 +653,11 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
   }
 
   /**
-   * Идёт ли в этом городе снег: по тому же прогнозу, что и погода (запрос — один на двадцать минут на город).
-   * `true` / `false`; `null` — узнать не удалось (город не найден, сеть молчит). Нужен комнате: снег за её окном.
+   * Что сейчас в этом городе: код погоды службы (таблица ВМО) и температура — по тому же прогнозу, что и «погода»
+   * (запрос — один на двадцать минут на город). `null` — узнать не удалось (город не найден, сеть молчит). Нужно
+   * комнате: за её окном та же погода, что у человека (0.44.0; до того отсюда брался только снег).
    */
-  async function snowing(placeText) {
+  async function skyNow(placeText) {
     const place = await findPlace(placeText, { tries: 1 });
     if (!place?.ok) return null;
     const url = `${METEO}?latitude=${place.latitude}&longitude=${place.longitude}`
@@ -669,9 +670,15 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
       return answer.ok && answer.data?.daily ? { ok: true, current: answer.data.current ?? null, daily: answer.data.daily } : { ok: false, code: "network" };
     }, { staleMs: 3 * 3_600_000 });
     if (!got?.ok || !got.current) return null;
-    // Коды снега: снегопад (71–77) и снежные заряды (85, 86).
     const code = Number(got.current.weather_code);
-    return (code >= 71 && code <= 77) || code === 85 || code === 86;
+    if (!Number.isFinite(code)) return null;
+    return { code, temp: Number(got.current.temperature_2m), place: place.name };
+  }
+  /** Идёт ли в этом городе снег: `true` / `false`; `null` — узнать не удалось. Коды снега: 71–77, 85, 86. */
+  async function snowing(placeText) {
+    const now = await skyNow(placeText);
+    if (!now) return null;
+    return (now.code >= 71 && now.code <= 77) || now.code === 85 || now.code === 86;
   }
 
   // ── курсы ───────────────────────────────────────────────────────────────
@@ -778,5 +785,5 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok === true, spare: bank.via === "spare" };
   }
 
-  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, snowing, rates, convert, animal, gesture, probe, advise, daily, onThisDay, lookup, translate, fetchJson: getJson });
+  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, skyNow, snowing, rates, convert, animal, gesture, probe, advise, daily, onThisDay, lookup, translate, fetchJson: getJson });
 }

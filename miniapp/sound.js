@@ -1,10 +1,11 @@
 /**
- * Звук комнаты (сборка 0.41.0): дождь за окном и отклик на заботу. Файлов со звуком нет: шум и тон делает сам
+ * Звук комнаты (сборки 0.41.0 и 0.44.0): то, что за окном, и отклик на заботу. Файлов со звуком нет: шум и тон делает сам
  * телефон (Web Audio) — страница от этого не тяжелеет, а дождь не повторяется по кругу.
  *
  * Модуль грузится, только когда звук включили: кто его не включал, тот его и не качает. `createSound()` — `null`,
  * если браузер звука не умеет; иначе:
- *   on(sky)    — включить и пустить фон: «rain» — дождь, «snow» — тихий ветер; обещание — пошёл ли звук;
+ *   on(sky)    — включить и пустить фон: «rain» — дождь, «storm» — гроза (дождь гуще и дальний гром), «snow» —
+ *                тихий ветер, «calm» — сухая погода: тихая комната, еле слышный город; обещание — пошёл ли звук;
  *   off()      — выключить;
  *   play(name) — короткий отклик: purr (мурчание), pour (льётся чай), crunch (корм), drip (вода), toy (игра),
  *                pat (погладили её);
@@ -64,25 +65,48 @@ export function createSound() {
     master.connect(ctx.destination);
     return true;
   }
-  /** Фон. Дождь — шелест по стеклу, тонкое шипение и гул по крышам; снег — тихий ветер. Громкость медленно «дышит». */
+  /**
+   * Фон. Дождь — шелест по стеклу, тонкое шипение и гул по крышам; гроза — тот же дождь гуще и гром вдалеке; снег —
+   * тихий ветер; сухая погода — тишина комнаты: еле слышный гул города. Громкость медленно «дышит».
+   */
+  const BEDS = Object.freeze({
+    rain: { level: 0.8, sway: [0.11, 0.07], layers: [[false, "bandpass", 2600, 0.35, 0.16], [false, "highpass", 6500, 0.5, 0.045], [true, "lowpass", 520, 0.5, 0.5]] },
+    storm: { level: 0.95, sway: [0.16, 0.12], layers: [[false, "bandpass", 2300, 0.3, 0.22], [false, "highpass", 6000, 0.5, 0.06], [true, "lowpass", 480, 0.5, 0.62]] },
+    snow: { level: 0.5, sway: [0.07, 0.12], layers: [[true, "lowpass", 420, 0.4, 0.55], [false, "bandpass", 900, 0.3, 0.02]] },
+    calm: { level: 0.3, sway: [0.05, 0.08], layers: [[true, "lowpass", 220, 0.4, 0.5], [false, "bandpass", 500, 0.25, 0.008]] },
+  });
+  /** Гром: низкий раскат, который долго затихает. */
+  const thunder = (at) => {
+    const from = noise(true), out = gain(0), band = filter("lowpass", 150, 0.6);
+    band.frequency.setValueAtTime(260, at);
+    band.frequency.exponentialRampToValueAtTime(70, at + 2.6);
+    chain(from, band, out, master);
+    shape(out, at, 0.12, 0.5, 2.8, 1.3);
+    from.start(at); from.stop(at + 3.8);
+  };
   function bedOf(sky) {
-    const out = gain(0), nodes = [];
+    const out = gain(0), nodes = [], kind = BEDS[sky];
     out.connect(master);
-    const layer = (brown, type, frequency, q, level) => { nodes.push(chain(noise(brown), filter(type, frequency, q), gain(level), out)); };
-    if (sky === "snow") { layer(true, "lowpass", 420, 0.4, 0.55); layer(false, "bandpass", 900, 0.3, 0.02); }
-    else { layer(false, "bandpass", 2600, 0.35, 0.16); layer(false, "highpass", 6500, 0.5, 0.045); layer(true, "lowpass", 520, 0.5, 0.5); }
-    const sway = ctx.createOscillator(), depth = gain(sky === "snow" ? 0.12 : 0.07);
-    sway.frequency.value = sky === "snow" ? 0.07 : 0.11;
+    for (const [brown, type, frequency, q, level] of kind.layers) nodes.push(chain(noise(brown), filter(type, frequency, q), gain(level), out));
+    const sway = ctx.createOscillator(), depth = gain(kind.sway[1]);
+    sway.frequency.value = kind.sway[0];
     sway.connect(depth); depth.connect(out.gain);
     nodes.push(sway);
     for (const node of nodes) node.start();
-    out.gain.setTargetAtTime(sky === "snow" ? 0.5 : 0.8, ctx.currentTime, 0.8);
-    return { out, nodes, sky };
+    out.gain.setTargetAtTime(kind.level, ctx.currentTime, 0.8);
+    const made = { out, nodes, sky, timer: 0 };
+    // Гроза: гром — раз в четверть минуты или реже, не по часам.
+    if (sky === "storm") {
+      const roll = () => { made.timer = setTimeout(() => { if (ctx.state === "running" && bed === made) thunder(ctx.currentTime + 0.05); roll(); }, 9000 + Math.random() * 16000); };
+      roll();
+    }
+    return made;
   }
   function dropBed() {
     if (!bed) return;
     const old = bed;
     bed = null;
+    clearTimeout(old.timer);
     old.out.gain.setTargetAtTime(0, ctx.currentTime, 0.25);
     setTimeout(() => {
       for (const node of old.nodes) { try { node.stop(); } catch { /* уже остановлен */ } }
@@ -126,7 +150,8 @@ export function createSound() {
       if (!ensure()) return false;
       try { if (ctx.state !== "running") await ctx.resume(); } catch { return false; }
       master.gain.setTargetAtTime(LEVEL, ctx.currentTime, 0.2);
-      const wanted = sky === "snow" ? "snow" : "rain";
+      // Незнакомое слово — дождь: так было всегда (прежняя страница знает только дождь и снег).
+      const wanted = Object.hasOwn(BEDS, sky) ? sky : "rain";
       if (!bed || bed.sky !== wanted) { dropBed(); bed = bedOf(wanted); }
       return ctx.state === "running";
     },

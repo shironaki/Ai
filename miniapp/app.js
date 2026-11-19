@@ -1,5 +1,5 @@
 /**
- * Комната Аи — страница (мини-приложение, сборка 0.43.0): нажатия, связь с сердцем, раскладка по разметке.
+ * Комната Аи — страница (мини-приложение, сборка 0.44.0): нажатия, связь с сердцем, раскладка по разметке.
  *
  * Что нарисовать — `scene.js`; что показать по ответу сердца — `logic.js` (оба проверяются тестами без браузера).
  * Здесь — только то, чему нужен браузер и Telegram:
@@ -11,6 +11,10 @@
  *     кодом, как раньше, а комната открывается в любом случае;
  *   • позы (с 0.41.0): картинок у состояния несколько — она меняет позу сама и от нажатия; следующая картинка
  *     подгружается заранее, а смена идёт только когда она уже здесь;
+ *   • своя жизнь (с 0.44.0): она и Байт меняют занятие сами, по очереди, — и доходят до нового места шагом;
+ *     слова под рисунком при этом те, что о нынешней картинке (распорядок присылает сердце: `her.beats`, `cat.beats`);
+ *   • смена часа при открытой странице (с 0.44.0): страница сама спрашивает комнату заново — свет перетекает, а
+ *     если в этот час она переодевается, уходит к шкафу, «*переодевается*» и возвращается в другом;
  *   • звук (`sound.js`, с 0.41.0): выключатель под рисунком; модуль грузится, когда звук включили;
  *   • кнопка «на главный экран» — там, где Telegram это умеет.
  */
@@ -20,10 +24,15 @@ import * as logic from "./logic.js";
 // Имена берутся из модулей целиком, а не по одному. Страница — четыре файла, и после новой публикации браузер
 // может какое-то время держать старую копию любого из них. Импорт по именам такого не прощает: нет в старом
 // `scene.js` нового имени — и страница не запускается вовсе. Так имя просто окажется пустым; всё, что добавлено
-// после первой публикации (`drawRain`, `spriteOf`, `drawSprite`, `spritesOf`, `spriteStand`, `applyPat`, `nextTurn`),
-// перед вызовом проверяется.
-const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat } = logic;
+// после первой публикации (`drawRain`, `spriteOf`, `drawSprite`, `spritesOf`, `spriteStand`, `applyPat`, `nextTurn`,
+// а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`), перед
+// вызовом проверяется.
+const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X } = scene;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf } = logic;
+// Что бывает за окном: с 0.44.0 — семь видов неба (погода города человека); прежняя логика знает два.
+const SKY_NAMES = Array.isArray(logic.SKIES) ? logic.SKIES : ["rain", "snow"];
+const skyName = (value) => (SKY_NAMES.includes(value) ? value : "rain");
+const SKY_WORDS = Object.freeze({ clear: "ясное небо", clouds: "облака", overcast: "пасмурное небо", fog: "туман", rain: "дождь", storm: "гроза", snow: "снег" });
 
 const tg = window.Telegram?.WebApp ?? null;
 const $ = (id) => document.getElementById(id);
@@ -39,9 +48,18 @@ const SPRITE_WAIT_MS = 6_000;
 
 let state = { ...blank(new Date().getHours()), demo: !inTelegram };
 let header = "";
-// Что уже нарисовано: рисунок меняется, только когда изменилось то, что на нём видно. `her` — её картинка на
-// рисунке и место, где она стоит: по ним прежняя поза тает, пока новая проявляется.
-const drawn = { part: "", sky: "", view: "", her: null };
+// Что уже нарисовано: рисунок меняется, только когда изменилось то, что на нём видно. `cast` — кто где на рисунке:
+// её картинка и место, где она стоит, место и фигура Байта — по ним прежняя поза тает, а до нового места они
+// доходят шагом. `back` и `inside` — приставки имён слоёв: когда час сменяется при открытой странице, прежний слой
+// тает поверх нового, и имена у них должны быть разными.
+const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-" };
+// Сколько прежний слой тает поверх нового (то же число — в стилях: `.fading`).
+const FADE_MS = 1600;
+// Сколько её нет, пока она переодевается.
+const CHANGE_MS = local && Number(params.change) >= 200 ? Number(params.change) : 3400;
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Идёт сцена у шкафа: нажатия ждут, своя жизнь тоже.
+let acting = false;
 
 // ── Она картинкой ────────────────────────────────────────────────────────────
 // Картинка на каждое её состояние — отдельным модулем в папке `her/`: `export default { w, h, cx, src }`. Модуль
@@ -106,12 +124,22 @@ function settle(name, sprite) {
 }
 /** Все позы этого состояния по порядку; в прежнем рисунке их одна. */
 const posesOf = (view) => (canTurn ? spritesOf(view) : []);
+/** Дождаться картинок (или срока): перед сценой у шкафа нужны обе «идёт» и новая поза. */
+function settled(names, wait = 5000) {
+  const wanted = names.filter(Boolean);
+  for (const name of wanted) fetchSprite(name);
+  const until = Date.now() + wait;
+  return new Promise((resolve) => {
+    const check = () => { if (wanted.every(name => sprites[name] !== undefined) || Date.now() > until) resolve(); else setTimeout(check, 120); };
+    check();
+  });
+}
 /**
  * Следующая поза — только когда её картинка уже здесь: иначе она пропала бы на время загрузки. Нет картинки —
  * она заказывается, а смена случится в следующий раз. Возвращает, сменилась ли поза.
  */
 function turn() {
-  if (!canTurn || !state.ready || state.busy || document.hidden) return false;
+  if (!canTurn || !state.ready || state.busy || acting || document.hidden) return false;
   const list = posesOf(viewOf(state));
   if (list.length < 2) return false;
   const next = list[((Number.isInteger(state.turn) ? state.turn : 0) + 1) % list.length];
@@ -120,11 +148,97 @@ function turn() {
   paint();
   return true;
 }
-let turnTimer = 0;
+// ── Своя жизнь ───────────────────────────────────────────────────────────────
+// Она и Байт живут сами, не дожидаясь нажатий: по очереди переходят к следующему занятию. У каждой реплики
+// распорядка своя картинка, поэтому слова под рисунком меняются вместе с ним — и говорят о том, что на нём сейчас.
+const canBeat = typeof nextBeat === "function";
+/** Её следующее занятие. Картинки ещё нет — она заказывается, а ход случится в следующий раз. */
+function herStep() {
+  if (!state.ready || state.busy || acting || document.hidden) return false;
+  const next = canBeat ? nextBeat(state, "her") : null;
+  // Распорядка нет (прежнее сердце или витрина с заданной позой) — позы идут по кругу, как раньше.
+  if (!next) return turn();
+  const name = canPaint ? spriteOf(viewOf(next)) : null;
+  if (name && sprites[name] === undefined) { fetchSprite(name); return false; }
+  state = next;
+  paint();
+  return true;
+}
+/** Байт идёт на следующее место. Спит, прячется или его держит сценка — остаётся где был. */
+function catStep() {
+  if (!state.ready || state.busy || acting || document.hidden) return false;
+  const next = canBeat ? nextBeat(state, "cat") : null;
+  if (!next) return false;
+  state = next;
+  paint();
+  return true;
+}
+let turnTimer = 0, lifeTurn = 0;
 function scheduleTurn() {
   clearTimeout(turnTimer);
   if (!canTurn) return;
-  turnTimer = setTimeout(() => { turn(); scheduleTurn(); }, TURN_MS[0] + Math.random() * (TURN_MS[1] - TURN_MS[0]));
+  turnTimer = setTimeout(() => {
+    lifeTurn += 1;
+    // По очереди: она, Байт. Кому идти некуда, тот ход пропускает — второй не ходит за двоих.
+    if (lifeTurn % 2) herStep(); else catStep();
+    scheduleTurn();
+  }, TURN_MS[0] + Math.random() * (TURN_MS[1] - TURN_MS[0]));
+}
+
+// ── Смена часа при открытой странице ─────────────────────────────────────────
+// Сердце говорит, сколько осталось до следующей части суток (`clock.left`); страница сама спрашивает комнату
+// заново в эту минуту — и ещё раз в десять минут, пока открыта: Байт успевает проголодаться, а дождь — кончиться.
+// Прежнее сердце срока не называет и на повторный вопрос считало бы новый заход — его страница не переспрашивает.
+const REFRESH_MS = 10 * 60_000;
+const canTick = typeof applyTick === "function" && typeof changeOf === "function";
+let tickTimer = 0, lookedAt = 0;
+const tickLeft = () => (state.clock ? state.clock.at + state.clock.left - Date.now() : state.demo && typeof leftOf === "function" ? leftOf() : null);
+function scheduleTick() {
+  clearTimeout(tickTimer);
+  const left = canTick && state.ready ? tickLeft() : null;
+  if (left == null) return;
+  // Через полторы секунды после границы: часы телефона и сердца могут расходиться.
+  tickTimer = setTimeout(tick, Math.max(3_000, Math.min(REFRESH_MS, left + 1500)));
+}
+/** Витрина: тот же вопрос — себе. На своей машине следующий час можно назвать в адресе (`#then=вечер`). */
+const demoTick = () => demoLook(new Date().getHours(), { ...params, ...(params.then ? { part: params.then } : {}), ...(params.thenSky ? { sky: params.thenSky } : {}), left: "" });
+async function tick() {
+  if (!canTick || !state.ready) return;
+  if (state.busy || acting) { clearTimeout(tickTimer); tickTimer = setTimeout(tick, 3_000); return; }
+  // Страница свёрнута — вопрос подождёт: его задаст возвращение.
+  if (document.hidden) return;
+  const at = Date.now();
+  const result = state.demo ? demoTick() : await call({ do: "look", again: true });
+  lookedAt = Date.now();
+  if (result?.ok === true && !state.busy && !acting) await play(changeOf(state, applyTick(state, result, at)));
+  scheduleTick();
+}
+/** Сыграть перемену: тихо, сменой света — или сценой у шкафа. */
+async function play(change) {
+  const stood = drawn.cast?.her ?? null;
+  const strider = canPaint && typeof walkOf === "function" ? walkOf(viewOf(state)) : null;
+  if (change.kind !== "wardrobe" || !stood || typeof walkSeconds !== "function") { state = change.state; paint(); return; }
+  acting = true;
+  try {
+    const target = change.state;
+    await settled([strider, walkOf(viewOf(target)), spriteOf(viewOf(target))]);
+    // 1. Уходит к шкафу — ещё в прежнем свете и в прежнем наряде.
+    state = { ...state, away: true, tone: "", retry: false, said: change.leave };
+    paint();
+    await sleep(1000 * (sprites[strider] ? walkSeconds(stood.x, DOOR_X) : 0.6) + 300);
+    // 2. Свет часа меняется без неё; на её месте — «*переодевается*».
+    state = { ...target, away: true, said: "*переодевается*" };
+    paint();
+    await sleep(CHANGE_MS);
+    // 3. Возвращается в другом — от двери к своему месту.
+    state = { ...target, away: false, entering: true, said: change.back };
+    paint();
+    state = { ...state, entering: false };
+    buzz("light");
+  } finally {
+    acting = false;
+    if (state.away) { state = { ...state, away: false }; paint(); }
+  }
 }
 
 // ── Звук ─────────────────────────────────────────────────────────────────────
@@ -137,8 +251,8 @@ const canSound = typeof (globalThis.AudioContext ?? globalThis.webkitAudioContex
 let sound = null, soundOn = false, soundBusy = false;
 const soundKept = () => { try { return localStorage.getItem(SOUND_KEY) === "1"; } catch { return false; } };
 const keepSound = (on) => { try { localStorage.setItem(SOUND_KEY, on ? "1" : "0"); } catch { /* память телефона закрыта: выбор не запомнится */ } };
-/** Что за окном слышно: дождь или снег (снег — тихий ветер). */
-const skyOf = () => (state.sky === "snow" ? "snow" : "rain");
+/** Что за окном слышно: дождь, гроза, снег (тихий ветер) — или тихая комната, когда сухо. */
+const skyOf = () => { const sky = skyName(state.sky); return sky === "rain" || sky === "storm" || sky === "snow" ? sky : "calm"; };
 function paintSound() {
   const button = $("sound");
   if (!button) return;
@@ -205,27 +319,64 @@ function theme() {
   try { tg.setBottomBarColor?.(page); } catch { /* то же */ }
 }
 
+/**
+ * Прежний слой — копией поверх нового: тает и убирается. Места нажатий из копии вынимаются: нажимают на новый слой.
+ */
+function ghostOf(layer) {
+  if (!layer || !layer.firstChild) return;
+  const copy = layer.cloneNode(true);
+  copy.removeAttribute("id");
+  copy.setAttribute("class", "fading");
+  copy.setAttribute("pointer-events", "none");
+  copy.querySelector(".zones")?.remove();
+  layer.after(copy);
+  setTimeout(() => copy.remove(), FADE_MS);
+}
+/** Кто где на рисунке сейчас: её картинка и место, место и фигура Байта. В прежнем рисунке — только она. */
+function castNow(view) {
+  if (!canPaint) return null;
+  if (typeof castOf === "function") return castOf(view, { sprites });
+  const stood = typeof spriteStand === "function" ? spriteStand(view) : null;
+  return { her: stood && sprites[stood.name] ? { name: stood.name, x: stood.x } : null, cat: null };
+}
+
 function paint() {
   const app = $("app");
   app.dataset.light = LIGHTS[state.part] ?? "day";
   app.dataset.state = state.ready ? "ready" : "loading";
-  // Три слоя. Небо с городом и дождь перерисовываются только со сменой часа, комната — когда в ней что-то
-  // изменилось: иначе при каждом нажатии дождь прыгал бы назад, а гирлянда мигала заново. Сам дождь движется
+  // Три слоя. Небо с городом и дождь перерисовываются только со сменой часа и погоды, комната — когда в ней
+  // что-то изменилось: иначе при каждом нажатии дождь прыгал бы назад, а гирлянда мигала заново. Сам дождь движется
   // без рисования вовсе: страница сдвигает его слой целиком (стили `.rainbox`).
-  const view = viewOf(state), key = JSON.stringify(view), sky = view.sky === "snow" ? "snow" : "rain";
-  if (drawn.part !== view.part || drawn.sky !== sky) {
-    $("backdrop").innerHTML = drawBackdrop(view.part, sky);
-    // Слои дождя есть только в новой разметке, а `drawRain` — только в новом рисунке (см. выше про старые копии):
-    // нет одного из двух — комната открывается без дождя, но открывается. Снег — те же слои, другой узор и шаг.
-    for (const [id, plane] of [["rainFar", "far"], ["rainNear", "near"]]) {
-      const layer = $(id);
-      if (layer && drawRain) layer.innerHTML = drawRain(view.part, plane, sky);
-      if (layer?.parentElement) layer.parentElement.dataset.sky = sky;
-    }
-    // За окном сменилось — сменился и фон звука: дождь или тихий ветер.
+  const view = viewOf(state), key = JSON.stringify(view), sky = skyName(view.sky);
+  const moon = Number.isFinite(view.moon) ? view.moon : null;
+  const outside = drawn.part !== view.part || drawn.sky !== sky || drawn.moon !== moon;
+  // Час или погода сменились при открытой странице — прежний рисунок тает поверх нового (`ghostOf`).
+  const fade = outside && Boolean(drawn.part) && (drawn.part !== view.part || drawn.sky !== sky);
+  if (outside) {
+    const rain = () => {
+      // Слои дождя есть только в новой разметке, а `drawRain` — только в новом рисунке (см. выше про старые копии):
+      // нет одного из двух — комната открывается без дождя, но открывается. Снег — те же слои, другой узор и шаг;
+      // в сухую погоду слои пусты.
+      for (const [id, plane] of [["rainFar", "far"], ["rainNear", "near"]]) {
+        const layer = $(id);
+        if (layer && drawRain) layer.innerHTML = drawRain(view.part, plane, sky);
+        if (layer?.parentElement) layer.parentElement.dataset.sky = sky;
+      }
+    };
+    const box = $("rainFar")?.parentElement ?? null;
+    if (fade) {
+      drawn.back = drawn.back === "s-" ? "t-" : "s-";
+      ghostOf($("backdrop"));
+      // Дождь гаснет, сменяется и проступает снова.
+      if (box) { box.classList.add("dim"); setTimeout(() => { rain(); box.classList.remove("dim"); }, FADE_MS / 2); } else rain();
+    } else rain();
+    $("backdrop").innerHTML = drawBackdrop(view.part, sky, { phase: moon ?? 0.3, prefix: drawn.back });
+    $("room").setAttribute("aria-label", `Комната Аи: окно во всю стену, за ним город и ${SKY_WORDS[sky] ?? "небо"}`);
+    // За окном сменилось — сменился и фон звука: дождь, гроза, тихий ветер или тишина комнаты.
     if (drawn.sky && drawn.sky !== sky && soundOn) startSound();
     drawn.part = view.part;
     drawn.sky = sky;
+    drawn.moon = moon;
   }
   if (canPaint) {
     const name = spriteOf(view);
@@ -237,15 +388,28 @@ function paint() {
     // Следующая поза — тоже заранее: смена идёт, только когда картинка уже здесь.
     const list = posesOf(view);
     if (sprites[name] && list.length > 1) fetchSprite(list[(list.indexOf(name) + 1) % list.length]);
+    if (sprites[name] && canBeat) {
+      const next = nextBeat(state, "her");
+      if (next) fetchSprite(spriteOf(viewOf(next)));
+    }
+    // Картинка «идёт» в её нынешнем наряде: от места к месту она доходит шагом.
+    if (sprites[name] && typeof walkOf === "function") fetchSprite(walkOf(view));
   }
-  if (drawn.view !== key) {
-    // Где она встанет и какой картинкой: прежняя поза тает, пока новая проявляется (`was`).
-    const stood = canPaint && typeof spriteStand === "function" ? spriteStand(view) : null;
-    const now = stood && sprites[stood.name] ? { name: stood.name, x: stood.x } : null;
-    const was = now && drawn.her && drawn.her.name !== now.name && sprites[drawn.her.name] ? drawn.her : null;
-    $("inside").innerHTML = drawInside(view, canPaint ? { sprites, ...(was ? { was } : {}) } : undefined);
+  if (drawn.view !== key || state.entering) {
+    // Где она и Байт были на прежнем рисунке: прежняя поза тает, пока новая проявляется, а до другого места они
+    // доходят шагом. Свет сменился — прежняя комната тает целиком, и ходить в ней некому.
+    const before = fade ? null : drawn.cast;
+    const options = canPaint ? {
+      sprites, ...(before?.her ? { was: before.her } : {}), ...(before?.cat ? { catWas: before.cat } : {}), ...(state.entering ? { enter: true } : {}),
+    } : undefined;
+    if (fade) {
+      drawn.inside = drawn.inside === "r-" ? "q-" : "r-";
+      ghostOf($("inside"));
+    }
+    if (options && drawn.inside !== "r-") options.prefix = drawn.inside;
+    $("inside").innerHTML = drawInside(view, options);
     drawn.view = key;
-    drawn.her = now;
+    drawn.cast = castNow(view);
   }
   const say = $("say");
   if (say.textContent !== state.said) {
@@ -322,9 +486,10 @@ async function enter() {
   state = { ...state, retry: false, tone: "", said: "Дверь открывается…" };
   paint();
   if (state.demo) {
-    state = applyLook(state, demoLook(new Date().getHours(), params));
+    state = applyLook(state, demoLook(new Date().getHours(), params), Date.now());
     if (params.say) state = { ...state, said: params.say };
     paint();
+    scheduleTick();
     return;
   }
   if (!canCall) {
@@ -332,15 +497,20 @@ async function enter() {
     paint();
     return;
   }
-  state = applyLook(state, await call({ do: "look" }));
+  const at = Date.now();
+  state = applyLook(state, await call({ do: "look" }), at);
+  lookedAt = Date.now();
   paint();
   buzz(state.ready ? "light" : "error");
+  scheduleTick();
+  scheduleTurn();
 }
 
 /** Погладить её по голове: её слова — от сердца (по тому, насколько вы близки); раз в день это ещё и шаг в отношениях. */
 async function pat() {
   // Прежняя логика (старая копия `logic.js`) гладить не умеет — тогда нажатие на голову значит то же, что на неё.
   if (typeof applyPat !== "function" || typeof demoPat !== "function") { act("her"); return; }
+  scheduleTurn();
   state = { ...state, busy: "pat" };
   paint();
   const result = state.demo ? demoPat(state) : await call({ do: "pat" });
@@ -353,13 +523,17 @@ async function pat() {
 }
 
 async function act(name) {
-  if (!state.ready || state.busy) return;
+  if (!state.ready || state.busy || acting) return;
   if (name === "pat") { await pat(); return; }
+  // Любое нажатие отодвигает её и Байта следующий ход: дать прочесть ответ.
+  scheduleTurn();
   if (!CARE.includes(name)) {
+    // Нажали на неё — она переходит к следующему занятию и говорит о нём; идти некуда — повторяет нынешнее.
+    if (name === "her" && canBeat && nextBeat(state, "her") && herStep()) { buzz("light"); return; }
     const next = applyTap(state, name);
     if (next) { state = next; paint(); buzz("light"); }
-    // Нажали на неё — она ответила и сменила позу.
-    if (name === "her" && next) { turn(); scheduleTurn(); }
+    // Прежнее сердце (без распорядка): она ответила и сменила позу.
+    if (name === "her" && next && !(canBeat && nextBeat(state, "her"))) turn();
     return;
   }
   state = { ...state, busy: name };
@@ -375,7 +549,8 @@ async function act(name) {
 
 async function pick(index) {
   const scene = state.scene;
-  if (!state.ready || state.busy || !scene || scene.pick != null) return;
+  if (!state.ready || state.busy || acting || !scene || scene.pick != null) return;
+  scheduleTurn();
   state = { ...state, busy: "pick" };
   paint();
   const result = state.demo ? demoPick(state, index) : await call({ do: "pick", key: scene.key, pick: index });
@@ -406,11 +581,14 @@ $("sound")?.addEventListener("click", async () => {
   if (!ok) { state = { ...state, tone: "warn", said: "Звук не включился: этот телефон не дал комнате звучать." }; paint(); }
 });
 if (canSound && soundKept()) document.addEventListener("pointerdown", () => { if (!soundOn) startSound(); }, { once: true });
-// Комнату свернули — звук и смена поз ждут; вернулись — продолжаются.
+// Комнату свернули — звук и своя жизнь ждут; вернулись — продолжаются, а комната спрашивается заново, если
+// за это время сменился час или прошло больше минуты.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { try { sound?.off(); } catch { /* звук не важнее комнаты */ } return; }
   if (soundOn) startSound();
   scheduleTurn();
+  const left = canTick && state.ready ? tickLeft() : null;
+  if (left != null && (left <= 0 || Date.now() - lookedAt > 60_000)) tick(); else scheduleTick();
 });
 
 // «На главный экран»: кнопка видна там, где Telegram это умеет и где комнату туда ещё не добавили.

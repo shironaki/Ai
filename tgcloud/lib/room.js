@@ -18,6 +18,7 @@ const fold = (text) => String(text ?? "").toLowerCase().replace(/ё/gu, "е").re
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
+const hashOf = (text) => { let hash = 2166136261; for (const char of String(text)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0; return hash; };
 
 export const ROOM_KEY = (userId) => `heart:room:${userId}`;
 /** Кактус поливают не чаще раза в пять дней: раньше — «ей пока хватит». */
@@ -29,6 +30,46 @@ export const NEWS_AT_ONCE = 2;
 
 /** Сколько после захода в комнату короткие слова («покормить», «погладить его», «налить чаю») считаются словами о ней. */
 export const CONTEXT_MS = 30 * 60_000;
+
+// ── что за окном (0.44.0) ────────────────────────────────────────────────────
+// До 0.44.0 за её окном всегда шёл дождь (с 0.41.0 — ещё снег, когда он идёт в городе человека). Владелец сказал
+// иначе: какая погода в городе человека — такая и у неё; города она не знает — погода случайная; час суток — его.
+/** Виды неба: ясно, облачно (солнце и облака), пасмурно, туман, дождь, гроза, снег. Те же слова знает рисунок. */
+export const SKIES = Object.freeze(["clear", "clouds", "overcast", "fog", "rain", "storm", "snow"]);
+/** Небо по коду погоды службы (таблица ВМО, как в `sources.js`); незнакомый код — пасмурно. */
+export function skyOfCode(code) {
+  // Кода нет — неба не знаем: пустое значение не должно стать «ясно» (у нуля в таблице именно этот смысл).
+  if (code == null || code === "" || typeof code === "boolean") return null;
+  const value = Number(code);
+  if (!Number.isFinite(value)) return null;
+  if (value <= 1) return "clear";
+  if (value === 2) return "clouds";
+  if (value === 3) return "overcast";
+  if (value === 45 || value === 48) return "fog";
+  if ((value >= 71 && value <= 77) || value === 85 || value === 86) return "snow";
+  if (value >= 95) return "storm";
+  if (value >= 51 && value <= 82) return "rain";
+  return "overcast";
+}
+/** Сколько держится выдуманная погода: одна на шесть часов — комната не меняет небо при каждом заходе. */
+export const SKY_SPAN_MS = 6 * HOUR;
+/** Из чего она выбирает погоду, когда города не знает: по времени года (месяц — по часам человека), с весами. */
+const SKY_ODDS = Object.freeze({
+  winter: [["snow", 34], ["overcast", 24], ["clouds", 14], ["clear", 14], ["fog", 9], ["rain", 5]],
+  summer: [["clear", 36], ["clouds", 27], ["rain", 14], ["overcast", 10], ["storm", 9], ["fog", 4]],
+  between: [["rain", 26], ["clouds", 22], ["clear", 20], ["overcast", 18], ["fog", 9], ["storm", 5]],
+});
+/**
+ * Погода, которую она выдумывает сама: города человека нет или служба молчит. `seed` — зерно человека,
+ * `at` — сейчас, `month` — месяц по его часам. Одна и та же шесть часов подряд, у каждого человека своя.
+ */
+export function randomSky({ seed = 0, at = 0, month = 0 } = {}) {
+  const odds = SKY_ODDS[month === 12 || month === 1 || month === 2 ? "winter" : month >= 6 && month <= 8 ? "summer" : "between"];
+  const total = odds.reduce((sum, [, weight]) => sum + weight, 0);
+  let roll = hashOf(`${seed}:${Math.floor(Number(at) / SKY_SPAN_MS)}`) % total;
+  for (const [sky, weight] of odds) { roll -= weight; if (roll < 0) return sky; }
+  return odds[0][0];
+}
 
 // Байт — по имени; «кот» — только «твой кот»: «кормлю кота» человек говорит о своём (тема словаря «звери дома»).
 const YOUR = "(?:твой|твоего|твоему|твоим|твоя|твою|твоей|своего|своему|своим|свой|свою|своей)";
@@ -232,50 +273,90 @@ export function feastsOf({ birthday = false, days = 0, hijri = null } = {}) {
 /**
  * Сценки дня: случай и два решения. В тексте — формы словаря: {ты|вы}.
  * Ключ — латиницей: он уходит в кнопку (`h:<ключ>:<0|1>`), а там важен каждый байт.
+ *
+ * С 0.44.0 у сценки есть то, что видно на рисунке: владелец прочёл «Байт сел сторожить подоконник» и увидел Байта
+ * на полу. `show` — пока сценка не сыграна, третий элемент решения — после него:
+ *   cat — где и какой Байт: [фигура, место];
+ *   her — где она (поза из `HER_POSES`);
+ *   fx  — что изменилось в самой комнате (`SCENE_FX`): страница рисует это поверх обычной комнаты.
+ * `sky` — при какой погоде сценка возможна: «дождь стучит сильнее обычного» в ясный день неправда.
+ * Слова исхода и его картинка — одна запись: поменяли одно — поменять другое (тест сверяет ключевые слова).
  */
+export const SCENE_FX = Object.freeze(["cactus", "haze", "window", "blink", "sock", "curtains", "noplaid", "puddle", "boat"]);
 export const SCENES = Object.freeze([
   { key: "cactus", loot: "комочек земли из горшка Колючки", text: "Байт уронил Колючку с подоконника. Сидит рядом и делает вид, что так и было.",
-    options: [["Поднять Колючку", "Колючка снова на подоконнике, земля собрана. Она цела: характер у неё крепче горшка."],
-      ["Отчитать Байта", "Байт выслушал, зевнул и ушёл под кресло. Вину не признал. Колючку я подняла сама."]] },
-  { key: "kettle", loot: "ситечко от чайника", text: "Чайник выкипел: я зачиталась. В комнате туман — как за окном.",
-    options: [["Заварить новый", "Новый чай готов. На этот раз жасмина — с горкой. Одна кружка — {твоя|ваша}."],
-      ["Открыть окно", "Окно открыто: в комнату вошли дождь и свежесть. Байт сел сторожить подоконник."]] },
+    show: { cat: ["sit", "sill"], fx: ["cactus"] },
+    options: [["Поднять Колючку", "Колючка снова на подоконнике, земля собрана. Она цела: характер у неё крепче горшка.", { cat: ["sit", "sill"] }],
+      ["Отчитать Байта", "Байт выслушал, зевнул и ушёл под кресло. Вину не признал. Колючку я подняла сама.", { cat: ["eyes", "under"] }]] },
+  { key: "kettle", loot: "ситечко от чайника", text: "Чайник выкипел: я зачиталась. В комнате туман — хоть ложкой ешь.",
+    show: { fx: ["haze"] },
+    options: [["Заварить новый", "Новый чай готов. На этот раз жасмина — с горкой. Одна кружка — {твоя|ваша}.", { her: "garland" }],
+      ["Открыть окно", "Окно открыто: туман ушёл, в комнате свежо. Байт сел сторожить подоконник.", { cat: ["sit", "sill"], fx: ["window"] }]] },
   { key: "notebook", loot: "скомканная страница из блокнота", text: "Байт улёгся на мой блокнот. Именно на ту страницу, которая нужна.",
-    options: [["Подвинуть Байта", "Байт подвинут на полстраницы. Он считает это компромиссом. Я — победой."],
-      ["Подождать", "Ждём. Байт спит, блокнот тёплый. Напоминания подождут: они у меня и в голове есть."]] },
+    show: { cat: ["curl", "desk"] },
+    options: [["Подвинуть Байта", "Байт подвинут на полстраницы. Он считает это компромиссом. Я — победой.", { cat: ["curl", "desk"] }],
+      ["Подождать", "Ждём. Байт спит, блокнот тёплый. Напоминания подождут: они у меня и в голове есть.", { cat: ["curl", "desk"] }]] },
   { key: "lights", loot: "лампочка от гирлянды", text: "Гирлянда замигала: одна лампочка решила жить своей жизнью.",
-    options: [["Починить", "Лампочка подкручена, гирлянда горит ровно. В комнате снова уютно — спасибо."],
-      ["Пусть мигает", "Пусть мигает. Теперь у меня не гирлянда, а азбука Морзе. Байт пытается её прочесть."]] },
+    show: { fx: ["blink"] },
+    options: [["Починить", "Лампочка подкручена, гирлянда горит ровно. В комнате снова уютно — спасибо.", { her: "garland" }],
+      ["Пусть мигает", "Пусть мигает. Теперь у меня не гирлянда, а азбука Морзе. Байт пытается её прочесть.", { cat: ["sit", "sill"], fx: ["blink"] }]] },
   { key: "sock", loot: "носок неизвестного происхождения", text: "Байт принёс добычу и положил к ногам. Это носок. Чей — неизвестно.",
-    options: [["Похвалить охотника", "Байт горд собой и унёс носок в коробку — к остальным трофеям. Там уже целая коллекция."],
-      ["Отобрать носок", "Носок отобран. Байт смотрит так, будто его ограбили. Придётся мириться вкусняшкой."]] },
-  { key: "rain", loot: "кисточка от шторы", text: "Дождь сегодня стучит сильнее обычного — по стеклу целые реки.",
-    options: [["Задёрнуть шторы", "Шторы задёрнуты, лампа горит. Дождь остался снаружи, уют — внутри."],
-      ["Слушать вместе", "Сидим и слушаем. Под такой дождь даже молчать хорошо. Спасибо, что {ты рядом|вы рядом}."]] },
+    show: { cat: ["sit", "near"], fx: ["sock"] },
+    options: [["Похвалить охотника", "Байт горд собой и унёс носок в коробку — к остальным трофеям. Там уже целая коллекция.", { cat: ["curl", "box"] }],
+      ["Отобрать носок", "Носок отобран. Байт смотрит так, будто его ограбили. Придётся мириться вкусняшкой.", { cat: ["sit", "near"] }]] },
+  { key: "rain", sky: ["rain", "storm"], loot: "кисточка от шторы", text: "Дождь сегодня стучит сильнее обычного — по стеклу целые реки.",
+    options: [["Задёрнуть шторы", "Шторы задёрнуты, лампа горит. Дождь остался снаружи, уют — внутри.", { fx: ["curtains"] }],
+      ["Слушать вместе", "Стою у окна и слушаю. Под такой дождь даже молчать хорошо. Спасибо, что {ты рядом|вы рядом}.", { her: "sill" }]] },
   { key: "book", loot: "закладка из «Маленького принца»", text: "Не могу выбрать, что читать вечером. Помоги{|те}.",
-    options: [["«Маленький принц»", "Значит, «Маленький принц». Перечитаю про Лиса: «ты навсегда в ответе за тех, кого приручил»."],
-      ["Манга", "Значит, манга. Третья глава ждала меня полгода — сегодня её день."]] },
+    options: [["«Маленький принц»", "Значит, «Маленький принц». Перечитаю про Лиса: «ты навсегда в ответе за тех, кого приручил».", { her: "chair" }],
+      ["Манга", "Значит, манга. Третья глава ждала меня полгода — сегодня её день.", { her: "chair" }]] },
   { key: "box", loot: "уголок от чайной коробки", text: "Байт залез в коробку из-под чая и не может вылезти. Или не хочет.",
-    options: [["Достать Байта", "Байт извлечён. Через минуту он залез обратно. Коробка теперь его — официально."],
-      ["Оставить", "Байт остался в коробке и уснул. Торчат только уши. Не трогаем: он там счастлив."]] },
+    show: { cat: ["curl", "box"] },
+    options: [["Достать Байта", "Байт извлечён. Через минуту он залез обратно. Коробка теперь его — официально.", { cat: ["curl", "box"] }],
+      ["Оставить", "Байт остался в коробке и уснул. Торчат только уши. Не трогаем: он там счастлив.", { cat: ["curl", "box"] }]] },
   { key: "plaid", loot: "нитка от синего пледа", text: "Мой синий плед пропал. Байт подозрительно доволен.",
-    options: [["Искать вместе", "Плед нашёлся под креслом — вместе с ленточкой и двумя ручками. Байт устроил там гнездо."],
-      ["Спросить Байта", "Байт на допросе молчал и жмурился. Плед нашёлся сам: он на нём сидел."]] },
-  { key: "puddle", loot: "бумажный кораблик", text: "Окно оставалось открытым — на подоконнике лужа. Колючка, кажется, не против.",
-    options: [["Вытереть", "Подоконник сухой, окно прикрыто. Колючка получила свою неделю воды за один раз."],
-      ["Пустить кораблик", "Кораблик из записки доплыл до самой Колючки. Байт сбил его лапой. Морской бой окончен."]] },
+    show: { cat: ["sit", "rug"], fx: ["noplaid"] },
+    options: [["Искать вместе", "Плед нашёлся под креслом — вместе с ленточкой и двумя ручками. Байт устроил там гнездо и вылезать не хочет.", { cat: ["eyes", "under"] }],
+      ["Спросить Байта", "Байт на допросе молчал и жмурился. Плед нашёлся сам: он на нём сидел.", { cat: ["sit", "rug"] }]] },
+  { key: "puddle", sky: ["rain", "storm"], loot: "бумажный кораблик", text: "Окно оставалось открытым — на подоконнике лужа. Колючка, кажется, не против.",
+    show: { fx: ["puddle"] },
+    options: [["Вытереть", "Подоконник сухой, окно прикрыто. Колючка получила свою неделю воды за один раз.", {}],
+      ["Пустить кораблик", "Кораблик из записки доплыл до самой Колючки. Байт уже рядом: сейчас собьёт его лапой.", { cat: ["sit", "sill"], fx: ["puddle", "boat"] }]] },
 ].map(scene => Object.freeze(scene)));
 
-const hashOf = (text) => { let hash = 2166136261; for (const char of String(text)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0; return hash; };
 /** Номер календарного дня «2026-11-18»: сценки идут по кругу, а не как выпадет — без повтора десять дней. */
 const dayNumber = (day) => { const at = Date.parse(`${day}T00:00:00Z`); return Number.isFinite(at) ? Math.floor(at / DAY) : 0; };
 
 /** Что с Колючкой: полита (поливали меньше пяти дней назад) или сухо. */
 export const plantState = ({ water = 0, at = 0 } = {}) => (Number(water) > 0 && at - Number(water) >= 0 && at - Number(water) < WATER_EVERY_MS ? "полита" : "сухо");
 
-/** Сценка этого дня для этого человека. */
-export function sceneFor(userId, day) {
-  return SCENES[(dayNumber(day) + hashOf(userId)) % SCENES.length];
+/**
+ * Сценка этого дня для этого человека. `sky` — что сейчас за окном: сценка о дожде в сухой день пропускается —
+ * берётся следующая по кругу. Неба не назвали — годится любая (так было до 0.44.0).
+ */
+export function sceneFor(userId, day, sky = "") {
+  const start = (dayNumber(day) + hashOf(userId)) % SCENES.length;
+  for (let step = 0; step < SCENES.length; step += 1) {
+    const scene = SCENES[(start + step) % SCENES.length];
+    if (!sky || !scene.sky || scene.sky.includes(sky)) return scene;
+  }
+  return SCENES[start];
+}
+/**
+ * Что сценка меняет на рисунке сейчас: `{ cat, her, fx }` или `null`. `record` — запись о сценке у человека
+ * (`{ day, key, pick, at }`), `today` — его день, `at` — сейчас. Несыгранная сценка видна весь свой день; исход —
+ * три часа после выбора (как память Байта о ласке): потом комната снова живёт сама.
+ */
+export function sceneLook(record, { today = "", at = 0 } = {}) {
+  const scene = record?.day === today ? sceneByKey(record.key) : null;
+  if (!scene) return null;
+  const picked = record.pick === 0 || record.pick === 1;
+  if (picked && !(Number(record.at) > 0 && at - Number(record.at) >= 0 && at - Number(record.at) < FRESH_MS)) return null;
+  const look = picked ? scene.options[record.pick][2] ?? {} : scene.show ?? {};
+  const cat = Array.isArray(look.cat) ? { shape: look.cat[0], place: look.cat[1] } : null;
+  const fx = (look.fx ?? []).filter(name => SCENE_FX.includes(name));
+  if (!cat && !look.her && !fx.length) return null;
+  return { cat, her: look.her ?? "", fx, since: picked ? Number(record.at) : 0 };
 }
 /** Зерно дня для Байта: у каждого человека он сегодня «свой», но весь день один и тот же. */
 export const seedOf = (userId, day) => hashOf(`${userId}:${day}`);
@@ -283,18 +364,23 @@ export const sceneByKey = (key) => SCENES.find(scene => scene.key === key) ?? nu
 /** Трофеи Байта словами — по ключам сыгранных сценок, в порядке, в каком он их принёс. */
 export const lootOf = (keys) => (Array.isArray(keys) ? keys : []).map(key => sceneByKey(key)?.loot).filter(Boolean);
 
+/** Сколько чай «тёплый»: час после того, как его налили, она с кружкой. */
+export const TEA_WARM_MS = 3_600_000;
 /** Чем она занята: ключ запаса «+комната:она:…» по настроению (`mood.js`) и часу. */
 const HER = Object.freeze({
   "обиженное": "обида", "ревнивое": "ревность", "уставшее": "устала", "сонное": "сон", "ленивое": "уют", "ворчливое": "дело",
   "игривое": "игра", "хулиганское": "игра", "праздничное": "игра", "радостное": "игра", "довольное": "игра",
   "мечтательное": "уют", "задумчивое": "уют", "уютное": "уют", "романтичное": "уют", "таинственное": "уют", "весеннее": "уют", "суеверное": "уют",
 });
-export function herKey(mood, hour = 12) {
+export function herKey(mood, hour = 12, { tea = 0, at = 0 } = {}) {
   const known = HER[String(mood)];
   // Чувство к человеку и усталость сильнее часа; в остальном ночью она дремлет.
   if (known === "обида" || known === "ревность" || known === "устала") return known;
   if (hour >= 23 || hour < 5) return "сон";
-  return known ?? "дело";
+  const key = known ?? "дело";
+  // Ей налили чай — она с кружкой: дела и ленточка ждут, пока чай не остыл (0.44.0: на рисунке у неё в руках то, о
+  // чём слова). Обиду, ревность, усталость и сон кружка не отменяет.
+  return (key === "дело" || key === "игра") && Number(tea) > 0 && at - Number(tea) >= 0 && at - Number(tea) < TEA_WARM_MS ? "уют" : key;
 }
 
 /**
@@ -321,7 +407,7 @@ const HER_POSE = Object.freeze([
   ["back", /спиной/u],
   ["sill", /подоконник/u],
   ["map", /карту звёздного|кассиопе/u],
-  ["garland", /гирлянду/u],
+  ["garland", /гирлянд/u],
   ["dance", /танцу/u],
   ["ribbon", /ленточк/u],
   ["shelf", /полк|книги|валл-и/u],
@@ -340,13 +426,15 @@ export function herPose(line, key = "") {
 
 /**
  * Как нарисован Байт (`shape`) и где (`place`). Фигуры: sit — сидит; lie — лежит; curl — спит клубком; walk — идёт;
- * play — в прыжке; eat — ест; claw — точит когти, стоя у кресла; eyes — одни глаза из темноты; tail — один хвост.
+ * play — в прыжке; eat — ест; claw — точит когти, стоя у кресла; eyes — одни глаза из темноты; tail — один хвост;
+ * belly — на спине, лапы кверху (0.44.0: «перевернулся на спину» было только словами).
  * Места: bowl — у миски; sill — подоконник; chair — кресло; rug — ковёр; pillow — его подушка; desk — стол;
  * box — коробка; near — рядом, на переднем плане; top — на шкафу; under — под креслом; plaid — под пледом.
  */
-export const CAT_SHAPES = Object.freeze(["sit", "lie", "curl", "walk", "play", "eat", "claw", "eyes", "tail"]);
+export const CAT_SHAPES = Object.freeze(["sit", "lie", "curl", "walk", "play", "eat", "claw", "eyes", "tail", "belly"]);
 export const CAT_PLACES = Object.freeze(["bowl", "sill", "chair", "rug", "pillow", "desk", "box", "near", "top", "under", "plaid"]);
 const CAT_POSE = Object.freeze([
+  ["belly", "near", /на спину|кверху лапами|пузом кверху/u],
   ["eyes", "under", /под креслом/u],
   ["sit", "top", /на шкаф/u],
   ["tail", "plaid", /из-под пледа/u],
@@ -360,8 +448,10 @@ const CAT_POSE = Object.freeze([
   ["curl", "desk", /на клавиатуре/u],
   ["curl", "box", /в коробк/u],
   ["sit", "desk", /со стола/u],
-  ["walk", "near", /трётся о ноги|ходит следом/u],
-  ["sit", "near", /подставляет|наглажен/u],
+  ["walk", "near", /трётся о ноги|ходит следом|выгнул спину/u],
+  ["sit", "near", /подставляет|наглажен|прин[её]с е[её]/u],
+  ["lie", "near", /у (?:ваших|твоих) ног/u],
+  ["walk", "rug", /нес[её]т добычу|через весь ков[её]р/u],
   ["play", "rug", /охотится|носится|погнался/u],
   ["lie", "rug", /растянулся|набегался|устал играть|мурчит/u],
 ]);
@@ -369,19 +459,67 @@ const CAT_DEFAULT = Object.freeze({
   "голоден": ["sit", "bowl"], "сыт": ["lie", "rug"], "спит": ["curl", "pillow"], "ласка": ["sit", "near"],
   "игра": ["lie", "rug"], "шалит": ["sit", "sill"], "обижен": ["eyes", "under"],
 });
-/** Поза Байта по фразе из запаса «+комната:байт:<key>»; у фразы без примет — поза состояния. */
-export function catPose(line, key = "") {
+/**
+ * Поза Байта по фразе: из запаса «+комната:байт:<key>» или из слов заботы. У фразы без примет — `fallback`
+ * (поза после заботы, `catAfter`), а без него — поза состояния.
+ */
+export function catPose(line, key = "", fallback = null) {
   const said = String(line ?? "").toLowerCase();
   for (const [shape, place, rule] of CAT_POSE) if (rule.test(said)) return { shape, place };
+  if (fallback?.shape && fallback?.place) return { shape: fallback.shape, place: fallback.place };
   const [shape, place] = CAT_DEFAULT[key] ?? ["sit", "rug"];
   return { shape, place };
 }
+/** Состояния, в которых Байт с места не ходит: спит или прячется. Страница тогда не водит его по комнате. */
+export const CAT_STILL = Object.freeze(["спит", "обижен"]);
 /** Байт сразу после заботы: погладили — рядом, покормили — у миски, поиграли — носится. `again` — сегодня это уже было. */
 export function catAfter(op, { again = false } = {}) {
   if (op === "feed") return again ? { shape: "sit", place: "bowl" } : { shape: "eat", place: "bowl" };
   if (op === "play") return again ? { shape: "lie", place: "rug" } : { shape: "play", place: "rug" };
   if (op === "pet") return { shape: "sit", place: "near" };
   return null;
+}
+
+// ── подпись рисунка на стене ────────────────────────────────────────────────
+// В альбоме лежит просьба как она сказана: «нарисуй Мекку» → «Мекку». Подпись под рисунком — название, а название
+// стоит в именительном: «Мекка». Владелец увидел «мой рисунок — „Мекку“» (сообщение 40).
+const STOP_WORD = /^(?:в|во|на|с|со|у|под|над|за|из|к|ко|по|о|об|от|до|для|без|при|про|через|между|перед|и|или|как|где|который|которая|которое|которые|что)$/u;
+/** Слова на «у» и «ю», которые не склоняются: «какаду» — не винительный от «какада». */
+const STAYS = new Set(["кенгуру", "какаду", "шоу", "рагу", "меню", "интервью", "авеню", "ревю", "гну", "эму", "зебу", "тофу", "баку", "перу", "катманду", "ноу", "гуру", "табу", "фрау", "инь", "ню", "барбекю", "парвеню"]);
+const OWN = Object.freeze({ "мою": "моя", "твою": "твоя", "свою": "своя", "нашу": "наша", "вашу": "ваша", "эту": "эта", "ту": "та", "одну": "одна", "всю": "вся", "саму": "сама" });
+const SELF_TITLE = Object.freeze({ "себя": "автопортрет", "тебя": "автопортрет", "меня": "портрет", "нас": "мы вдвоём" });
+/**
+ * Название рисунка в именительном падеже — или `null`, когда уверенности нет (тогда она скажет иначе: «я рисовала
+ * кота», где винительный на месте). Меняется только начало — слова до первого предлога: «красивую девушку в плаще» →
+ * «красивая девушка в плаще». Правила — только надёжные: женский род («-у/-ю» → «-а/-я», прилагательные «-ую/-юю» →
+ * «-ая/-яя»); слово на согласную, «-о», «-е», «-ь», «-и», «-ы», «-й» в винительном то же, что в именительном («закат»,
+ * «море», «горы»). Слово на «-а/-я» может оказаться кем угодно («кота», «облака», «Мекка») — тут она не гадает.
+ */
+export function nominative(phrase) {
+  const words = String(phrase ?? "").replace(/\s+/gu, " ").trim().split(" ").filter(Boolean);
+  if (!words.length || words.length > 12) return null;
+  const whole = words.join(" ").toLowerCase();
+  if (Object.hasOwn(SELF_TITLE, whole)) return SELF_TITLE[whole];
+  const end = words.findIndex(word => STOP_WORD.test(word.toLowerCase()));
+  const head = end === -1 ? words : words.slice(0, end);
+  if (!head.length || head.length > 4) return null;
+  const turned = [];
+  for (const [index, word] of head.entries()) {
+    const low = word.toLowerCase(), last = index === head.length - 1;
+    // Слово с цифрой, знаком или латиницей — не её забота.
+    if (!/^[а-яё-]+$/u.test(low)) return null;
+    const keep = (ending) => `${word.slice(0, word.length - ending.length)}`;
+    if (Object.hasOwn(OWN, low)) { turned.push(word[0] === low[0] ? OWN[low] : `${OWN[low][0].toUpperCase()}${OWN[low].slice(1)}`); continue; }
+    if (STAYS.has(low)) { turned.push(word); continue; }
+    if (/(?:ую|юю)$/u.test(low)) { turned.push(`${keep("ую")}${low.endsWith("юю") ? "яя" : "ая"}`); continue; }
+    // Перед главным словом — только прилагательные: «мужу открытку» и «аниме девочку» она не разбирает.
+    if (!last && !/(?:ый|ий|ой|ое|ее|ые|ие)$/u.test(low)) return null;
+    if (/[ая]$/u.test(low)) return null;
+    if (low.endsWith("у")) { turned.push(`${keep("у")}а`); continue; }
+    if (low.endsWith("ю")) { turned.push(`${keep("ю")}я`); continue; }
+    turned.push(word);
+  }
+  return [...turned, ...(end === -1 ? [] : words.slice(end))].join(" ");
 }
 
 /** Цвет абажура — по названию любимого цвета человека; незнакомое название — тёплый янтарный, как у лампы. */
@@ -403,7 +541,7 @@ const CARE = Object.freeze(["pet", "feed", "play", "tea", "water", "pat"]);
 
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, seen: [], scene: null, near: 0, loot: [] });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -426,7 +564,7 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
    * (только в личке). Возвращает: `fresh` — о каких вещах сказать (не больше двух за раз), `first` — первый ли
    * это заход вообще, `scene` — сценка, если сегодня её ещё не было.
    */
-  async function visit(userId, { day, keys = null, scenes = false } = {}) {
+  async function visit(userId, { day, keys = null, scenes = false, sky = "" } = {}) {
     const state = await read(userId, day);
     const first = !state.n;
     // Сезонная вещь уходит и возвращается: о ёлке она скажет и через год.
@@ -434,7 +572,7 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     // О новом — не больше двух вещей за раз; праздничные — первыми: их день короткий, завтра о них говорить поздно.
     const festive = (key) => (ITEMS.find(item => item.key === key)?.feast ? 0 : 1);
     const fresh = keys ? keys.filter(key => !kept.includes(key)).sort((one, two) => festive(one) - festive(two)).slice(0, NEWS_AT_ONCE) : [];
-    const offered = scenes && state.scene?.day !== day ? sceneFor(userId, day) : null;
+    const offered = scenes && state.scene?.day !== day ? sceneFor(userId, day, sky) : null;
     const next = {
       ...state, at: state.at || now(), near: now(), n: state.n + 1, day, done: state.done, seen: [...kept, ...fresh],
       ...(offered ? { scene: { day, key: offered.key, pick: null } } : {}),
@@ -459,7 +597,8 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const first = state.cared !== day;
     const next = {
       ...state, at: state.at || at, near: at, day, done: { ...state.done, [op]: (Number(state.done[op]) || 0) + 1 },
-      ...(op === "water" ? { water: at } : {}), ...(op === "tea" || op === "water" || op === "pat" ? {} : { last: op, lastAt: at }),
+      // Когда ей налили чай: час после этого она с кружкой, чем бы ни была занята (`herKey`, `TEA_WARM_MS`).
+      ...(op === "water" ? { water: at } : {}), ...(op === "tea" ? { tea: at } : {}), ...(op === "tea" || op === "water" || op === "pat" ? {} : { last: op, lastAt: at }),
       ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}),
     };
     const saved = await write(userId, next);
@@ -484,7 +623,7 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const first = state.cared !== day;
     // Сыграл сценку — Байт унёс в коробку трофей: память о ней. Один на сценку, сколько бы раз она ни выпадала.
     const loot = state.loot.includes(key) ? state.loot : [...state.loot, key];
-    const next = { ...state, day, done: state.done, loot, scene: { ...state.scene, pick }, ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}) };
+    const next = { ...state, day, done: state.done, loot, scene: { ...state.scene, pick, at: now() }, ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}) };
     if (!await write(userId, next)) return { ok: false, code: "storage" };
     return { ok: true, scene, label: scene.options[pick][0], outcome: scene.options[pick][1], first, state: next };
   }
