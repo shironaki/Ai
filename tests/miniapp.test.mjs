@@ -16,7 +16,7 @@ const scene = await import("../miniapp/scene.js");
 const logic = await import("../miniapp/logic.js");
 const room = await import("../tgcloud/lib/room.js");
 const { default: endpoint } = await import("../tgcloud/endpoints/room.js");
-const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
+const { createPhrasebook, SECTIONS } = await import("../tgcloud/lib/phrasebook.js");
 const { FIRST_KEY } = await import("../tgcloud/lib/personal.js");
 
 const { drawRoom, drawBackdrop, drawRain, drawInside, WIDTH, HEIGHT, WIN, RAIN_SHIFT, PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS, MOODS, tint } = scene;
@@ -151,6 +151,25 @@ test("рисунок: нажатия — отдельным слоем пове�
   }
   assert.equal(drawRain("чепуха"), drawRain("день"));
   assert.notEqual(drawRain("день"), drawRain("ночь"), "ночью струи светлее неба — другой цвет");
+  // Слой едет вниз и влево на один шаг и начинает сначала. Струи должны закрывать стекло и в начале оборота, и в
+  // конце: начинаться выше окна хотя бы на шаг, кончаться ниже него, а крайние — уходить за углы. Иначе к концу
+  // оборота верх окна оголится, и дождь «заморгает».
+  for (const plane of ["far", "near"]) {
+    const fall = RAIN_SHIFT[plane].y / 100 * WIN.h, drift = -RAIN_SHIFT[plane].x / 100 * WIN.w;
+    assert.ok(fall > 20 && drift > 0 && RAIN_SHIFT[plane].seconds > 0.3, plane);
+    const lines = [...drawRain("день", plane).matchAll(/<path d="M(-?[\d.]+) (-?[\d.]+) L(-?[\d.]+) (-?[\d.]+)" stroke-dasharray="([\d.]+) ([\d.]+)"/gu)].map(found => found.slice(1).map(Number));
+    assert.ok(lines.length >= 12, plane);
+    const cross = ([x1, y1, x2, y2], y) => x1 + (x2 - x1) * (y - y1) / (y2 - y1);
+    const gap = Math.abs(lines[1][0] - lines[0][0]);
+    for (const [x1, y1, x2, y2, dash, rest] of lines) {
+      assert.ok(y1 <= -fall && y2 >= WIN.h, `${plane}: струя от ${y1} до ${y2} не закрывает стекло на всём обороте`);
+      assert.ok(x2 < x1, `${plane}: струи наклонены влево`);
+      // Пунктир повторяется ровно через шаг: сдвинутый на шаг слой неотличим от исходного.
+      assert.ok(Math.abs((dash + rest) - Math.hypot(fall, drift)) < 0.06, `${plane}: шаг пунктира ${dash + rest}, а слой сдвигается на ${Math.hypot(fall, drift)}`);
+    }
+    assert.ok(Math.min(...lines.map(line => cross(line, WIN.h))) <= gap, `${plane}: левый нижний угол без струй`);
+    assert.ok(Math.max(...lines.map(line => cross(line, 0))) >= WIN.w + drift - gap, `${plane}: правый верхний угол без струй к концу оборота`);
+  }
 
   const zones = zonesOf(markup);
   assert.equal((markup.match(/data-act="/gu) ?? []).length, zones.length, "каждое место нажатия — прямоугольник в слое нажатий");
@@ -262,6 +281,56 @@ test("рисунок и сердце говорят об одном: позы, �
   assert.equal(room.colourHex("цвет морской волны"), "#3fc7b8");
   assert.equal(room.colourHex("цвет печали"), room.LAMP_COLOUR);
   for (const name of ["красный", "зелёный", "жёлтый", "розовый", "фиолетовый", "чёрный", "белый", "оранжевый", "голубой", "серый", "коричневый"]) assert.match(room.colourHex(name), /^#[0-9a-f]{6}$/u, name);
+});
+
+test("словарь 0.39.0: о новом рисунке она отвечает сама; о чём говорит у окна — то и нарисовано; прежние темы не задеты", () => {
+  // Что на рисунке видно — о том можно спросить, и ответ не уходит модели.
+  const hit = {
+    "ты сделала ремонт?": "в комнате ремонт", "почему комната другая": "в комнате ремонт", "комната стала красивее": "ремонт удался", "новая комната супер": "ремонт удался",
+    "комната не очень": "комната не нравится", "верни старую комнату": "комната не нравится", "кто нарисовал комнату?": "кто нарисовал комнату", "помнишь старую комнату?": "где старая комната",
+    "ты там красивая": "ты красивая в комнате", "ты в комнате другая": "ты изменилась в комнате", "почему у тебя красные глаза?": "глаза на рисунке", "у тебя красивые глаза": "красивые глаза",
+    "у тебя длинные волосы": "волосы на рисунке", "красивые волосы": "красивые волосы", "что у тебя на шее?": "чокер", "ты подросла": "ты подросла", "красивая куртка": "наряд в комнате",
+    "ты моргаешь": "ты моргаешь", "Байт полосатый": "байт полосатый", "почему Байт машет хвостом?": "хвост байта", "какие у Байта глаза?": "глаза байта", "почему Байт под креслом?": "байт под креслом",
+    "красивые шторы": "шторы", "что за башня за окном?": "вид из окна", "что за вывеска?": "вывеска за окном", "что мигает на башне?": "огонек на башне", "красивый ковёр": "ковер",
+    "что за коробка?": "коробка байта", "что играет в комнате?": "колонка", "почему гирлянда мигает?": "красивая гирлянда", "красивая лампа": "лампа на столе", "обои в полоску": "обои",
+    "красивый чайник": "чайник на столе", "что за робот на полке?": "робот на полке", "что за созвездие на карте?": "карта звезд", "у тебя большое окно": "окно во всю стену",
+    "удобное кресло": "кресло", "зачем табуретка?": "табуретка",
+  };
+  for (const [said, name] of Object.entries(hit)) assert.deepEqual(book.match(said), [name], said);
+  // Прежние темы остались при своих словах: новое их не отняло.
+  const kept = {
+    "во что ты одета": "что на тебе", "ты изменилась": "что с тобой", "какой у тебя вид из окна": "за окном", "что у тебя играет": "что слушаешь", "байт красивый": "байт хороший",
+    "как ты выглядишь": "как ты выглядишь", "почему ты там маленькая": "ты чиби", "красивая комната": "красивая комната", "что у тебя на стене": "на стене", "включи гирлянду": "гирлянда",
+  };
+  for (const [said, name] of Object.entries(kept)) assert.deepEqual(book.match(said), [name], said);
+  // Чужое остаётся чужим: «красивые глаза у твоей сестры» и вопрос по делу — не к этим темам.
+  for (const said of ["красивые глаза у твоей сестры", "какие шторы купить в спальню", "что за вывеска на фото"]) assert.equal(book.match(said), null, said);
+
+  // О чём она говорит, когда нажимают на окно, — то и нарисовано в этот час.
+  const marks = [
+    [/вывеск/u, (part) => /class="neon"/u.test(drawBackdrop(part)), "вывеска светится"],
+    [/огон[её]к/u, (part) => /class="beacon"/u.test(drawBackdrop(part)), "огонёк на башне горит"],
+    [/гирлянда уже горит|лампа и гирлянда|светится одна гирлянда|[Гг]орит только лампа/u, (part) => /class="glow"/u.test(drawInside({ part })), "свет в комнате зажжён"],
+    [/[Лл]ампа выключена|в комнате светло/u, (part) => !/class="glow"/u.test(drawInside({ part })), "свет в комнате не горит"],
+  ];
+  const window = SECTIONS.find(item => item.n === "+комната:окно");
+  assert.ok(window, "запас «+комната:окно» на месте");
+  const seen = new Set();
+  for (const [tags, line] of window.l) {
+    const part = PARTS.find(name => String(tags).split(",").includes(name));
+    assert.ok(part, `строка об окне без часа: ${line}`);
+    for (const [word, drawn, what] of marks) {
+      if (!word.test(line)) continue;
+      seen.add(what);
+      assert.ok(drawn(part), `«${line}» (${part}) — а на рисунке не так: ${what}`);
+    }
+  }
+  assert.deepEqual([...seen].sort(), marks.map(([, , what]) => what).sort(), "каждая примета встречается в её словах об окне");
+  // Вывеска и огонёк — приметы вечера и ночи: днём их в словах нет, и на рисунке они не горят.
+  for (const part of ["утро", "день"]) {
+    assert.doesNotMatch(drawBackdrop(part), /class="(?:neon|beacon)"/u, part);
+    for (const [tags, line] of window.l) if (String(tags).split(",").includes(part)) assert.doesNotMatch(line, /вывеск|огон[её]к/u, line);
+  }
 });
 
 // ── страница: что показать ──────────────────────────────────────────────────
@@ -757,7 +826,7 @@ test("страница: папка уходит на платформу как �
   for (const plane of ["far", "near"]) {
     const { x, y, seconds } = RAIN_SHIFT[plane];
     assert.match(html, new RegExp(`<svg class="plane ${plane}" id="rain${plane === "far" ? "Far" : "Near"}" viewBox="0 0 ${WIN.w} ${WIN.h}"`, "u"), plane);
-    assert.ok(html.includes(`.rainbox .${plane} { animation: rain-${plane} ${seconds}s linear infinite; }`), plane);
+    assert.ok(html.includes(`.rainbox .plane.${plane} { animation: rain-${plane} ${seconds}s linear infinite; }`), plane);
     assert.ok(html.includes(`@keyframes rain-${plane} { to { transform: translate(${pct(x)}%, ${pct(y)}%); } }`), plane);
   }
   for (const id of ["app", "stage", "sky", "rainFar", "rainNear", "room", "backdrop", "inside", "talk", "who", "say", "retry", "scene", "sceneText", "sceneChoice", "scenePicked", "actions", "hint", "foot"]) assert.match(html, new RegExp(` id="${id}"`, "u"), id);
@@ -766,8 +835,9 @@ test("страница: папка уходит на платформу как �
   assert.deepEqual([...html.matchAll(/data-pick="([01])"/gu)].map(found => found[1]), ["0", "1"]);
   // Спрятанное спрятано, какой бы display ни задал стиль: иначе сыгранная сценка оставалась бы с кнопками.
   assert.match(html, /\[hidden\] \{ display: none !important; \}/u);
-  // Движение отключается у тех, кто просил его не показывать.
-  assert.match(html, /@media \(prefers-reduced-motion: reduce\)/u);
+  // Движение отключается у тех, кто просил его не показывать, — всё: и рисунок, и небо, и дождь целиком.
+  const calm = /@media \(prefers-reduced-motion: reduce\) \{\s*([^{}]+)\{ animation: none !important; \}/u.exec(html)?.[1].split(",").map(item => item.trim()) ?? [];
+  for (const selector of ["#room *", "#sky *", ".rainbox *"]) assert.ok(calm.includes(selector), `движение не отключается у «${selector}»`);
   // Движение живёт в двух местах: рисунок вешает класс, стили страницы его двигают. Переименуй одно без другого —
   // и хвост замрёт, а тесты промолчат. Поэтому: у каждого класса из рисунка, кроме неподвижных, есть правило,
   // и каждое правило для рисунка относится к классу, который рисунок в самом деле ставит.
@@ -786,6 +856,14 @@ test("страница: папка уходит на платформу как �
   assert.deepEqual([...classes].filter(name => !styled.has(name) && !still.has(name)).sort(), [], "класс в рисунке есть, а правила в стилях нет");
   assert.deepEqual([...styled].filter(name => !classes.has(name)).sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
   for (const name of ["breath", "blink", "slide", "bulb", "tailwag", "steam", "zzz"]) assert.ok(classes.has(name) && styled.has(name), name);
+  // Правило с классом из рисунка действует только внутри рисунка (`#room`, `#sky`) — или на сам слой дождя
+  // (`.plane.far`, `.plane.near`). У струй внутри слоя те же классы `far` и `near`: правило `.rainbox .far` двигало
+  // и слой, и струи — дождь шёл вдвое быстрее, а верх окна пустел на каждом обороте (найдено до выпуска 0.39.0).
+  for (const rule of css.replace(/\/\*[\s\S]*?\*\//gu, "").matchAll(/([^{}@]+)\{[^{}]*\}/gu)) for (const selector of rule[1].split(",")) {
+    const used = [...selector.matchAll(/\.([a-z][a-z0-9]*)/gu)].map(found => found[1]).filter(name => classes.has(name));
+    if (!used.length || /#room|#sky/u.test(selector)) continue;
+    assert.match(selector.trim(), /^\.rainbox \.plane\.(?:far|near)$/u, `правило «${selector.trim()}» заденет части рисунка с классом «${used.join("», «")}»`);
+  }
   // Класс движения не стоит на части с собственным сдвигом: стиль заменил бы сдвиг, и часть уехала бы в угол.
   const moving = [...styled].filter(name => name !== "tap" && name !== "cat");
   for (const view of [{ part: "вечер", her: { pose: "dance", key: "игра" }, cat: { shape: "play", place: "rug", key: "игра" }, things: [...THINGS], tea: true }, { part: "ночь", her: { pose: "nap", key: "сон" }, cat: { shape: "claw", place: "chair", key: "шалит" }, things: [] }]) {
@@ -800,6 +878,16 @@ test("страница: папка уходит на платформу как �
 
   const app = read("miniapp/app.js");
   assert.deepEqual([...app.matchAll(/^import .+ from "([^"]+)";$/gmu)].map(found => found[1]), ["./scene.js", "./logic.js"]);
+  // Имена из своих модулей страница берёт целиком (`import * as`), а не по одному. После новой публикации браузер
+  // может какое-то время держать старую копию любого из четырёх файлов; импорт по имени, которого в старой копии
+  // нет, не даёт странице запуститься вовсе — так в 0.39.0 новый `app.js` падал рядом с прежним `scene.js`.
+  // Всё, что появилось после первой публикации, перед вызовом проверяется. Смеси файлов открывает
+  // `bash scripts/verify.sh page` (шаг 5).
+  assert.match(app, /^import \* as scene from "\.\/scene\.js";$/mu);
+  assert.match(app, /^import \* as logic from "\.\/logic\.js";$/mu);
+  assert.doesNotMatch(app, /^import \{/mu, "импорт по именам: старая копия модуля остановит страницу");
+  assert.match(app, /const layer = \$\(id\);\s+if \(layer && drawRain\) layer\.innerHTML = drawRain\(view\.part, plane\);/u, "слой дождя и `drawRain` проверяются перед вызовом");
+  assert.match(read("scripts/verify.sh"), /previous_page\(\) \{/u);
   assert.match(app, /Serverless\.call\("room", /u, "страница зовёт функцию комнаты по имени файла в tgcloud/endpoints");
   assert.ok(existsSync(new URL("tgcloud/endpoints/room.js", ROOT)));
   // Настройки витрины из адреса — только на своей машине: иначе ссылкой можно вложить ей в уста чужие слова.

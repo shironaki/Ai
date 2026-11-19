@@ -8,23 +8,34 @@
  * Зачем. Тесты без браузера (`tests/miniapp.test.mjs`) проверяют разметку рисунка, но не знают, кто получит
  * нажатие: в 0.38.0 ночью свет лампы, нарисованный позже чайника, молча забирал его нажатия, а у сыгранной
  * сценки оставались кнопки. По картинке этого не видно. Здесь страница открывается как витрина (вне Telegram
- * она показывает комнату сама, сердце не нужно) и проверяется три вещи:
+ * она показывает комнату сама, сердце не нужно) и проверяется пять вещей:
  *   1. страница открылась без ошибок, комната нарисована;
  *   2. каждое место на рисунке, каждая кнопка заботы и сценка дня отзываются на нажатие пальцем;
  *   3. на всех рисунках (день и ночь × без вещей и со всеми × её позы × места и фигуры Байта): заботу
  *      (Колючка, чайник, миска, клубок) не заслоняет никто; до неё и до Байта можно дотянуться всегда;
  *      вещь или окно фигура заслонить может (она сидит на подушке — нажатие по праву её), но не навсегда.
+ *   4. движение: дождь едет слоем, и только слоем, — на свой шаг за свой оборот, без пустых краёв; в комнате
+ *      движется то, что должно; у того, кто просил движение не показывать, не движется ничего. Снимок этого
+ *      не покажет: в 0.39.0 дождь шёл вдвое быстрее и на каждом обороте оголял верх окна — правило стилей
+ *      задевало и струи внутри слоя. На неподвижной картинке всё было верно.
+ *   5. старые копии: страница — четыре файла, и после новой публикации браузер может какое-то время держать
+ *      старую копию любого из них. Каждая смесь прежних и новых файлов (их четырнадцать) должна открыться и
+ *      отозваться на заботу. В 0.39.0 шесть смесей из четырнадцати оставляли пустую страницу: новый `app.js`
+ *      брал из `scene.js` имя, которого в прежнем рисунке нет, и писал в слой, которого нет в прежней разметке.
+ *      Прежнюю страницу достаёт из истории `verify.sh` (последний коммит с другим номером страницы).
  *
  * Браузер (puppeteer-core и @sparticuz/chromium) зависимостью проекта не становится: `verify.sh` ставит его
- * во временную папку и запускает этот файл оттуда. Аргументы: <папка страницы> [куда положить снимок].
+ * во временную папку и запускает этот файл оттуда. Аргументы: <папка страницы> [куда положить снимок]
+ * [папка прежней страницы]; снимок не нужен, а прежняя страница есть — вторым словом «-».
  */
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, extname, normalize } from "node:path";
 import { tmpdir } from "node:os";
 
-const [, , folder, shot = ""] = process.argv;
-if (!folder) { console.error("Нужна папка страницы: node room-check.mjs <папка miniapp> [снимок.png]"); process.exit(2); }
+const [, , folder, shotArg = "", previous = ""] = process.argv;
+const shot = shotArg === "-" ? "" : shotArg;
+if (!folder) { console.error("Нужна папка страницы: node room-check.mjs <папка miniapp> [снимок.png|-] [папка прежней страницы]"); process.exit(2); }
 
 let chromium, puppeteer;
 try {
@@ -38,9 +49,12 @@ try {
 
 // Раздатчик папки: файлы страницы — модули, по file:// браузер их не загрузит.
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
+/** Какие файлы сейчас отдаются из прежней страницы (шаг 5); обычно — никакие. */
+let stale = new Set();
 const server = createServer(async (request, response) => {
   const path = normalize(decodeURIComponent(new URL(request.url, "http://x").pathname)).replace(/^(\.\.[/\\])+/u, "");
-  const file = join(folder, path === "/" ? "index.html" : path);
+  const name = path === "/" ? "index.html" : path.replace(/^[/\\]+/u, "");
+  const file = join(stale.has(name) ? previous : folder, name);
   try {
     const body = await readFile(file);
     response.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
@@ -218,6 +232,115 @@ try {
   console.log(`  рисунков ${report.drawings}, проверок ${report.checks}`);
   for (const item of report.broken) fail(`${item.key} — ${item.count} раз: ${item.where.join(" | ")}`);
   if (report.covered.length) console.log(`  фигура заслоняет вещь целиком (не ошибка — нажатие по праву её): ${report.covered.map(item => `${item.key} ×${item.count}`).join("; ")}`);
+
+  // ── 4. что движется ────────────────────────────────────────────────────────
+  console.log("4. Движение");
+  // Свежая страница: на прежней рисунки перебирались. Часы движения здесь останавливаются и ставятся руками —
+  // так сдвиг дождя меряется точно, а не «примерно через полсекунды».
+  const stage = await browser.newPage();
+  await stage.goto(`${origin}/index.html#part=${encodeURIComponent("вечер")}&things=all`, { waitUntil: "load", timeout: 30_000 });
+  await pause(900);
+  const motion = await stage.evaluate(async () => {
+    const scene = await import("./scene.js");
+    const name = (node) => `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ""}${(node.getAttribute("class") ?? "").trim().split(/\s+/u).filter(Boolean).map(item => `.${item}`).join("")}`;
+    const out = { stray: [], moving: {}, total: 0, planes: {} };
+    for (const animation of document.getAnimations()) {
+      const target = animation.effect?.target;
+      if (!target || animation.playState !== "running") continue;
+      out.total += 1;
+      if (target.id === "rainFar" || target.id === "rainNear") continue;
+      // Внутри слоя дождя не движется ничего: слой едет целиком. Иначе сдвиги сложатся.
+      if (target.closest(".rainbox")) { out.stray.push(`${name(target)} — «${animation.animationName}»: внутри слоя дождя`); continue; }
+      if (target.closest("#room, #sky")) { for (const cls of (target.getAttribute("class") ?? "").split(/\s+/u)) if (cls) out.moving[cls] = (out.moving[cls] ?? 0) + 1; continue; }
+      if (!target.matches("#say, .heart, .actions button")) out.stray.push(`${name(target)} — «${animation.animationName}»: вне рисунка`);
+    }
+    const box = document.querySelector(".rainbox").getBoundingClientRect();
+    for (const [id, key] of [["rainFar", "far"], ["rainNear", "near"]]) {
+      const plane = document.getElementById(id), own = plane.getAnimations(), lines = [...plane.querySelectorAll("path")];
+      const info = { animations: own.length, lines: lines.length };
+      out.planes[key] = info;
+      if (own.length !== 1 || lines.length < 2) continue;
+      const [animation] = own, duration = Number(animation.effect.getComputedTiming().duration);
+      animation.pause();
+      const boxes = (time) => { animation.currentTime = time; return lines.map(line => line.getBoundingClientRect()); };
+      // Струя идёт сверху-справа вниз-влево: где она пересекает высоту y.
+      const cross = (r, y) => r.right - (y - r.top) * (r.width / r.height);
+      const cover = (list) => {
+        const gap = Math.abs(list[1].right - list[0].right);
+        return {
+          top: Math.max(...list.map(r => r.top)) - box.top, bottom: box.bottom - Math.min(...list.map(r => r.bottom)),
+          right: box.right - Math.max(...list.map(r => cross(r, box.top))) - gap, left: Math.min(...list.map(r => cross(r, box.bottom))) - box.left - gap,
+        };
+      };
+      const start = boxes(0), half = boxes(duration / 2), end = boxes(duration - 1);
+      Object.assign(info, {
+        seconds: duration / 1000, wanted: scene.RAIN_SHIFT[key].seconds,
+        moved: [half[0].left - start[0].left, half[0].top - start[0].top],
+        expected: [scene.RAIN_SHIFT[key].x / 100 * box.width / 2, scene.RAIN_SHIFT[key].y / 100 * box.height / 2],
+        gaps: { "в начале оборота": cover(start), "в конце оборота": cover(end) },
+      });
+      animation.currentTime = 0;
+      animation.play();
+    }
+    return out;
+  });
+  for (const text of motion.stray) fail(`движется лишнее: ${text}`);
+  for (const [key, info] of Object.entries(motion.planes)) {
+    if (info.animations !== 1) { fail(`дождь, слой «${key}»: движений у слоя — ${info.animations}, а должно быть одно`); continue; }
+    if (Math.abs(info.seconds - info.wanted) > 0.002) fail(`дождь, слой «${key}»: оборот ${info.seconds} с, а в рисунке записано ${info.wanted} с`);
+    const off = Math.hypot(info.moved[0] - info.expected[0], info.moved[1] - info.expected[1]);
+    if (off > 0.75) fail(`дождь, слой «${key}»: за пол-оборота струя ушла на (${info.moved.map(v => v.toFixed(1)).join("; ")}) точек, а должна на (${info.expected.map(v => v.toFixed(1)).join("; ")}) — сдвиги складываются?`);
+    for (const [when, gaps] of Object.entries(info.gaps)) for (const [side, gap] of Object.entries(gaps)) {
+      if (gap > 0.5) fail(`дождь, слой «${key}», ${when}: край окна без струй (${side}: ${gap.toFixed(1)} точек)`);
+    }
+  }
+  // Вечером при всех вещах в комнате движутся: лампочки гирлянды, она (дышит, моргает), капли на стекле, пар.
+  for (const [cls, least] of [["bulb", 20], ["breath", 1], ["blink", 1], ["slide", 1]]) {
+    if ((motion.moving[cls] ?? 0) < least) fail(`не движется «${cls}»: частей ${motion.moving[cls] ?? 0}, а должно быть не меньше ${least}`);
+  }
+  // Кто просил движение не показывать, тот не видит никакого: ни в комнате, ни за окном.
+  await stage.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+  await pause(200);
+  const restless = await stage.evaluate(() => document.getAnimations().filter(animation => animation.playState === "running").map(animation => {
+    const target = animation.effect?.target;
+    return `${target?.tagName?.toLowerCase() ?? "?"}${target?.id ? `#${target.id}` : ""}.${(target?.getAttribute?.("class") ?? "").trim().replace(/\s+/gu, ".")} — «${animation.animationName}»`;
+  }));
+  if (restless.length) fail(`движение просили не показывать, а движется ${restless.length}: ${restless.slice(0, 4).join("; ")}`);
+  await stage.close();
+  console.log(`  движется частей: ${motion.total} (${Object.entries(motion.moving).sort((a, b) => b[1] - a[1]).map(([cls, count]) => `${cls} ×${count}`).join(", ")}); дождь: ${Object.entries(motion.planes).map(([key, info]) => `«${key}» — оборот ${info.seconds} с`).join(", ")}; без движения по просьбе — ${restless.length ? "нет" : "да"}`);
+
+  // ── 5. старые и новые файлы вперемешку ─────────────────────────────────────
+  if (previous) {
+    console.log("5. Старые копии");
+    const names = ["index.html", "app.js", "logic.js", "scene.js"];
+    let opened = 0, mixes = 0;
+    // Все смеси, кроме «всё новое» (проверено выше) и «всё прежнее» (это страница, которая уже работает у людей).
+    for (let mask = 1; mask < 2 ** names.length - 1; mask += 1) {
+      stale = new Set(names.filter((_, index) => mask & (1 << index)));
+      mixes += 1;
+      const tab = await browser.newPage();
+      const broken = [];
+      tab.on("pageerror", (error) => broken.push(String(error)));
+      tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
+      await tab.goto(`${origin}/index.html#part=${encodeURIComponent("вечер")}&things=all`, { waitUntil: "load", timeout: 30_000 });
+      await pause(600);
+      const got = await tab.evaluate(() => ({ state: document.querySelector("#app")?.dataset.state ?? "", art: document.querySelectorAll("#inside *").length, sky: document.querySelectorAll("#backdrop *").length }));
+      let fed = false;
+      try {
+        await tab.tap('#actions button[data-act="feed"]');
+        await pause(350);
+        fed = await tab.$eval('#actions button[data-act="feed"]', (node) => node.classList.contains("done"));
+      } catch { fed = false; }
+      const label = `прежние ${[...stale].join(", ")} с новыми остальными`;
+      if (got.state !== "ready" || got.art < 150 || got.sky < 20) fail(`${label}: комната не открылась (состояние «${got.state}», частей рисунка ${got.art})${broken.length ? ` — ${broken[0].slice(0, 170)}` : ""}`);
+      else if (broken.length) fail(`${label}: ошибка на странице — ${broken[0].slice(0, 170)}`);
+      else if (!fed) fail(`${label}: забота не нажимается`);
+      else opened += 1;
+      await tab.close();
+    }
+    stale = new Set();
+    console.log(`  смесей прежних и новых файлов — ${mixes}, открылись и отозвались — ${opened}`);
+  } else console.log("5. Старые копии: прежней страницы рядом нет — не проверялось");
 
   if (errors.length) for (const text of errors) fail(`ошибка на странице: ${text}`);
 } catch (error) {

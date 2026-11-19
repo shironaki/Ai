@@ -8,8 +8,15 @@
  *   • открыта не из Telegram (нет подписи) — витрина: комната по часам устройства, забота понарошку;
  *   • ошибка связи — словами в её реплике и кнопкой «Попробовать ещё раз», а не пустым экраном.
  */
-import { drawBackdrop, drawRain, drawInside } from "./scene.js";
-import { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, refused, explain, unwrap, demoLook, demoCare, demoPick } from "./logic.js";
+import * as scene from "./scene.js";
+import * as logic from "./logic.js";
+
+// Имена берутся из модулей целиком, а не по одному. Страница — четыре файла, и после новой публикации браузер
+// может какое-то время держать старую копию любого из них. Импорт по именам такого не прощает: нет в старом
+// `scene.js` нового имени — и страница не запускается вовсе. Так имя просто окажется пустым; всё, что добавлено
+// после первой публикации (сейчас — `drawRain`), перед вызовом проверяется.
+const { drawBackdrop, drawRain, drawInside } = scene;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, refused, explain, unwrap, demoLook, demoCare, demoPick } = logic;
 
 const tg = window.Telegram?.WebApp ?? null;
 const $ = (id) => document.getElementById(id);
@@ -59,8 +66,12 @@ function paint() {
   const view = viewOf(state), key = JSON.stringify(view);
   if (drawn.part !== view.part) {
     $("backdrop").innerHTML = drawBackdrop(view.part);
-    $("rainFar").innerHTML = drawRain(view.part, "far");
-    $("rainNear").innerHTML = drawRain(view.part, "near");
+    // Слои дождя есть только в новой разметке, а `drawRain` — только в новом рисунке (см. выше про старые копии):
+    // нет одного из двух — комната открывается без дождя, но открывается.
+    for (const [id, plane] of [["rainFar", "far"], ["rainNear", "near"]]) {
+      const layer = $(id);
+      if (layer && drawRain) layer.innerHTML = drawRain(view.part, plane);
+    }
     drawn.part = view.part;
   }
   if (drawn.view !== key) { $("inside").innerHTML = drawInside(view); drawn.view = key; }

@@ -83,9 +83,11 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 @keyframes pulse { 50% { opacity: 0.55; } }
 @keyframes float { from { opacity: 0; transform: translateY(6px) scale(0.6); } 25% { opacity: 1; } to { opacity: 0; transform: translateY(-46px) scale(1.15); } }
 
-/* Движение в рисунке. Дождь: слой сдвигается ровно на один шаг пунктира (числа — RAIN_SHIFT в scene.js) и начинает сначала. */
-.rainbox .far { animation: rain-far 0.95s linear infinite; }
-.rainbox .near { animation: rain-near 0.62s linear infinite; }
+/* Движение в рисунке. Дождь: слой сдвигается ровно на один шаг пунктира (числа — RAIN_SHIFT в scene.js) и начинает сначала.
+   Правило — только для самого слоя (`.plane`): у струй внутри него те же классы `far` и `near`, и правило пошире
+   двигало бы и их — дождь шёл бы вдвое быстрее, а верх окна пустел бы на каждом обороте. */
+.rainbox .plane.far { animation: rain-far 0.95s linear infinite; }
+.rainbox .plane.near { animation: rain-near 0.62s linear infinite; }
 @keyframes rain-far { to { transform: translate(-6.8182%, 27.5229%); } }
 @keyframes rain-near { to { transform: translate(-9.0909%, 36.6972%); } }
 /* Капли сползают по стеклу. */
@@ -128,7 +130,7 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 #room .ribbon { transform-origin: 20% 0%; animation: swing 0.8s ease-in-out infinite alternate; }
 @keyframes swing { from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
 @media (prefers-reduced-motion: reduce) {
-  #room *, #sky *, .rainbox .plane, .heart, #say.fresh, .actions button.busy { animation: none !important; }
+  #room *, #sky *, .rainbox *, .heart, #say.fresh, .actions button.busy { animation: none !important; }
 }
 </style>
 </head>

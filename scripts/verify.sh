@@ -6,8 +6,8 @@
 #   bash scripts/verify.sh lint     только eslint: необъявленные имена, повторы ключей
 #   bash scripts/verify.sh ci       только тесты
 #   bash scripts/verify.sh node24   только прогон на Node 24
-#   bash scripts/verify.sh page     страница комнаты в настоящем браузере: каждое место нажато
-#                                   (после любой правки в miniapp/; вторым словом — куда положить снимок)
+#   bash scripts/verify.sh page     страница комнаты в настоящем браузере: каждое место нажато, движение,
+#                                   старые копии (после любой правки в miniapp/; вторым словом — снимок)
 #   bash scripts/verify.sh sheet <снимок.png> [rooms|her|cat|things|zones|файл.json] [час]
 #                                   лист рисунков комнаты — посмотреть глазами (после правки рисунка)
 #
@@ -90,10 +90,33 @@ browser() {
   fi
 }
 
+# Прежняя страница — та, что сейчас открыта у людей: последний коммит, где номер страницы (PAGE в
+# miniapp/logic.js) был другим. Сценарий проверит, что её файлы и новые открываются вперемешку: после новой
+# публикации браузер может какое-то время держать старую копию любого из четырёх файлов.
+previous_page() {
+  local now was commit
+  rm -rf "$PAGE/previous"
+  now="$(sed -n 's/^export const PAGE = "\([0-9]*\)";.*/\1/p' "$ROOT/miniapp/logic.js")"
+  if [ -z "$now" ]; then echo "прежняя страница: номер страницы в miniapp/logic.js не найден"; return 0; fi
+  for commit in $(cd "$ROOT" && git log --format=%H -n 300 -- miniapp/logic.js 2>/dev/null || true); do
+    was="$(cd "$ROOT" && git show "$commit:miniapp/logic.js" 2>/dev/null | sed -n 's/^export const PAGE = "\([0-9]*\)";.*/\1/p' || true)"
+    if [ -n "$was" ] && [ "$was" != "$now" ]; then
+      mkdir -p "$PAGE/previous"
+      (cd "$ROOT" && git archive "$commit" miniapp | tar -x -C "$PAGE/previous")
+      echo "прежняя страница: номер $was, коммит ${commit:0:7} (сейчас — номер $now)"
+      return 0
+    fi
+  done
+  echo "прежняя страница: в истории нет страницы с другим номером"
+}
+
 page() {
   browser
+  previous_page
   cp "$ROOT/scripts/room-check.mjs" "$PAGE/room-check.mjs"
-  (cd "$PAGE" && node room-check.mjs "$ROOT/miniapp" "${1:-}")
+  local before=""
+  if [ -d "$PAGE/previous/miniapp" ]; then before="$PAGE/previous/miniapp"; fi
+  (cd "$PAGE" && node room-check.mjs "$ROOT/miniapp" "${1:--}" "$before")
 }
 
 # Лист рисунков комнаты: тот же браузер, сценарий — scripts/room-sheet.mjs.
