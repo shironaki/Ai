@@ -1,5 +1,5 @@
 /**
- * Комната Аи — страница (мини-приложение, сборка 0.40.0): нажатия, связь с сердцем, раскладка по разметке.
+ * Комната Аи — страница (мини-приложение, сборка 0.41.0): нажатия, связь с сердцем, раскладка по разметке.
  *
  * Что нарисовать — `scene.js`; что показать по ответу сердца — `logic.js` (оба проверяются тестами без браузера).
  * Здесь — только то, чему нужен браузер и Telegram:
@@ -8,7 +8,11 @@
  *   • открыта не из Telegram (нет подписи) — витрина: комната по часам устройства, забота понарошку;
  *   • ошибка связи — словами в её реплике и кнопкой «Попробовать ещё раз», а не пустым экраном;
  *   • её картинки (папка `her/`, с 0.40.0): грузится только та, что нужна сейчас; не загрузилась — она нарисована
- *     кодом, как раньше, а комната открывается в любом случае.
+ *     кодом, как раньше, а комната открывается в любом случае;
+ *   • позы (с 0.41.0): картинок у состояния несколько — она меняет позу сама и от нажатия; следующая картинка
+ *     подгружается заранее, а смена идёт только когда она уже здесь;
+ *   • звук (`sound.js`, с 0.41.0): выключатель под рисунком; модуль грузится, когда звук включили;
+ *   • кнопка «на главный экран» — там, где Telegram это умеет.
  */
 import * as scene from "./scene.js";
 import * as logic from "./logic.js";
@@ -16,9 +20,10 @@ import * as logic from "./logic.js";
 // Имена берутся из модулей целиком, а не по одному. Страница — четыре файла, и после новой публикации браузер
 // может какое-то время держать старую копию любого из них. Импорт по именам такого не прощает: нет в старом
 // `scene.js` нового имени — и страница не запускается вовсе. Так имя просто окажется пустым; всё, что добавлено
-// после первой публикации (`drawRain`, `spriteOf`, `drawSprite`), перед вызовом проверяется.
-const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, refused, explain, unwrap, demoLook, demoCare, demoPick } = logic;
+// после первой публикации (`drawRain`, `spriteOf`, `drawSprite`, `spritesOf`, `spriteStand`, `applyPat`, `nextTurn`),
+// перед вызовом проверяется.
+const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand } = scene;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat } = logic;
 
 const tg = window.Telegram?.WebApp ?? null;
 const $ = (id) => document.getElementById(id);
@@ -34,8 +39,9 @@ const SPRITE_WAIT_MS = 6_000;
 
 let state = { ...blank(new Date().getHours()), demo: !inTelegram };
 let header = "";
-// Что уже нарисовано: рисунок меняется, только когда изменилось то, что на нём видно.
-const drawn = { part: "", view: "" };
+// Что уже нарисовано: рисунок меняется, только когда изменилось то, что на нём видно. `her` — её картинка на
+// рисунке и место, где она стоит: по ним прежняя поза тает, пока новая проявляется.
+const drawn = { part: "", sky: "", view: "", her: null };
 
 // ── Она картинкой ────────────────────────────────────────────────────────────
 // Картинка на каждое её состояние — отдельным модулем в папке `her/`: `export default { w, h, cx, src }`. Модуль
@@ -46,6 +52,11 @@ const sprites = {};
 const asked = new Set();
 const kept = [];
 const canPaint = typeof spriteOf === "function" && typeof drawSprite === "function";
+// Позы сменяются, только если рисунок и логика — новые: в прежних копиях этих имён нет.
+const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";
+// Сколько она стоит в одной позе: от и до, миллисекунды. На своей машине срок можно назвать в адресе (`#turn=900`) —
+// для проверки в браузере: ждать полминуты она не может.
+const TURN_MS = Object.freeze(local && Number(params.turn) >= 200 ? [Number(params.turn), Number(params.turn)] : [24_000, 40_000]);
 
 /** Определение картинки — в кладовую рисунка. Кладовой в разметке нет (старая копия `index.html`) — создаётся. */
 function store(name, sprite) {
@@ -93,6 +104,69 @@ function settle(name, sprite) {
   drawn.view = "";
   paint();
 }
+/** Все позы этого состояния по порядку; в прежнем рисунке их одна. */
+const posesOf = (view) => (canTurn ? spritesOf(view) : []);
+/**
+ * Следующая поза — только когда её картинка уже здесь: иначе она пропала бы на время загрузки. Нет картинки —
+ * она заказывается, а смена случится в следующий раз. Возвращает, сменилась ли поза.
+ */
+function turn() {
+  if (!canTurn || !state.ready || state.busy || document.hidden) return false;
+  const list = posesOf(viewOf(state));
+  if (list.length < 2) return false;
+  const next = list[((Number.isInteger(state.turn) ? state.turn : 0) + 1) % list.length];
+  if (!sprites[next]) { fetchSprite(next); return false; }
+  state = nextTurn(state);
+  paint();
+  return true;
+}
+let turnTimer = 0;
+function scheduleTurn() {
+  clearTimeout(turnTimer);
+  if (!canTurn) return;
+  turnTimer = setTimeout(() => { turn(); scheduleTurn(); }, TURN_MS[0] + Math.random() * (TURN_MS[1] - TURN_MS[0]));
+}
+
+// ── Звук ─────────────────────────────────────────────────────────────────────
+// Выключатель запоминается на этом телефоне. Сам звук начинается только с нажатия человека (так устроены
+// телефоны), поэтому запомненное «включено» ждёт первого касания страницы. Модуль `sound.js` грузится, когда звук
+// включили: не загрузился или телефон звука не умеет — комната остаётся тихой, и только.
+const SOUND_KEY = "ai-room-sound";
+const SOUNDS = Object.freeze({ pet: "purr", feed: "crunch", play: "toy", tea: "pour", water: "drip", pat: "pat" });
+const canSound = typeof (globalThis.AudioContext ?? globalThis.webkitAudioContext) === "function";
+let sound = null, soundOn = false, soundBusy = false;
+const soundKept = () => { try { return localStorage.getItem(SOUND_KEY) === "1"; } catch { return false; } };
+const keepSound = (on) => { try { localStorage.setItem(SOUND_KEY, on ? "1" : "0"); } catch { /* память телефона закрыта: выбор не запомнится */ } };
+/** Что за окном слышно: дождь или снег (снег — тихий ветер). */
+const skyOf = () => (state.sky === "snow" ? "snow" : "rain");
+function paintSound() {
+  const button = $("sound");
+  if (!button) return;
+  button.hidden = !canSound;
+  button.setAttribute("aria-pressed", soundOn ? "true" : "false");
+  const label = button.querySelector("span");
+  if (label) label.textContent = soundOn ? "Звук включён" : "Включить звук";
+}
+async function startSound() {
+  if (!canSound || soundBusy) return false;
+  soundBusy = true;
+  let ok = false;
+  try {
+    if (!sound) sound = (await import("./sound.js")).createSound?.() ?? null;
+    ok = sound ? await sound.on(skyOf()) === true : false;
+  } catch { ok = false; }
+  soundBusy = false;
+  soundOn = ok;
+  paintSound();
+  return ok;
+}
+function stopSound() {
+  soundOn = false;
+  try { sound?.off(); } catch { /* звук не важнее комнаты */ }
+  paintSound();
+}
+const ring = (name) => { if (soundOn && Object.hasOwn(SOUNDS, name)) { try { sound?.play(SOUNDS[name]); } catch { /* звук не важнее комнаты */ } } };
+
 function fetchSprite(name) {
   if (!canPaint || !name || asked.has(name)) return;
   asked.add(name);
@@ -138,24 +212,39 @@ function paint() {
   // Три слоя. Небо с городом и дождь перерисовываются только со сменой часа, комната — когда в ней что-то
   // изменилось: иначе при каждом нажатии дождь прыгал бы назад, а гирлянда мигала заново. Сам дождь движется
   // без рисования вовсе: страница сдвигает его слой целиком (стили `.rainbox`).
-  const view = viewOf(state), key = JSON.stringify(view);
-  if (drawn.part !== view.part) {
-    $("backdrop").innerHTML = drawBackdrop(view.part);
+  const view = viewOf(state), key = JSON.stringify(view), sky = view.sky === "snow" ? "snow" : "rain";
+  if (drawn.part !== view.part || drawn.sky !== sky) {
+    $("backdrop").innerHTML = drawBackdrop(view.part, sky);
     // Слои дождя есть только в новой разметке, а `drawRain` — только в новом рисунке (см. выше про старые копии):
-    // нет одного из двух — комната открывается без дождя, но открывается.
+    // нет одного из двух — комната открывается без дождя, но открывается. Снег — те же слои, другой узор и шаг.
     for (const [id, plane] of [["rainFar", "far"], ["rainNear", "near"]]) {
       const layer = $(id);
-      if (layer && drawRain) layer.innerHTML = drawRain(view.part, plane);
+      if (layer && drawRain) layer.innerHTML = drawRain(view.part, plane, sky);
+      if (layer?.parentElement) layer.parentElement.dataset.sky = sky;
     }
+    // За окном сменилось — сменился и фон звука: дождь или тихий ветер.
+    if (drawn.sky && drawn.sky !== sky && soundOn) startSound();
     drawn.part = view.part;
+    drawn.sky = sky;
   }
   if (canPaint) {
     const name = spriteOf(view);
     fetchSprite(name);
     // Она с блокнотом — следующей может понадобиться картинка с кружкой (ей нальют чай): пусть будет под рукой.
     if (name === "work" && sprites.work) fetchSprite("tea");
+    // Следующая поза — тоже заранее: смена идёт, только когда картинка уже здесь.
+    const list = posesOf(view);
+    if (sprites[name] && list.length > 1) fetchSprite(list[(list.indexOf(name) + 1) % list.length]);
   }
-  if (drawn.view !== key) { $("inside").innerHTML = drawInside(view, canPaint ? { sprites } : undefined); drawn.view = key; }
+  if (drawn.view !== key) {
+    // Где она встанет и какой картинкой: прежняя поза тает, пока новая проявляется (`was`).
+    const stood = canPaint && typeof spriteStand === "function" ? spriteStand(view) : null;
+    const now = stood && sprites[stood.name] ? { name: stood.name, x: stood.x } : null;
+    const was = now && drawn.her && drawn.her.name !== now.name && sprites[drawn.her.name] ? drawn.her : null;
+    $("inside").innerHTML = drawInside(view, canPaint ? { sprites, ...(was ? { was } : {}) } : undefined);
+    drawn.view = key;
+    drawn.her = now;
+  }
   const say = $("say");
   if (say.textContent !== state.said) {
     say.textContent = state.said;
@@ -186,6 +275,9 @@ function paint() {
     $("scenePicked").textContent = played ? `«${scene.options[scene.pick]}». ${scene.outcome} Новая сценка — завтра.` : "";
   }
   $("hint").hidden = !state.ready;
+  const tools = $("tools");
+  if (tools) tools.hidden = !state.ready;
+  paintSound();
   $("foot").textContent = [
     state.next ? `Новая вещь появится через ${state.next} ${plural(state.next, "день", "дня", "дней")}` : "",
     `страница ${PAGE}`, state.build ? `сердце ${state.build}` : "", state.demo ? "витрина" : "",
@@ -243,11 +335,29 @@ async function enter() {
   buzz(state.ready ? "light" : "error");
 }
 
+/** Погладить её по голове: её слова — от сердца (по тому, насколько вы близки); раз в день это ещё и шаг в отношениях. */
+async function pat() {
+  // Прежняя логика (старая копия `logic.js`) гладить не умеет — тогда нажатие на голову значит то же, что на неё.
+  if (typeof applyPat !== "function" || typeof demoPat !== "function") { act("her"); return; }
+  state = { ...state, busy: "pat" };
+  paint();
+  const result = state.demo ? demoPat(state) : await call({ do: "pat" });
+  state = applyPat(state, result);
+  paint();
+  if (result?.ok !== true) { buzz("error"); return; }
+  buzz(result.again ? "light" : "medium");
+  ring("pat");
+  if (!result.again) heart("pat");
+}
+
 async function act(name) {
   if (!state.ready || state.busy) return;
+  if (name === "pat") { await pat(); return; }
   if (!CARE.includes(name)) {
     const next = applyTap(state, name);
     if (next) { state = next; paint(); buzz("light"); }
+    // Нажали на неё — она ответила и сменила позу.
+    if (name === "her" && next) { turn(); scheduleTurn(); }
     return;
   }
   state = { ...state, busy: name };
@@ -257,6 +367,7 @@ async function act(name) {
   paint();
   if (result?.ok !== true) { buzz("error"); return; }
   buzz(result.again ? "light" : "medium");
+  ring(name);
   if (!result.again) heart(name === "tea" ? "her" : name === "water" ? "plant" : "cat");
 }
 
@@ -285,6 +396,33 @@ $("sceneChoice").addEventListener("click", (event) => {
 });
 $("retry").addEventListener("click", () => enter());
 
+// Звук: выключатель под рисунком. Запомненное «включено» ждёт первого касания страницы.
+$("sound")?.addEventListener("click", async () => {
+  if (soundOn) { stopSound(); keepSound(false); return; }
+  const ok = await startSound();
+  keepSound(ok);
+  if (!ok) { state = { ...state, tone: "warn", said: "Звук не включился: этот телефон не дал комнате звучать." }; paint(); }
+});
+if (canSound && soundKept()) document.addEventListener("pointerdown", () => { if (!soundOn) startSound(); }, { once: true });
+// Комнату свернули — звук и смена поз ждут; вернулись — продолжаются.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { try { sound?.off(); } catch { /* звук не важнее комнаты */ } return; }
+  if (soundOn) startSound();
+  scheduleTurn();
+});
+
+// «На главный экран»: кнопка видна там, где Telegram это умеет и где комнату туда ещё не добавили.
+(function homeScreen() {
+  const button = $("home");
+  if (!button || !tg || typeof tg.addToHomeScreen !== "function" || typeof tg.checkHomeScreenStatus !== "function") return;
+  try {
+    tg.checkHomeScreenStatus((status) => { button.hidden = !(status === "missed" || status === "unknown"); });
+    tg.onEvent?.("homeScreenAdded", () => { button.hidden = true; });
+  } catch { /* старый Telegram: кнопки не будет */ }
+  button.addEventListener("click", () => { try { tg.addToHomeScreen(); } catch { /* не вышло — кнопка просто не сработала */ } });
+})();
+
 try { tg?.ready?.(); tg?.expand?.(); } catch { /* вне Telegram этих вызовов нет */ }
 paint();
 enter();
+scheduleTurn();

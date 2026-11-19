@@ -10,8 +10,10 @@
 #                                   старые копии (после любой правки в miniapp/; вторым словом — снимок)
 #   bash scripts/verify.sh sheet <снимок.png> [rooms|her|cat|things|zones|файл.json] [час] [drawn]
 #                                   лист рисунков комнаты — посмотреть глазами (после правки рисунка)
-#   bash scripts/verify.sh sprite <картинка.png> <имя> [высота] [качество] [ось]
+#   bash scripts/verify.sh sprite <картинка.png> <имя> [высота] [качество] [ось] [erase=x0,y0,x1,y1]
 #                                   спрайт Аи: картинка на зелёном фоне → модуль miniapp/her/<имя>.js
+#   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя> [win=ШxВ] [at=x,y]
+#                                   моргание: заплатка «веки» в модуль спрайта (она же картинка, глаза закрыты)
 #
 # Зависимостей у проекта нет и не будет (на платформе нет npm), поэтому eslint и
 # Node 24 ставятся во временную папку (VERIFY_TMP, по умолчанию /tmp) при первом
@@ -139,6 +141,16 @@ sprite() {
   (cd "$PAGE" && node room-sprite.mjs "$ROOT" "$input" "$@")
 }
 
+# Моргание: из той же картинки с закрытыми глазами — заплатка «веки» в модуль спрайта: сценарий — scripts/room-blink.mjs.
+blink() {
+  if [ -z "${2:-}" ]; then echo "Нужно: bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя спрайта> [win=ШxВ] [at=x,y]"; return 1; fi
+  browser
+  cp "$ROOT/scripts/room-blink.mjs" "$PAGE/room-blink.mjs"
+  local input="$1"; shift
+  case "$input" in /*) ;; *) input="$PWD/$input" ;; esac
+  (cd "$PAGE" && node room-blink.mjs "$ROOT" "$input" "$@")
+}
+
 case "${1:-quick}" in
   quick) lint; ci ;;
   all) lint; ci; node24 ;;
@@ -148,5 +160,6 @@ case "${1:-quick}" in
   page) page "${2:-}" ;;
   sheet) shift; sheet "$@" ;;
   sprite) shift; sprite "$@" ;;
+  blink) shift; blink "$@" ;;
   *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

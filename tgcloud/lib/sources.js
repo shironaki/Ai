@@ -652,6 +652,28 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { ok: true, place, text: `${text}${got.stale ? "\n(Свежих данных нет — это прогноз трёхчасовой давности.)" : ""}`, today: dayLine(0, "Сегодня"), stale: Boolean(got.stale), source: "Open-Meteo" };
   }
 
+  /**
+   * Идёт ли в этом городе снег: по тому же прогнозу, что и погода (запрос — один на двадцать минут на город).
+   * `true` / `false`; `null` — узнать не удалось (город не найден, сеть молчит). Нужен комнате: снег за её окном.
+   */
+  async function snowing(placeText) {
+    const place = await findPlace(placeText, { tries: 1 });
+    if (!place?.ok) return null;
+    const url = `${METEO}?latitude=${place.latitude}&longitude=${place.longitude}`
+      + "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"
+      + "&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max"
+      + "&timezone=auto&forecast_days=3&wind_speed_unit=ms";
+    // Комната ждать не может: короткий срок, и к источнику, который только что молчал, не ходим вовсе.
+    const got = await cached(`heart:src:meteo:${cityKey(place.name)}`, 20 * 60_000, async () => {
+      const answer = await getJson(url, { timeout: 1800, soft: true });
+      return answer.ok && answer.data?.daily ? { ok: true, current: answer.data.current ?? null, daily: answer.data.daily } : { ok: false, code: "network" };
+    }, { staleMs: 3 * 3_600_000 });
+    if (!got?.ok || !got.current) return null;
+    // Коды снега: снегопад (71–77) и снежные заряды (85, 86).
+    const code = Number(got.current.weather_code);
+    return (code >= 71 && code <= 77) || code === 85 || code === 86;
+  }
+
   // ── курсы ───────────────────────────────────────────────────────────────
   /**
    * Курсы: главный источник — официальный, с «вчера»; два запасных — рыночные,
@@ -756,5 +778,5 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok === true, spare: bank.via === "spare" };
   }
 
-  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, rates, convert, animal, gesture, probe, advise, daily, onThisDay, lookup, translate, fetchJson: getJson });
+  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, snowing, rates, convert, animal, gesture, probe, advise, daily, onThisDay, lookup, translate, fetchJson: getJson });
 }

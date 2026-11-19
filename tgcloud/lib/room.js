@@ -50,6 +50,14 @@ const RULES = Object.freeze([
   ["news", rx(`^(?:а\\s+)?(?:есть\\s+)?что\\s+(?:то|нибудь)\\s+(?:новое|новенькое|изменилось|появилось)\\s+(?:у\\s+тебя\\s+)?в\\s+${ROOM}$`)],
   ["news", rx(`^(?:а\\s+)?в\\s+${ROOM}\\s+(?:есть\\s+)?что\\s+(?:то|нибудь)\\s+(?:новое|новенькое|изменилось|появилось)$`)],
 
+  // Коробка Байта: что он в неё натаскал (трофеи из сыгранных сценок).
+  // Байт назван обязательно: «что в коробке» само по себе — не о комнате (такое понимается только в ней, см. LOOSE).
+  ["loot", rx(`^(?:а\\s+)?что\\s+(?:лежит\\s+|там\\s+)?у\\s+${CAT_ACC}\\s+в\\s+коробке$`)],
+  ["loot", rx(`^(?:а\\s+)?что\\s+(?:лежит\\s+|там\\s+)?в\\s+коробке\\s+(?:у\\s+)?${CAT_ACC}$`)],
+  ["loot", rx(`^(?:покажи|открой|загляни\\s+в)\\s+коробку\\s+${CAT_ACC}$`)],
+  ["loot", rx(`^(?:покажи\\s+)?(?:трофеи|добычу|сокровища|коллекцию)\\s+${CAT_ACC}$`)],
+  ["loot", /^(?:а\s+)?что\s+(?:натаскал|насобирал|наворовал|притащил)\s+байт$/u],
+
   // Кнопка комнаты в меню бота: убрать и вернуть — слово хозяина.
   ["menuoff", /^(?:убери|убрать|спрячь|скрой|выключи|отключи)\s+(?:кнопку\s+)?(?:комнаты|комнату|комната)\s+из\s+меню$/u],
   ["menuon", /^(?:верни|вернуть|поставь|включи|добавь)\s+(?:кнопку\s+)?(?:комнаты|комнату|комната)\s+в\s+меню$/u],
@@ -150,6 +158,7 @@ const LOOSE = Object.freeze([
   ["cat", /^(?:а\s+)?(?:как|где)\s+(?:там\s+)?(?:кот|котик)$/u],
   ["plant", /^(?:а\s+)?как\s+(?:там\s+)?кактус$/u],
   ["call", /^(?:кис\s+кис(?:\s+кис)?|кс\s+кс(?:\s+кс)?)$/u],
+  ["loot", /^(?:а\s+)?что\s+(?:лежит\s+|там\s+)?в\s+(?:его\s+)?коробке$/u],
   ["cat", /^(?:а\s+)?(?:что|чем)\s+(?:делает|занят)\s+(?:кот|котик)$/u],
   ["cat", /^(?:а\s+)?(?:кот|котик)\s+(?:спит|ел|поел|сыт|голодный|голоден|где|как\s+там)$/u],
 ]);
@@ -184,6 +193,10 @@ export const ITEMS = Object.freeze([
   { key: "абажур", title: "абажур любимого цвета", colour: true },
   { key: "рисунок", title: "мой рисунок на стене", drawing: true },
   { key: "ёлка", title: "ёлка с гирляндой", season: true },
+  // Праздники и даты (0.41.0): вещь стоит, пока идёт её день, — и уходит, как ёлка.
+  { key: "торт", title: "торт со свечкой — к дню рождения", feast: "birthday" },
+  { key: "свеча", title: "свеча на полке — в годовщину знакомства", feast: "anniversary" },
+  { key: "фонарь", title: "фонарь у окна — к празднику", feast: "lantern" },
 ].map(item => Object.freeze(item)));
 
 /** Ёлка стоит с середины декабря до середины января. */
@@ -194,12 +207,26 @@ const festive = (month, day) => (month === 12 && day >= 15) || (month === 1 && d
  * `days` — дней знакомства, `care` — дней, когда он заботился, `colour` — его любимый цвет (если назван),
  * `drawing` — что она рисовала ему последним, `month` и `day` — сегодня по его часам.
  */
-export function itemsFor({ days = 0, care = 0, colour = "", drawing = "", month = 0, day = 0 } = {}) {
+export function itemsFor({ days = 0, care = 0, colour = "", drawing = "", month = 0, day = 0, feasts = [] } = {}) {
   return ITEMS.filter(item => (item.days ? days >= item.days
     : item.care ? care >= item.care
       : item.colour ? Boolean(String(colour).trim())
         : item.drawing ? Boolean(String(drawing).trim())
-          : item.season ? festive(month, day) : false)).map(item => item.key);
+          : item.season ? festive(month, day)
+            : item.feast ? feasts.includes(item.feast) : false)).map(item => item.key);
+}
+
+/**
+ * Что сегодня за день в комнате. `birthday` — сегодня день рождения гостя; `days` — дней знакомства (годовщина —
+ * ровно год, два, три…); `hijri` — сегодняшняя дата по хиджре `{ hm, hd }`: весь Рамадан, три дня Ураза-байрама
+ * и четыре дня Курбан-байрама у окна горит фонарь. Возвращает `{ list, islam }`: `list` — метки для
+ * `itemsFor` (birthday, anniversary, lantern), `islam` — какой именно праздник («ramadan», «fitr», «adha») или пусто.
+ */
+export function feastsOf({ birthday = false, days = 0, hijri = null } = {}) {
+  const hm = Number(hijri?.hm), hd = Number(hijri?.hd);
+  const islam = hm === 9 ? "ramadan" : hm === 10 && hd >= 1 && hd <= 3 ? "fitr" : hm === 12 && hd >= 10 && hd <= 13 ? "adha" : "";
+  const years = Number(days) > 0 && Number(days) % 365 === 0 ? Number(days) / 365 : 0;
+  return { list: [birthday ? "birthday" : "", years ? "anniversary" : "", islam ? "lantern" : ""].filter(Boolean), islam, years };
 }
 
 /**
@@ -207,34 +234,34 @@ export function itemsFor({ days = 0, care = 0, colour = "", drawing = "", month 
  * Ключ — латиницей: он уходит в кнопку (`h:<ключ>:<0|1>`), а там важен каждый байт.
  */
 export const SCENES = Object.freeze([
-  { key: "cactus", text: "Байт уронил Колючку с подоконника. Сидит рядом и делает вид, что так и было.",
+  { key: "cactus", loot: "комочек земли из горшка Колючки", text: "Байт уронил Колючку с подоконника. Сидит рядом и делает вид, что так и было.",
     options: [["Поднять Колючку", "Колючка снова на подоконнике, земля собрана. Она цела: характер у неё крепче горшка."],
       ["Отчитать Байта", "Байт выслушал, зевнул и ушёл под кресло. Вину не признал. Колючку я подняла сама."]] },
-  { key: "kettle", text: "Чайник выкипел: я зачиталась. В комнате туман — как за окном.",
+  { key: "kettle", loot: "ситечко от чайника", text: "Чайник выкипел: я зачиталась. В комнате туман — как за окном.",
     options: [["Заварить новый", "Новый чай готов. На этот раз жасмина — с горкой. Одна кружка — {твоя|ваша}."],
       ["Открыть окно", "Окно открыто: в комнату вошли дождь и свежесть. Байт сел сторожить подоконник."]] },
-  { key: "notebook", text: "Байт улёгся на мой блокнот. Именно на ту страницу, которая нужна.",
+  { key: "notebook", loot: "скомканная страница из блокнота", text: "Байт улёгся на мой блокнот. Именно на ту страницу, которая нужна.",
     options: [["Подвинуть Байта", "Байт подвинут на полстраницы. Он считает это компромиссом. Я — победой."],
       ["Подождать", "Ждём. Байт спит, блокнот тёплый. Напоминания подождут: они у меня и в голове есть."]] },
-  { key: "lights", text: "Гирлянда замигала: одна лампочка решила жить своей жизнью.",
+  { key: "lights", loot: "лампочка от гирлянды", text: "Гирлянда замигала: одна лампочка решила жить своей жизнью.",
     options: [["Починить", "Лампочка подкручена, гирлянда горит ровно. В комнате снова уютно — спасибо."],
       ["Пусть мигает", "Пусть мигает. Теперь у меня не гирлянда, а азбука Морзе. Байт пытается её прочесть."]] },
-  { key: "sock", text: "Байт принёс добычу и положил к ногам. Это носок. Чей — неизвестно.",
+  { key: "sock", loot: "носок неизвестного происхождения", text: "Байт принёс добычу и положил к ногам. Это носок. Чей — неизвестно.",
     options: [["Похвалить охотника", "Байт горд собой и унёс носок в коробку — к остальным трофеям. Там уже целая коллекция."],
       ["Отобрать носок", "Носок отобран. Байт смотрит так, будто его ограбили. Придётся мириться вкусняшкой."]] },
-  { key: "rain", text: "Дождь сегодня стучит сильнее обычного — по стеклу целые реки.",
+  { key: "rain", loot: "кисточка от шторы", text: "Дождь сегодня стучит сильнее обычного — по стеклу целые реки.",
     options: [["Задёрнуть шторы", "Шторы задёрнуты, лампа горит. Дождь остался снаружи, уют — внутри."],
       ["Слушать вместе", "Сидим и слушаем. Под такой дождь даже молчать хорошо. Спасибо, что {ты рядом|вы рядом}."]] },
-  { key: "book", text: "Не могу выбрать, что читать вечером. Помоги{|те}.",
+  { key: "book", loot: "закладка из «Маленького принца»", text: "Не могу выбрать, что читать вечером. Помоги{|те}.",
     options: [["«Маленький принц»", "Значит, «Маленький принц». Перечитаю про Лиса: «ты навсегда в ответе за тех, кого приручил»."],
       ["Манга", "Значит, манга. Третья глава ждала меня полгода — сегодня её день."]] },
-  { key: "box", text: "Байт залез в коробку из-под чая и не может вылезти. Или не хочет.",
+  { key: "box", loot: "уголок от чайной коробки", text: "Байт залез в коробку из-под чая и не может вылезти. Или не хочет.",
     options: [["Достать Байта", "Байт извлечён. Через минуту он залез обратно. Коробка теперь его — официально."],
       ["Оставить", "Байт остался в коробке и уснул. Торчат только уши. Не трогаем: он там счастлив."]] },
-  { key: "plaid", text: "Мой синий плед пропал. Байт подозрительно доволен.",
+  { key: "plaid", loot: "нитка от синего пледа", text: "Мой синий плед пропал. Байт подозрительно доволен.",
     options: [["Искать вместе", "Плед нашёлся под креслом — вместе с ленточкой и двумя ручками. Байт устроил там гнездо."],
       ["Спросить Байта", "Байт на допросе молчал и жмурился. Плед нашёлся сам: он на нём сидел."]] },
-  { key: "puddle", text: "Окно оставалось открытым — на подоконнике лужа. Колючка, кажется, не против.",
+  { key: "puddle", loot: "бумажный кораблик", text: "Окно оставалось открытым — на подоконнике лужа. Колючка, кажется, не против.",
     options: [["Вытереть", "Подоконник сухой, окно прикрыто. Колючка получила свою неделю воды за один раз."],
       ["Пустить кораблик", "Кораблик из записки доплыл до самой Колючки. Байт сбил его лапой. Морской бой окончен."]] },
 ].map(scene => Object.freeze(scene)));
@@ -253,6 +280,8 @@ export function sceneFor(userId, day) {
 /** Зерно дня для Байта: у каждого человека он сегодня «свой», но весь день один и тот же. */
 export const seedOf = (userId, day) => hashOf(`${userId}:${day}`);
 export const sceneByKey = (key) => SCENES.find(scene => scene.key === key) ?? null;
+/** Трофеи Байта словами — по ключам сыгранных сценок, в порядке, в каком он их принёс. */
+export const lootOf = (keys) => (Array.isArray(keys) ? keys : []).map(key => sceneByKey(key)?.loot).filter(Boolean);
 
 /** Чем она занята: ключ запаса «+комната:она:…» по настроению (`mood.js`) и часу. */
 const HER = Object.freeze({
@@ -369,11 +398,12 @@ export function colourHex(name) {
   return LAMP_COLOUR;
 }
 
-const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
+// `pat` — погладить её саму (0.41.0): считается как забота, но Байта не касается.
+const CARE = Object.freeze(["pet", "feed", "play", "tea", "water", "pat"]);
 
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, seen: [], scene: null, near: 0 });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -381,6 +411,7 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     if (usable()) { try { saved = await store.get(ROOM_KEY(userId)); } catch { saved = null; } }
     const state = { ...blank(), ...(saved && typeof saved === "object" ? saved : {}) };
     state.seen = Array.isArray(state.seen) ? state.seen : [];
+    state.loot = Array.isArray(state.loot) ? state.loot.filter(key => typeof key === "string").slice(-SCENES.length) : [];
     state.done = state.done && typeof state.done === "object" && (!day || state.day === day) ? state.done : {};
     return state;
   }
@@ -400,7 +431,9 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const first = !state.n;
     // Сезонная вещь уходит и возвращается: о ёлке она скажет и через год.
     const kept = keys ? state.seen.filter(key => keys.includes(key)) : state.seen;
-    const fresh = keys ? keys.filter(key => !kept.includes(key)).slice(0, NEWS_AT_ONCE) : [];
+    // О новом — не больше двух вещей за раз; праздничные — первыми: их день короткий, завтра о них говорить поздно.
+    const festive = (key) => (ITEMS.find(item => item.key === key)?.feast ? 0 : 1);
+    const fresh = keys ? keys.filter(key => !kept.includes(key)).sort((one, two) => festive(one) - festive(two)).slice(0, NEWS_AT_ONCE) : [];
     const offered = scenes && state.scene?.day !== day ? sceneFor(userId, day) : null;
     const next = {
       ...state, at: state.at || now(), near: now(), n: state.n + 1, day, done: state.done, seen: [...kept, ...fresh],
@@ -426,7 +459,7 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const first = state.cared !== day;
     const next = {
       ...state, at: state.at || at, near: at, day, done: { ...state.done, [op]: (Number(state.done[op]) || 0) + 1 },
-      ...(op === "water" ? { water: at } : {}), ...(op === "tea" || op === "water" ? {} : { last: op, lastAt: at }),
+      ...(op === "water" ? { water: at } : {}), ...(op === "tea" || op === "water" || op === "pat" ? {} : { last: op, lastAt: at }),
       ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}),
     };
     const saved = await write(userId, next);
@@ -449,7 +482,9 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     if (state.scene?.key !== key) return { ok: false, code: "gone" };
     if (state.scene.pick != null) return { ok: false, code: "played", scene };
     const first = state.cared !== day;
-    const next = { ...state, day, done: state.done, scene: { ...state.scene, pick }, ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}) };
+    // Сыграл сценку — Байт унёс в коробку трофей: память о ней. Один на сценку, сколько бы раз она ни выпадала.
+    const loot = state.loot.includes(key) ? state.loot : [...state.loot, key];
+    const next = { ...state, day, done: state.done, loot, scene: { ...state.scene, pick }, ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}) };
     if (!await write(userId, next)) return { ok: false, code: "storage" };
     return { ok: true, scene, label: scene.options[pick][0], outcome: scene.options[pick][1], first, state: next };
   }

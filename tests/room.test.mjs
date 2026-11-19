@@ -17,7 +17,7 @@ const NOON = Date.parse("2026-11-18T11:00:00Z");
 const HOUR = 3_600_000;
 const own = (text) => message(text, { id: OWNER });
 const book = createPhrasebook({ random: () => 0 });
-const VARS = { "цвет": "синий", "рисунок": "кот в шляпе" };
+const VARS = { "цвет": "синий", "рисунок": "кот в шляпе", "лет": "2 года", "праздник": "Рамадан", "трофеи": "носок неизвестного происхождения, бумажный кораблик", "число": "2" };
 const pool = (name, ctx = {}) => book.pool(`+комната:${name}`, { formal: true, vars: VARS, ...ctx });
 const roomOf = (id) => JSON.parse(sdk().kv.get(ROOM_KEY(id)) ?? "null");
 const bondOf = (id) => JSON.parse(sdk().kv.get(`heart:bond:${id}`) ?? "null");
@@ -93,7 +93,8 @@ test("правила: вещи по дням знакомства и забот�
   assert.deepEqual(itemsFor({ days: 2 }), []);
   assert.deepEqual(itemsFor({ days: 3 }), ["кружка"]);
   assert.deepEqual(itemsFor({ days: 30 }), ["кружка", "тапочки", "подушка", "снимок"]);
-  assert.deepEqual(itemsFor({ days: 400, care: 10, colour: "синий", drawing: "кот в шляпе", month: 12, day: 20 }), ITEMS.map(item => item.key), "все двенадцать");
+  assert.deepEqual(itemsFor({ days: 400, care: 10, colour: "синий", drawing: "кот в шляпе", month: 12, day: 20 }), ITEMS.filter(item => !item.feast).map(item => item.key), "все двенадцать — без праздничных");
+  assert.deepEqual(itemsFor({ days: 400, care: 10, colour: "синий", drawing: "кот в шляпе", month: 12, day: 20, feasts: ["birthday", "anniversary", "lantern"] }), ITEMS.map(item => item.key), "и три праздничные");
   assert.deepEqual(itemsFor({ care: 9 }), []);
   assert.deepEqual(itemsFor({ care: 10 }), ["место"]);
   // Ёлка — с 15 декабря по 14 января.
@@ -132,7 +133,9 @@ test("правила: вещи по дням знакомства и забот�
 test("словарь: у каждого запаса комнаты есть строка любому — хозяину и гостю, на «ты» и на «вы», в любой час и в любом её состоянии", () => {
   const names = ["зайти", "окно", "подсказка", ...["дело", "уют", "игра", "сон", "устала", "обида", "ревность"].map(key => `она:${key}`),
     ...["голоден", "сыт", "спит", "ласка", "игра", "шалит", "обижен", "защита", "зов"].map(key => `байт:${key}`), "колючка:полита", "колючка:сухо", "мириться",
-    ...["погладить", "покормить", "поиграть", "чай"].flatMap(key => [key, `${key}:ещё`]), "полить", "полить:рано", ...ITEMS.map(item => `вещь:${item.key}`)];
+    ...["погладить", "покормить", "поиграть", "чай"].flatMap(key => [key, `${key}:ещё`]), "полить", "полить:рано", ...ITEMS.map(item => `вещь:${item.key}`),
+    // 0.41.0: погладить её саму, коробка Байта, снег за окном.
+    "она:погладить", "она:погладить:ещё", "она:погладить:рано", "коробка", "коробка:пусто", "окно:снег"];
   for (const name of names) {
     assert.ok(pool(name).length >= 1, `запаса «+комната:${name}» нет`);
     for (const part of ["утро", "день", "вечер", "ночь"]) for (const owner of [true, false]) for (const formal of [true, false]) for (const level of ["cold", "known", "warm", "close"]) {
@@ -473,4 +476,16 @@ test("«удали всё обо мне» стирает и комнату; ск
   await h.onMessage(message("удали всё обо мне"), KEY);
   await h.onMessage(message("да, удали всё"), KEY);
   assert.equal(roomOf(5), null, "и её больше нет");
+});
+
+test("разбор 0.41.0: коробка Байта — только когда Байт назван; коротко — лишь в комнате; «покажи» здесь — не просьба о картинке", () => {
+  for (const said of ["что в коробке у Байта", "Что в коробке у Байта?", "а что у Байта в коробке", "что лежит в коробке Байта", "что в коробке у твоего кота", "покажи трофеи Байта", "покажи добычу Байта", "открой коробку Байта", "загляни в коробку Байта", "что натаскал Байт", "что притащил Байт"]) {
+    assert.deepEqual(parseRoom(said), { op: "loot" }, said);
+  }
+  // Без Байта — не о комнате: чужая коробка, чужой кот, просто «покажи трофеи».
+  for (const said of ["что в коробке", "что лежит в коробке", "что в коробке у соседа", "покажи трофеи", "что натаскал кот", "покажи коробку", "что в коробке передач"]) assert.equal(parseRoom(said), null, said);
+  // Только что был в комнате — понятно и коротко.
+  assert.deepEqual(parseRoom("что в коробке", { near: true }), { op: "loot", loose: true });
+  assert.deepEqual(parseRoom("а что там в его коробке", { near: true }), { op: "loot", loose: true });
+  assert.equal(parseRoom("что в коробке у соседа", { near: true }), null);
 });

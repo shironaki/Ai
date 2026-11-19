@@ -2,13 +2,17 @@
 /**
  * Спрайт Аи для страницы комнаты: из картинки на зелёном фоне — в модуль `miniapp/her/<имя>.js`.
  *
- *   bash scripts/verify.sh sprite <картинка.png> <имя> [высота, точек] [качество 0–1] [ось 0–1]
+ *   bash scripts/verify.sh sprite <картинка.png> <имя> [высота, точек] [качество 0–1] [ось 0–1 или «-»] [erase=x0,y0,x1,y1 …]
  *
  * Что делает: убирает зелёный фон (и зелёный отсвет по краям), обрезает пустые поля, уменьшает до нужной высоты
  * и сохраняет картинкой WebP с прозрачностью — строкой base64 внутри модуля:
  * `export default { w, h, cx, src: "data:image/webp;base64,…" }` (`cx` — ось тела в долях ширины: по ней спрайт
  * ставится на место; считается сама, шестым словом задаётся руками). Рядом, в `out/`, кладёт снимок для глаз:
  * спрайт на светлом и на тёмном фоне — по нему видно, чисто ли вырезан край.
+ *
+ * Имя — латиницей, наряд через дефис: `tea`, `tea2`, `home-tea`. `erase=…` — прямоугольник в долях исходной картинки
+ * (левый верхний и правый нижний угол), в котором всё светлое считается фоном: так убирается нарисованный пар над
+ * кружкой (пар на странице рисует код — он движется), а тёмные волосы рядом остаются.
  *
  * Почему строкой, а не файлом картинки. Двоичные файлы песочница чата портит между ходами (AGENTS.md, раздел 6),
  * а текст — нет; страница берёт такой модуль отдельным запросом и только тот, что нужен сейчас.
@@ -23,8 +27,9 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve, extname } from "node:path";
 import { tmpdir } from "node:os";
 
-const [, , root, input, name, heightArg = "900", qualityArg = "0.86", axisArg = ""] = process.argv;
-if (!root || !input || !/^[a-z][a-z0-9]*$/u.test(name ?? "")) { console.error("Нужно: node room-sprite.mjs <корень репозитория> <картинка.png> <имя латиницей> [высота] [качество]"); process.exit(2); }
+const [, , root, input, name, heightArg = "900", qualityArg = "0.86", axisArg = "", ...more] = process.argv;
+const erase = more.filter(word => word.startsWith("erase=")).map(word => word.slice(6).split(",").map(Number)).filter(box => box.length === 4 && box.every(value => value >= 0 && value <= 1));
+if (!root || !input || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(name ?? "")) { console.error("Нужно: node room-sprite.mjs <корень репозитория> <картинка.png> <имя латиницей> [высота] [качество]"); process.exit(2); }
 const height = Math.max(200, Math.min(1600, Number(heightArg) || 900)), quality = Math.max(0.4, Math.min(1, Number(qualityArg) || 0.86));
 
 let chromium, puppeteer;
@@ -47,7 +52,7 @@ const browser = await puppeteer.launch({ args: [...chromium.args, "--no-sandbox"
 try {
   const page = await browser.newPage();
   await page.setContent("<!doctype html><meta charset=\"utf-8\"><body style=\"margin:0\"></body>");
-  const made = await page.evaluate(async (source, wanted, q) => {
+  const made = await page.evaluate(async (source, wanted, q, boxes) => {
     const image = new Image();
     image.src = source;
     await image.decode();
@@ -60,9 +65,12 @@ try {
     // выходит полупрозрачным, а его зелёный отсвет гасится: зелёный канал не выше остальных.
     const LOW = 24, HIGH = 96;
     let left = full.width, top = full.height, right = -1, bottom = -1, green = 0;
+    const wiped = boxes.map(([x0, y0, x1, y1]) => [x0 * full.width, y0 * full.height, x1 * full.width, y1 * full.height]);
     for (let i = 0; i < px.length; i += 4) {
       const r = px[i], g = px[i + 1], b = px[i + 2], over = g - Math.max(r, b);
       let alpha = over <= LOW ? 1 : over >= HIGH ? 0 : 1 - (over - LOW) / (HIGH - LOW);
+      // Нарисованный пар: в названном прямоугольнике всё светлое — фон.
+      if (alpha > 0 && wiped.length && (r + g + b) / 3 > 100) { const x = (i / 4) % full.width, y = Math.floor(i / 4 / full.width); if (wiped.some(([x0, y0, x1, y1]) => x >= x0 && x <= x1 && y >= y0 && y <= y1)) alpha = 0; }
       if (over > 0) px[i + 1] = Math.max(r, b);
       // Полупрозрачный край темнится к линии: светлая кайма на тёмных волосах заметнее, чем тёмная.
       if (alpha > 0 && alpha < 1) { const k = 0.55 + 0.45 * alpha; px[i] = r * k; px[i + 1] = px[i + 1] * k; px[i + 2] = b * k; }
@@ -97,7 +105,7 @@ try {
     sctx.fillStyle = "#2a2440"; sctx.fillRect(show.width / 2, 0, show.width / 2, show.height);
     sctx.drawImage(out, 20, 20); sctx.drawImage(out, out.width + 40, 20);
     return { src, cx, w: out.width, h: out.height, from: [full.width, full.height], box: [left, top, cw, ch], share: green / (px.length / 4), preview: show.toDataURL("image/png") };
-  }, `data:${type};base64,${bytes.toString("base64")}`, height, quality);
+  }, `data:${type};base64,${bytes.toString("base64")}`, height, quality, erase);
   if (made.error) { console.error(`спрайт «${name}»: ${made.error}`); process.exit(1); }
   const folder = join(resolve(root), "miniapp", "her");
   await mkdir(folder, { recursive: true });
@@ -106,7 +114,7 @@ try {
   await writeFile(join(folder, `${name}.js`), text);
   await mkdir(join(resolve(root), "out"), { recursive: true });
   await writeFile(join(resolve(root), "out", `sprite-${name}.png`), Buffer.from(made.preview.split(",")[1], "base64"));
-  console.log(`спрайт «${name}»: ${made.from.join("×")} → ${made.w}×${made.h}, ось ${axis}, фон — ${Math.round(made.share * 100)} % картинки, модуль ${Math.round(Buffer.byteLength(text) / 1024)} КБ → miniapp/her/${name}.js; снимок — out/sprite-${name}.png`);
+  console.log(`спрайт «${name}»: ${made.from.join("×")} (фигура в рамке ${made.box.join(" ")}) → ${made.w}×${made.h}, ось ${axis}, фон — ${Math.round(made.share * 100)} % картинки, модуль ${Math.round(Buffer.byteLength(text) / 1024)} КБ → miniapp/her/${name}.js; снимок — out/sprite-${name}.png`);
 } finally {
   await browser.close().catch(() => {});
 }

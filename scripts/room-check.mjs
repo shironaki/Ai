@@ -25,6 +25,10 @@
  *      отозваться на заботу. В 0.39.0 шесть смесей из четырнадцати оставляли пустую страницу: новый `app.js`
  *      брал из `scene.js` имя, которого в прежнем рисунке нет, и писал в слой, которого нет в прежней разметке.
  *      Прежнюю страницу достаёт из истории `verify.sh` (последний коммит с другим номером страницы).
+ *   7. она живая (0.41.0): днём у состояния несколько поз — нажали на неё, и поза сменилась (прежняя тает, новая
+ *      проявляется), сама — через полминуты; у картинки с «веками» она моргает; по голове её гладят (сердечко,
+ *      во второй раз — другие слова); коробка Байта отвечает; звук включается нажатием, запоминается, а без
+ *      нажатия не начинается.
  *   6. её картинка не загрузилась: папки `her/` на сервере нет — или файл пришёл, а картинка в нём не читается
  *      (браузер не знает формата, страница не даёт её показать). Комната открывается, она нарисована кодом,
  *      забота нажимается. Второй случай без проверки оставил бы её невидимой: ссылка на картинку в рисунке
@@ -151,7 +155,7 @@ try {
   const lines = await page.evaluate(async () => {
     const logic = await import("./logic.js");
     const look = logic.demoLook(20, { part: "вечер", things: "all" });
-    return { her: look.her.line, window: look.window, things: Object.fromEntries(look.things.map(item => [item.key, item.line])) };
+    return { her: look.her.line, window: look.window, box: look.box?.line ?? "", things: Object.fromEntries(look.things.map(item => [item.key, item.line])) };
   });
   const tapZone = async (act) => {
     const point = await pointOf(act);
@@ -169,13 +173,29 @@ try {
     if (!await done(act)) fail(`«${act}»: нажатие на рисунок заботой не стало (её слова: «${after}»)`);
     else if (after === before || !after) fail(`«${act}»: её слова не изменились`);
   }
-  // Она, окно и вещи: её слова о них.
-  for (const [act, expected] of [["her", null], ["window", lines.window], ...Object.entries(lines.things).map(([key, line]) => [`thing:${key}`, line])]) {
+  // Она, окно, коробка Байта и вещи: её слова о них.
+  for (const [act, expected] of [["her", null], ["window", lines.window], ["box", lines.box], ...Object.entries(lines.things).map(([key, line]) => [`thing:${key}`, line])]) {
     if (!seen.zones.includes(act)) { if (act !== "thing:плед") fail(`«${act}»: места на рисунке нет`); continue; }
     if (!await tapZone(act)) continue;
     const after = await said();
     if (!after) fail(`«${act}»: она молчит`);
     else if (expected && after !== expected) fail(`«${act}»: сказано «${after}», а ждали «${expected}»`);
+  }
+  // Погладить её по голове: её слова меняются, над головой — сердечко; во второй раз — другие слова, без сердечка.
+  {
+    const before = await said();
+    if (await tapZone("pat")) {
+      const hearts = await page.evaluate(() => document.querySelectorAll("#stage .heart").length);
+      const once = await said();
+      if (!once || once === before) fail("погладить её: слова не изменились");
+      if (!hearts) fail("погладить её: сердечка над головой нет");
+      await pause(1300);
+      if (await tapZone("pat")) {
+        const twice = await said();
+        if (!twice || twice === once) fail("погладить её во второй раз: слова те же, что в первый");
+        if (await page.evaluate(() => document.querySelectorAll("#stage .heart").length)) fail("погладить её во второй раз: сердечко появилось снова");
+      }
+    }
   }
   // Кнопки под рисунком: второй раз за день — другие слова; кнопка остаётся отмеченной.
   for (const act of ["pet", "feed", "play", "tea", "water"]) {
@@ -198,7 +218,7 @@ try {
   if (!scene.picked || !/Новая сценка — завтра\./u.test(scene.text)) fail(`исход сценки не показан: «${scene.text}»`);
   // После всех нажатий её картинка — та же: в кладовой не прибавилось копий, комната по-прежнему ссылается на неё.
   const later = await painted();
-  if (new Set(later.kept).size !== later.kept.length || later.kept.length > 2) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
+  if (new Set(later.kept).size !== later.kept.length || later.kept.length > 8) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
   if (!later.shown || later.inline) fail(`после нажатий её картинки не видно: ${JSON.stringify(later.used)}`);
   console.log(`  нажато: забота на рисунке и кнопками, она, окно, вещей — ${Object.keys(lines.things).length}, сценка`);
   if (shot) { await page.screenshot({ path: shot, fullPage: false }); console.log(`  снимок: ${shot}`); }
@@ -214,8 +234,11 @@ try {
     ...["уют", "устала", "игра"].flatMap(key => ["desk", "shelf", "chair", "sill"].map(pose => [pose, key])),
     ["nap", "сон"], ["chair", "сон"], ["desk", "ревность"], ["back", "обида"],
   ];
+  // Вторые и третьи позы (0.41.0) — с теми «фигурой и местом» Байта, какие бывают по словарю: все сочетания подряд
+  // утроили бы время проверки, а этих восемнадцати хватает, чтобы увидеть, кто кого закрыл.
+  const PAIRS = "sit.bowl walk.bowl lie.bowl sit.sill lie.chair lie.rug curl.pillow curl.desk curl.box sit.near walk.near play.rug claw.chair sit.desk eyes.under sit.top tail.plaid eat.bowl".split(" ").map(pair => pair.split("."));
   for (const how of ["картинкой", "кодом"]) for (const part of ["день", "ночь"]) for (const full of [false, true]) {
-    const chunk = await page.evaluate(async (part, full, looks) => {
+    const chunk = await page.evaluate(async (part, full, looks, pairs) => {
       const scene = await import("./scene.js");
       const sprites = {};
       if (looks) for (const name of Object.keys(scene.HER_SPRITES)) sprites[name] = (await import(`./her/${name}.js`)).default;
@@ -231,9 +254,13 @@ try {
       };
       const things = full ? [...scene.THINGS] : [];
       backdrop.innerHTML = scene.drawBackdrop(part);
-      for (const [pose, key] of looks ?? scene.HER_POSES.map(item => [item, "дело"])) for (const place of scene.CAT_PLACES) for (const shape of scene.CAT_SHAPES) {
-        const label = `${looks ? "картинкой" : "кодом"}/${part}/${full ? "вещи" : "пусто"}/${pose}·${key}/${shape}.${place}`;
-        const view = { part, her: { pose, key }, cat: { shape, place, key: "сыт" }, plant: "dry", things, lamp: "#7fd0c8" };
+      const every = scene.CAT_PLACES.flatMap(place => scene.CAT_SHAPES.map(shape => [shape, place]));
+      // Первая поза — со всеми сочетаниями; остальные позы того же состояния — с теми, что бывают по словарю.
+      const turns = (key) => (looks && typeof scene.spritesOf === "function" ? scene.spritesOf({ part, her: { pose: "desk", key } }).length : 1);
+      const plan = (looks ?? scene.HER_POSES.map(item => [item, "дело"])).flatMap(([pose, key]) => Array.from({ length: turns(key) }, (_, turn) => [pose, key, turn]));
+      for (const [pose, key, turn] of plan) for (const [shape, place] of turn ? pairs : every) {
+        const label = `${looks ? "картинкой" : "кодом"}/${part}/${full ? "вещи" : "пусто"}/${pose}·${key}${turn ? `·поза ${turn + 1}` : ""}/${shape}.${place}`;
+        const view = { part, her: { pose, key, ...(turn ? { turn } : {}) }, cat: { shape, place, key: "сыт" }, plant: "dry", things, lamp: "#7fd0c8" };
         inside.innerHTML = looks ? scene.drawInside(view, { sprites }) : scene.drawInside(view);
         if (looks && !inside.querySelector("use")) note(broken, "her: картинки на рисунке нет", label);
         drawings += 1;
@@ -257,13 +284,13 @@ try {
           if (own > 0 || reachable(node, box)) continue;
           // До неё и до Байта можно дотянуться на любом рисунке. Вещь и окно фигура заслонить может:
           // она сидит на подушке — нажатие по праву её. Но не на каждом рисунке (сверка — ниже).
-          if (act === "her" || act === "pet") note(broken, `${act}: не дотянуться ← ${who}`, label);
+          if (act === "her" || act === "pet" || act === "pat") note(broken, `${act}: не дотянуться ← ${who}`, label);
           else note(covered, `${act} ← ${who}`, label);
         }
       }
       const list = (map) => [...map.entries()].map(([key, value]) => ({ key, ...value }));
       return { drawings, checks, broken: list(broken), covered: list(covered), free: [...free.entries()], things: [...scene.THINGS] };
-    }, part, full, how === "картинкой" ? LOOKS : null);
+    }, part, full, how === "картинкой" ? LOOKS : null, PAIRS);
     tally.drawings += chunk.drawings;
     tally.checks += chunk.checks;
     merge(tally.broken, chunk.broken);
@@ -423,6 +450,108 @@ try {
     await tab.close();
   }
   pictures = true;
+
+  // ── 7. она живая: позы, веки, звук ─────────────────────────────────────────
+  console.log("7. Позы, моргание, звук, снег");
+  {
+    const tab = await browser.newPage();
+    const broken = [];
+    tab.on("pageerror", (error) => broken.push(String(error)));
+    tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
+    // День, «уют», у окна: поз три (с кружкой, пьёт, сидит на пуфе), у первой есть «веки».
+    const day = `${origin}/index.html#part=${encodeURIComponent("день")}&key=${encodeURIComponent("уют")}&scene=0`;
+    const failed = failures.length;
+    await tab.goto(day, { waitUntil: "load", timeout: 30_000 });
+    await pause(900);
+    const shownNow = () => tab.evaluate(() => ({
+      used: [...document.querySelectorAll("#inside > .art use")].map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
+      kept: [...document.querySelectorAll("#store image")].map(node => node.id),
+      leave: document.querySelectorAll("#inside .leave").length, arrive: document.querySelectorAll("#inside .arrive").length,
+      wink: document.querySelectorAll("#inside use.wink").length,
+      winking: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside use.wink")).length,
+      pouf: document.querySelectorAll('#inside [fill*="r-pouf"]').length,
+    }));
+    const waitKept = async (id, ms = 4000) => { for (let spent = 0; spent < ms; spent += 200) { if ((await shownNow()).kept.includes(id)) return true; await pause(200); } return false; };
+    const tapHer = async () => {
+      const point = await tab.evaluate(() => { const box = document.querySelector('#room .zones [data-act="her"]')?.getBoundingClientRect(); return box ? { x: box.left + box.width / 2, y: box.top + box.height * 0.6 } : null; });
+      if (!point) return false;
+      await tab.touchscreen.tap(point.x, point.y);
+      return true;
+    };
+    const start = await shownNow();
+    if (!start.used.includes("#r-her-tea")) fail(`днём в «уюте» первая поза — не «с кружкой»: ${JSON.stringify(start.used)}`);
+    if (!start.wink || !start.winking) fail(`она не моргает: заплаток на глаза — ${start.wink}, движется — ${start.winking}`);
+    if (!start.kept.includes("r-her-tea-blink")) fail(`«век» нет в кладовой рисунка: ${JSON.stringify(start.kept)}`);
+    // Следующая поза подгружается заранее — и только тогда нажатие её сменит.
+    if (!await waitKept("r-her-tea2")) fail("следующая поза не подгрузилась заранее");
+    if (!await tapHer()) fail("на неё не нажать");
+    await pause(160);
+    const mid = await shownNow();
+    if (!mid.used.includes("#r-her-tea2")) fail(`нажали на неё, а поза не сменилась: ${JSON.stringify(mid.used)}`);
+    if (!mid.leave || !mid.arrive) fail(`поза сменилась рывком: тающих — ${mid.leave}, проявляющихся — ${mid.arrive}`);
+    if (!await waitKept("r-her-tea3")) fail("третья поза не подгрузилась заранее");
+    await pause(600);
+    await tapHer();
+    await pause(700);
+    const third = await shownNow();
+    if (!third.used.includes("#r-her-tea3") || !third.pouf) fail(`третья поза — сидит на пуфе: ${JSON.stringify(third.used)}, пуфов — ${third.pouf}`);
+    if (new Set(third.kept).size !== third.kept.length) fail(`картинки в кладовой повторяются: ${JSON.stringify(third.kept)}`);
+    // Сама — без нажатия: срок назван в адресе (на странице в Telegram он — от 24 до 40 секунд).
+    await tab.goto(`${day}&turn=700`, { waitUntil: "load", timeout: 30_000 });
+    await tab.reload({ waitUntil: "load" });
+    await pause(700);
+    const before = (await shownNow()).used.join();
+    let turned = false;
+    for (let spent = 0; spent < 6000 && !turned; spent += 300) { await pause(300); turned = (await shownNow()).used.join() !== before; }
+    if (!turned) fail("сама она позу не сменила за шесть секунд (срок в адресе — 0,7 с)");
+
+    // Звук: по умолчанию тихо; включается нажатием; запоминается; без нажатия не начинается.
+    await tab.goto(day, { waitUntil: "load", timeout: 30_000 });
+    await tab.reload({ waitUntil: "load" });
+    await pause(800);
+    const soundNow = () => tab.evaluate(() => { const button = document.getElementById("sound"); return { shown: Boolean(button) && getComputedStyle(button).display !== "none" && button.getBoundingClientRect().height > 0, on: button?.getAttribute("aria-pressed") === "true", kept: localStorage.getItem("ai-room-sound"), loaded: performance.getEntriesByType("resource").some(entry => /\/sound\.js$/u.test(entry.name)) }; });
+    const quiet = await soundNow();
+    if (!quiet.shown) fail("выключателя звука на странице не видно");
+    if (quiet.on || quiet.loaded) fail(`звук включён без спроса: нажат — ${quiet.on}, модуль загружен — ${quiet.loaded}`);
+    await tab.tap("#sound");
+    await pause(900);
+    const loud = await soundNow();
+    if (!loud.on || loud.kept !== "1" || !loud.loaded) fail(`звук не включился: нажат — ${loud.on}, запомнен — «${loud.kept}», модуль загружен — ${loud.loaded}`);
+    // Забота со звуком: мурчание — и ни одной ошибки.
+    await tab.tap('#actions button[data-act="pet"]');
+    await pause(500);
+    // Запомненное «включено» ждёт первого касания страницы: телефон не даст звучать без него.
+    await tab.reload({ waitUntil: "load" });
+    await pause(800);
+    const waiting = await soundNow();
+    if (waiting.on || waiting.loaded) fail(`после перезагрузки звук начался без касания: нажат — ${waiting.on}, модуль загружен — ${waiting.loaded}`);
+    await tapHer();
+    await pause(1100);
+    const again = await soundNow();
+    if (!again.on) fail("запомненный звук не вернулся с первым касанием страницы");
+    await tab.tap("#sound");
+    await pause(500);
+    const off = await soundNow();
+    if (off.on || off.kept !== "0") fail(`звук не выключился: нажат — ${off.on}, запомнен — «${off.kept}»`);
+    // Снег вместо дождя (когда в городе человека снег): те же два слоя, в них хлопья, у каждого слоя — одно движение.
+    await tab.goto(`${day}&sky=snow&things=all`, { waitUntil: "load", timeout: 30_000 });
+    await tab.reload({ waitUntil: "load" });
+    await pause(800);
+    const snow = await tab.evaluate(() => ({
+      sky: document.querySelector(".rainbox")?.dataset.sky ?? "",
+      planes: ["rainFar", "rainNear"].map(id => { const plane = document.getElementById(id); return { flakes: plane.querySelectorAll(".snow circle").length, lines: plane.querySelectorAll("path").length, moves: plane.getAnimations().map(animation => animation.animationName) }; }),
+      things: ["торт", "свеча", "фонарь"].filter(key => document.querySelector(`#room .zones [data-act="thing:${key}"]`)),
+    }));
+    if (snow.sky !== "snow") fail(`снег: слой дождя не знает, что идёт снег («${snow.sky}»)`);
+    for (const [index, plane] of snow.planes.entries()) {
+      if (plane.flakes < 20 || plane.lines) fail(`снег, слой ${index + 1}: хлопьев — ${plane.flakes}, струй дождя — ${plane.lines}`);
+      if (plane.moves.length !== 1 || !/^snow-(?:far|near)$/u.test(plane.moves[0])) fail(`снег, слой ${index + 1}: движения — ${JSON.stringify(plane.moves)}, а должно быть одно, снежное`);
+    }
+    if (snow.things.length !== 3) fail(`праздничные вещи: на рисунке — ${JSON.stringify(snow.things)}, а должны быть торт, свеча и фонарь`);
+    if (broken.length) fail(`позы и звук — ошибка на странице: ${broken[0].slice(0, 200)}`);
+    if (failures.length === failed) console.log(`  позы сменяются от нажатия и сами, прежняя тает; моргает (заплаток — ${start.wink}); звук включается нажатием, запоминается, без касания не начинается; снег — хлопьями в двух слоях; торт, свеча и фонарь на месте`);
+    await tab.close();
+  }
 
   if (errors.length) for (const text of errors) fail(`ошибка на странице: ${text}`);
 } catch (error) {

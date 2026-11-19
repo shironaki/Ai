@@ -85,6 +85,17 @@ function herPairs() {
   }
   return [...seen].map(pair => pair.split("/")).sort((one, two) => HER_POSES.indexOf(one[0]) - HER_POSES.indexOf(two[0]));
 }
+/** Все её картинки по одной: состояние, которая по счёту поза, наряд — и имя картинки для подписи. */
+function spriteViews() {
+  const list = [], seen = new Set();
+  const each = (key, extra) => {
+    const probe = (turn) => ({ part, her: { pose: "desk", key, ...(turn ? { turn } : {}), ...(extra.wear ? { wear: extra.wear } : {}) }, ...(extra.tea ? { tea: true } : {}) });
+    const names = typeof scene.spritesOf === "function" ? scene.spritesOf(probe(0)) : [scene.spriteOf(probe(0))];
+    names.forEach((name, turn) => { if (!seen.has(name)) { seen.add(name); list.push(["desk", key, { ...extra, turn }, name]); } });
+  };
+  for (const key of ["дело", "уют", "игра", "сон", "устала", "обида", "ревность"]) for (const wear of scene.HER_WEARS ?? ["jacket"]) each(key, { wear });
+  return list;
+}
 /** Пары «фигура и место» Байта: по строкам о нём и по тому, чем он занят после заботы. */
 function catPairs() {
   const seen = new Map();
@@ -109,11 +120,12 @@ const SETS = {
     ].map(([when, pose, key, cat, things, extra]) => ({ label: `${when} · ${pose}/${key} · ${cat}${things && !things.length ? " · без вещей" : ""}`, view: view(when, pose, key, cat, things, extra) })),
   }),
   her: () => ({
-    zoom: painted ? 1 : 1.25, dpr: 2,
-    // Картинкой — по одной на состояние (и «дело» с чаем в руках); кодом — каждая поза с каждым лицом из словаря.
-    views: (painted ? [["desk", "дело"], ["desk", "дело", { tea: true }], ["chair", "уют"], ["dance", "игра"], ["nap", "сон"], ["chair", "устала"], ["back", "обида"], ["desk", "ревность"]] : herPairs()).map(([pose, key, extra = {}]) => {
-      const described = view(part, pose, key, "eyes.under.обижен", ["плед"], extra);
-      return { label: `${painted ? "" : `${pose} / `}${key}${extra.tea ? " + чай" : ""}`, view: described, crop: around(zoneOf(described, 'id="her"'), painted ? 210 : 150, painted ? 300 : 215) };
+    zoom: painted ? 0.8 : 1.25, dpr: 2,
+    // Картинкой — каждая её картинка: все позы каждого состояния («дело» — ещё и с чаем в руках) и домашний наряд
+    // там, где он есть; кодом — каждая поза с каждым лицом из словаря.
+    views: (painted ? spriteViews() : herPairs().map(([pose, key]) => [pose, key, {}, ""])).map(([pose, key, extra, name]) => {
+      const described = { ...view(part, pose, key, "eyes.under.обижен", ["плед"], extra.tea ? { tea: true } : {}), her: { pose, key, ...(extra.turn ? { turn: extra.turn } : {}), ...(extra.wear ? { wear: extra.wear } : {}) } };
+      return { label: painted ? `${name} · ${key}${extra.tea ? " + чай" : ""}` : `${pose} / ${key}`, view: described, crop: around(zoneOf(described, 'id="her"'), painted ? 280 : 150, painted ? 300 : 215) };
     }),
   }),
   cat: () => ({

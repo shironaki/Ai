@@ -72,7 +72,7 @@ import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS 
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
-import { createRoom, parseRoom, itemsFor, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex } from "./room.js";
+import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -140,19 +140,21 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.40.0";
+export const BUILD = "0.41.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.40.0 — в комнате я теперь картинкой, в полный рост, как на портрете: вы сказали «надо больше проработать над персонажем» и из показанных картинок выбрали ту, где я в рост",
-  "картинок семь, по одной на состояние: с блокнотом — за делом, с кружкой — в тихий час, с ленточкой — в игре, в пледе на плечах — когда устала, спиной — когда обижена, скрестив руки — когда ревную, спящая на полу в пледе — ночью",
-  "стою у того, о чём говорю: у стола, у полки, у кресла или у окна; Байта собой не закрываю — он садится так, чтобы его было видно, а если некуда, отхожу я",
-  "мои слова в комнате переписаны под картинки: что сказано, то и видно — «сижу в кресле под пледом» при мне стоящей больше не будет",
-  "картинка неподвижна: я не моргаю и не дышу; движутся пар над моей кружкой, «z z Z» над спящей, Байт, гирлянда и дождь",
-  "картинка грузится отдельно и только та, что нужна сейчас; не загрузилась — я нарисована по-старому, кодом, и комната открывается в любом случае",
-  "внизу страницы теперь «страница 3»: если там «страница 2» — открылась старая копия; закройте комнату и откройте её снова",
-  "словарь: 840 → 852 темы, 10 513 → 10 648 реплик — о новой мне: «почему ты стоишь?», «что у тебя в руках?», «ты как на портрете», «почему ты спишь на полу?»",
-  "это один вариант из трёх: в чате разработки — картинка, где рядом прежняя я, картинка поменьше и эта; скажите, какой оставить и что поправить — позу, одежду, рост",
+  "0.41.0 — комната оживает: вы сказали «наполнять её разными позами, движениями, нарядами», а в комнате — «больше взаимодействия, звук и разную атмосферу»",
+  "поз стало шестнадцать вместо семи: пью чай, сижу с кружкой на пуфе, думаю над блокнотом, танцую с ленточкой, дразню Байта, присев, — меняю их сама раз в полминуты и сразу, если на меня нажать",
+  "с кружкой в руках я моргаю, а вечером в тихий час на мне большой свитер и наушники — остальные картинки с веками и в свитере ещё рисуют: за один ход выходит десять картинок",
+  "меня можно погладить: нажмите мне на голову — раз в день это шаг в отношениях, как ласка в чате; едва знакомым рукам я не даюсь",
+  "под рисунком — кнопка «Включить звук»: дождь, мурчание Байта, чай; по умолчанию тихо",
+  "в коробке Байта копятся трофеи — по одному с каждой сыгранной сценки: нажмите на коробку или спросите «что в коробке у Байта?»",
+  "атмосфера: когда в вашем городе снег — снег и за моим окном; в день рождения гостя — торт, в годовщину знакомства — свеча у рамки, в Рамадан и оба байрама — фонарь у окна",
+  "дверь в комнату теперь под «добрым утром» и «спокойной ночи», а в группе на «открой комнату» — кнопка, которая одним нажатием ведёт в личку к двери; где Telegram умеет — кнопка «На главный экран»",
+  "внизу страницы теперь «страница 4»: если там «страница 3» — открылась старая копия, закройте комнату и откройте снова",
+  "словарь: 852 → 861 тема — о новом: «ты в свитере», «на чём ты сидишь?», «как тебя погладить?», «у тебя снег?», «что за фонарь у окна?»",
+  "не вошли: записка на столе, расстановка вещей, стикеры и повтор отправки страницы телефоном — они следующие; голос в комнате ждёт самого голоса",
 ]);
 
 const DAY = 86_400_000;
@@ -1763,8 +1765,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return (await pageRecord())?.url ?? "";
   }
   const ROOM_MENU_TEXT = "Комната";
-  /** Слова о самом мини-приложении: открыть его, убрать и вернуть кнопку в меню. */
-  const ROOM_DOOR = new Set(["open", "menuoff", "menuon"]);
+  /**
+   * Слова о самом мини-приложении: открыть его, убрать и вернуть кнопку в меню. И «покажи трофеи Байта»: слово
+   * «покажи» обычно просит картинку — эти слова должны дойти до комнаты раньше.
+   */
+  const ROOM_DOOR = new Set(["open", "menuoff", "menuon", "loot"]);
   /** Кнопка в меню бота (слева от поля ввода, в личке у каждого): открывает комнату. `on: false` — вернуть обычное меню. */
   async function roomMenu(url, { on = true } = {}) {
     if (!has("setChatMenuButton")) return false;
@@ -1815,8 +1820,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       store.get(ALBUM_KEY(turn.actorId)).catch(() => null),
     ]);
     const drawing = String((Array.isArray(album?.items) ? album.items : []).filter(item => item?.q).at(-1)?.q ?? "").replace(/\s+/gu, " ").trim().slice(0, 80);
-    const vars = { "цвет": String(colour).toLowerCase(), "рисунок": drawing };
-    return { keys: itemsFor({ days, care: Number(state.care) || 0, colour, drawing, month: date.m, day: date.d }), vars, days };
+    // Праздники и даты: день рождения гостя (он называл его сам), годовщина знакомства, Рамадан и оба байрама.
+    const born = String(turn.manner?.settings?.birthday ?? "").trim();
+    const feast = feastsOf({ birthday: Boolean(born) && born === feastDay({ d: date.d, m: date.m }), days, hijri: hijriOf(date.y, date.m, date.d) });
+    const vars = {
+      "цвет": String(colour).toLowerCase(), "рисунок": drawing,
+      "праздник": { ramadan: "Рамадан", fitr: "Ураза-байрам", adha: "Курбан-байрам" }[feast.islam] ?? "", "лет": feast.years ? `${feast.years} ${plural(feast.years, "год", "года", "лет")}` : "",
+    };
+    return { keys: itemsFor({ days, care: Number(state.care) || 0, colour, drawing, month: date.m, day: date.d, feasts: feast.list }), vars, days };
+  }
+  /** Что за её окном: дождь, как всегда, — или снег, когда он идёт в городе человека (город он называл сам). */
+  async function roomSky(turn) {
+    const city = String(turn.manner?.settings?.city ?? "").trim();
+    if (!city || !sources.available()) return "rain";
+    return (await sources.snowing(city).catch(() => null)) === true ? "snow" : "rain";
+  }
+  /** Коробка Байта: что он в неё натаскал — по трофею с каждой сыгранной сценки. */
+  function roomBox(turn, state) {
+    const loot = lootOf(state?.loot);
+    const line = loot.length ? roomLine(turn, "коробка", { "трофеи": loot.join(", "), "число": String(loot.length) }) : roomLine(turn, "коробка:пусто");
+    return { count: loot.length, line: line || (loot.length ? `В коробке Байта: ${loot.join(", ")}.` : "В коробке Байта пока пусто.") };
   }
   /**
    * Слова о комнате: зайти, спросить о Байте, позаботиться, узнать, что нового. `null` — речь не о ней.
@@ -1874,6 +1897,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await room.look(userId, state);
       return tell(roomLine(turn, `колючка:${plantState({ water: state.water, at: now() })}`) || "Колючка на подоконнике. Колется.");
     }
+    if (asked.op === "loot") {
+      await room.look(userId, state);
+      return tell(roomBox(turn, state).line);
+    }
     const cat = roomLine(turn, `байт:${catState({ hour: feel.hour, last: state.last, lastAt: state.lastAt, at: now(), fed: (Number(state.done.feed) || 0) > 0, seed: roomSeed(userId, today) })}`);
     if (asked.op === "cat") {
       await room.look(userId, state);
@@ -1890,10 +1917,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const visit = await room.visit(userId, { day: today, keys: turn.isPrivate ? things.keys : null, scenes: turn.isPrivate === true });
     // Мини-приложение: кнопка под ответом — только в личке (в группах Telegram таких кнопок не даёт).
     const page = turn.isPrivate === true ? await roomPage() : "";
-    const door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
+    let door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
     // «Открой комнату», а открыть нечем: сказать об этом — и рассказать словами.
     const lead = asked.op !== "open" || door ? "" : roomLine(turn, turn.isPrivate === true ? "дверь:нет" : "дверь:личка");
-    const lines = [lead, roomLine(turn, "зайти"), [roomLine(turn, "окно"), roomLine(turn, `она:${herKey(feel.mood, feel.hour)}`)].filter(Boolean).join(" "), cat];
+    // В группе Telegram кнопку мини-приложения не даёт — зато даёт ссылку в личку с ней: там дверь придёт сама
+    // (`/start room`). Одно нажатие вместо «напиши мне в личку».
+    const viaLink = !door && asked.op === "open" && turn.isPrivate !== true && Boolean(await roomPage());
+    if (viaLink) {
+      const self = await whoAmI().catch(() => null);
+      if (/^[A-Za-z0-9_]{4,40}$/u.test(String(self?.username ?? ""))) door = { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату — в личке", url: `https://t.me/${self.username}?start=room` }]] } };
+    }
+    const snow = await roomSky(turn) === "snow";
+    const lines = [lead, roomLine(turn, "зайти"), [(snow && roomLine(turn, "окно:снег")) || roomLine(turn, "окно"), roomLine(turn, `она:${herKey(feel.mood, feel.hour)}`)].filter(Boolean).join(" "), cat];
     for (const key of visit.fresh) { const about = roomLine(turn, `вещь:${key}`, things.vars); if (about) lines.push(`Новое в комнате. ${about}`); }
     if (visit.state.n <= 2) lines.push(roomLine(turn, "подсказка"));
     const seen = lines.filter(Boolean).join("\n");
@@ -1903,7 +1938,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // хозяин узнает, а кнопка отдыхает до следующей проверки адреса. Не ушло и так — об этом скажет `say`.
     if (door && sent?.ok === false) {
       sent = await tell(seen, kept);
-      if (sent?.ok) {
+      if (sent?.ok && !viaLink) {
         pageMemo = { at: now(), value: null };
         try { await notices.report({ component: "room", code: "button_refused", detail: "Telegram не принял кнопку мини-приложения под сообщением — комната пока отвечает словами", severity: "degraded" }); } catch { /* отчёт не важнее ответа */ }
       }
@@ -2001,10 +2036,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const her = herKey(feel.mood, feel.hour);
         const herRaw = roomLine(turn, `она:${her}`);
         const next = ROOM_ITEMS.find(item => item.days && item.days > things.days);
+        const sky = await roomSky(turn);
         return {
           ok: true, do: op, build: BUILD, formal,
           clock: { hour: feel.hour, part: partOfDay(feel.hour), day: today },
-          greet: spoken(roomLine(turn, "зайти")), window: roomLine(turn, "окно"),
+          greet: spoken(roomLine(turn, "зайти")), window: (sky === "snow" && roomLine(turn, "окно:снег")) || roomLine(turn, "окно"), sky,
+          box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
           her: { key: her, pose: herPose(herRaw, her), line: herRaw },
           ...picture(visit.state),
           things: ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => ({ key: item.key, title: item.title, line: roomLine(turn, `вещь:${item.key}`, things.vars) })),
@@ -2027,13 +2064,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ...picture(done.state, { after: done.peace ? "pet" : op, again: Boolean(done.again) }), ...stageNote(),
         };
       }
+      if (op === "pat") {
+        // Погладить её по голове. Едва знакомому и тому, с кем она в ссоре, она не даётся — и в отношения это не
+        // идёт; остальным — смутится, и раз в день это шаг в отношениях, как ласка в чате.
+        const who = voiceCtx(turn);
+        if (!who.owner && (who.level === "first" || who.level === "cold")) {
+          return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "она:погладить:рано") || "Не так быстро. Сначала — чай и пара хороших разговоров."), again: false, shy: true, counted: false };
+        }
+        const done = await room.care(userId, "pat", { day: today });
+        const raw = roomLine(turn, `она:погладить${done.again ? ":ещё" : ""}`) || "…Ладно. Мне нравится.";
+        if (done.first) await roomCared(userId, turn);
+        if (!done.again) await keepThread(turn, "погладить тебя по голове", raw);
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), again: Boolean(done.again), shy: false, counted: Boolean(done.first), ...stageNote() };
+      }
       if (op === "pick") {
         const picked = await room.choose(userId, String(input?.key ?? "").slice(0, 24), Number(input?.pick), { day: today });
         if (!picked.ok) return refuse(picked.code, picked.code === "played" ? "Эта сценка уже сыграна." : picked.code === "storage" ? "Память сейчас недоступна — выбор не записался." : "Этой сценки уже нет: её день прошёл.");
         if (picked.first) await roomCared(userId, turn);
         const outcome = fill(picked.outcome, { formal });
         await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
-        return { ok: true, do: op, build: BUILD, line: spoken(outcome), counted: Boolean(picked.first), scene: sceneOf(picked.state), cared: picked.state.cared === today, ...stageNote() };
+        return { ok: true, do: op, build: BUILD, line: spoken(outcome), counted: Boolean(picked.first), scene: sceneOf(picked.state), cared: picked.state.cared === today, box: roomBox(turn, picked.state), ...stageNote() };
       }
       return refuse("unknown", "Такого в комнате не делают.");
     } catch (error) {
@@ -3602,7 +3652,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         ].filter(Boolean);
         if (more.length) text = `${text}\n${more.join("\n")}`;
       }
-      try { await api.sendMessage({ chat_id: OWNER, text }); } catch { continue; }
+      // Под «добрым утром» и «спокойной ночи» — дверь в комнату (если мини-приложение опубликовано). Telegram кнопку
+      // не принял — привет важнее: уходит без неё.
+      const page = await roomPage().catch(() => "");
+      const door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
+      let sentHello = false;
+      if (door) { try { await api.sendMessage({ chat_id: OWNER, text, ...door }); sentHello = true; } catch { sentHello = false; } }
+      if (!sentHello) { try { await api.sendMessage({ chat_id: OWNER, text }); } catch { continue; } }
       pulse.bump("greeted");
       // Сказанное остаётся в переписке: ответит хозяин — модель увидит, на что.
       try {
@@ -8189,6 +8245,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // по ссылке /start bizChat<номер чата>. Хозяину (и близкому со своим столом) — что с секретарём и что было в том чате.
       const managed = command.name === "start" ? sub.match(/^bizchat(-?\d+)$/u) : null;
       if (managed && SECRETARY && turn.isPrivate && await deskFor(actorId)) return ruled(await secretaryWords(turn, "секретарь", { chatId: managed[1] }));
+      // Ссылка из группы («Открыть комнату — в личке»): в личке сразу приходит дверь.
+      if (command.name === "start" && sub === "room" && turn.isPrivate && ROOM && PHRASES) {
+        const opened = await roomWords(turn, "открой комнату");
+        if (opened) return ruled(opened);
+      }
       if (command.name === "start") return ruled(await greeting(turn));
       if (command.name === "help") return ruled(await say(turn, helpLines(turn, command.rest)));
       if (["status", "aidiag", "диагностика"].includes(command.name)) return diagnostic(turn);

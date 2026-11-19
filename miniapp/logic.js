@@ -1,5 +1,5 @@
 /**
- * Комната Аи — что показать (мини-приложение, сборка 0.40.0).
+ * Комната Аи — что показать (мини-приложение, сборка 0.41.0).
  *
  * Чистые функции между ответом сердца (`endpoints/room`) и рисунком (`scene.js`): здесь нет ни страницы, ни
  * Telegram, поэтому всё проверяется тестами. Страница (`app.js`) только зовёт их и раскладывает итог по разметке.
@@ -7,13 +7,16 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "3";
+export const PAGE = "4";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
 /** Цвет шапки Telegram под стену комнаты в этот час. */
 export const HEADERS = Object.freeze({ "утро": "#c9b5ab", "день": "#cbbeb3", "вечер": "#65536a", "ночь": "#443f5d" });
 export const partOf = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
+
+/** Наряды, которые может назвать сердце (те же, что `HER_WEARS` в рисунке; из рисунка имя не берётся: рядом может лежать его прежняя копия). */
+const WEARS = Object.freeze(["jacket", "home"]);
 
 const text = (value, limit = 600) => (typeof value === "string" ? value.trim().slice(0, limit) : "");
 const count = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Math.floor(Number(value)) : 0);
@@ -23,14 +26,19 @@ export function blank(hour = 12) {
   return {
     ready: false, demo: false, busy: "", tone: "", said: "Дверь открывается…", retry: false,
     part: partOf(hour), her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, tea: false,
-    lines: { her: "", window: "", cat: "", things: {} }, done: {}, scene: null, build: "", next: null,
+    lines: { her: "", window: "", cat: "", box: "", things: {} }, done: {}, scene: null, build: "", next: null,
+    // Которая по счёту её поза (позы состояния идут по кругу) и гладили ли её сегодня; что за окном — дождь или снег.
+    turn: 0, patted: false, sky: "rain",
   };
 }
 
-/** Что отдать рисунку. */
+/** Что отдать рисунку. `turn` — которая по счёту её поза: страница прибавляет его со временем и от нажатия. */
 export function viewOf(state) {
-  return { part: state.part, her: state.her, cat: state.cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed, tea: state.tea };
+  const turn = Number.isInteger(state.turn) && state.turn > 0 ? state.turn : 0;
+  return { part: state.part, her: state.her && turn ? { ...state.her, turn } : state.her, cat: state.cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed, tea: state.tea, ...(state.sky === "snow" ? { sky: "snow" } : {}) };
 }
+/** Следующая её поза. */
+export const nextTurn = (state) => ({ ...state, turn: (Number.isInteger(state.turn) && state.turn > 0 ? state.turn : 0) + 1 });
 
 function sceneOf(raw) {
   if (!raw || typeof raw !== "object" || !text(raw.key, 24) || !text(raw.text)) return null;
@@ -61,11 +69,12 @@ export function applyLook(state, result) {
   const thingLines = Object.fromEntries(things.map(item => [item.key, text(item.line) || `${text(item.title).slice(0, 1).toUpperCase()}${text(item.title).slice(1)}.`]));
   const fresh = (Array.isArray(result.fresh) ? result.fresh : []).filter(key => thingLines[key]);
   const done = doneOf(result.done);
-  const lines = { her: text(result.her?.line), window: text(result.window), cat: text(result.cat?.line), things: thingLines };
+  const lines = { her: text(result.her?.line), window: text(result.window), cat: text(result.cat?.line), box: text(result.box?.line), things: thingLines };
   const said = [text(result.greet), lines.her, lines.cat, ...fresh.map(key => `Новое в комнате. ${thingLines[key]}`)].filter(Boolean).join("\n");
   return {
     ...state, ready: true, busy: "", tone: "", retry: false, part,
-    her: { pose: HER_POSES.includes(result.her?.pose) ? result.her.pose : "desk", key: text(result.her?.key, 16) },
+    her: { pose: HER_POSES.includes(result.her?.pose) ? result.her.pose : "desk", key: text(result.her?.key, 16), ...(WEARS.includes(result.her?.wear) ? { wear: result.her.wear } : {}) },
+    turn: 0, patted: result.patted === true, sky: result.sky === "snow" ? "snow" : "rain",
     cat: catOf(result.cat), plant: result.plant?.state === "dry" ? "dry" : "wet",
     things: things.map(item => item.key), lamp: /^#[0-9a-f]{6}$/iu.test(String(result.lamp ?? "")) ? result.lamp : "",
     fed: done.feed > 0, tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
@@ -93,14 +102,22 @@ export function applyPick(state, result) {
     const closed = result?.code === "played" || result?.code === "gone";
     return { ...refused(state, result), scene: closed ? null : state.scene };
   }
-  return { ...state, busy: "", tone: "", retry: false, scene: sceneOf(result.scene) ?? state.scene, said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || state.said };
+  // Сыграли сценку — Байт унёс в коробку трофей: строка о коробке приходит новая.
+  const lines = text(result.box?.line) ? { ...state.lines, box: text(result.box.line) } : state.lines;
+  return { ...state, busy: "", tone: "", retry: false, lines, scene: sceneOf(result.scene) ?? state.scene, said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || state.said };
 }
 
-/** Нажатие на то, что не забота: она сама, окно, вещь. Возвращает новое состояние или `null` — сказать нечего. */
+/** Нажатие на то, что не забота: она сама, окно, коробка Байта, вещь. Возвращает новое состояние или `null` — сказать нечего. */
 export function applyTap(state, act) {
   const name = String(act ?? "");
-  const said = name === "her" ? state.lines.her : name === "window" ? state.lines.window : name.startsWith("thing:") ? state.lines.things[name.slice(6)] : "";
+  const said = name === "her" ? state.lines.her : name === "window" ? state.lines.window : name === "box" ? state.lines.box : name.startsWith("thing:") ? state.lines.things[name.slice(6)] : "";
   return said ? { ...state, tone: "", retry: false, said } : null;
+}
+
+/** Ответ на «погладить её» (`do: "pat"`): её слова; гладили сегодня — отметка остаётся. */
+export function applyPat(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  return { ...state, busy: "", tone: "", retry: false, patted: true, said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || "…" };
 }
 
 /** Ошибка связи словами. `err` — то, что отдаёт `Telegram.WebApp.Serverless.call`: `message`, `type`. */
@@ -146,6 +163,7 @@ const DEMO_THINGS = Object.freeze({
   "снимок": "Рамка с нашим первым разговором.", "плед": "Плед на двоих. Синий, как и мой.", "календарь": "Календарь. Один день обведён — день знакомства.",
   "кресло": "Второе кресло у окна. Ваше.", "кактус": "Маленький кактус рядом с Колючкой. Имя ещё не придумала.", "место": "Место на подоконнике рядом с Байтом. Он подвинулся — это редкость.",
   "абажур": "Абажур — любимого цвета гостя.", "рисунок": "Мой рисунок на стене.", "ёлка": "Ёлка с гирляндой. Байт уже присматривается к шарам.",
+  "торт": "Торт со свечкой — в день рождения гостя.", "свеча": "Свеча у рамки — в годовщину знакомства.", "фонарь": "Фонарь у окна — в Рамадан и оба байрама.",
 });
 export const DEMO_NOTE = "Это витрина: по-настоящему комната открывается из Telegram — кнопкой «Комната» в чате с Аи.";
 
@@ -156,11 +174,12 @@ export function demoLook(hour = 12, params = {}) {
   const [shape = "sit", place = "bowl", catKey = "голоден"] = String(params.cat ?? "").split(".").filter(Boolean);
   const listed = params.things === "all" ? [...THINGS] : String(params.things ?? "кружка,тапочки").split(",").filter(name => THINGS.includes(name));
   return {
-    ok: true, do: "look", build: "", clock: { hour, part }, greet: DEMO_NOTE, window: DEMO_WINDOW[part],
+    ok: true, do: "look", build: "", clock: { hour, part }, greet: DEMO_NOTE, window: params.sky === "snow" ? "Сегодня вместо дождя — снег: крыши белые, город притих." : DEMO_WINDOW[part], sky: params.sky === "snow" ? "snow" : "rain",
     her: { pose: HER_POSES.includes(params.her) ? params.her : pose, key: params.key ?? key, line: params.her ? "" : line },
     cat: { shape, place, key: catKey, line: params.cat ? "" : "Байт сидит у миски и смотрит. На миску. На меня. Снова на миску." },
     plant: { state: params.plant === "wet" ? "wet" : "dry" }, done: {}, cared: false,
     things: listed.map(name => ({ key: name, title: name, line: DEMO_THINGS[name] ?? "" })), lamp: params.lamp ?? "", drawing: "", fresh: [], next: null,
+    box: { count: 2, line: "В коробке Байта — его трофеи: носок неизвестного происхождения и лампочка от гирлянды. Растёт с каждой сценкой." }, patted: false,
     scene: params.scene === "0" ? null : { key: DEMO_SCENE.key, text: DEMO_SCENE.text, options: DEMO_SCENE.options, pick: null, outcome: null }, first: true,
   };
 }
@@ -174,6 +193,10 @@ export function demoCare(state, op) {
     ...(moved ? { cat: { key: op === "feed" ? "сыт" : op === "play" ? "игра" : "ласка", ...(before && op !== "pet" ? { shape: op === "feed" ? "sit" : "lie", place: moved.place } : moved) } } : {}),
     plant: { state: op === "water" ? "wet" : state.plant }, done: { ...state.done, [op]: before + (early ? 0 : 1) }, cared: true,
   };
+}
+/** «Погладить её» на витрине. */
+export function demoPat(state) {
+  return { ok: true, do: "pat", build: "", line: state.patted ? "Ещё? Я не против. Только Байту не говорите: он считает, что гладить положено его." : "…Так можно было? Ладно. Мне нравится.", again: state.patted === true, counted: false };
 }
 export function demoPick(state, pick) {
   const index = pick === 1 ? 1 : 0;
