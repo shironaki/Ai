@@ -12,8 +12,11 @@
 #                                   лист рисунков комнаты — посмотреть глазами (после правки рисунка)
 #   bash scripts/verify.sh sprite <картинка.png> <имя> [высота] [качество] [ось] [erase=x0,y0,x1,y1]
 #                                   спрайт Аи: картинка на зелёном фоне → модуль miniapp/her/<имя>.js
-#   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя> [win=ШxВ] [at=x,y]
+#   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя> [win=ШxВ] [at=x,y] [by=head]
 #                                   моргание: заплатка «веки» в модуль спрайта (она же картинка, глаза закрыты)
+#   bash scripts/verify.sh ref <имя>[,<имя>…] <куда.png> [высота] [closed]
+#                                   образец для средства рисования: её картинка из модуля — на зелёном фоне
+#                                   (closed — с закрытыми глазами: перенести веки на ту же позу в другом наряде)
 #
 # Зависимостей у проекта нет и не будет (на платформе нет npm), поэтому eslint и
 # Node 24 ставятся во временную папку (VERIFY_TMP, по умолчанию /tmp) при первом
@@ -151,6 +154,16 @@ blink() {
   (cd "$PAGE" && node room-blink.mjs "$ROOT" "$input" "$@")
 }
 
+# Образец для средства рисования: её картинка из модуля на зелёном фоне — сценарий scripts/room-ref.mjs.
+ref() {
+  if [ -z "${2:-}" ]; then echo "Нужно: bash scripts/verify.sh ref <имя>[,<имя>…] <куда.png> [высота] [closed]"; return 1; fi
+  browser
+  cp "$ROOT/scripts/room-ref.mjs" "$PAGE/room-ref.mjs"
+  local names="$1" out="$2"; shift 2
+  case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
+  (cd "$PAGE" && node room-ref.mjs "$ROOT" "$names" "$out" "$@")
+}
+
 case "${1:-quick}" in
   quick) lint; ci ;;
   all) lint; ci; node24 ;;
@@ -161,5 +174,6 @@ case "${1:-quick}" in
   sheet) shift; sheet "$@" ;;
   sprite) shift; sprite "$@" ;;
   blink) shift; blink "$@" ;;
+  ref) shift; ref "$@" ;;
   *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

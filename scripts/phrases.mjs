@@ -13,11 +13,19 @@
  * (0.36.2). Двумя — ни один модуль проекта не тяжелее, чем был в сборке, которая
  * заведомо публиковалась (docs/JOURNAL.md, «Сообщение 31»). Склеивает половины
  * `tgcloud/lib/phrasebook.js`.
+ *
+ * Почему в модулях не прочесть ни слова (с 0.42.0). Буква кириллицы весит в запросе два байта, латинская — один,
+ * кавычка — тоже два. Поэтому каждая тема записана как JSON, в котором знаки переставлены по таблице
+ * `tgcloud/lib/pack.js`: русские буквы — латинскими, кавычка — решёткой. Словарь в запросе стал легче на 377 КБ
+ * (docs/IDEAS.md, «Вес кода для облака», рычаг 2). Читать собранное глазами незачем: правится документ, а
+ * проверить тему можно так: `node scripts/say.mjs "привет"`. Одна тема — одна строка модуля, чтобы правка одной
+ * темы меняла в истории одну строку.
  */
 import { readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseCatalogue } from "../tgcloud/lib/catalogue.js";
+import { pack } from "../tgcloud/lib/pack.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const SOURCE = join(ROOT, "PHRASES.txt");
@@ -30,6 +38,9 @@ export const PARTS = Object.freeze(["phrases-1.js", "phrases-2.js"]);
 /** Прежний единый модуль: после сборки его быть не должно. */
 const FORMER = join(DIRECTORY, "phrases.js");
 
+/** Текст → запись шаблонной строкой JavaScript с тем же значением: экранируются только `\`, обратная кавычка и `${`. */
+export const literal = (text) => `\`${String(text).replace(/\\/gu, "\\\\").replace(/`/gu, "\\`").replace(/\$\{/gu, "\\${")}\``;
+
 /**
  * Текст документа → тексты модулей: `{ "phrases-1.js": …, "phrases-2.js": … }`.
  * Темы идут в порядке документа; граница — там, где набралась половина веса.
@@ -38,14 +49,14 @@ const FORMER = join(DIRECTORY, "phrases.js");
 export function build(text) {
   const { sections, errors } = parseCatalogue(text);
   if (errors.length) throw new Error(`В PHRASES.txt есть ошибки:\n${errors.map(item => `  • ${item}`).join("\n")}`);
-  const rows = sections.map(section => `  ${JSON.stringify(section)},`);
-  const weights = rows.map(row => Buffer.byteLength(row) + 1);
+  const rows = sections.map(section => pack(section));
+  const weights = rows.map(row => Buffer.byteLength(row) + 2);
   const half = weights.reduce((sum, weight) => sum + weight, 0) / 2;
   let cut = 0;
   for (let sum = 0; cut < rows.length && sum < half; cut += 1) sum += weights[cut];
   const halves = [rows.slice(0, cut), rows.slice(cut)];
   return Object.fromEntries(PARTS.map((name, index) => [name,
-    `/**\n * Словарный запас Аи, часть ${index + 1} из ${PARTS.length}. Собрано из PHRASES.txt командой «npm run phrases».\n * Руками не править: правится документ, этот файл пересобирается.\n */\nexport const PART = Object.freeze([\n${halves[index].join("\n")}\n]);\n`]));
+    `/**\n * Словарный запас Аи, часть ${index + 1} из ${PARTS.length}. Собрано из PHRASES.txt командой «npm run phrases».\n * Руками не править: правится документ, этот файл пересобирается.\n * Текст упакован (lib/pack.js): русские буквы записаны латинскими, кавычки — решётками; так словарь вдвое легче для облака.\n * Одна строка — одна тема. Прочесть: unpack(PART).\n */\nexport const PART = ${literal(`[\n${halves[index].join(",\n")}\n]`)};\n`]));
 }
 
 /** Свежее ли собранное: каждый модуль словаря совпадает с тем, что даёт документ, и прежнего единого модуля нет. */

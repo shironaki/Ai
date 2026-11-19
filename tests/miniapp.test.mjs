@@ -469,8 +469,18 @@ test("она картинкой: у каждого состояния своя �
   assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "уют", wear: "jacket" } }), ["tea", "tea2", "tea3"]);
   assert.deepEqual(spritesOf({ part: "день", her: { pose: "desk", key: "уют", wear: "home" } }), ["home-tea"]);
   assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "уют", wear: "constructor" } }), ["home-tea"]);
-  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "дело" }, tea: true }), ["tea", "tea2", "tea3"]);
-  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "игра" } }), ["play", "play2", "play3"]);
+  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "дело" }, tea: true }), ["home-tea"]);
+  // С 0.42.0 свитер нарисован для каждого состояния: вечером и ночью она в нём, чем бы ни была занята.
+  for (const part of ["вечер", "ночь"]) for (const [key, name] of [["дело", "home-work"], ["уют", "home-tea"], ["игра", "home-play"], ["сон", "home-sleep"], ["устала", "home-tired"], ["обида", "home-pout"], ["ревность", "home-jealous"]]) {
+    for (const pose of HER_POSES) assert.deepEqual(spritesOf({ part, her: { pose, key } }), [name], `${part}/${pose}/${key}`);
+    // Та же поза в куртке есть, и числа у пары одни: рост, вид, что закрывает, где голова. Метка (пар, «z z») —
+    // того же рода и в двух сотых от пары: кружку нейросеть сдвинула на волос.
+    const { mark: mine, ...own } = HER_SPRITES[name], { mark: theirs, ...twin } = HER_SPRITES[name.slice(5)];
+    assert.deepEqual(own, twin, name);
+    assert.equal(mine?.[0], theirs?.[0], name);
+    if (mine) assert.ok(Math.abs(mine[1] - theirs[1]) < 0.02 && Math.abs(mine[2] - theirs[2]) < 0.02, name);
+  }
+  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "игра", wear: "jacket" } }), ["play", "play2", "play3"]);
   // Первая поза — та, что ближе к её словам: «танцую» — танцует, «дразню Байта ленточкой» — присела с ленточкой,
   // «чай, кресло, плед» — сидит с кружкой, «пью чай под гирляндой» — пьёт.
   assert.deepEqual(spritesOf({ part: "день", her: { pose: "dance", key: "игра" } }), ["play2", "play3", "play"]);
@@ -485,7 +495,10 @@ test("она картинкой: у каждого состояния своя �
   assert.equal(spriteOf({ her: { pose: "desk", key: "constructor" } }), "tea");
 
   // Определение картинки: один тег, только из проверенных частей.
-  assert.equal(drawSprite("work", SPRITES.work), `<image id="r-her-work" width="${SPRITES.work.w}" height="${SPRITES.work.h}" preserveAspectRatio="none" href="${SPRITES.work.src}"/>`);
+  assert.equal(drawSprite("tea2", SPRITES.tea2), `<image id="r-her-tea2" width="${SPRITES.tea2.w}" height="${SPRITES.tea2.h}" preserveAspectRatio="none" href="${SPRITES.tea2.src}"/>`);
+  // Веки (0.42.0) — у пяти картинок: с кружкой и с блокнотом (в куртке и в свитере) и на пуфе. У картинок с
+  // закрытыми глазами их нет и не будет.
+  assert.deepEqual(Object.keys(SPRITES).filter(name => SPRITES[name].blink).sort(), ["home-tea", "home-work", "tea", "tea3", "work"]);
   // У картинки с «веками» определений два: она сама и заплатка на глаза — в точках самой картинки.
   const lids = SPRITES.tea.blink;
   assert.equal(drawSprite("tea", SPRITES.tea), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/>`);
@@ -550,11 +563,18 @@ test("она картинкой: у каждого состояния своя �
   }
   // Смена позы: прежняя картинка тает, новая проявляется; рисунок целиком несёт определения обеих.
   {
-    const view = { part: "вечер", her: { pose: "desk", key: "дело", turn: 1 }, cat, plant: "wet", things: [] };
+    // Стемнело — сменился наряд: куртка тает, свитер проявляется тем же переходом, вечерняя тень лежит на обеих.
+    const dusk = { part: "вечер", her: { pose: "desk", key: "дело" }, cat, plant: "wet", things: [] };
+    const changed = drawInside(dusk, { ...PAINTED, was: { name: "work", x: 252 } });
+    assert.equal(wellFormed(changed), "");
+    assert.ok(changed.includes('<g class="leave"><use href="#r-her-work" ') && changed.includes('<g class="arrive"><use href="#r-her-home-work" ') && changed.includes('<mask id="r-herMaskWas" '));
+    assert.deepEqual(zonesOf(changed), zonesOf(drawInside(dusk, PAINTED)));
+
+    const view = { part: "день", her: { pose: "desk", key: "дело", turn: 1 }, cat, plant: "wet", things: [] };
     const plain = drawInside(view, PAINTED), smooth = drawInside(view, { ...PAINTED, was: { name: "work", x: 252 } });
     assert.ok(!plain.includes('class="leave"') && !plain.includes('class="arrive"'));
     assert.equal(wellFormed(smooth), "");
-    assert.ok(smooth.includes('<g class="leave"><use href="#r-her-work" ') && smooth.includes('<g class="arrive"><use href="#r-her-work2" ') && smooth.includes('<mask id="r-herMaskWas" '));
+    assert.ok(smooth.includes('<g class="leave"><use href="#r-her-work" ') && smooth.includes('<g class="arrive"><use href="#r-her-work2" ') && !smooth.includes('<mask id="r-herMaskWas" '));
     assert.deepEqual(zonesOf(smooth), zonesOf(plain));
     // Прежняя — та же самая, незнакомая, не загруженная или без места: тогда смена — без перехода.
     for (const was of [{ name: "work2", x: 252 }, { name: "constructor", x: 252 }, { name: "чужая", x: 252 }, { name: "work", x: "252" }, null, "work", { name: "work" }]) assert.equal(drawInside(view, { ...PAINTED, was }), plain, JSON.stringify(was));
@@ -608,7 +628,7 @@ test("она картинкой: Байта она собой не закрыв�
     const zones = zonesOf(drawInside(view, PAINTED)), her = zones.find(zone => zone.id === "her"), pet = zones.find(zone => zone.id === "cat");
     assert.ok(her && pet, label);
     // Её место — там, где она встала; Байта — не под полосой с её словами и не меньше пальца.
-    assert.ok(Math.abs(her.x + her.w / 2 - stand.x) <= (stand.name === "sleep" ? 1 : 0.01), label);
+    assert.ok(Math.abs(her.x + her.w / 2 - stand.x) <= (HER_SPRITES[stand.name].kind === "floor" ? 1 : 0.01), label);
     // Голова — на рисунке и выше полосы с её словами: гладить можно в любой позе.
     const head = zones.find(zone => zone.id === "pat");
     assert.ok(head && head.y + head.h <= 480 && head.x >= 0 && head.x + head.w <= WIDTH, `${label}: голова ${JSON.stringify(head)}`);
@@ -1116,7 +1136,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "4");
+  assert.equal(logic.PAGE, "5");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {

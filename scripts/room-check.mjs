@@ -28,7 +28,8 @@
  *   7. она живая (0.41.0): днём у состояния несколько поз — нажали на неё, и поза сменилась (прежняя тает, новая
  *      проявляется), сама — через полминуты; у картинки с «веками» она моргает; по голове её гладят (сердечко,
  *      во второй раз — другие слова); коробка Байта отвечает; звук включается нажатием, запоминается, а без
- *      нажатия не начинается.
+ *      нажатия не начинается. Вечером (0.42.0) у каждого состояния — картинка в свитере; с блокнотом и с
+ *      кружкой она моргает и в нём; нажатие на неё единственную вечернюю позу не меняет и ничего не ломает.
  *   6. её картинка не загрузилась: папки `her/` на сервере нет — или файл пришёл, а картинка в нём не читается
  *      (браузер не знает формата, страница не даёт её показать). Комната открывается, она нарисована кодом,
  *      забота нажимается. Второй случай без проверки оставил бы её невидимой: ссылка на картинку в рисунке
@@ -125,14 +126,15 @@ try {
   const painted = () => page.evaluate(() => {
     const kept = [...document.querySelectorAll("#store image")], used = [...document.querySelectorAll("#inside use")].map(node => node.getAttribute("href"));
     return {
-      kept: kept.map(node => node.id), sized: kept.every(node => node.namespaceURI === "http://www.w3.org/2000/svg" && node.getBBox().width > 100 && node.getBBox().height > 100),
+      // «Веки» (`…-blink`) — заплатка на глаза, она маленькая; сама картинка — в рост.
+      kept: kept.map(node => node.id), sized: kept.every(node => node.namespaceURI === "http://www.w3.org/2000/svg" && node.getBBox().width > (node.id.endsWith("-blink") ? 20 : 100) && node.getBBox().height > (node.id.endsWith("-blink") ? 8 : 100)),
       used, inline: document.querySelectorAll("#inside image").length, drawn: document.querySelectorAll("#inside .breath").length,
       // Видна ли она на самом деле: у ссылки на картинку есть размер на экране.
       shown: [...document.querySelectorAll("#inside > .art use")].some(node => node.getBoundingClientRect().height > 200),
     };
   });
   const first = await painted();
-  if (first.kept.length < 1 || !first.sized) fail(`её картинки нет в кладовой рисунка: ${JSON.stringify(first.kept)}`);
+  if (!first.kept.some(id => !id.endsWith("-blink")) || !first.sized) fail(`её картинки нет в кладовой рисунка: ${JSON.stringify(first.kept)}`);
   if (!first.used.some(href => first.kept.includes(String(href).slice(1))) || !first.shown) fail(`комната не показывает её картинку: ссылки ${JSON.stringify(first.used)}, в кладовой ${JSON.stringify(first.kept)}`);
   if (first.inline) fail(`картинка лежит прямо в комнате (${first.inline}) — будет грузиться заново при каждом нажатии`);
   if (first.drawn) fail("она и картинкой, и нарисована кодом сразу");
@@ -505,6 +507,24 @@ try {
     for (let spent = 0; spent < 6000 && !turned; spent += 300) { await pause(300); turned = (await shownNow()).used.join() !== before; }
     if (!turned) fail("сама она позу не сменила за шесть секунд (срок в адресе — 0,7 с)");
 
+    // Вечер (0.42.0): свитер — у каждого состояния. Поза в нём пока одна: нажатие её не меняет и ничего не ломает.
+    const evening = [["дело", "home-work", true], ["уют", "home-tea", true], ["игра", "home-play", false], ["сон", "home-sleep", false], ["устала", "home-tired", false], ["обида", "home-pout", false], ["ревность", "home-jealous", false]];
+    for (const [key, name, lids] of evening) {
+      await tab.goto(`${origin}/index.html#part=${encodeURIComponent("вечер")}&key=${encodeURIComponent(key)}&scene=0`, { waitUntil: "load", timeout: 30_000 });
+      await tab.reload({ waitUntil: "load" });
+      if (!await waitKept(`r-her-${name}`, 6000)) { fail(`вечер, «${key}»: картинка в свитере («${name}») не загрузилась`); continue; }
+      await pause(300);
+      // Вечером ссылок на картинку две: сама она и маска вечерней тени на ней — обе на одну и ту же.
+      const worn = (now) => [...new Set(now.used)].join();
+      const dusk = await shownNow();
+      if (worn(dusk) !== `#r-her-${name}`) fail(`вечер, «${key}»: на ней не свитер — ${JSON.stringify(dusk.used)}`);
+      if (lids !== Boolean(dusk.wink) || (lids && !dusk.winking)) fail(`вечер, «${key}»: «веки» — ${dusk.wink}, движется — ${dusk.winking}, а моргать она ${lids ? "должна" : "не должна"}`);
+      await tapHer();
+      await pause(400);
+      const same = await shownNow();
+      if (worn(same) !== `#r-her-${name}` || same.leave) fail(`вечер, «${key}»: поза одна, а после нажатия на рисунке ${JSON.stringify(same.used)}, тающих — ${same.leave}`);
+    }
+
     // Звук: по умолчанию тихо; включается нажатием; запоминается; без нажатия не начинается.
     await tab.goto(day, { waitUntil: "load", timeout: 30_000 });
     await tab.reload({ waitUntil: "load" });
@@ -549,6 +569,7 @@ try {
     }
     if (snow.things.length !== 3) fail(`праздничные вещи: на рисунке — ${JSON.stringify(snow.things)}, а должны быть торт, свеча и фонарь`);
     if (broken.length) fail(`позы и звук — ошибка на странице: ${broken[0].slice(0, 200)}`);
+    if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний, с блокнотом и с кружкой она моргает и в нём`);
     if (failures.length === failed) console.log(`  позы сменяются от нажатия и сами, прежняя тает; моргает (заплаток — ${start.wink}); звук включается нажатием, запоминается, без касания не начинается; снег — хлопьями в двух слоях; торт, свеча и фонарь на месте`);
     await tab.close();
   }

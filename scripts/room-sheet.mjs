@@ -24,7 +24,11 @@
  * "place": "pillow", "key": "спит" }, "things": ["плед"], "tea": true, "fed": true, "plant": "wet", "lamp":
  * "#f08ab5" } }] }`. `view` — то же описание, что получает `drawRoom`; `crop` можно не писать. `width` —
  * ширина листа в точках: рисунки переносятся по ней; `zones` — показать места нажатий; `"sprites": false` у
- * листа или у рисунка — она нарисована кодом, а не картинкой.
+ * листа или у рисунка — она нарисована кодом, а не картинкой; `"lids": false` у листа — без «век».
+ *
+ * «Веки» на листе видны всегда: стилей страницы здесь нет, а на странице их показывает только миг моргания. Для
+ * проверки это и нужно (видно, как заплатка легла при свете часа); на снимке для владельца она выглядела бы
+ * так, будто у неё закрыты глаза, — такому листу пишется `"lids": false`.
  *
  * Она на листах — как на странице: картинкой из `miniapp/her/` (с 0.40.0). Четвёртое слово `drawn` рисует её
  * кодом: таким остаётся запасной вид, и его тоже надо видеть.
@@ -172,10 +176,11 @@ try {
 const zoom = sheet.zoom ?? 1;
 // Места нажатий: вещи — жёлтым, она — алым, Байт — синим, забота — зелёным; окно — одной рамкой, иначе оно красит всё.
 const paint = sheet.zones ? `<style>.zones rect{fill:#ffd400!important;fill-opacity:.14!important;stroke:#ffd400;stroke-width:1}.zones [data-act="window"] rect{fill-opacity:0!important;stroke-dasharray:4 3}.zones #her rect{fill:#ff2d6f!important;stroke:#ff2d6f}.zones #cat rect{fill:#2d9bff!important;stroke:#2d9bff}${["water", "tea", "feed", "play"].map(act => `.zones [data-act="${act}"] rect`).join(",")}{fill:#22d36b!important;stroke:#22d36b}</style>` : "";
+const lids = sheet.lids === false ? "<style>.wink{display:none}</style>" : "";
 const cells = sheet.views.map(({ label = "", view: described, crop, sprites: wanted }) => {
   const sprites_off = wanted === false;
   const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${drawRoom(described, how(sheet.sprites === false || sprites_off))}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${lids}${drawRoom(described, how(sheet.sprites === false || sprites_off))}</svg>`;
   return `<figure><img width="${w * zoom}" height="${h * zoom}" src="data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}"><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
 });
 // Рисунки идут строками и переносятся по ширине листа: вырезки бывают разного размера.

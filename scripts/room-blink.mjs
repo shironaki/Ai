@@ -2,7 +2,7 @@
 /**
  * Моргание для спрайта Аи: из той же картинки с закрытыми глазами — маленькая заплатка «веки» в модуль спрайта.
  *
- *   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя спрайта> [win=ШxВ] [at=x,y]
+ *   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя спрайта> [win=ШxВ] [at=x,y] [by=head]
  *
  * Откуда вторая картинка. Нейросеть правит уже принятый спрайт (он же на зелёном фоне — `scripts/room-sprite.mjs`,
  * образец для неё делается из модуля): «всё то же, только глаза закрыты». Правка сохраняет фигуру почти точка в
@@ -11,12 +11,14 @@
  *
  * Что делает: вырезает фон у второй картинки тем же правилом, подгоняет её к спрайту (сдвиг и размер — перебором,
  * по нижним четырём пятым фигуры: там ничего не менялось), находит глаза — окно, где две картинки расходятся
- * сильнее всего, — и дописывает в модуль `blink: { x, y, w, h, src }` (точки спрайта). Рядом, в `out/`, кладёт
+ * сильнее всего, — подгоняет заплатку ещё раз, уже по кайме вокруг глаз (правка могла сдвинуть голову на точку
+ * относительно тела), и дописывает в модуль `blink: { x, y, w, h, src }` (точки спрайта). Рядом, в `out/`, кладёт
  * снимок: спрайт, спрайт с заплаткой и разница — по нему видно, что заплатка села на глаза и края не видно.
  * Пересобрали спрайт — моргание собирается заново: `room-sprite.mjs` пишет модуль без него.
  *
  * `win` — размер окна глаз в точках спрайта (по умолчанию 100×30: стоящая фигура высотой 900); `at` — середина
- * окна руками, если поиск ошибся (например, изменился ещё и рот).
+ * окна руками, если поиск ошибся (например, изменился ещё и рот). `by=head` — подгонять по голове, а не по телу:
+ * так веки берутся с картинки в другом наряде (та же поза и то же лицо — у спрайта в свитере и его же в куртке).
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve, extname } from "node:path";
@@ -26,7 +28,7 @@ import { pathToFileURL } from "node:url";
 const [, , root, input, name, ...more] = process.argv;
 if (!root || !input || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(name ?? "")) { console.error("Нужно: node room-blink.mjs <корень репозитория> <картинка.png> <имя спрайта> [win=ШxВ] [at=x,y]"); process.exit(2); }
 const option = (key) => more.find(word => word.startsWith(`${key}=`))?.slice(key.length + 1) ?? "";
-const win = option("win").split("x").map(Number), at = option("at").split(",").map(Number);
+const win = option("win").split("x").map(Number), at = option("at").split(",").map(Number), byHead = option("by") === "head";
 
 let chromium, puppeteer;
 try {
@@ -50,7 +52,7 @@ const browser = await puppeteer.launch({ args: [...chromium.args, "--no-sandbox"
 try {
   const page = await browser.newPage();
   await page.setContent("<!doctype html><meta charset=\"utf-8\"><body style=\"margin:0\"></body>");
-  const made = await page.evaluate(async (base, source, size, centre) => {
+  const made = await page.evaluate(async (base, source, size, centre, head) => {
     const load = async (src) => { const image = new Image(); image.src = src; await image.decode(); return image; };
     const first = await load(base), second = await load(source);
     const W = first.naturalWidth, H = first.naturalHeight;
@@ -77,10 +79,12 @@ try {
     const fitted = (dx, dy, sw, sh) => pixels(x => x.drawImage(full, left, top, cw, ch, dx, dy, W + sw, H + sh));
     const gap = (pb, i) => (Math.abs(pa[i] - pb[i]) + Math.abs(pa[i + 1] - pb[i + 1]) + Math.abs(pa[i + 2] - pb[i + 2])) / 3;
     const score = (pb, y0, y1, step = 2) => { let sum = 0, count = 0; for (let y = y0; y < y1; y += step) for (let x = 0; x < W; x += step) { const i = (y * W + x) * 4; if (pa[i + 3] < 200 || pb[i + 3] < 200) continue; sum += gap(pb, i); count += 1; } return count ? sum / count : 999; };
-    // Подгонка: там, где ничего не менялось (ниже головы), картинки должны совпасть.
+    // Подгонка: там, где ничего не менялось (ниже головы), картинки должны совпасть. С картинкой в другом наряде
+    // (`by=head`) совпадает только голова — тогда по ней.
+    const [from, to] = head ? [0, Math.round(H * 0.2)] : [Math.round(H * 0.25), H];
     let best = null;
     for (const sw of [0, -2, 2, -4, 4]) for (const sh of [0, -2, 2, -4, 4]) for (let dx = -4; dx <= 4; dx += 1) for (let dy = -4; dy <= 4; dy += 1) {
-      const value = score(fitted(dx, dy, sw, sh), Math.round(H * 0.25), H, 3);
+      const value = score(fitted(dx, dy, sw, sh), from, to, 3);
       if (!best || value < best.value) best = { value, dx, dy, sw, sh };
     }
     const pb = fitted(best.dx, best.dy, best.sw, best.sh);
@@ -92,12 +96,39 @@ try {
       for (let y = 0; y < H; y += 1) { let row = 0; for (let x = 0; x < W; x += 1) { const i = (y * W + x) * 4; const d = pa[i + 3] < 200 || pb[i + 3] < 200 ? 0 : gap(pb, i); row += d > 24 ? d : 0; table[(y + 1) * (W + 1) + x + 1] = table[y * (W + 1) + x + 1] + row; } }
       const sum = (x, y) => table[(y + wh) * (W + 1) + x + ww] - table[y * (W + 1) + x + ww] - table[(y + wh) * (W + 1) + x] + table[y * (W + 1) + x];
       let most = -1;
-      for (let y = 0; y + wh <= H; y += 1) for (let x = 0; x + ww <= W; x += 1) { const value = sum(x, y); if (value > most) { most = value; cx = x + ww / 2; cy = y + wh / 2; } }
+      // Глаза — в верхних двух пятых картинки (она стоит или сидит): ниже искать нечего, а перерисованная вязка
+      // свитера там «расходится» сильнее век.
+      for (let y = 0; y + wh <= H * 0.4; y += 1) for (let x = 0; x + ww <= W; x += 1) { const value = sum(x, y); if (value > most) { most = value; cx = x + ww / 2; cy = y + wh / 2; } }
     }
     // Заплатка: окно с запасом, край тает; прозрачность — ещё и по самой фигуре, чтобы ничего не легло мимо неё.
     const PAD = 7, FEATHER = 6;
     const x0 = Math.max(0, Math.round(cx - ww / 2) - PAD), y0 = Math.max(0, Math.round(cy - wh / 2) - PAD);
     const x1 = Math.min(W, Math.round(cx + ww / 2) + PAD), y1 = Math.min(H, Math.round(cy + wh / 2) + PAD);
+    // Местная подгонка. Правка могла сдвинуть голову на точку-другую относительно тела (так было с картинкой в
+    // свитере: вязку нейросеть перерисовала). Кайма заплатки — чёлка, щёки, пряди — не менялась: по ней заплатка и
+    // встаёт на место, иначе при каждом моргании лицо дёргалось бы.
+    const rim = (data) => {
+      let sum = 0, count = 0;
+      for (let y = y0; y < y1; y += 1) for (let x = x0; x < x1; x += 1) {
+        if (Math.min(x - x0, y - y0, x1 - 1 - x, y1 - 1 - y) >= FEATHER + 2) continue;
+        const i = (y * W + x) * 4;
+        if (pa[i + 3] < 200 || data[i + 3] < 200) continue;
+        sum += gap(data, i); count += 1;
+      }
+      return count ? sum / count : 999;
+    };
+    let near = { value: rim(pb), dx: 0, dy: 0, sw: 0, sh: 0, data: pb };
+    const tryAt = (sw, sh) => {
+      for (let dx = -6; dx <= 6; dx += 1) for (let dy = -6; dy <= 6; dy += 1) {
+        if (!dx && !dy && !sw && !sh) continue;
+        const data = fitted(best.dx + dx, best.dy + dy, best.sw + sw, best.sh + sh), value = rim(data);
+        if (value < near.value - 0.05) near = { value, dx, dy, sw, sh, data };
+      }
+    };
+    tryAt(0, 0);
+    // Сдвига мало — голова ещё и чуть другого размера: тот же перебор с размером.
+    if (near.value > 8.5) for (const sw of [-6, -4, -2, 0, 2, 4, 6]) for (const sh of [-6, -4, -2, 0, 2, 4, 6]) if (sw || sh) tryAt(sw, sh);
+    const pe = near.data;
     const patch = document.createElement("canvas");
     patch.width = x1 - x0; patch.height = y1 - y0;
     const pctx = patch.getContext("2d");
@@ -107,9 +138,9 @@ try {
       const i = (y * W + x) * 4, o = ((y - y0) * patch.width + (x - x0)) * 4;
       const edge = Math.min(x - x0, y - y0, x1 - 1 - x, y1 - 1 - y);
       const soft = Math.max(0, Math.min(1, (edge + 0.5) / FEATHER));
-      cut.data[o] = pb[i]; cut.data[o + 1] = pb[i + 1]; cut.data[o + 2] = pb[i + 2];
-      cut.data[o + 3] = Math.round(Math.min(pa[i + 3], pb[i + 3]) * soft);
-      if (gap(pb, i) > 24) changed += 1;
+      cut.data[o] = pe[i]; cut.data[o + 1] = pe[i + 1]; cut.data[o + 2] = pe[i + 2];
+      cut.data[o + 3] = Math.round(Math.min(pa[i + 3], pe[i + 3]) * soft);
+      if (gap(pe, i) > 24) changed += 1;
     }
     pctx.putImageData(cut, 0, 0);
     const src = patch.toDataURL("image/webp", 0.92);
@@ -126,12 +157,14 @@ try {
     sctx.drawImage(patch, 0, 0, patch.width, patch.height, 20 + vw * zoom + (x0 - vx) * zoom, 10 + (y0 - vy) * zoom, patch.width * zoom, patch.height * zoom);
     const diff = document.createElement("canvas"); diff.width = vw; diff.height = vh;
     const dctx = diff.getContext("2d"), dimg = dctx.createImageData(vw, vh);
-    for (let y = 0; y < vh; y += 1) for (let x = 0; x < vw; x += 1) { const i = ((vy + y) * W + vx + x) * 4, o = (y * vw + x) * 4, d = Math.min(255, gap(pb, i) * 4); dimg.data[o] = d; dimg.data[o + 1] = d; dimg.data[o + 2] = d; dimg.data[o + 3] = 255; }
+    for (let y = 0; y < vh; y += 1) for (let x = 0; x < vw; x += 1) { const i = ((vy + y) * W + vx + x) * 4, o = (y * vw + x) * 4, d = Math.min(255, gap(pe, i) * 4); dimg.data[o] = d; dimg.data[o + 1] = d; dimg.data[o + 2] = d; dimg.data[o + 3] = 255; }
     dctx.putImageData(dimg, 0, 0);
     sctx.drawImage(diff, 0, 0, vw, vh, 30 + vw * zoom * 2, 10, vw * zoom, vh * zoom);
-    return { src, box: [x0, y0, patch.width, patch.height], fit: best, changed, body: score(pb, Math.round(H * 0.25), H), preview: show.toDataURL("image/png") };
-  }, sprite.src, `data:${type};base64,${bytes.toString("base64")}`, [win[0] > 0 ? win[0] : 100, win[1] > 0 ? win[1] : 30], [at[0] > 0 ? at[0] : 0, at[1] > 0 ? at[1] : 0]);
+    return { src, box: [x0, y0, patch.width, patch.height], fit: best, near: { dx: near.dx, dy: near.dy, sw: near.sw, sh: near.sh, rim: near.value }, changed, body: head ? 0 : score(pb, Math.round(H * 0.25), H), preview: show.toDataURL("image/png") };
+  }, sprite.src, `data:${type};base64,${bytes.toString("base64")}`, [win[0] > 0 ? win[0] : 100, win[1] > 0 ? win[1] : 30], [at[0] > 0 ? at[0] : 0, at[1] > 0 ? at[1] : 0], byHead);
   if (made.error) { console.error(`моргание «${name}»: ${made.error}`); process.exit(1); }
+  // Кайма заплатки не сошлась — заплатку было бы видно: шов на чёлке или на щеках.
+  if (made.near.rim > 12) { console.error(`моргание «${name}»: вокруг глаз картинки расходятся (в среднем ${made.near.rim.toFixed(1)} из 255) — заплатку было бы видно. Нужна другая картинка или окно руками (at=x,y).`); process.exit(1); }
   // Картинки разошлись и там, где ничего не менялось, — правка перерисовала фигуру: заплатка не сядет.
   if (made.body > 14) { console.error(`моргание «${name}»: картинки расходятся и ниже головы (в среднем ${made.body.toFixed(1)} из 255) — правка перерисовала фигуру, заплатка не сядет. Нужна другая картинка.`); process.exit(1); }
   const text = await readFile(file, "utf8");
@@ -142,7 +175,7 @@ try {
   await writeFile(file, cleared.replace(/, src: "data:image\/webp;base64,/u, `, ${blink}src: "data:image/webp;base64,`));
   await mkdir(join(resolve(root), "out"), { recursive: true });
   await writeFile(join(resolve(root), "out", `blink-${name}.png`), Buffer.from(made.preview.split(",")[1], "base64"));
-  console.log(`моргание «${name}»: заплатка ${w}×${h} в точке ${x}, ${y}; подгонка ${JSON.stringify(made.fit)}; ниже головы расходятся на ${made.body.toFixed(1)} из 255; изменённых точек в заплатке — ${made.changed}; модуль — ${Math.round(Buffer.byteLength(await readFile(file, "utf8")) / 1024)} КБ; снимок — out/blink-${name}.png`);
+  console.log(`моргание «${name}»: заплатка ${w}×${h} в точке ${x}, ${y}; у глаз сдвинута на ${made.near.dx}, ${made.near.dy}${made.near.sw || made.near.sh ? `, размер ${made.near.sw}, ${made.near.sh}` : ""} (кайма расходится на ${made.near.rim.toFixed(1)} из 255); ниже головы — на ${made.body.toFixed(1)}; изменённых точек в заплатке — ${made.changed}; модуль — ${Math.round(Buffer.byteLength(await readFile(file, "utf8")) / 1024)} КБ; снимок — out/blink-${name}.png`);
 } finally {
   await browser.close().catch(() => {});
 }

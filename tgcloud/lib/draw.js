@@ -235,10 +235,13 @@ export function refusal(text, { free = false } = {}) {
 }
 
 // ── что именно просят ────────────────────────────────────────────────────
-/** Она сама, её комната и кот — по канону из словаря; описания на английском. */
-const SELF = "anime style portrait of a young adult woman with shoulder-length dark hair with one blue streak, blue eyes, headphones around her neck, oversized cozy sweater, gentle smile, rainy window with city lights in the background, soft warm light, detailed illustration";
+/**
+ * Она сама, её комната и кот — по канону из словаря; описания на английском. С 0.42.0 она — по портрету
+ * (`docs/profile/welcome.jpg`) и по картинкам комнаты: то же, что говорит о себе словами («как ты выглядишь»).
+ */
+const SELF = "anime style portrait of a young adult woman with very long straight black hair and blunt bangs, crimson red eyes, black choker with a small ring, red off-shoulder top, black leather jacket slipped off her shoulders, gentle smile, rainy window with city lights in the background, soft warm light, detailed illustration";
 /** Её приметы без позы и фона — для «нарисуй себя в шляпе». */
-const LOOK = "a young adult woman with shoulder-length dark hair with one blue streak, blue eyes, anime style, detailed illustration";
+const LOOK = "a young adult woman with very long straight black hair and blunt bangs, crimson red eyes, black choker, anime style, detailed illustration";
 const ROOM = "cozy small room at night, floor-to-ceiling window with rain and city lights outside, wooden desk with a warm lamp and a teapot, bookshelf with manga, blue plaid on an armchair, string lights, a small cactus on the windowsill, a grey cat sleeping on a pillow, anime background art, warm atmosphere, detailed";
 const CAT = "a fluffy grey cat sleeping on a computer keyboard in a cozy room with a rainy window, anime style, warm light, detailed illustration";
 /**

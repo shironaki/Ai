@@ -4,6 +4,7 @@
  * Фразы лежат в текстовом документе PHRASES.txt в корне проекта; из него
  * командой «npm run phrases» собираются data/phrases-1.js и data/phrases-2.js —
  * их и читает сердце. Модулей два, чтобы ни один не был слишком тяжёл для облака.
+ * В модулях текст упакован (`pack.js`: буква — один байт), здесь он распаковывается — один раз, при загрузке.
  * Модель на «привет», «как дела» и «какой твой любимый цвет» не тратится:
  * реплика узнаётся целиком, ответ берётся из каталога.
  *
@@ -15,12 +16,13 @@
 import { PART as FIRST } from "./data/phrases-1.js";
 import { PART as SECOND } from "./data/phrases-2.js";
 import { EXCLUSIVES, clean } from "./catalogue.js";
+import { unpack } from "./pack.js";
 import { plainWords, squeezed } from "./slang.js";
 
 export { TAGS, parseCatalogue, expandTrigger } from "./catalogue.js";
 
 /** Весь словарь: темы в порядке документа. */
-export const SECTIONS = Object.freeze([...FIRST, ...SECOND]);
+export const SECTIONS = Object.freeze([...unpack(FIRST), ...unpack(SECOND)]);
 
 const LEAD = /^(?:ну|а|и|о|ой|эй|слушай|слушайте|кстати|так|ладно|блин|хм|эх|ах|вот|давай|скажи|скажите|ответь|ответьте|расскажи|расскажите)\s+(?=\S)/u;
 const TRAIL = /\s+(?:пожалуйста|плиз|пж|а|же|то|ж|вообще|сейчас|сегодня|там|мне|нам|ка|если не секрет|интересно)$/u;

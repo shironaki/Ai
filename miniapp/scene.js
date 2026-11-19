@@ -1325,6 +1325,8 @@ function her(g, c, f, pose, key, view = {}) {
 // поставить. Она стоит ближе к зрителю, чем мебель, и потому крупнее её: рост — три четверти рисунка, лицо видно.
 // Фигура, нарисованная кодом выше, осталась запасной: её видно, когда спрайта нет (старая копия страницы, обрыв).
 
+// С 0.42.0 свитер нарисован для каждого состояния (вечером и ночью она в нём, чем бы ни была занята), а «веки»
+// есть у пяти картинок: с кружкой и с блокнотом в обоих нарядах и на пуфе.
 // С 0.41.0 картинок у состояния несколько: позы сменяют друг друга (сами и от нажатия), у глаз есть «веки» —
 // она моргает, а вечером на ней домашний свитер. Всё, что нужно знать о картинке, лежит в одной таблице.
 
@@ -1356,7 +1358,14 @@ export const HER_SPRITES = Object.freeze({
   jealous: { tall: 390, half: 64 },
   jealous2: { tall: 390, half: 64 },
   sleep: { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
+  // В свитере — те же позы, что в куртке (нейросеть переодела те же картинки): и числа те же.
   "home-tea": { tall: 390, mark: ["steam", 0.115, 0.228] },
+  "home-work": { tall: 390 },
+  "home-play": { tall: 390, legs: [-30, 72], head: [0.66, 0.075] },
+  "home-tired": { tall: 390, half: 70 },
+  "home-pout": { tall: 390, head: [0.55, 0.07] },
+  "home-jealous": { tall: 390, half: 64 },
+  "home-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
 });
 /**
  * Позы состояния (ключи те же, что у лиц: `MOODS`) — имена картинок в куртке, по порядку смены. У всех поз одного
@@ -1374,7 +1383,10 @@ const SPRITE_FIRST = Object.freeze({
   "игра": { dance: "play2", ribbon: "play3" },
   "уют": { chair: "tea3", garland: "tea2" },
 });
-/** Наряд: названный (сердцем или страницей) или по часу — вечером и ночью домашний. Наряд без картинки этого состояния не надевается. */
+/**
+ * Наряд: названный (сердцем или страницей) или по часу — вечером и ночью домашний. Наряд без картинки этого состояния
+ * не надевается. С 0.42.0 свитер нарисован для каждого состояния — пока по одной позе: вечером она позу не меняет.
+ */
 function wearOf(view, key) {
   const named = HER_WEARS.includes(view.her.wear) ? view.her.wear : null;
   const wear = named ?? (view.part === "вечер" || view.part === "ночь" ? "home" : "jacket");
@@ -1389,7 +1401,9 @@ export function spritesOf(view = {}) {
   const poses = key === "дело" && view.tea ? SPRITE_OF["уют"] : SPRITE_OF[key];
   const dressed = wear === "jacket" ? [] : poses.map(pose => `${wear}-${pose}`).filter(name => Object.hasOwn(HER_SPRITES, name));
   const list = dressed.length ? dressed : poses;
-  const first = dressed.length || poses !== SPRITE_OF[key] || !Object.hasOwn(SPRITE_FIRST, key) || !Object.hasOwn(SPRITE_FIRST[key], view.her.pose) ? -1 : list.indexOf(SPRITE_FIRST[key][view.her.pose]);
+  // Первая поза — по её словам; в наряде — та же поза, если она в нём нарисована.
+  const wanted = poses === SPRITE_OF[key] && Object.hasOwn(SPRITE_FIRST, key) && Object.hasOwn(SPRITE_FIRST[key], view.her.pose) ? SPRITE_FIRST[key][view.her.pose] : null;
+  const first = wanted ? list.findIndex(name => name === wanted || name === `${wear}-${wanted}`) : -1;
   return first > 0 ? [...list.slice(first), ...list.slice(0, first)] : [...list];
 }
 /**

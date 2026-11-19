@@ -54,7 +54,7 @@ test("ключ и разбор: «ID:токен», base64 своими сила�
   for (const said of ["кота в шляпе", "голые деревья зимой", "кота, который соскучился", "греблю на озере", "члена экипажа у штурвала", "Sussex landscape"]) assert.equal(refusal(said), "", said);
   // «Себя в шляпе» — она же, но как просили; «себя» и «себя ещё» — канон целиком.
   assert.deepEqual({ ...subjectOf("себя в шляпе"), look: "" }, { own: "self", text: "в шляпе", look: "" });
-  assert.match(subjectOf("саму себя с котом на руках").look, /young adult woman.*blue streak/u);
+  assert.match(subjectOf("саму себя с котом на руках").look, /young adult woman.*long straight black hair.*crimson red eyes/u);
   assert.ok(subjectOf("себя ещё").prompt && !subjectOf("себя ещё").text);
 });
 
@@ -126,7 +126,9 @@ test("она сама, её комната, «ещё» и «нарисуй ме�
   source("m2m100", translated("a red fox in the snow"));
   const h = heart(ON, { now: () => NOON });
   await h.onMessage(message("нарисуй себя"), KEY);
-  assert.match(asked("flux-1-schnell")[0].prompt, /dark hair with one blue streak.*headphones/u);
+  assert.match(asked("flux-1-schnell")[0].prompt, /long straight black hair and blunt bangs, crimson red eyes, black choker.*leather jacket/u);
+  // Прежний облик (до портрета) не просится ни словом.
+  assert.doesNotMatch(asked("flux-1-schnell")[0].prompt, /blue|shoulder-length|sweater|headphones/u);
   assert.equal(asked("m2m100").length, 0, "канон уже по-английски — переводить нечего");
   await h.onMessage(message("нарисуй свою комнату"), KEY);
   assert.match(asked("flux-1-schnell")[1].prompt, /window with rain.*grey cat/u);
@@ -141,7 +143,7 @@ test("она сама, её комната, «ещё» и «нарисуй ме�
 
   // «Себя в шляпе»: переводится только просьба, её приметы добавляются сами.
   await h.onMessage(message("нарисуй себя в шляпе"), KEY);
-  assert.match(asked("flux-1-schnell").at(-1).prompt, /^a red fox in the snow, a young adult woman with shoulder-length dark hair with one blue streak/u);
+  assert.match(asked("flux-1-schnell").at(-1).prompt, /^a red fox in the snow, a young adult woman with very long straight black hair and blunt bangs, crimson red eyes, black choker/u);
   assert.equal(asked("m2m100").at(-1).text, "в шляпе");
   assert.equal(photos().length, 5);
 
