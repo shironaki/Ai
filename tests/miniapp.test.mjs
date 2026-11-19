@@ -805,7 +805,7 @@ test("страница: ответ сердца раскладывается п�
   assert.equal(seen.said, "Заходите. Тапочки у двери.\nЯ в кресле у окна, под пледом.\nБайт сидит у миски.\nНовое в комнате. На столе — вторая кружка.");
   // У сценки с 0.44.0 — ещё и то, что она меняет на рисунке (`fx`), и куда встаёт она сама (`her`); прежнее сердце
   // их не шлёт — пусто.
-  assert.deepEqual(seen.scene, { key: "sock", text: "Байт принёс носок.", options: ["Похвалить", "Отобрать"], pick: null, outcome: "", fx: [], her: "" });
+  assert.deepEqual(seen.scene, { key: "sock", text: "Байт принёс носок.", options: ["Похвалить", "Отобрать"], pick: null, outcome: "", fx: [] });
   assert.deepEqual([seen.build, seen.next, seen.tone, seen.retry], ["0.38.0", 4, "", false]);
   // То, что отдано рисунку, рисуется.
   assert.equal(wellFormed(drawRoom(logic.viewOf(seen))), "");
@@ -935,7 +935,7 @@ test("функция комнаты: зайти — всё, что видно; �
   // изменила в комнате, пока не сыграна.
   const today = room.sceneFor(5, "2026-11-18", seen.sky);
   const shown = room.sceneLook({ day: "2026-11-18", key: today.key, pick: null }, { today: "2026-11-18", at: NOON });
-  assert.deepEqual(seen.scene, { key: today.key, text: today.text.replace(/\{[^|}]*\|([^}]*)\}/gu, "$1"), options: today.options.map(option => option[0]), pick: null, outcome: null, fx: shown?.fx ?? [], ...(shown?.her ? { her: shown.her } : {}) });
+  assert.deepEqual(seen.scene, { key: today.key, text: today.text.replace(/\{[^|}]*\|([^}]*)\}/gu, "$1"), options: today.options.map(option => option[0]), pick: null, outcome: null, fx: shown?.fx ?? [] });
   assert.deepEqual(seen.scene.fx, today.show?.fx ?? []);
   // Заход считается заходом; в чат при этом ничего не уходит, модель не спрошена.
   assert.deepEqual([roomOf(5).n, toChat(5).length, chats().length], [1, 0, 0]);

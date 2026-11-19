@@ -71,8 +71,31 @@ report() {
   echo "$label: $(grep -E '^# (tests|pass|fail)' "$log" | tr '\n' ' ')"
 }
 
+# Тесты не пропадают молча. 19.11.2026 новый файл тестов был записан поверх прежнего с тем же именем
+# (`tests/life.test.mjs`, 19 тестов): eslint чист, прогон зелёный — а девятнадцати проверок нет. Видно это только по
+# счёту, поэтому счёт сравнивается с последним коммитом, по файлам. Убраны намеренно — VERIFY_LOST=ok.
+kept() {
+  local file was now lost=0
+  git -C "$ROOT" rev-parse --verify -q HEAD > /dev/null 2>&1 || return 0
+  while IFS= read -r file; do
+    was="$(git -C "$ROOT" show "HEAD:$file" 2>/dev/null | grep -c '^test(' || true)"
+    now=0
+    if [ -f "$ROOT/$file" ]; then now="$(grep -c '^test(' "$ROOT/$file" || true)"; fi
+    if [ "${now:-0}" -lt "${was:-0}" ]; then
+      echo "тестов стало меньше: $file — было $was, стало $now (сравнение с последним коммитом)"
+      lost=1
+    fi
+  done < <(git -C "$ROOT" ls-tree -r --name-only HEAD -- tests | grep '\.test\.mjs$' || true)
+  if [ "$lost" -ne 0 ]; then
+    if [ "${VERIFY_LOST:-}" = "ok" ]; then echo "тесты убраны намеренно (VERIFY_LOST=ok)"; return 0; fi
+    echo "Файл затёрт — вернуть: git show HEAD:<файл> > <файл>. Тесты убраны намеренно — VERIFY_LOST=ok bash scripts/verify.sh ci"
+    return 1
+  fi
+}
+
 ci() {
   local status=0
+  kept || status=1
   (cd "$ROOT" && npm run check --silent && node --test --test-timeout=120000 --test-reporter=tap) > "$TMP/ci.log" 2>&1 || status=$?
   report "$TMP/ci.log" "тесты (Node $(node --version))" "$status"
 }

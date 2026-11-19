@@ -23,8 +23,6 @@ const WEARS = Object.freeze(["jacket", "home"]);
  */
 export const SKIES = Object.freeze(["clear", "clouds", "overcast", "fog", "rain", "storm", "snow"]);
 const skyOf = (value) => (SKIES.includes(value) ? value : "rain");
-/** Состояния, в которых сценка дня может её переставить: она спокойна — занята делом, отдыхает или играет. */
-const CALM = Object.freeze(["дело", "уют", "игра"]);
 /** Что сценка дня меняет в комнате (те же слова, что `SCENE_FX` в рисунке и в сердце). */
 const FX = Object.freeze(["cactus", "haze", "window", "blink", "sock", "curtains", "noplaid", "puddle", "boat"]);
 /** В чём она в этот час, если наряд не назван: вечером и ночью — домашнее (то же правило — в рисунке). */
@@ -69,12 +67,9 @@ export const catBeat = (state) => (Array.isArray(state.cat?.beats) && state.cat.
 export function viewOf(state) {
   const turn = Number.isInteger(state.turn) && state.turn > 0 ? state.turn : 0;
   const beat = herBeat(state);
-  // `pin` — место, куда её поставила сценка дня («Значит, манга» — она в кресле, с кружкой): до следующей её
-  // реплики. Обида, ревность, усталость и сон сильнее сценки: тогда она остаётся как была.
-  const pin = state.her?.pin && CALM.includes(state.her.key) ? state.her.pin : null;
   const her = !state.her ? null : {
-    pose: pin ?? beat?.pose ?? state.her.pose, key: pin ? "уют" : state.her.key, ...(state.her.wear ? { wear: state.her.wear } : {}),
-    ...(beat || pin ? { beat: true } : turn ? { turn } : {}), ...(state.away ? { away: true } : {}),
+    pose: beat?.pose ?? state.her.pose, key: state.her.key, ...(state.her.wear ? { wear: state.her.wear } : {}),
+    ...(beat ? { beat: true } : turn ? { turn } : {}), ...(state.away ? { away: true } : {}),
   };
   const pet = catBeat(state);
   // Она дразнит Байта ленточкой — он рядом и ловит её, чем бы ни был занят до того (если не спит и не прячется).
@@ -100,9 +95,7 @@ export function nextBeat(state, who) {
     const beats = state.her?.beats;
     if (state.away || !Array.isArray(beats) || beats.length < 2) return null;
     const beat = ((Number(state.her.beat) || 0) + 1) % beats.length, line = beats[beat].line;
-    const { pin, ...her } = state.her;
-    void pin;
-    return { ...state, her: { ...her, beat }, lines: { ...state.lines, her: line || state.lines.her }, ...(line ? { tone: "", retry: false, said: line } : {}) };
+    return { ...state, her: { ...state.her, beat }, lines: { ...state.lines, her: line || state.lines.her }, ...(line ? { tone: "", retry: false, said: line } : {}) };
   }
   const beats = state.cat?.beats;
   if (!state.cat || state.cat.still === true || !Array.isArray(beats) || !beats.length) return null;
@@ -119,8 +112,8 @@ function sceneOf(raw) {
   const pick = raw.pick === 0 || raw.pick === 1 ? raw.pick : null;
   return {
     key: text(raw.key, 24), text: text(raw.text), options, pick, outcome: pick == null ? "" : text(raw.outcome),
-    // Что сценка меняет в самой комнате и куда ставит её саму (0.44.0); прежнее сердце этого не шлёт.
-    fx: (Array.isArray(raw.fx) ? raw.fx : []).filter(name => FX.includes(name)), her: HER_POSES.includes(raw.her) ? raw.her : "",
+    // Что сценка меняет в самой комнате (0.44.0); прежнее сердце этого не шлёт.
+    fx: (Array.isArray(raw.fx) ? raw.fx : []).filter(name => FX.includes(name)),
   };
 }
 const shapeOf = (value) => (CAT_SHAPES.includes(value) ? value : "sit");
@@ -168,8 +161,7 @@ export function applyLook(state, result, at = 0) {
   const said = [text(result.greet), lines.her, lines.cat, ...fresh.map(key => `Новое в комнате. ${thingLines[key]}`)].filter(Boolean).join("\n");
   return {
     ...state, ready: true, busy: "", tone: "", retry: false, part,
-    // Сценка дня может поставить её саму («Значит, манга» — она в кресле): место держится до её следующей реплики.
-    her: { ...herOf(result.her), ...(sceneOf(result.scene)?.her ? { pin: sceneOf(result.scene).her } : {}) },
+    her: herOf(result.her),
     turn: 0, patted: result.patted === true, sky: skyOf(result.sky),
     // Луна — по дню человека; дня в ответе нет — по часам устройства; нет и их — обычный месяц.
     moon: moonOf(text(result.clock?.day, 10) || (at > 0 ? at : null)), fx: sceneOf(result.scene)?.fx ?? [], away: false, entering: false,
@@ -258,11 +250,15 @@ export function applyPick(state, result) {
   // Сыграли сценку — Байт унёс в коробку трофей: строка о коробке приходит новая.
   const lines = text(result.box?.line) ? { ...state.lines, box: text(result.box.line) } : state.lines;
   const scene = sceneOf(result.scene) ?? state.scene;
+  // Исход поставил её саму («значит, манга» — она в кресле с кружкой): сердце шлёт её заново — чем занята, где и
+  // что говорит. Её первая реплика теперь — сами слова исхода: нажали на неё — она скажет о том, что на рисунке.
+  const her = result.her && typeof result.her === "object" && state.her ? herOf(result.her) : null;
   return {
-    ...state, busy: "", tone: "", retry: false, lines, scene, said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || state.said,
+    ...state, busy: "", tone: "", retry: false, scene, said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || state.said,
+    lines: her && text(result.her.line) ? { ...lines, her: text(result.her.line) } : lines,
     // Рисунок идёт за словами исхода (0.44.0): Байт — туда, где сказано; в комнате — то, что сказано; она — где сказано.
     fx: scene?.fx ?? [], cat: catOf(result.cat, state.cat),
-    ...(scene?.her && state.her ? { her: { ...state.her, pin: scene.her } } : {}),
+    ...(her ? { her, turn: 0 } : {}),
   };
 }
 
