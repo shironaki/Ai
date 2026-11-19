@@ -382,8 +382,9 @@ test("словарь 0.40.0: о картинке она отвечает сам�
   }
   assert.match(said("кто нарисовал комнату"), /картинкой, по моему портрету/u);
 
-  // Её слова в комнате — о том, что видно. Картинка у состояния одна, поэтому каждая строка состояния называет то,
-  // что на ней есть, и ни одна не говорит того, чего на ней нет: стоя она не сидит, не лежит и не читает.
+  // Её слова в комнате — о том, что видно. Строка звучит всё время, пока позы состояния сменяют друг друга (с
+  // 0.41.0 их две-три, с 0.43.0 — в обоих нарядах), поэтому называет только общее для них: что у неё в руках. И
+  // ни одна не говорит того, чего нет на какой-то из поз: «сижу», «лежу», «читаю».
   const shown = {
     "дело": /блокнот/u, "уют": /кружк|чай/iu, "игра": /ленточк|[Дд]ирижирую/u, "сон": /плед/u,
     "устала": /плед|[Зз]еваю|[Оо]тдыхаю/u, "обида": /спиной|[Оо]твернулась|скрестив/u, "ревность": /[Сс]крести|[Рр]азглядываю/u,
@@ -401,6 +402,66 @@ test("словарь 0.40.0: о картинке она отвечает сам�
     assert.ok(pool(`она:${look.her.key}`).includes(look.her.line), `витрина, ${hour} ч: «${look.her.line}» — такой строки в словаре нет`);
     assert.equal(room.herPose(look.her.line, look.her.key), look.her.pose, look.her.line);
   }
+});
+
+test("словарь 0.43.0: слова сходятся с картинками — числа в словах те же, что в папке, вечером она меняет позы; о новом видимом отвечает сама", () => {
+  const said = (name) => book.pool(name, { formal: true }).join(" ");
+  const names = Object.keys(HER_SPRITES), jackets = names.filter(name => !name.includes("-")), lidded = names.filter(name => SPRITES[name].blink);
+  // Числа, которые она называет вслух, — из папки с картинками. Прибавилась картинка — тест напомнит перечитать
+  // темы (их список — в шапке блока «СБОРКА 0.43.0» в PHRASES.txt) и назвать новое число здесь.
+  const WORDS = { 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 30: /[Тт]ридцат/u };
+  const word = (count, what) => { assert.ok(WORDS[count], `${what}: ${count} — этого числа словами здесь нет: перечитать темы о картинках и дописать`); return WORDS[count]; };
+  for (const topic of ["сколько у тебя поз", "кто тебя рисует"]) {
+    assert.match(said(topic), word(names.length, "картинок"), topic);
+    assert.match(said(topic), word(jackets.length, "поз в куртке"), topic);
+  }
+  assert.match(said("как часто ты моргаешь"), word(lidded.length, "картинок с веками"));
+  // Где она моргает — названо словами: у каждой картинки с веками есть своё слово в теме. Новые веки — новое слово.
+  const LIDS = { tea: /кружк/u, tea3: /пуф/u, work: /блокнот/u, work2: /блокнот/u, jealous: /скрещ[её]нными руками/u };
+  for (const name of lidded.filter(item => !item.includes("-"))) {
+    assert.ok(LIDS[name], `${name}: веки есть, а слова о них в темах «как часто ты моргаешь» и «ты моргаешь» нет — дописать`);
+    assert.match(said("как часто ты моргаешь"), LIDS[name], name);
+  }
+  assert.match(said("как часто ты моргаешь"), /в куртке и в свитере|в обоих нарядах/u);
+  // Свитер полон (это держит тест «она картинкой»): значит, ни одна тема не говорит «вечером поза одна».
+  assert.deepEqual(names.filter(name => name.startsWith("home-")).sort(), jackets.map(name => `home-${name}`).sort());
+  for (const topic of ["позы вечером", "ты меняешь позы", "сколько у тебя поз", "ты моргаешь", "как часто ты моргаешь", "свитер на весь вечер", "свитер в комнате", "почему ты стоишь", "те же позы в свитере", "кто тебя рисует"]) {
+    assert.ok(said(topic), `темы «${topic}» нет`);
+    assert.doesNotMatch(said(topic), /пока (?:по )?одн|ещё не нарисован|единственн|позу не меняю|[Дд]нём — меняю/u, topic);
+  }
+  assert.match(said("позы вечером"), /[Мм]еняю/u);
+  // Прежний вопрос «почему вечером одна поза» не остался без ответа: тема та же, ответ — новый.
+  for (const asked of ["почему ты вечером не меняешь позу?", "ты в свитере не двигаешься", "ты и вечером меняешь позы?"]) assert.deepEqual(book.match(asked), ["позы вечером"], asked);
+
+  // Что видно на новых картинках — о том можно спросить, и ответ не уходит модели.
+  const hit = {
+    "что за ленточка?": "ленточка", "зачем тебе лента": "ленточка", "ты оглядываешься": "ты оглядываешься", "почему ты смотришь через плечо?": "ты оглядываешься",
+    "ты грызёшь ручку": "ручка у губ", "ты задумалась": "ручка у губ", "ты трёшь глаз": "ты трешь глаз", "ты сонная": "ты трешь глаз",
+    "ты опять пьёшь чай": "ты опять пьешь чай", "почему ты пьёшь с закрытыми глазами?": "пьешь с закрытыми глазами", "ты красиво танцуешь": "ты танцуешь", "под что ты танцуешь?": "музыка для танцев",
+    "кто тебя рисует?": "кто тебя рисует", "почему позы одинаковые?": "те же позы в свитере", "у тебя красивая улыбка": "твоя улыбка", "какой длины твои волосы?": "длина волос", "ты заплетаешь косу?": "прическа",
+  };
+  for (const [asked, name] of Object.entries(hit)) assert.deepEqual(book.match(asked), [name], asked);
+  // Прежние темы остались при своих словах: новое их не отняло.
+  const kept = {
+    "ты умеешь танцевать": "станцуй", "о чем ты задумалась": "о чем думаешь", "ты подглядываешь": "ты меня видишь", "что ты пьешь": "любимый напиток", "ты улыбаешься": "ты смеешься",
+    "красивые волосы": "красивые волосы", "что у тебя в руках?": "что у тебя в руках", "кто нарисовал комнату?": "кто нарисовал комнату", "ты зеваешь": "ты зеваешь", "ты отвернулась": "ты отвернулась",
+  };
+  for (const [asked, name] of Object.entries(kept)) assert.deepEqual(book.match(asked), [name], asked);
+  // Чужое остаётся чужим: вопрос не о ней — не к этим темам.
+  for (const asked of ["что за ленточка у кота на шее", "ты оглядываешься на прошлое", "кто тебя рисует на уроке", "какой длины твои волосы были в школе"]) assert.equal(book.match(asked), null, asked);
+
+  // О жизни человека: тяжёлое — серьёзной темой (без манер и шуток), и только о людях и питомцах.
+  const life = {
+    "у меня умер дедушка": "!утрата", "не стало мамы": "!утрата", "кота усыпили": "!умер питомец", "мама в больнице": "!близкий заболел", "я боюсь операции": "!операция",
+    "я лежу в больнице": "!в больнице", "давление скачет": "!давление", "меня выписали": "выписали", "я закрыл кредит": "закрыл кредит", "у сына утренник": "утренник",
+    "меня никто не поздравил": "никто не поздравил", "завтра дедлайн": "дедлайн", "делаем уроки": "уроки с ребенком", "надо позвонить маме": "надо позвонить маме", "сегодня день матери": "день матери",
+  };
+  for (const [asked, name] of Object.entries(life)) assert.deepEqual(book.match(asked), [name], asked);
+  for (const asked of ["у меня умер телефон", "умер аккумулятор", "у меня умерла надежда", "давление в шинах упало", "меня выписали из чата"]) assert.equal(book.match(asked), null, asked);
+  // Скорую она называет номером, который работает с любого телефона.
+  assert.match(said("!давление"), /112/u);
+  assert.doesNotMatch(said("!давление"), /Байт|кофе — понимаю/u);
+  for (const topic of ["!утрата", "!умер питомец", "!операция", "!в больнице"]) assert.doesNotMatch(said(topic), /мяу|(?:^|[^а-яё])ня(?:[^а-яё]|$)|Байт (?:так|считает)/iu, topic);
 });
 
 // ── она картинкой (0.40.0) ──────────────────────────────────────────────────
@@ -464,21 +525,35 @@ test("она картинкой: у каждого состояния своя �
   // Наряд: вечером и ночью — домашний, но только там, где у него есть картинка этого состояния; названный
   // сердцем — сильнее часа; незнакомый — как не названный. Ей налили чай за делом — кружка, а куртка та же.
   assert.deepEqual(spritesOf({ part: "день", her: { pose: "desk", key: "уют" } }), ["tea", "tea2", "tea3"]);
-  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "уют" } }), ["home-tea"]);
-  assert.deepEqual(spritesOf({ part: "ночь", her: { pose: "desk", key: "уют" } }), ["home-tea"]);
+  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "уют" } }), ["home-tea", "home-tea2", "home-tea3"]);
+  assert.deepEqual(spritesOf({ part: "ночь", her: { pose: "desk", key: "уют" } }), ["home-tea", "home-tea2", "home-tea3"]);
   assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "уют", wear: "jacket" } }), ["tea", "tea2", "tea3"]);
-  assert.deepEqual(spritesOf({ part: "день", her: { pose: "desk", key: "уют", wear: "home" } }), ["home-tea"]);
-  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "уют", wear: "constructor" } }), ["home-tea"]);
-  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "дело" }, tea: true }), ["home-tea"]);
-  // С 0.42.0 свитер нарисован для каждого состояния: вечером и ночью она в нём, чем бы ни была занята.
-  for (const part of ["вечер", "ночь"]) for (const [key, name] of [["дело", "home-work"], ["уют", "home-tea"], ["игра", "home-play"], ["сон", "home-sleep"], ["устала", "home-tired"], ["обида", "home-pout"], ["ревность", "home-jealous"]]) {
-    for (const pose of HER_POSES) assert.deepEqual(spritesOf({ part, her: { pose, key } }), [name], `${part}/${pose}/${key}`);
-    // Та же поза в куртке есть, и числа у пары одни: рост, вид, что закрывает, где голова. Метка (пар, «z z») —
-    // того же рода и в двух сотых от пары: кружку нейросеть сдвинула на волос.
+  assert.deepEqual(spritesOf({ part: "день", her: { pose: "desk", key: "уют", wear: "home" } }), ["home-tea", "home-tea2", "home-tea3"]);
+  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "уют", wear: "constructor" } }), ["home-tea", "home-tea2", "home-tea3"]);
+  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "дело" }, tea: true }), ["home-tea", "home-tea2", "home-tea3"]);
+  // С 0.42.0 свитер нарисован для каждого состояния: вечером и ночью она в нём, чем бы ни была занята. С 0.43.0 —
+  // и для каждой позы: вечерний список — тот же, что дневной, в том же порядке (первая поза по её словам — та же),
+  // только в свитере. В 0.42.0 поз в свитере было по одной, и вечером она позу не меняла.
+  for (const part of ["вечер", "ночь"]) for (const key of Object.keys(MOODS)) for (const pose of HER_POSES) for (const tea of [false, true]) {
+    const day = spritesOf({ part: "день", her: { pose, key }, tea });
+    assert.deepEqual(spritesOf({ part, her: { pose, key }, tea }), day.map(name => `home-${name}`), `${part}/${pose}/${key}/${tea}`);
+  }
+  assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "dance", key: "игра" } }), ["home-play2", "home-play3", "home-play"]);
+  assert.deepEqual(spritesOf({ part: "ночь", her: { pose: "chair", key: "уют" } }), ["home-tea3", "home-tea", "home-tea2"]);
+  assert.equal(spriteOf({ part: "вечер", her: { pose: "desk", key: "дело", turn: 1 } }), "home-work2");
+  // Свитер полон: у каждой позы в куртке есть пара, и лишних картинок в нём нет.
+  const jackets = Object.keys(HER_SPRITES).filter(name => !name.includes("-"));
+  assert.deepEqual(Object.keys(HER_SPRITES).filter(name => name.startsWith("home-")).sort(), jackets.map(name => `home-${name}`).sort());
+  for (const name of jackets.map(item => `home-${item}`)) {
+    // Числа у пары одни: рост, вид, что закрывает, где голова. Метка (пар, «z z») — того же рода и в двух сотых от
+    // пары: кружку нейросеть сдвинула на волос.
     const { mark: mine, ...own } = HER_SPRITES[name], { mark: theirs, ...twin } = HER_SPRITES[name.slice(5)];
     assert.deepEqual(own, twin, name);
     assert.equal(mine?.[0], theirs?.[0], name);
     if (mine) assert.ok(Math.abs(mine[1] - theirs[1]) < 0.02 && Math.abs(mine[2] - theirs[2]) < 0.02, name);
+    // И сама картинка пары — того же размера (она переодета, а не перерисована): ширина гуляет на рукав куртки.
+    assert.equal(SPRITES[name].h, SPRITES[name.slice(5)].h, name);
+    assert.ok(Math.abs(SPRITES[name].w - SPRITES[name.slice(5)].w) <= 16, `${name}: ширина ${SPRITES[name].w} против ${SPRITES[name.slice(5)].w}`);
   }
   assert.deepEqual(spritesOf({ part: "вечер", her: { pose: "desk", key: "игра", wear: "jacket" } }), ["play", "play2", "play3"]);
   // Первая поза — та, что ближе к её словам: «танцую» — танцует, «дразню Байта ленточкой» — присела с ленточкой,
@@ -496,9 +571,12 @@ test("она картинкой: у каждого состояния своя �
 
   // Определение картинки: один тег, только из проверенных частей.
   assert.equal(drawSprite("tea2", SPRITES.tea2), `<image id="r-her-tea2" width="${SPRITES.tea2.w}" height="${SPRITES.tea2.h}" preserveAspectRatio="none" href="${SPRITES.tea2.src}"/>`);
-  // Веки (0.42.0) — у пяти картинок: с кружкой и с блокнотом (в куртке и в свитере) и на пуфе. У картинок с
-  // закрытыми глазами их нет и не будет.
-  assert.deepEqual(Object.keys(SPRITES).filter(name => SPRITES[name].blink).sort(), ["home-tea", "home-work", "tea", "tea3", "work"]);
+  // Веки — у десяти картинок (0.43.0; в 0.42.0 — у пяти): с кружкой, с блокнотом (обе позы), на пуфе и со
+  // скрещёнными руками — в куртке и в свитере. У картинок с закрытыми глазами их нет и не будет.
+  const lidded = Object.keys(SPRITES).filter(name => SPRITES[name].blink).sort();
+  assert.deepEqual(lidded, ["home-jealous", "home-tea", "home-tea3", "home-work", "home-work2", "jealous", "tea", "tea3", "work", "work2"]);
+  // Моргает в куртке — моргает и в свитере: веки пары переносятся без новой картинки (`blink … by=head`).
+  for (const name of lidded.filter(item => !item.includes("-"))) assert.ok(lidded.includes(`home-${name}`), `home-${name}: веки есть у пары в куртке — перенести`);
   // У картинки с «веками» определений два: она сама и заплатка на глаза — в точках самой картинки.
   const lids = SPRITES.tea.blink;
   assert.equal(drawSprite("tea", SPRITES.tea), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/>`);
@@ -590,7 +668,8 @@ test("она картинкой: у каждого состояния своя �
   assert.ok(drawn.includes('class="breath"') && !drawn.includes("<use"));
   const none = Object.fromEntries(Object.keys(HER_SPRITES).map(name => [name, false]));
   const wanted = spriteOf(view);
-  assert.equal(wanted, "home-tea");
+  // «Чай, кресло, плед» — вечером она сидит с кружкой в свитере (до 0.43.0 в свитере была одна поза — стоя).
+  assert.equal(wanted, "home-tea3");
   for (const options of [{}, { sprites: null }, { sprites: none }, { sprites: { [wanted]: { ...SPRITES[wanted], src: "javascript:alert(1)" } } }, { sprites: { [wanted]: "data:image/webp;base64,AAAA" } }, null, "sprites", 7]) {
     assert.equal(drawInside(view, options), drawn, JSON.stringify(options).slice(0, 60));
   }
@@ -1136,7 +1215,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "5");
+  assert.equal(logic.PAGE, "6");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {

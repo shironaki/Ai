@@ -28,8 +28,9 @@
  *   7. она живая (0.41.0): днём у состояния несколько поз — нажали на неё, и поза сменилась (прежняя тает, новая
  *      проявляется), сама — через полминуты; у картинки с «веками» она моргает; по голове её гладят (сердечко,
  *      во второй раз — другие слова); коробка Байта отвечает; звук включается нажатием, запоминается, а без
- *      нажатия не начинается. Вечером (0.42.0) у каждого состояния — картинка в свитере; с блокнотом и с
- *      кружкой она моргает и в нём; нажатие на неё единственную вечернюю позу не меняет и ничего не ломает.
+ *      нажатия не начинается. Вечером у каждого состояния — картинки в свитере (0.42.0), и поз в нём столько же,
+ *      сколько в куртке (0.43.0): нажатие меняет позу, а куртка вечером не появляется ни на миг; где у картинки
+ *      есть «веки», она моргает; у «сна» поза одна — нажатие её не меняет и ничего не ломает.
  *   6. её картинка не загрузилась: папки `her/` на сервере нет — или файл пришёл, а картинка в нём не читается
  *      (браузер не знает формата, страница не даёт её показать). Комната открывается, она нарисована кодом,
  *      забота нажимается. Второй случай без проверки оставил бы её невидимой: ссылка на картинку в рисунке
@@ -467,6 +468,10 @@ try {
     await pause(900);
     const shownNow = () => tab.evaluate(() => ({
       used: [...document.querySelectorAll("#inside > .art use")].map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
+      // Прежняя поза остаётся в рисунке до следующей перерисовки, но уже растаявшей: что на ней сейчас ВИДНО —
+      // это ссылки без тех, чья группа «тает» дошла до прозрачности.
+      seen: [...document.querySelectorAll("#inside > .art use")].filter(node => { const gone = node.closest(".leave"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
+        .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
       kept: [...document.querySelectorAll("#store image")].map(node => node.id),
       leave: document.querySelectorAll("#inside .leave").length, arrive: document.querySelectorAll("#inside .arrive").length,
       wink: document.querySelectorAll("#inside use.wink").length,
@@ -507,22 +512,54 @@ try {
     for (let spent = 0; spent < 6000 && !turned; spent += 300) { await pause(300); turned = (await shownNow()).used.join() !== before; }
     if (!turned) fail("сама она позу не сменила за шесть секунд (срок в адресе — 0,7 с)");
 
-    // Вечер (0.42.0): свитер — у каждого состояния. Поза в нём пока одна: нажатие её не меняет и ничего не ломает.
-    const evening = [["дело", "home-work", true], ["уют", "home-tea", true], ["игра", "home-play", false], ["сон", "home-sleep", false], ["устала", "home-tired", false], ["обида", "home-pout", false], ["ревность", "home-jealous", false]];
-    for (const [key, name, lids] of evening) {
+    // Вечер: свитер — у каждого состояния (0.42.0) и у каждой позы (0.43.0). Что должно быть на ней, считает сам
+    // рисунок (`spritesOf` — его держат тесты), а здесь проверяется страница: картинки загрузились, нажатие
+    // сменило позу, куртка вечером не показалась ни на миг, веки — там, где они есть в модуле картинки.
+    const evening = ["дело", "уют", "игра", "сон", "устала", "обида", "ревность"];
+    let eveningPoses = 0, eveningLids = 0;
+    for (const key of evening) {
       await tab.goto(`${origin}/index.html#part=${encodeURIComponent("вечер")}&key=${encodeURIComponent(key)}&scene=0`, { waitUntil: "load", timeout: 30_000 });
       await tab.reload({ waitUntil: "load" });
-      if (!await waitKept(`r-her-${name}`, 6000)) { fail(`вечер, «${key}»: картинка в свитере («${name}») не загрузилась`); continue; }
-      await pause(300);
-      // Вечером ссылок на картинку две: сама она и маска вечерней тени на ней — обе на одну и ту же.
-      const worn = (now) => [...new Set(now.used)].join();
-      const dusk = await shownNow();
-      if (worn(dusk) !== `#r-her-${name}`) fail(`вечер, «${key}»: на ней не свитер — ${JSON.stringify(dusk.used)}`);
-      if (lids !== Boolean(dusk.wink) || (lids && !dusk.winking)) fail(`вечер, «${key}»: «веки» — ${dusk.wink}, движется — ${dusk.winking}, а моргать она ${lids ? "должна" : "не должна"}`);
-      await tapHer();
-      await pause(400);
-      const same = await shownNow();
-      if (worn(same) !== `#r-her-${name}` || same.leave) fail(`вечер, «${key}»: поза одна, а после нажатия на рисунке ${JSON.stringify(same.used)}, тающих — ${same.leave}`);
+      const plan = await tab.evaluate(async (mood) => {
+        const [scene, logic] = await Promise.all([import("./scene.js"), import("./logic.js")]);
+        const look = logic.demoLook(20, { part: "вечер", key: mood, scene: "0" });
+        const list = scene.spritesOf({ part: "вечер", her: { pose: look.her.pose, key: mood } });
+        const lids = [];
+        for (const name of list) lids.push(Boolean((await import(`./her/${name}.js`)).default.blink));
+        return { list, lids };
+      }, key);
+      if (!plan.list.length || plan.list.some(name => !name.startsWith("home-"))) { fail(`вечер, «${key}»: на ней должен быть свитер, а рисунок называет ${JSON.stringify(plan.list)}`); continue; }
+      if ((key === "сон") !== (plan.list.length === 1)) fail(`вечер, «${key}»: поз в свитере — ${plan.list.length}`);
+      // Ссылок на картинку вечером две: сама она и маска вечерней тени на ней — обе на одну и ту же.
+      // `worn` — что на ней видно; `drawn` — всё, что есть в рисунке, вместе с тающей прежней позой.
+      const worn = (now) => [...new Set(now.seen)];
+      const drawn = (now) => [...new Set(now.used)];
+      for (const [index, name] of plan.list.entries()) {
+        if (!await waitKept(`r-her-${name}`, 6000)) { fail(`вечер, «${key}»: картинка в свитере («${name}») не загрузилась`); break; }
+        if (index) {
+          await tapHer();
+          await pause(160);
+          const mid = await shownNow();
+          if (!mid.used.includes(`#r-her-${name}`)) { fail(`вечер, «${key}»: нажали на неё, а поза не сменилась на «${name}»: ${JSON.stringify(drawn(mid))}`); break; }
+          if (!mid.leave || !mid.arrive) fail(`вечер, «${key}»: поза сменилась рывком: тающих — ${mid.leave}, проявляющихся — ${mid.arrive}`);
+          if (drawn(mid).some(href => !href.startsWith("#r-her-home-"))) fail(`вечер, «${key}»: при смене позы показалась куртка — ${JSON.stringify(drawn(mid))}`);
+          await pause(900);
+        } else {
+          await pause(300);
+        }
+        const dusk = await shownNow();
+        if (worn(dusk).join() !== `#r-her-${name}`) fail(`вечер, «${key}»: на ней не «${name}» — видно ${JSON.stringify(worn(dusk))}, в рисунке ${JSON.stringify(dusk.used)}`);
+        const lids = plan.lids[index];
+        if (lids !== Boolean(dusk.wink) || (lids && !dusk.winking)) fail(`вечер, «${key}», «${name}»: «веки» — ${dusk.wink}, движется — ${dusk.winking}, а моргать она ${lids ? "должна" : "не должна"}`);
+        eveningPoses += 1;
+        eveningLids += lids ? 1 : 0;
+      }
+      if (plan.list.length === 1) {
+        await tapHer();
+        await pause(400);
+        const same = await shownNow();
+        if (worn(same).join() !== `#r-her-${plan.list[0]}` || same.leave) fail(`вечер, «${key}»: поза одна, а после нажатия на рисунке ${JSON.stringify(same.used)}, тающих — ${same.leave}`);
+      }
     }
 
     // Звук: по умолчанию тихо; включается нажатием; запоминается; без нажатия не начинается.
@@ -569,7 +606,7 @@ try {
     }
     if (snow.things.length !== 3) fail(`праздничные вещи: на рисунке — ${JSON.stringify(snow.things)}, а должны быть торт, свеча и фонарь`);
     if (broken.length) fail(`позы и звук — ошибка на странице: ${broken[0].slice(0, 200)}`);
-    if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний, с блокнотом и с кружкой она моргает и в нём`);
+    if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний: поз в нём — ${eveningPoses}, сменяются от нажатия, куртка не показывается; моргает на ${eveningLids} из них`);
     if (failures.length === failed) console.log(`  позы сменяются от нажатия и сами, прежняя тает; моргает (заплаток — ${start.wink}); звук включается нажатием, запоминается, без касания не начинается; снег — хлопьями в двух слоях; торт, свеча и фонарь на месте`);
     await tab.close();
   }

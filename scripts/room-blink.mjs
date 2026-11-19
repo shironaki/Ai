@@ -76,16 +76,27 @@ try {
     const cw = right - left + 1, ch = bottom - top + 1;
     const pixels = (draw) => { const c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d", { willReadFrequently: true }); x.imageSmoothingQuality = "high"; draw(x); return x.getImageData(0, 0, W, H).data; };
     const pa = pixels(x => x.drawImage(first, 0, 0));
-    const fitted = (dx, dy, sw, sh) => pixels(x => x.drawImage(full, left, top, cw, ch, dx, dy, W + sw, H + sh));
+    // Та же картинка с закрытыми глазами — тот же силуэт: её рамка ложится на рамку спрайта. Картинка в другом наряде
+    // (`by=head`) — силуэт другой: куртка шире свитера, и рамки по ширине не сходятся (в 0.43.0 — на тринадцать точек
+    // из трёхсот). Тогда вторая картинка берётся по росту, без искажения, а её место по ширине ищется широко.
+    const fitted = head
+      ? (dx, dy, sw, sh) => pixels(x => x.drawImage(full, left, top, cw, ch, dx, dy, cw * (H + sh) / ch, H + sh))
+      : (dx, dy, sw, sh) => pixels(x => x.drawImage(full, left, top, cw, ch, dx, dy, W + sw, H + sh));
     const gap = (pb, i) => (Math.abs(pa[i] - pb[i]) + Math.abs(pa[i + 1] - pb[i + 1]) + Math.abs(pa[i + 2] - pb[i + 2])) / 3;
     const score = (pb, y0, y1, step = 2) => { let sum = 0, count = 0; for (let y = y0; y < y1; y += step) for (let x = 0; x < W; x += step) { const i = (y * W + x) * 4; if (pa[i + 3] < 200 || pb[i + 3] < 200) continue; sum += gap(pb, i); count += 1; } return count ? sum / count : 999; };
     // Подгонка: там, где ничего не менялось (ниже головы), картинки должны совпасть. С картинкой в другом наряде
     // (`by=head`) совпадает только голова — тогда по ней.
     const [from, to] = head ? [0, Math.round(H * 0.2)] : [Math.round(H * 0.25), H];
     let best = null;
-    for (const sw of [0, -2, 2, -4, 4]) for (const sh of [0, -2, 2, -4, 4]) for (let dx = -4; dx <= 4; dx += 1) for (let dy = -4; dy <= 4; dy += 1) {
-      const value = score(fitted(dx, dy, sw, sh), from, to, 3);
-      if (!best || value < best.value) best = { value, dx, dy, sw, sh };
+    const attempt = (dx, dy, sw, sh) => { const value = score(fitted(dx, dy, sw, sh), from, to, 3); if (!best || value < best.value) best = { value, dx, dy, sw, sh }; };
+    if (head) {
+      // Сначала грубо и широко (обувь меняет рост на точки, наряд — ширину на десятки), потом — вокруг найденного.
+      const wide = Math.max(48, Math.abs(Math.round(cw * H / ch) - W) + 16);
+      for (let sh = -16; sh <= 16; sh += 4) for (let dx = -wide; dx <= wide; dx += 3) for (const dy of [-4, 0, 4]) attempt(dx, dy, 0, sh);
+      const rough = best;
+      for (let sh = rough.sh - 3; sh <= rough.sh + 3; sh += 1) for (let dx = rough.dx - 3; dx <= rough.dx + 3; dx += 1) for (let dy = rough.dy - 4; dy <= rough.dy + 4; dy += 1) attempt(dx, dy, 0, sh);
+    } else {
+      for (const sw of [0, -2, 2, -4, 4]) for (const sh of [0, -2, 2, -4, 4]) for (let dx = -4; dx <= 4; dx += 1) for (let dy = -4; dy <= 4; dy += 1) attempt(dx, dy, sw, sh);
     }
     const pb = fitted(best.dx, best.dy, best.sw, best.sh);
     // Глаза: окно, где разница собрана плотнее всего (сумма по окну — через таблицу сумм).
@@ -127,7 +138,7 @@ try {
     };
     tryAt(0, 0);
     // Сдвига мало — голова ещё и чуть другого размера: тот же перебор с размером.
-    if (near.value > 8.5) for (const sw of [-6, -4, -2, 0, 2, 4, 6]) for (const sh of [-6, -4, -2, 0, 2, 4, 6]) if (sw || sh) tryAt(sw, sh);
+    if (near.value > 8.5) for (const sw of head ? [0] : [-6, -4, -2, 0, 2, 4, 6]) for (const sh of [-6, -4, -2, 0, 2, 4, 6]) if (sw || sh) tryAt(sw, sh);
     const pe = near.data;
     const patch = document.createElement("canvas");
     patch.width = x1 - x0; patch.height = y1 - y0;
@@ -175,7 +186,7 @@ try {
   await writeFile(file, cleared.replace(/, src: "data:image\/webp;base64,/u, `, ${blink}src: "data:image/webp;base64,`));
   await mkdir(join(resolve(root), "out"), { recursive: true });
   await writeFile(join(resolve(root), "out", `blink-${name}.png`), Buffer.from(made.preview.split(",")[1], "base64"));
-  console.log(`моргание «${name}»: заплатка ${w}×${h} в точке ${x}, ${y}; у глаз сдвинута на ${made.near.dx}, ${made.near.dy}${made.near.sw || made.near.sh ? `, размер ${made.near.sw}, ${made.near.sh}` : ""} (кайма расходится на ${made.near.rim.toFixed(1)} из 255); ниже головы — на ${made.body.toFixed(1)}; изменённых точек в заплатке — ${made.changed}; модуль — ${Math.round(Buffer.byteLength(await readFile(file, "utf8")) / 1024)} КБ; снимок — out/blink-${name}.png`);
+  console.log(`моргание «${name}»: заплатка ${w}×${h} в точке ${x}, ${y}; у глаз сдвинута на ${made.near.dx}, ${made.near.dy}${made.near.sw || made.near.sh ? `, размер ${made.near.sw}, ${made.near.sh}` : ""} (кайма расходится на ${made.near.rim.toFixed(1)} из 255); ${byHead ? `по голове: место ${made.fit.dx}, ${made.fit.dy}, рост ${made.fit.sh >= 0 ? "+" : ""}${made.fit.sh}, голова расходится на ${made.fit.value.toFixed(1)}` : `ниже головы — на ${made.body.toFixed(1)}`}; изменённых точек в заплатке — ${made.changed}; модуль — ${Math.round(Buffer.byteLength(await readFile(file, "utf8")) / 1024)} КБ; снимок — out/blink-${name}.png`);
 } finally {
   await browser.close().catch(() => {});
 }

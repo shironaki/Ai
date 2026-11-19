@@ -10,7 +10,7 @@
 #                                   старые копии (после любой правки в miniapp/; вторым словом — снимок)
 #   bash scripts/verify.sh sheet <снимок.png> [rooms|her|cat|things|zones|файл.json] [час] [drawn]
 #                                   лист рисунков комнаты — посмотреть глазами (после правки рисунка)
-#   bash scripts/verify.sh sprite <картинка.png> <имя> [высота] [качество] [ось] [erase=x0,y0,x1,y1]
+#   bash scripts/verify.sh sprite <картинка.png> <имя> [высота] [качество] [ось] [erase=x0,y0,x1,y1] [red]
 #                                   спрайт Аи: картинка на зелёном фоне → модуль miniapp/her/<имя>.js
 #   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя> [win=ШxВ] [at=x,y] [by=head]
 #                                   моргание: заплатка «веки» в модуль спрайта (она же картинка, глаза закрыты)
