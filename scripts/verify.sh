@@ -8,6 +8,8 @@
 #   bash scripts/verify.sh node24   только прогон на Node 24
 #   bash scripts/verify.sh page     страница комнаты в настоящем браузере: каждое место нажато
 #                                   (после любой правки в miniapp/; вторым словом — куда положить снимок)
+#   bash scripts/verify.sh sheet <снимок.png> [rooms|her|cat|things|zones|файл.json] [час]
+#                                   лист рисунков комнаты — посмотреть глазами (после правки рисунка)
 #
 # Зависимостей у проекта нет и не будет (на платформе нет npm), поэтому eslint и
 # Node 24 ставятся во временную папку (VERIFY_TMP, по умолчанию /tmp) при первом
@@ -80,14 +82,26 @@ node24() {
 # Страница мини-приложения в браузере без экрана. Браузер — во временной папке, как eslint: зависимостью
 # проекта он не становится. Сам сценарий — scripts/room-check.mjs; он запускается из этой папки, чтобы
 # найти браузер рядом с собой.
-page() {
+browser() {
   if [ ! -d "$PAGE/node_modules/puppeteer-core" ] || [ ! -d "$PAGE/node_modules/@sparticuz/chromium" ]; then
     echo "браузер: ставлю в $PAGE (около минуты)…"
     mkdir -p "$PAGE"
     (cd "$PAGE" && npm install --no-audit --no-fund --silent puppeteer-core @sparticuz/chromium)
   fi
+}
+
+page() {
+  browser
   cp "$ROOT/scripts/room-check.mjs" "$PAGE/room-check.mjs"
   (cd "$PAGE" && node room-check.mjs "$ROOT/miniapp" "${1:-}")
+}
+
+# Лист рисунков комнаты: тот же браузер, сценарий — scripts/room-sheet.mjs.
+sheet() {
+  if [ -z "${1:-}" ]; then echo "Куда положить снимок? bash scripts/verify.sh sheet /tmp/rooms.png [rooms|her|cat|things|zones|файл.json] [час]"; return 1; fi
+  browser
+  cp "$ROOT/scripts/room-sheet.mjs" "$PAGE/room-sheet.mjs"
+  (cd "$PAGE" && node room-sheet.mjs "$ROOT" "$@")
 }
 
 case "${1:-quick}" in
@@ -97,5 +111,6 @@ case "${1:-quick}" in
   ci) ci ;;
   node24) node24 ;;
   page) page "${2:-}" ;;
-  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  sheet) shift; sheet "$@" ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

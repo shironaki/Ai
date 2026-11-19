@@ -1,5 +1,5 @@
 /**
- * Комната Аи — что показать (мини-приложение, сборка 0.38.0).
+ * Комната Аи — что показать (мини-приложение, сборка 0.39.0).
  *
  * Чистые функции между ответом сердца (`endpoints/room`) и рисунком (`scene.js`): здесь нет ни страницы, ни
  * Telegram, поэтому всё проверяется тестами. Страница (`app.js`) только зовёт их и раскладывает итог по разметке.
@@ -7,12 +7,12 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "1";
+export const PAGE = "2";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
 /** Цвет шапки Telegram под стену комнаты в этот час. */
-export const HEADERS = Object.freeze({ "утро": "#d2c1b5", "день": "#d8ccbf", "вечер": "#8f7e98", "ночь": "#636087" });
+export const HEADERS = Object.freeze({ "утро": "#c9b5ab", "день": "#cbbeb3", "вечер": "#65536a", "ночь": "#443f5d" });
 export const partOf = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
 
 const text = (value, limit = 600) => (typeof value === "string" ? value.trim().slice(0, limit) : "");

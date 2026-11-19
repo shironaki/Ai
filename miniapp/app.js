@@ -1,5 +1,5 @@
 /**
- * Комната Аи — страница (мини-приложение, сборка 0.38.0): нажатия, связь с сердцем, раскладка по разметке.
+ * Комната Аи — страница (мини-приложение, сборка 0.39.0): нажатия, связь с сердцем, раскладка по разметке.
  *
  * Что нарисовать — `scene.js`; что показать по ответу сердца — `logic.js` (оба проверяются тестами без браузера).
  * Здесь — только то, чему нужен браузер и Telegram:
@@ -8,7 +8,7 @@
  *   • открыта не из Telegram (нет подписи) — витрина: комната по часам устройства, забота понарошку;
  *   • ошибка связи — словами в её реплике и кнопкой «Попробовать ещё раз», а не пустым экраном.
  */
-import { drawBackdrop, drawInside } from "./scene.js";
+import { drawBackdrop, drawRain, drawInside } from "./scene.js";
 import { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, refused, explain, unwrap, demoLook, demoCare, demoPick } from "./logic.js";
 
 const tg = window.Telegram?.WebApp ?? null;
@@ -40,7 +40,7 @@ const buzz = (kind) => {
 /** Шапка и фон Telegram — под стену комнаты в этот час. */
 function theme() {
   const colour = HEADERS[state.part] ?? HEADERS["день"];
-  const page = getComputedStyle($("app")).getPropertyValue("--bg").trim() || "#efe6da";
+  const page = getComputedStyle($("app")).getPropertyValue("--bg").trim() || "#f1e8dc";
   document.documentElement.style.setProperty("--page", page);
   if (!tg || header === colour) return;
   header = colour;
@@ -53,10 +53,16 @@ function paint() {
   const app = $("app");
   app.dataset.light = LIGHTS[state.part] ?? "day";
   app.dataset.state = state.ready ? "ready" : "loading";
-  // Дождь идёт своим чередом: за окном перерисовывается только со сменой часа, комната — когда в ней что-то
-  // изменилось. Иначе при каждом нажатии капли прыгали бы назад, а гирлянда мигала заново.
+  // Три слоя. Небо с городом и дождь перерисовываются только со сменой часа, комната — когда в ней что-то
+  // изменилось: иначе при каждом нажатии дождь прыгал бы назад, а гирлянда мигала заново. Сам дождь движется
+  // без рисования вовсе: страница сдвигает его слой целиком (стили `.rainbox`).
   const view = viewOf(state), key = JSON.stringify(view);
-  if (drawn.part !== view.part) { $("backdrop").innerHTML = drawBackdrop(view.part); drawn.part = view.part; }
+  if (drawn.part !== view.part) {
+    $("backdrop").innerHTML = drawBackdrop(view.part);
+    $("rainFar").innerHTML = drawRain(view.part, "far");
+    $("rainNear").innerHTML = drawRain(view.part, "near");
+    drawn.part = view.part;
+  }
   if (drawn.view !== key) { $("inside").innerHTML = drawInside(view); drawn.view = key; }
   const say = $("say");
   if (say.textContent !== state.said) {

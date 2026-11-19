@@ -1,5 +1,6 @@
 /**
- * Мини-приложение «Комната» (0.38.0) — шаг 2 идей 41 и 112–114: комнату можно открыть картинкой.
+ * Мини-приложение «Комната» (0.38.0; рисунок заново — 0.39.0) — шаг 2 идей 41 и 112–114: комнату можно
+ * открыть картинкой.
  *
  * Браузера и Telegram здесь нет. Проверяется всё, что от них не зависит: рисунок (`miniapp/scene.js`),
  * раскладка ответа сердца по странице (`miniapp/logic.js`), функция комнаты (`heart.onRoom`, её зовёт
@@ -18,7 +19,7 @@ const { default: endpoint } = await import("../tgcloud/endpoints/room.js");
 const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
 const { FIRST_KEY } = await import("../tgcloud/lib/personal.js");
 
-const { drawRoom, drawBackdrop, drawInside, WIDTH, HEIGHT, PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS, MOODS, tint } = scene;
+const { drawRoom, drawBackdrop, drawRain, drawInside, WIDTH, HEIGHT, WIN, RAIN_SHIFT, PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS, MOODS, tint } = scene;
 const ROOT = new URL("..", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const ON = { PHRASES: true };
@@ -97,7 +98,7 @@ test("рисунок: каждая поза Аи, каждая фигура и �
     assert.notEqual(withIt, empty, `вещь «${key}» ничего не меняет на рисунке`);
     assert.deepEqual(zonesOf(withIt).filter(zone => zone.act.startsWith("thing:")).map(zone => zone.act), [`thing:${key}`]);
   }
-  // Абажур — любимого цвета человека; гирлянда с ёлкой переезжает на неё.
+  // Абажур — любимого цвета человека.
   assert.ok(drawRoom({ ...bare, part: "вечер", things: ["абажур"], lamp: "#3f6fd8" }).includes("#3f6fd8"));
   assert.ok(!drawRoom({ ...bare, part: "вечер", things: [], lamp: "#3f6fd8" }).includes("#3f6fd9"));
   // Час виден: вечером и ночью горит лампа, дождь идёт всегда.
@@ -121,8 +122,9 @@ test("рисунок: каждая поза Аи, каждая фигура и �
 test("рисунок: нажатия — отдельным слоем поверх картинки; забота — поверх всех, свет лампы пальцу не мешает, Байт у миски не закрывает миску", () => {
   const view = { part: "ночь", her: { pose: "desk", key: "дело" }, cat: { shape: "sit", place: "bowl", key: "голоден" }, things: [...THINGS], lamp: "#7fd0c8" };
   const markup = drawRoom(view);
-  // Три слоя: за окном, картинка, нажатия. Первые два нажатий не ловят вовсе.
-  assert.equal(markup, `${drawBackdrop("ночь")}${drawInside(view)}`);
+  // Четыре слоя: за окном, дождь по стеклу, картинка, нажатия. Первые три нажатий не ловят вовсе.
+  const rain = `<g clip-path="url(#s-glass)" pointer-events="none"><g transform="translate(${WIN.x} ${WIN.y})">${drawRain("ночь")}</g></g>`;
+  assert.equal(markup, `${drawBackdrop("ночь")}${rain}${drawInside(view)}`);
   assert.ok(markup.startsWith('<g class="backdrop" pointer-events="none">'));
   assert.equal((markup.match(/<g class="art" pointer-events="none">/gu) ?? []).length, 1);
   assert.equal((markup.match(/<g class="zones">/gu) ?? []).length, 1);
@@ -134,6 +136,21 @@ test("рисунок: нажатия — отдельным слоем пове�
   assert.notEqual(drawBackdrop("ночь"), drawBackdrop("день"));
   assert.equal(drawBackdrop("чепуха"), drawBackdrop("день"));
   assert.ok(!drawInside(view).includes('class="rain'), "дождь — за окном");
+  // Дождь — отдельным слоем: страница рисует его раз в час и двигает целиком, поэтому в небе и в комнате его нет,
+  // имён в нём нет (два плана лежат в двух отдельных картинках) и нажатий он не ловит.
+  assert.ok(!drawBackdrop("ночь").includes('class="rain'));
+  for (const part of PARTS) {
+    assert.equal(drawRain(part), drawRain(part, "far") + drawRain(part, "near"), part);
+    for (const plane of ["far", "near"]) {
+      const layer = drawRain(part, plane);
+      assert.ok(layer.startsWith(`<g class="rain ${plane}" pointer-events="none" `), `${part}/${plane}`);
+      assert.equal(wellFormed(layer), "", `${part}/${plane}`);
+      assert.doesNotMatch(layer, / id="|url\(#|NaN|undefined/u, `${part}/${plane}`);
+      assert.ok((layer.match(/<path /gu) ?? []).length >= 12, `${part}/${plane}: струй мало`);
+    }
+  }
+  assert.equal(drawRain("чепуха"), drawRain("день"));
+  assert.notEqual(drawRain("день"), drawRain("ночь"), "ночью струи светлее неба — другой цвет");
 
   const zones = zonesOf(markup);
   assert.equal((markup.match(/data-act="/gu) ?? []).length, zones.length, "каждое место нажатия — прямоугольник в слое нажатий");
@@ -731,7 +748,19 @@ test("страница: папка уходит на платформу как �
   assert.match(html, /<meta name="viewport" content="width=device-width, initial-scale=1/u);
   assert.match(html, /<svg id="room" viewBox="0 0 400 520"/u);
   assert.equal(`${WIDTH} ${HEIGHT}`, "400 520");
-  for (const id of ["app", "stage", "room", "backdrop", "inside", "talk", "who", "say", "retry", "scene", "sceneText", "sceneChoice", "scenePicked", "actions", "hint", "foot"]) assert.match(html, new RegExp(` id="${id}"`, "u"), id);
+  // Три картинки одна над другой: небо с городом, дождь, комната со слоем нажатий. Дождь лежит ровно по стеклу —
+  // числа в стилях те же, что `WIN` в рисунке, — и сдвигается на один шаг пунктира (`RAIN_SHIFT`): иначе он шёл бы
+  // рывками или вылезал на стену.
+  assert.match(html, /<svg id="sky" viewBox="0 0 400 520"[^>]*><g id="backdrop"><\/g><\/svg>/u);
+  const pct = (value) => String(Number(value.toFixed(4)));
+  assert.ok(html.includes(`.rainbox { position: absolute; left: ${pct(WIN.x / WIDTH * 100)}%; top: ${pct(WIN.y / HEIGHT * 100)}%; width: ${pct(WIN.w / WIDTH * 100)}%; height: ${pct(WIN.h / HEIGHT * 100)}%; overflow: hidden; pointer-events: none; }`), "дождь — по стеклу");
+  for (const plane of ["far", "near"]) {
+    const { x, y, seconds } = RAIN_SHIFT[plane];
+    assert.match(html, new RegExp(`<svg class="plane ${plane}" id="rain${plane === "far" ? "Far" : "Near"}" viewBox="0 0 ${WIN.w} ${WIN.h}"`, "u"), plane);
+    assert.ok(html.includes(`.rainbox .${plane} { animation: rain-${plane} ${seconds}s linear infinite; }`), plane);
+    assert.ok(html.includes(`@keyframes rain-${plane} { to { transform: translate(${pct(x)}%, ${pct(y)}%); } }`), plane);
+  }
+  for (const id of ["app", "stage", "sky", "rainFar", "rainNear", "room", "backdrop", "inside", "talk", "who", "say", "retry", "scene", "sceneText", "sceneChoice", "scenePicked", "actions", "hint", "foot"]) assert.match(html, new RegExp(` id="${id}"`, "u"), id);
   // Пять кнопок заботы — теми же словами, что знает сердце.
   assert.deepEqual([...html.matchAll(/<button type="button" data-act="([a-z]+)"/gu)].map(found => found[1]), [...logic.CARE]);
   assert.deepEqual([...html.matchAll(/data-pick="([01])"/gu)].map(found => found[1]), ["0", "1"]);
@@ -739,6 +768,32 @@ test("страница: папка уходит на платформу как �
   assert.match(html, /\[hidden\] \{ display: none !important; \}/u);
   // Движение отключается у тех, кто просил его не показывать.
   assert.match(html, /@media \(prefers-reduced-motion: reduce\)/u);
+  // Движение живёт в двух местах: рисунок вешает класс, стили страницы его двигают. Переименуй одно без другого —
+  // и хвост замрёт, а тесты промолчат. Поэтому: у каждого класса из рисунка, кроме неподвижных, есть правило,
+  // и каждое правило для рисунка относится к классу, который рисунок в самом деле ставит.
+  const css = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
+  const styled = new Set([...css.matchAll(/(?:#room|#sky)((?: ?\.[a-z][a-z0-9]*)+)/gu)].flatMap(found => found[1].match(/[a-z][a-z0-9]*/gu)));
+  const classes = new Set();
+  let turn = 0;
+  const cats = ["шалит", "сыт", "обижен", "игра"];
+  const collect = (view) => { for (const found of drawRoom(view).matchAll(/class="([^"]+)"/gu)) for (const name of found[1].split(" ")) classes.add(name); };
+  for (const part of PARTS) for (const pose of HER_POSES) {
+    turn += 1;
+    collect({ part, her: { pose, key: "уют" }, cat: { shape: CAT_SHAPES[turn % CAT_SHAPES.length], place: CAT_PLACES[turn % CAT_PLACES.length], key: cats[turn % cats.length] }, things: [...THINGS], tea: true, fed: true });
+  }
+  for (const [shape, place] of [["claw", "chair"], ["play", "rug"], ["eat", "bowl"], ["curl", "pillow"], ["walk", "near"]]) collect({ part: "вечер", her: { pose: "desk", key: "дело" }, cat: { shape, place, key: "шалит" }, things: [] });
+  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "far", "near", "b0", "s0", ...CAT_SHAPES]);
+  assert.deepEqual([...classes].filter(name => !styled.has(name) && !still.has(name)).sort(), [], "класс в рисунке есть, а правила в стилях нет");
+  assert.deepEqual([...styled].filter(name => !classes.has(name)).sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
+  for (const name of ["breath", "blink", "slide", "bulb", "tailwag", "steam", "zzz"]) assert.ok(classes.has(name) && styled.has(name), name);
+  // Класс движения не стоит на части с собственным сдвигом: стиль заменил бы сдвиг, и часть уехала бы в угол.
+  const moving = [...styled].filter(name => name !== "tap" && name !== "cat");
+  for (const view of [{ part: "вечер", her: { pose: "dance", key: "игра" }, cat: { shape: "play", place: "rug", key: "игра" }, things: [...THINGS], tea: true }, { part: "ночь", her: { pose: "nap", key: "сон" }, cat: { shape: "claw", place: "chair", key: "шалит" }, things: [] }]) {
+    for (const tag of drawRoom(view).matchAll(/<[a-z]+ ((?:"[^"]*"|[^<>"])*)>/gu)) {
+      const names = /class="([^"]+)"/u.exec(tag[1])?.[1].split(" ") ?? [];
+      if (names.some(name => moving.includes(name))) assert.doesNotMatch(tag[1], /(?:^| )transform="/u, names.join("."));
+    }
+  }
   // Чужих скриптов, стилей и картинок нет: кроме скрипта Telegram страница ничего не тянет со стороны.
   const outside = [...html.matchAll(/(?:src|href)="(https?:[^"]+)"/gu)].map(found => found[1]);
   assert.deepEqual(outside, ["https://telegram.org/js/telegram-web-app.js"]);
@@ -752,7 +807,7 @@ test("страница: папка уходит на платформу как �
   assert.match(app, /localhost\|127/u);
   // Текст на страницу попадает текстом, а не разметкой: рисунок — единственное, что вставляется как разметка.
   const markupWrites = [...app.matchAll(/\.innerHTML = ([^;]+);/gu)].map(found => found[1].trim());
-  assert.deepEqual(markupWrites.filter(value => !/^draw(?:Backdrop|Inside)\(/u.test(value) && !value.startsWith("'<svg ")), []);
+  assert.deepEqual(markupWrites.filter(value => !/^draw(?:Backdrop|Rain|Inside)\(/u.test(value) && !value.startsWith("'<svg ")), []);
   for (const name of ["scene.js", "logic.js"]) {
     const source = read(`miniapp/${name}`);
     const code = source.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/^\s*\/\/.*$/gmu, "");

@@ -7,7 +7,7 @@
 <meta name="robots" content="noindex">
 <title>Комната Аи</title>
 <!--
-  Комната Аи — мини-приложение Telegram (сборка 0.38.0).
+  Комната Аи — мини-приложение Telegram (сборка 0.39.0).
   Страница — четыре файла без сборки: index.html (разметка и стили), scene.js (рисунок), logic.js (что показать),
   app.js (нажатия и связь). С сердцем говорит через функцию endpoints/room:
   Telegram.WebApp.Serverless.call("room", { do: "look" }, …). Открытая не из Telegram — показывает витрину.
@@ -15,105 +15,133 @@
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 :root {
-  --bg: #efe6da; --ink: #2c2631; --dim: #7d727b; --card: #fffaf2; --line: #e3d7c7; --btn: #fffdf8; --accent: #c8283f; --accent-ink: #ffffff;
-  --shadow: 0 6px 22px rgba(60, 40, 30, 0.16);
+  --bg: #f1e8dc; --ink: #2c2631; --dim: #85786f; --card: #fffaf2; --line: #e6d9c8; --btn: #fffdf8; --tint: #f9e4e1;
+  --accent: #c8283f; --accent-ink: #ffffff; --ok: #3f9d6b;
+  --shadow: 0 8px 24px rgba(74, 50, 36, 0.16);
   color-scheme: light;
 }
-main[data-light="evening"] { --bg: #3b3149; --ink: #f6eef2; --dim: #b9acbf; --card: #483c58; --line: #5a4b6e; --btn: #524462; --shadow: 0 6px 22px rgba(10, 6, 20, 0.4); }
-main[data-light="night"] { --bg: #232039; --ink: #efebf8; --dim: #a19cbd; --card: #2f2b4b; --line: #3e3a63; --btn: #37335a; --shadow: 0 6px 22px rgba(4, 4, 14, 0.5); }
+main[data-light="evening"] { --bg: #33283f; --ink: #f6eef2; --dim: #b7a9bd; --card: #43364f; --line: #594a64; --btn: #4a3c57; --tint: #5c3a52; --accent: #e04a60; --shadow: 0 8px 24px rgba(10, 6, 20, 0.45); }
+main[data-light="night"] { --bg: #201d36; --ink: #efebf8; --dim: #a19cbd; --card: #2d2946; --line: #3e395d; --btn: #353053; --tint: #473357; --accent: #e04a60; --shadow: 0 8px 24px rgba(4, 4, 14, 0.55); }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 /* Спрятанное спрятано, какой бы display ни задал стиль ниже: иначе сыгранная сценка оставалась бы с кнопками. */
 [hidden] { display: none !important; }
-html, body { margin: 0; height: 100%; background: var(--page, #efe6da); }
+html, body { margin: 0; height: 100%; background: var(--page, #f1e8dc); }
 body { font: 15px/1.42 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: var(--ink); overflow-x: hidden; -webkit-text-size-adjust: 100%; }
 main { max-width: 520px; margin: 0 auto; min-height: 100%; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; transition: background-color 0.4s; }
-.stage { position: relative; line-height: 0; user-select: none; -webkit-user-select: none; }
-#room { display: block; width: 100%; height: auto; touch-action: manipulation; }
+
+/* Рисунок — три слоя один над другим: небо и город, дождь, комната со слоем нажатий. */
+.stage { position: relative; line-height: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }
+#sky { display: block; width: 100%; height: auto; }
+#room { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: manipulation; }
 #room .tap { cursor: pointer; outline: none; }
 #room .tap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-main[data-state="loading"] #room { filter: saturate(0.8) brightness(0.94); }
+/* Дождь лежит ровно по стеклу (те же числа — WIN в scene.js) и съезжает целиком: комната не перерисовывается. */
+.rainbox { position: absolute; left: 31%; top: 8.4615%; width: 66%; height: 41.9231%; overflow: hidden; pointer-events: none; }
+.rainbox .plane { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; will-change: transform; }
+/* Нижний край рисунка тает в фон страницы: полоса с её словами лежит на нём, а не на срезе. */
+.stage::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 30px; background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none; transition: opacity 0.4s; }
+main[data-state="loading"] .stage { filter: saturate(0.8) brightness(0.94); }
 
 /* Её слова — полосой поверх нижнего края рисунка, как в визуальной новелле. */
-.talk { position: relative; margin: -16px 12px 0; padding: 12px 14px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); min-height: 68px; }
-.talk .who { position: absolute; top: -11px; left: 14px; padding: 1px 10px 2px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 700; letter-spacing: 0.02em; line-height: 1.5; }
+.talk { position: relative; z-index: 1; margin: -16px 12px 0; padding: 15px 16px 13px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); min-height: 70px; }
+.talk .who { position: absolute; top: -12px; left: 16px; padding: 2px 12px 3px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 700; letter-spacing: 0.03em; line-height: 1.5; box-shadow: 0 2px 6px rgba(160, 30, 50, 0.3); }
 #say { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
 #say.fresh { animation: rise 0.28s ease-out; }
 .talk[data-tone="warn"] { border-color: var(--accent); }
-.talk[data-tone="warn"] .who { background: var(--dim); }
+.talk[data-tone="warn"] .who { background: var(--dim); box-shadow: none; }
 #retry { margin-top: 10px; }
 
 .panel { padding: 12px 12px calc(14px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
-.card { padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; }
-.card h2 { margin: 0 0 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+.card { padding: 12px 14px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; }
+.card h2 { display: flex; align-items: center; gap: 7px; margin: 0 0 5px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+.card h2::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .card p { margin: 0; }
-.choice { display: flex; gap: 8px; margin-top: 10px; }
+.choice { display: flex; gap: 8px; margin-top: 11px; }
 .choice button { flex: 1 1 0; }
 #scene .picked { margin-top: 8px; color: var(--dim); font-size: 13px; }
 
-button { font: inherit; color: var(--ink); background: var(--btn); border: 1px solid var(--line); border-radius: 12px; padding: 10px 10px; cursor: pointer; transition: transform 0.08s, background-color 0.2s, opacity 0.2s; }
-button:active { transform: scale(0.97); }
+button { font: inherit; color: var(--ink); background: var(--btn); border: 1px solid var(--line); border-radius: 14px; padding: 10px 10px; cursor: pointer; transition: transform 0.08s, background-color 0.2s, opacity 0.2s; }
+button:active { transform: scale(0.96); }
 button:disabled { opacity: 0.55; cursor: default; }
 button.main { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
 
-.actions { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
-.actions button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px 7px; font-size: 11.5px; line-height: 1.15; min-width: 0; }
-.actions svg { width: 26px; height: 26px; display: block; }
-.actions button.done::after { content: ""; position: absolute; top: 6px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.actions { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; }
+.actions button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 9px 2px 8px; border-radius: 16px; font-size: 11.5px; line-height: 1.15; min-width: 0; }
+.actions .ico { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: var(--tint); color: var(--accent); transition: background-color 0.3s; }
+.actions svg { width: 24px; height: 24px; display: block; }
+/* Сделано сегодня — зелёная отметка в углу. */
+.actions button.done::after { content: ""; position: absolute; top: 5px; right: 6px; width: 15px; height: 15px; border-radius: 50%; border: 2px solid var(--btn); background: var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2.2 5.2l2 2 3.6-4' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 9px no-repeat; }
 .actions button.busy { animation: pulse 0.9s ease-in-out infinite; }
 
 .hint, .foot { margin: 0; color: var(--dim); font-size: 12.5px; text-align: center; }
 .foot { font-size: 11px; opacity: 0.8; }
 
 /* Сердечко над тем, о ком позаботились. */
-.heart { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; animation: float 1.1s ease-out forwards; }
+.heart { position: absolute; z-index: 2; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none; animation: float 1.1s ease-out forwards; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes pulse { 50% { opacity: 0.55; } }
 @keyframes float { from { opacity: 0; transform: translateY(6px) scale(0.6); } 25% { opacity: 1; } to { opacity: 0; transform: translateY(-46px) scale(1.15); } }
 
-/* Движение в самом рисунке. */
-#room .near .drop { animation: fall-near 0.62s linear infinite; }
-#room .far .drop { animation: fall-far 0.95s linear infinite; }
-#room .drop.d1 { animation-delay: -0.21s; } #room .drop.d2 { animation-delay: -0.43s; } #room .drop.d3 { animation-delay: -0.57s; }
-@keyframes fall-near { to { stroke-dashoffset: -80; } }
-@keyframes fall-far { to { stroke-dashoffset: -60; } }
-#room .bulb { animation: twinkle 3.2s ease-in-out infinite; }
-#room .bulb.b1 { animation-delay: -0.8s; } #room .bulb.b2 { animation-delay: -1.7s; } #room .bulb.b3 { animation-delay: -2.5s; }
-@keyframes twinkle { 50% { opacity: 0.55; } }
-#room .steam { animation: steam 2.4s ease-in-out infinite; }
-@keyframes steam { from { opacity: 0; transform: translateY(2px); } 40% { opacity: 0.7; } to { opacity: 0; transform: translateY(-5px); } }
+/* Движение в рисунке. Дождь: слой сдвигается ровно на один шаг пунктира (числа — RAIN_SHIFT в scene.js) и начинает сначала. */
+.rainbox .far { animation: rain-far 0.95s linear infinite; }
+.rainbox .near { animation: rain-near 0.62s linear infinite; }
+@keyframes rain-far { to { transform: translate(-6.8182%, 27.5229%); } }
+@keyframes rain-near { to { transform: translate(-9.0909%, 36.6972%); } }
+/* Капли сползают по стеклу. */
+#room .slide { animation: slide 8s linear infinite; }
+#room .slide.s1 { animation-duration: 10s; animation-delay: -3.4s; } #room .slide.s2 { animation-duration: 12.5s; animation-delay: -7s; }
+@keyframes slide { from { transform: translateY(0); opacity: 0; } 8% { opacity: 1; } 82% { opacity: 1; } to { transform: translateY(30px); opacity: 0; } }
+/* Город: маяк на башне и вывеска. Гирлянда: лампочка меняет яркость коротким переходом и держит её — рисунок
+   перерисовывается только в эти мгновения, а не всё время. */
+#sky .beacon { animation: beacon 2.6s steps(1) infinite; }
+@keyframes beacon { 50% { opacity: 0.12; } }
+#sky .neon { animation: neon 6s steps(1) infinite; }
+@keyframes neon { 88% { opacity: 0.35; } 90% { opacity: 1; } 93% { opacity: 0.45; } 95% { opacity: 1; } }
+#room .bulb { animation: twinkle 3.6s infinite; }
+#room .bulb.b1 { animation-delay: -0.9s; } #room .bulb.b2 { animation-delay: -1.8s; } #room .bulb.b3 { animation-delay: -2.7s; }
+@keyframes twinkle { 0%, 44% { opacity: 1; } 50%, 94% { opacity: 0.5; } }
+#room .note { animation: note 3.4s ease-in-out infinite; }
+@keyframes note { from { opacity: 0; transform: translateY(3px); } 40% { opacity: 0.85; } to { opacity: 0; transform: translateY(-9px); } }
+#room .steam { animation: steam 2.6s ease-in-out infinite; }
+@keyframes steam { from { opacity: 0; transform: translateY(2px); } 40% { opacity: 0.7; } to { opacity: 0; transform: translateY(-6px); } }
 #room .zzz { animation: zzz 3s ease-in-out infinite; }
-@keyframes zzz { from { opacity: 0.2; transform: translateY(2px); } 50% { opacity: 0.9; } to { opacity: 0.2; transform: translateY(-4px); } }
-#room .tailwag, #room .sway, #room .munch, #room .scratch, #room .toy, #room .ribbon, #room .blink { transform-box: fill-box; }
-#room .tailwag { transform-origin: 0% 100%; animation: wag 2.6s ease-in-out infinite; }
+@keyframes zzz { from { opacity: 0.2; transform: translateY(2px); } 50% { opacity: 0.95; } to { opacity: 0.2; transform: translateY(-5px); } }
+/* Она и Байт: дыхание, моргание, хвост. */
+#room .breath { animation: breath 4.4s ease-in-out infinite; }
+@keyframes breath { 50% { transform: translateY(-0.8px); } }
+#room .tailwag, #room .sway, #room .munch, #room .scratch, #room .ribbon, #room .blink { transform-box: fill-box; }
+#room .blink { transform-origin: 50% 55%; animation: blink 5.2s infinite; }
+#room .cat .blink { animation-duration: 6.6s; animation-delay: -2.2s; }
+@keyframes blink { 0%, 93.5%, 100% { transform: scaleY(1); } 96.5% { transform: scaleY(0.08); } }
+#room .tailwag { transform-origin: 0% 100%; animation: wag 2.8s ease-in-out infinite; }
 #room .tailwag.angry { animation-duration: 0.7s; }
-@keyframes wag { 50% { transform: rotate(7deg); } }
+@keyframes wag { 50% { transform: rotate(8deg); } }
 #room .sway { transform-origin: 50% 100%; animation: sway 1.1s ease-in-out infinite alternate; }
-@keyframes sway { from { transform: rotate(-4deg); } to { transform: rotate(4deg); } }
+@keyframes sway { from { transform: rotate(-3deg); } to { transform: rotate(3deg); } }
 #room .munch { transform-origin: 80% 50%; animation: munch 0.5s ease-in-out infinite alternate; }
 @keyframes munch { to { transform: translateY(1.6px) rotate(-4deg); } }
-#room .scratch { transform-origin: 100% 50%; animation: scratch 0.45s ease-in-out infinite alternate; }
-@keyframes scratch { to { transform: translateY(3px); } }
-#room .toy { transform-origin: 50% 0%; animation: swing 0.9s ease-in-out infinite alternate; }
-#room .ribbon { transform-origin: 0% 0%; animation: swing 0.8s ease-in-out infinite alternate; }
+#room .scratch { transform-origin: 100% 100%; animation: scratch 0.45s ease-in-out infinite alternate; }
+@keyframes scratch { to { transform: translateY(3.4px); } }
+#room .toy { animation: scoot 0.5s ease-in-out infinite alternate; }
+@keyframes scoot { to { transform: translateX(-5px); } }
+#room .ribbon { transform-origin: 20% 0%; animation: swing 0.8s ease-in-out infinite alternate; }
 @keyframes swing { from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
-#room .blink { transform-origin: 50% 50%; animation: blink 4.2s infinite; }
-@keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
-#room .glow { animation: glow 5s ease-in-out infinite; }
-@keyframes glow { 50% { opacity: 0.86; } }
 @media (prefers-reduced-motion: reduce) {
-  #room *, .heart, #say.fresh, .actions button.busy { animation: none !important; }
+  #room *, #sky *, .rainbox .plane, .heart, #say.fresh, .actions button.busy { animation: none !important; }
 }
 </style>
 </head>
 <body>
 <main id="app" data-light="day" data-state="loading">
   <div class="stage" id="stage">
-    <!-- Две части: то, что за окном (меняется только с часом), и сама комната со слоем нажатий (scene.js). -->
-    <svg id="room" viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Комната Аи: окно во всю стену, за ним дождь и город">
-      <g id="backdrop"></g>
-      <g id="inside"></g>
-    </svg>
+    <!-- Три слоя (scene.js): за окном — меняется только с часом; дождь — движется сам; комната со слоем нажатий. -->
+    <svg id="sky" viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g id="backdrop"></g></svg>
+    <div class="rainbox" aria-hidden="true">
+      <svg class="plane far" id="rainFar" viewBox="0 0 264 218" xmlns="http://www.w3.org/2000/svg"></svg>
+      <svg class="plane near" id="rainNear" viewBox="0 0 264 218" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <svg id="room" viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Комната Аи: окно во всю стену, за ним дождь и город"><g id="inside"></g></svg>
   </div>
   <div class="talk" id="talk" aria-live="polite">
     <span class="who" id="who">Аи</span>
@@ -131,13 +159,13 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
       <p class="picked" id="scenePicked" hidden></p>
     </div>
     <div class="actions" id="actions" aria-label="Забота">
-      <button type="button" data-act="pet"><svg viewBox="0 0 26 26" aria-hidden="true"><g fill="currentColor"><ellipse cx="13" cy="17" rx="5.6" ry="4.6"/><circle cx="6.2" cy="12" r="2.3"/><circle cx="10.4" cy="7.8" r="2.4"/><circle cx="15.6" cy="7.8" r="2.4"/><circle cx="19.8" cy="12" r="2.3"/></g></svg>Погладить</button>
-      <button type="button" data-act="feed"><svg viewBox="0 0 26 26" aria-hidden="true"><path d="M4 12h18l-2.4 8.2H6.4z" fill="currentColor"/><ellipse cx="13" cy="11.6" rx="9" ry="2.6" fill="currentColor" opacity="0.55"/><circle cx="10" cy="9.6" r="1.7" fill="currentColor"/><circle cx="14.6" cy="8.8" r="1.7" fill="currentColor"/><circle cx="17" cy="10.4" r="1.4" fill="currentColor"/></svg>Покормить</button>
-      <button type="button" data-act="play"><svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="11" cy="12" r="7" fill="currentColor"/><path d="M5.4 9.6q5.6-3.6 11.2 0M5 14.4q6 3.6 12 0" fill="none" stroke="var(--btn)" stroke-width="1.2"/><path d="M17 17.4q3 3 5.4 1.2t2.2 2.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Поиграть</button>
-      <button type="button" data-act="tea"><svg viewBox="0 0 26 26" aria-hidden="true"><path d="M5 10h12v7.4a3.6 3.6 0 0 1-3.6 3.6H8.6A3.6 3.6 0 0 1 5 17.4z" fill="currentColor"/><path d="M17 11.6h1.8a2.8 2.8 0 0 1 0 5.6H17" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.6 7.6q-1.6-2 0-4M12.6 7.6q1.6-2 0-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/></svg>Чай</button>
-      <button type="button" data-act="water"><svg viewBox="0 0 26 26" aria-hidden="true"><path d="M13 3.6q6.4 7.6 6.4 12a6.4 6.4 0 0 1-12.8 0q0-4.4 6.4-12z" fill="currentColor"/><path d="M10 16.4a3.2 3.2 0 0 0 2.6 3" fill="none" stroke="var(--btn)" stroke-width="1.4" stroke-linecap="round"/></svg>Полить</button>
+      <button type="button" data-act="pet"><span class="ico"><svg viewBox="0 0 26 26" aria-hidden="true"><g fill="currentColor"><ellipse cx="13" cy="17" rx="5.6" ry="4.6"/><circle cx="6.2" cy="12" r="2.3"/><circle cx="10.4" cy="7.8" r="2.4"/><circle cx="15.6" cy="7.8" r="2.4"/><circle cx="19.8" cy="12" r="2.3"/></g></svg></span>Погладить</button>
+      <button type="button" data-act="feed"><span class="ico"><svg viewBox="0 0 26 26" aria-hidden="true"><path d="M4 12h18l-2.4 8.2H6.4z" fill="currentColor"/><ellipse cx="13" cy="11.6" rx="9" ry="2.6" fill="currentColor" opacity="0.55"/><circle cx="10" cy="9.6" r="1.7" fill="currentColor"/><circle cx="14.6" cy="8.8" r="1.7" fill="currentColor"/><circle cx="17" cy="10.4" r="1.4" fill="currentColor"/></svg></span>Покормить</button>
+      <button type="button" data-act="play"><span class="ico"><svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="11" cy="12" r="7" fill="currentColor"/><path d="M5.4 9.6q5.6-3.6 11.2 0M5 14.4q6 3.6 12 0" fill="none" stroke="var(--tint)" stroke-width="1.2"/><path d="M17 17.4q3 3 5.4 1.2t2.2 2.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>Поиграть</button>
+      <button type="button" data-act="tea"><span class="ico"><svg viewBox="0 0 26 26" aria-hidden="true"><path d="M5 10h12v7.4a3.6 3.6 0 0 1-3.6 3.6H8.6A3.6 3.6 0 0 1 5 17.4z" fill="currentColor"/><path d="M17 11.6h1.8a2.8 2.8 0 0 1 0 5.6H17" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.6 7.6q-1.6-2 0-4M12.6 7.6q1.6-2 0-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.7"/></svg></span>Чай</button>
+      <button type="button" data-act="water"><span class="ico"><svg viewBox="0 0 26 26" aria-hidden="true"><path d="M13 3.6q6.4 7.6 6.4 12a6.4 6.4 0 0 1-12.8 0q0-4.4 6.4-12z" fill="currentColor"/><path d="M10 16.4a3.2 3.2 0 0 0 2.6 3" fill="none" stroke="var(--tint)" stroke-width="1.4" stroke-linecap="round"/></svg></span>Полить</button>
     </div>
-    <p class="hint" id="hint">Нажимать можно и на сам рисунок: на Байта, миску, клубок, чайник, Колючку, на окно и на вещи.</p>
+    <p class="hint" id="hint">Нажимать можно и на сам рисунок: на неё, на Байта, миску, клубок, чайник, Колючку, на окно и на вещи.</p>
     <p class="foot" id="foot"></p>
   </section>
 </main>

@@ -1,21 +1,26 @@
 /**
- * Комната Аи — рисунок (мини-приложение, сборка 0.38.0).
+ * Комната Аи — рисунок (мини-приложение; нарисован заново в сборке 0.39.0).
  *
  * Чистая функция: по описанию «что сейчас в комнате» возвращает разметку SVG. Ни страницы, ни Telegram здесь
  * нет — поэтому рисунок проверяется тестами (`tests/miniapp.test.mjs`): каждая поза Аи, каждая поза Байта и
  * каждая вещь из `tgcloud/lib/room.js` должны рисоваться. Что именно нарисовать, решает сердце (`heart.onRoom`):
  * где она и где Байт — по тем же фразам, которые она говорит в чате.
  *
- * Свет не накладывается сверху, а считается: каждый цвет комнаты приглушается под час (`tint`), а лампа,
- * гирлянда и окна города рисуются поверх своим цветом. Так нет ни фильтров, ни режимов смешения — рисунок
- * одинаков в любом браузере, который открывает Telegram.
- *
- * Рисунок — три слоя. `drawBackdrop` — небо, город и дождь: они зависят только от часа, и страница не трогает
- * их при нажатиях (иначе капли прыгали бы назад). `drawInside` — сама комната и поверх неё слой нажатий.
- * Картинка нажатий не ловит вовсе (`pointer-events="none"`): кто кого закрывает на рисунке и кто первым
- * встречает палец — разные вещи. Свет лампы лежит поверх всего, но чайник под ним остаётся чайником; Байт сидит
- * у миски — а миска остаётся миской. Порядок слоя нажатий: окно, вещи, Аи, Байт и поверх всех — забота
- * (Колючка, чайник, миска, клубок).
+ * Как устроен рисунок.
+ *   • Слои. `drawBackdrop` — небо и город: зависят только от часа. `drawRain` — дождь: на странице он лежит
+ *     отдельным слоем и движется целиком, комната при этом не перерисовывается. `drawInside` — сама комната и
+ *     поверх неё слой нажатий. `drawRoom` — всё разом, для снимков и тестов.
+ *   • Свет считается, а не накладывается: каждая краска приглушается под час (`tint`), а лампа, гирлянда и окна
+ *     города рисуются поверх своим цветом. Она и Байт приглушаются слабее комнаты — на них смотрят. Свет лампы
+ *     и окна на стене и на полу лежит под мебелью и фигурами; сверху — только мягкая тень по углам. Ни фильтров,
+ *     ни режимов смешения: рисунок одинаков в любом браузере, который открывает Telegram.
+ *   • Объём — тремя тонами: у каждой вещи свой цвет, тень и блик; тени под мебелью и на стене — отдельными
+ *     полупрозрачными пятнами.
+ *   • Картинка нажатий не ловит вовсе (`pointer-events="none"`): кто кого закрывает на рисунке и кто первым
+ *     встречает палец — разные вещи. Порядок слоя нажатий: окно, вещи, Аи, Байт и поверх всех — забота
+ *     (Колючка, чайник, миска, клубок).
+ *   • Её облик — по картинке профиля: длинные прямые чёрные волосы с ровной чёлкой, алые глаза, чокер с
+ *     колечком, красный топ с открытыми плечами, чёрная куртка.
  */
 
 export const WIDTH = 400;
@@ -28,49 +33,103 @@ export const THINGS = Object.freeze(["кружка", "тапочки", "поду
 /** Её лицо — по тому, чем она занята (ключ запаса «+комната:она:<key>»). */
 export const MOODS = Object.freeze({ "дело": "calm", "уют": "smile", "игра": "happy", "сон": "sleep", "устала": "tired", "обида": "pout", "ревность": "jealous" });
 
-// ── свет ─────────────────────────────────────────────────────────────────────
-/** Во сколько раз приглушён каждый канал цвета в этот час: [красный, зелёный, синий]. */
-const LIGHT = Object.freeze({ "утро": [0.97, 0.94, 0.95], "день": [1, 1, 1], "вечер": [0.66, 0.62, 0.8], "ночь": [0.46, 0.47, 0.68] });
-const SKY = Object.freeze({
-  "утро": ["#a9b8c9", "#ead9cb"], "день": ["#aebbc8", "#d7dde2"], "вечер": ["#3d456e", "#b47f78"], "ночь": ["#0f1530", "#27325a"],
-});
-const CITY = Object.freeze({
-  "утро": ["#a3acb9", "#838c9b"], "день": ["#9ba8b5", "#7b8897"], "вечер": ["#4d5078", "#33355a"], "ночь": ["#1c2342", "#11162d"],
+// ── свет и краски ────────────────────────────────────────────────────────────
+/**
+ * Час суток для краски: `k` — во сколько раз приглушён каждый канал, `to` и `mix` — к какому цвету воздуха и
+ * насколько она сдвинута (вечером — к сиреневому, ночью — к синему).
+ */
+const LIGHT = Object.freeze({
+  "утро": { k: [0.98, 0.95, 0.95], to: "#ffe1cc", mix: 0.06 },
+  "день": { k: [1, 1, 1], to: "#ffffff", mix: 0 },
+  "вечер": { k: [0.76, 0.67, 0.8], to: "#3d2c5e", mix: 0.1 },
+  "ночь": { k: [0.58, 0.58, 0.77], to: "#161b44", mix: 0.14 },
 });
 const lit = (part) => part === "вечер" || part === "ночь";
 
 const hex2 = (value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0");
-/** Цвет под час суток. Цвет без «#rrggbb» (прозрачный, готовый) возвращается как есть. */
-export function tint(colour, part) {
+const rgb = (colour) => {
   const found = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/iu.exec(String(colour));
-  const k = LIGHT[part] ?? LIGHT["день"];
-  if (!found) return colour;
-  return `#${hex2(parseInt(found[1], 16) * k[0])}${hex2(parseInt(found[2], 16) * k[1])}${hex2(parseInt(found[3], 16) * k[2])}`;
+  return found ? [parseInt(found[1], 16), parseInt(found[2], 16), parseInt(found[3], 16)] : null;
+};
+const hex = (list) => `#${hex2(list[0])}${hex2(list[1])}${hex2(list[2])}`;
+/** Смесь двух красок: `share` — доля второй. */
+const mix = (one, two, share) => {
+  const a = rgb(one), b = rgb(two);
+  return a && b ? hex(a.map((value, index) => value + (b[index] - value) * share)) : one;
+};
+const dk = (colour, share) => mix(colour, "#000000", share);
+const lt = (colour, share) => mix(colour, "#ffffff", share);
+/**
+ * Цвет под час суток. Цвет без «#rrggbb» (прозрачный, готовый) возвращается как есть. `soft` — насколько слабее
+ * обычного (0 — как комната, 1 — без изменений): так она и Байт остаются светлее стен.
+ */
+export function tint(colour, part, soft = 0) {
+  const value = rgb(colour);
+  if (!value) return colour;
+  const light = LIGHT[part] ?? LIGHT["день"], air = rgb(light.to), keep = Math.max(0, Math.min(1, Number(soft) || 0));
+  return hex(value.map((channel, index) => {
+    const dim = channel * light.k[index];
+    const aired = dim + (air[index] - dim) * light.mix;
+    return channel + (aired - channel) * (1 - keep);
+  }));
 }
 
-/** Краски комнаты при дневном свете. */
+/** Краски при дневном свете. */
 const DAY = Object.freeze({
-  wall: "#d8ccbf", wallLow: "#cbbdad", skirting: "#b3a08b", floor: "#a47e5d", plank: "#8f6b4d",
-  frame: "#f4eee5", frameDark: "#d6ccbd", sill: "#eee5d7", sillEdge: "#d3c7b5",
-  wood: "#7d5c46", woodDark: "#5f4635", woodLight: "#9b775c",
-  chair: "#5f8674", chairDark: "#4a6c5d", chairLight: "#7fa391", chair2: "#b08d6b", chair2Dark: "#8f7054", chair2Light: "#c7a787",
-  plaid: "#3f6db3", plaidLight: "#7ba3de", plaidDark: "#2d5289",
-  rug: "#9a5462", rugLight: "#bd7785", rugDark: "#7e404e",
-  skin: "#f8e0d1", skinDark: "#eac6b3", blush: "#f2a7a0", hair: "#1e1b24", hairLight: "#3d3747", eye: "#d42c45", white: "#ffffff",
-  top: "#a2242f", topDark: "#7f1a25", jacket: "#24212c", jacketLight: "#3b3745", stocking: "#2b2834", silver: "#c9ccd4",
-  cat: "#8f949e", catDark: "#6c717b", catLight: "#c6cad1", catEar: "#e3a4ad", catEye: "#dcd44c", nose: "#d98a94",
-  paper: "#f6f1e6", paperDark: "#ddd5c4", ink: "#4a4350", red: "#c7353f", gold: "#e0b34f", green: "#5d9c63", greenDark: "#3f7a4b", greenDry: "#8fa07a",
-  pot: "#c2714f", potDark: "#9e563a", soil: "#5a4334", soilDry: "#93806b", metal: "#b9bec8", metalDark: "#8b909b",
-  box: "#c49a6c", boxDark: "#a37c52", bowl: "#d9605a", bowlDark: "#b3443f", food: "#8a5a3c", pillow: "#e5d3c3", pillowDark: "#cbb5a2",
-  navy: "#1f2747", star: "#f3e9b8", lamp: "#f2b85b", walle: "#e2a93b", walleDark: "#8c6a2a", steam: "#ffffff", bulbOff: "#b9ad9c",
-  mug: "#b73a45", mug2: "#4f7fc0", treeGreen: "#3f7f55", treeDark: "#2c5f40", slipper: "#d9a7b0", slipperDark: "#b98590",
+  // стены, пол, окно
+  wall: "#e7d8cb", panel: "#cdb8a8", skirting: "#f0e6da", floor: "#b3875f", floorLine: "#7f5a3f",
+  frame: "#f8f2ea", frameDark: "#cfc2b1", sill: "#f5eee3", sillEdge: "#d8cbb8",
+  curtain: "#f6ecdf", curtainDark: "#d9c6b3", tie: "#b3202e", rod: "#6b5a4c",
+  // мебель
+  wood: "#7b5840", woodDark: "#59402f", woodLight: "#9c765a", woodPale: "#c09a78",
+  chair: "#4f7b69", chairDark: "#3a5f50", chairLight: "#74a08b", chair2: "#b98f6a", chair2Dark: "#94704f", chair2Light: "#d3ad89",
+  plaid: "#3a62a6", plaidLight: "#86a9e0", plaidDark: "#284781", cream: "#f3e7d3",
+  rug: "#8f4054", rugLight: "#c98b96", rugDark: "#6d2b3e",
+  // она
+  skin: "#fce8dc", skinDark: "#f0c5b5", skinLine: "#d79a8d", blush: "#f58e9a", lip: "#c9495a",
+  hair: "#1b1823", hairMid: "#312b3b", hairLight: "#544c67", hairShine: "#aaa3c6",
+  eye: "#dc2c48", eyeDark: "#5d0a1d", eyeLight: "#ff9aa5", white: "#ffffff",
+  top: "#b42030", topDark: "#84151f", topLight: "#d64656", jacket: "#35313f", jacketLight: "#5d5772", stocking: "#2b2835", stockingLight: "#4a4459", silver: "#d6d9e1",
+  // Байт
+  cat: "#8d929e", catDark: "#5d626e", catLight: "#d6d9df", catEar: "#eaaab5", catEye: "#f2e15c", catEyeDark: "#c2a22a", nose: "#e28d9a",
+  // вещи
+  paper: "#f8f3e8", paperDark: "#dfd6c4", ink: "#4a4350", red: "#c8353f", gold: "#e3b54e", green: "#5f9f66", greenDark: "#3f7a4c", greenDry: "#93a37c",
+  pot: "#c5714e", potDark: "#9d5438", soil: "#5a4334", soilDry: "#96826c", metal: "#bcc1cb", metalDark: "#8a8f9b",
+  box: "#c99e6f", boxDark: "#a57d53", bowl: "#d95c58", bowlDark: "#ae403d", food: "#8c5b3c", pillow: "#e8d6c6", pillowDark: "#cbb5a2",
+  navy: "#1c2446", star: "#f6ecbc", lamp: "#f2b85b", walle: "#e6ab3a", walleDark: "#8c6a2a", steam: "#ffffff",
+  mug: "#b93a46", mug2: "#4f7fc2", treeGreen: "#3f8157", treeDark: "#2b5f40", slipper: "#e2aab4", slipperDark: "#bf8793", teapot: "#f4ede2", teapotDark: "#d5c8b6",
 });
 
 // ── разметка ─────────────────────────────────────────────────────────────────
 const n = (value) => (Number.isInteger(value) ? String(value) : String(Math.round(value * 10) / 10));
 const at = (x, y, body, extra = "") => `<g transform="translate(${n(x)} ${n(y)})${extra}">${body}</g>`;
-const flip = (body) => `<g transform="scale(-1 1)">${body}</g>`;
 const esc = (text) => String(text ?? "").replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;").replace(/"/gu, "&quot;");
+const stopsOf = (stops) => stops.map(([offset, colour, opacity]) => `<stop offset="${offset}" stop-color="${colour}"${opacity === undefined ? "" : ` stop-opacity="${opacity}"`}/>`).join("");
+/**
+ * Переходы цвета одного слоя: каждый получает имя с приставкой слоя (`s-` — за окном, `r-` — комната), потому что
+ * на странице слои — соседи в одном документе, и одинаковые имена перепутались бы. Повторный запрос с тем же
+ * именем нового описания не добавляет (два кресла — один переход).
+ */
+function inks(prefix) {
+  const made = new Map();
+  // То же имя с другим содержимым (плед на кресле и плед на ней — разного тона) получает номер: имена не спорят.
+  const add = (id, make) => {
+    for (let index = 1; ; index += 1) {
+      const name = `${prefix}${id}${index === 1 ? "" : index}`, body = make(name);
+      if (!made.has(name)) made.set(name, body);
+      if (made.get(name) === body) return `url(#${name})`;
+    }
+  };
+  return {
+    lin: (id, stops, [x1, y1, x2, y2] = [0, 0, 0, 1], extra = "") => add(id, name => `<linearGradient id="${name}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"${extra}>${stopsOf(stops)}</linearGradient>`),
+    rad: (id, stops, extra = "") => add(id, name => `<radialGradient id="${name}"${extra}>${stopsOf(stops)}</radialGradient>`),
+    raw: (id, body) => add(id, body),
+    defs: () => `<defs>${[...made.values()].join("")}</defs>`,
+  };
+}
+/** Мягкая тень на полу или стене: пятно, тающее к краям. */
+const shadow = (g, cx, cy, rx, ry, strength = 0.3) => `<ellipse cx="${n(cx)}" cy="${n(cy)}" rx="${n(rx)}" ry="${n(ry)}" fill="${g.rad("sh", [[0, "#1a0f1e", 1], [0.6, "#1a0f1e", 0.55], [1, "#1a0f1e", 0]])}" opacity="${strength}"/>`;
+
 /** Невидимая область нажатия: палец шире мыши, а кот — маленький. */
 const hit = (x, y, w, h) => `<rect x="${n(x)}" y="${n(y)}" width="${n(w)}" height="${n(h)}" fill="#000" fill-opacity="0"/>`;
 /** Область в пределах рисунка: фигура у края не выносит нажатие за картинку. */
@@ -86,26 +145,26 @@ const tap = (act, label, box, id = "") => `<g class="tap" data-act="${esc(act)}"
 
 /** Что можно тронуть ради заботы: подпись, имя на странице и область. Эти области — поверх всех остальных. */
 const CARE_ZONES = Object.freeze({
-  water: ["Колючка", "plant", [328, 222, 32, 42]],
-  tea: ["Чайник", "kettle", [310, 284, 42, 38]],
-  feed: ["Миска Байта", "bowl", [18, 384, 46, 30]],
-  play: ["Клубок", "toy", [104, 464, 48, 28]],
+  water: ["Колючка", "plant", [320, 210, 38, 54]],
+  tea: ["Чайник", "kettle", [308, 280, 46, 40]],
+  feed: ["Миска Байта", "bowl", [10, 391, 56, 34]],
+  play: ["Клубок", "toy", [98, 462, 54, 32]],
 });
 /** Вещи, которые появляются у человека со временем (`ITEMS` в `tgcloud/lib/room.js`): подпись и область. */
 const THING_ZONES = Object.freeze({
-  "рисунок": ["Её рисунок", [16, 118, 44, 46]],
-  "календарь": ["Календарь", [62, 118, 38, 46]],
-  "снимок": ["Рамка с первым разговором", [68, 238, 32, 30]],
-  "кружка": ["Вторая кружка", [36, 294, 18, 22]],
-  "подушка": ["Вторая подушка", [146, 238, 44, 26]],
-  "место": ["Место рядом с Байтом", [262, 250, 40, 14]],
-  "кактус": ["Маленький кактус", [358, 238, 20, 26]],
-  "плед": ["Плед на двоих", [118, 288, 46, 96]],
-  "кресло": ["Второе кресло", [202, 300, 72, 94]],
-  "абажур": ["Абажур любимого цвета", [364, 262, 34, 30]],
+  "рисунок": ["Её рисунок", [14, 116, 44, 48]],
+  "календарь": ["Календарь", [60, 116, 40, 48]],
+  "снимок": ["Рамка с первым разговором", [68, 236, 34, 32]],
+  "кружка": ["Вторая кружка", [38, 292, 24, 24]],
+  "подушка": ["Вторая подушка", [208, 232, 48, 32]],
+  "место": ["Место рядом с Байтом", [268, 248, 44, 16]],
+  "кактус": ["Маленький кактус", [358, 236, 22, 28]],
+  "плед": ["Плед на двоих", [196, 272, 46, 104]],
+  "кресло": ["Второе кресло", [246, 292, 52, 92]],
+  "абажур": ["Абажур любимого цвета", [362, 258, 38, 34]],
   // Выше нижнего края: поверх него на странице лежит полоса с её словами.
-  "тапочки": ["Тапочки у двери", [18, 466, 60, 22]],
-  "ёлка": ["Ёлка", [332, 378, 68, 132]],
+  "тапочки": ["Тапочки у двери", [14, 462, 66, 26]],
+  "ёлка": ["Ёлка", [354, 366, 46, 136]],
 });
 /**
  * Вещи, чьи области лежат поверх Аи и Байта: лампа и ёлка стоят перед ними, а «место рядом с Байтом» мало
@@ -128,441 +187,1010 @@ function besideCare([x, y, w, h], [ax, ay]) {
       .sort((one, two) => Number(two.keeps) - Number(one.keeps) || two.area - one.area);
     if (ways.length) box = ways[0].way;
   }
-  return [box[0], box[1], box[2] - box[0], box[3] - box[1]];
+  // Отступив, область не должна стать меньше пальца: тогда она растёт в свободную сторону — прочь от заботы.
+  const span = (low, high, from, min, limit) => {
+    if (high - low >= min) return [low, high];
+    const start = low > from ? Math.min(low, limit - min) : Math.max(0, high - min);
+    return [start, start + min];
+  };
+  const [left, right] = span(box[0], box[2], x, 36, WIDTH), [top, bottom] = span(box[1], box[3], y, 24, HEIGHT);
+  return [left, top, right - left, bottom - top];
 }
 
-// Окно и то, что за ним.
-const WIN = Object.freeze({ x: 124, y: 44, w: 264, h: 218 });
-const FAR = Object.freeze([[124, 96], [150, 74], [178, 112], [206, 60], [232, 88], [262, 70], [288, 104], [316, 82], [342, 64], [368, 98]]);
-const NEAR = Object.freeze([[124, 42], [146, 58], [176, 34], [198, 66], [230, 46], [256, 28], [280, 56], [312, 40], [340, 62], [366, 36]]);
-const LIGHTS = Object.freeze([
-  [130, 180], [138, 196], [156, 200], [162, 214], [184, 160], [190, 176], [212, 210], [216, 224], [238, 184], [244, 200], [270, 200], [268, 216],
-  [296, 170], [302, 212], [322, 190], [330, 230], [348, 206], [352, 222], [374, 176], [380, 236], [206, 236], [150, 226], [284, 240], [226, 150], [352, 150],
-]);
-const DROPS = Object.freeze([[150, 92], [176, 150], [201, 70], [232, 120], [247, 196], [275, 84], [318, 132], [336, 60], [362, 178], [372, 108], [140, 214], [292, 222]]);
+// ── за окном ─────────────────────────────────────────────────────────────────
+/** Стекло окна. Те же числа — в стилях страницы (`.rainbox`): слой дождя лежит ровно по стеклу. */
+export const WIN = Object.freeze({ x: 124, y: 44, w: 264, h: 218 });
+/** Небо и город по часам: краски неба сверху вниз, облака, три плана домов, окна, зарево у горизонта. */
+const SKY = Object.freeze({
+  "утро": { sky: ["#8fa6c3", "#c4c2d2", "#f3d8c4"], cloud: "#ffffff", cloudLow: "#8496ad", far: "#b5bdcd", mid: "#8f99ad", near: "#6a7389", pane: "#566078", glow: ["#ffe6c4", 0.55], share: 0.14, rain: "#ffffff" },
+  "день": { sky: ["#9aacbf", "#c1ccd7", "#e0e5e7"], cloud: "#f6f8fa", cloudLow: "#8595a6", far: "#b4c0cb", mid: "#8c99a8", near: "#667383", pane: "#525f70", glow: null, share: 0, rain: "#ffffff" },
+  "вечер": { sky: ["#232857", "#54477f", "#b96f7f", "#f0a97c"], cloud: "#9478a6", cloudLow: "#3a3465", far: "#6e5d90", mid: "#463f73", near: "#2a2954", pane: "#1b1a3e", glow: ["#ffb57c", 0.6], share: 0.62, rain: "#d7def5" },
+  "ночь": { sky: ["#070b20", "#131a42", "#2b3268"], cloud: "#2c356a", cloudLow: "#0c112e", far: "#252d5d", mid: "#181e45", near: "#0d1129", pane: "#070a1b", glow: ["#5d51a6", 0.45], share: 0.44, rain: "#c9d3f2" },
+});
+// Дома: [x, высота, ширина]. Дальние — выше и бледнее, ближние — ниже и темнее.
+const FAR = Object.freeze([[118, 64, 22], [142, 98, 16], [160, 74, 24], [188, 124, 18], [208, 86, 26], [238, 108, 14], [254, 70, 30], [288, 96, 20], [310, 132, 16], [328, 80, 28], [360, 104, 18], [380, 72, 14]]);
+const MID = Object.freeze([[120, 62, 30], [152, 84, 22], [176, 52, 34], [212, 76, 26], [240, 58, 22], [264, 92, 28], [294, 60, 26], [322, 82, 24], [348, 56, 28], [378, 74, 16]]);
+const NEAR = Object.freeze([[116, 40, 46], [162, 56, 30], [192, 34, 50], [242, 50, 34], [276, 36, 34], [310, 60, 38], [348, 42, 46]]);
+const LIGHT_INKS = Object.freeze(["#ffd98a", "#ffd98a", "#ffe7b3", "#ffd98a", "#bfe6ff", "#ffd98a", "#ffb6a3"]);
 
-function outside(part) {
-  const [top, bottom] = SKY[part];
-  const [far, near] = CITY[part];
+/** Окна дома: горящие и тёмные. Какие горят — решает счёт по месту окна, а не случай: рисунок всегда один. */
+function panes([x, tall, w], base, seed, share) {
+  const on = [], off = [];
+  const cols = Math.max(1, Math.floor((w - 5) / 6)), rows = Math.max(1, Math.floor((tall - 6) / 8));
+  const left = x + (w - cols * 6 + 2.8) / 2;
+  for (let row = 0; row < rows; row += 1) for (let col = 0; col < cols; col += 1) {
+    const mark = (seed * 31 + row * 17 + col * 7 + row * col * 3 + seed * row) % 20;
+    const box = `x="${n(left + col * 6)}" y="${n(base - tall + 5 + row * 8)}" width="3.2" height="4.4"`;
+    if (mark < share * 20) on.push(`<rect ${box} fill="${LIGHT_INKS[(seed + row * 3 + col) % LIGHT_INKS.length]}"${mark % 3 === 0 ? ' opacity="0.75"' : ""}/>`);
+    else off.push(`<rect ${box}/>`);
+  }
+  return { on: on.join(""), off: off.join("") };
+}
+
+function cloud(x, y, k = 1) {
+  return `<g transform="translate(${x} ${y}) scale(${k})"><ellipse cx="0" cy="0" rx="26" ry="8"/><ellipse cx="-12" cy="-5" rx="12" ry="7"/><ellipse cx="6" cy="-8" rx="15" ry="9"/><ellipse cx="24" cy="-2" rx="12" ry="6"/></g>`;
+}
+
+function outside(g, part) {
+  const s = SKY[part];
   const base = WIN.y + WIN.h;
-  const row = (list, width) => list.map(([x, tall]) => `<rect x="${x}" y="${base - tall}" width="${width}" height="${tall}"/>`).join("");
-  const glow = lit(part) || part === "утро";
+  const block = (list) => list.map(([x, tall, w]) => `<rect x="${x}" y="${base - tall}" width="${w}" height="${tall + 1}"/>`).join("");
+  const sky = g.lin("sky", s.sky.map((colour, index, all) => [n(index / (all.length - 1)), colour]));
+  const midPanes = MID.map((house, index) => panes(house, base, index + 3, s.share * 0.8));
+  const nearPanes = NEAR.map((house, index) => panes(house, base, index + 11, s.share));
+  const glow = s.glow ? `<ellipse cx="282" cy="${base + 6}" rx="190" ry="96" fill="${g.rad("horizon", [[0, s.glow[0], s.glow[1]], [1, s.glow[0], 0]])}"/>` : "";
+  const night = lit(part);
   return [
-    `<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${top}"/><stop offset="1" stop-color="${bottom}"/></linearGradient>`,
-    `<clipPath id="glass"><rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}"/></clipPath></defs>`,
-    `<g clip-path="url(#glass)">`,
-    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" fill="url(#sky)"/>`,
-    `<g fill="${far}">${row(FAR, 30)}<rect x="213" y="${base - 124}" width="3" height="20"/><rect x="349" y="${base - 86}" width="2" height="24"/></g>`,
-    `<g fill="${near}">${row(NEAR, 34)}<path d="M176 ${base - 34} l17 -12 l17 12z M280 ${base - 56} l16 -10 l16 10z"/></g>`,
-    // Окна города: вечером и ночью — почти все, утром — редкие («фонари ещё не погасли»).
-    glow ? `<g class="city" fill="${part === "утро" ? "#f6e3b0" : "#ffd98a"}">${LIGHTS.filter((_, index) => (part === "утро" ? index % 4 === 0 : part === "ночь" ? index % 5 !== 3 : true))
-      .map(([x, y], index) => `<rect x="${x}" y="${y}" width="3" height="4" opacity="${index % 3 === 0 ? 0.95 : 0.7}"/>`).join("")}</g>` : "",
+    `<clipPath id="s-glass"><rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}"/></clipPath>`,
+    `<g clip-path="url(#s-glass)">`,
+    `<rect x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}" fill="${sky}"/>`,
+    glow,
+    // Облака: верхние светлые, нижние — дождевые, темнее.
+    `<g fill="${s.cloud}" opacity="${night ? 0.5 : 0.62}">${cloud(168, 76, 1.5)}${cloud(300, 66, 1.9)}${cloud(232, 118, 1.2)}${cloud(372, 112, 1.3)}</g>`,
+    `<g fill="${s.cloudLow}" opacity="${night ? 0.5 : 0.34}">${cloud(140, 104, 1.7)}${cloud(262, 92, 2.1)}${cloud(356, 84, 1.6)}${cloud(204, 62, 1.4)}</g>`,
+    // Дальний план: башни в дымке.
+    `<g fill="${s.far}">${block(FAR)}<rect x="196.4" y="${base - 138}" width="1.2" height="16"/><rect x="317.4" y="${base - 150}" width="1.2" height="20"/><path d="M142 ${base - 98} l8 -8 l8 8z M254 ${base - 70} h30 l-6 -7 h-18z"/></g>`,
+    night ? `<circle class="beacon" cx="318" cy="${base - 151}" r="1.5" fill="#ff5d4d"/>` : "",
+    `<rect x="${WIN.x}" y="${base - 140}" width="${WIN.w}" height="140" fill="${g.lin("haze1", [[0, s.sky.at(-1), 0], [1, s.sky.at(-1), 0.55]])}"/>`,
+    // Средний план.
+    `<g fill="${s.mid}">${block(MID)}<path d="M176 ${base - 52} l17 -10 l17 10z M294 ${base - 60} h26 v-5 h-26z"/><rect x="226" y="${base - 88}" width="1.4" height="14"/><rect x="276" y="${base - 104}" width="1.4" height="13"/><path d="M270 ${base - 97} h13" stroke="${s.mid}" stroke-width="1"/></g>`,
+    `<g fill="${s.pane}" opacity="${night ? 0.5 : 0.28}">${midPanes.map(item => item.off).join("")}</g>`,
+    `<g class="city" opacity="0.85">${midPanes.map(item => item.on).join("")}</g>`,
+    `<rect x="${WIN.x}" y="${base - 90}" width="${WIN.w}" height="90" fill="${g.lin("haze2", [[0, s.sky.at(-1), 0], [1, s.sky.at(-1), night ? 0.22 : 0.4]])}"/>`,
+    // Ближние крыши: бак с водой, трубы, антенны, вывеска.
+    `<g fill="${s.near}">${block(NEAR)}`,
+    `<path d="M162 ${base - 56} l15 -9 l15 9z"/><rect x="204" y="${base - 46}" width="12" height="12" rx="2"/><path d="M202 ${base - 47} l8 -6 l8 6z M205 ${base - 34} v5 M215 ${base - 34} v5" stroke="${s.near}" stroke-width="1.4"/>`,
+    `<rect x="250" y="${base - 58}" width="5" height="8"/><rect x="286" y="${base - 43}" width="6" height="7"/><rect x="362" y="${base - 50}" width="5" height="8"/><rect x="328.4" y="${base - 78}" width="1.3" height="18"/><path d="M323 ${base - 74} h12 M325 ${base - 69} h8" stroke="${s.near}" stroke-width="1"/><rect x="130.4" y="${base - 52}" width="1.2" height="12"/></g>`,
+    `<g fill="${s.pane}" opacity="${night ? 0.6 : 0.3}">${nearPanes.map(item => item.off).join("")}</g>`,
+    `<g class="city">${nearPanes.map(item => item.on).join("")}</g>`,
+    // Вывеска на крыше: вечером и ночью светится.
+    night
+      ? `<ellipse cx="259.5" cy="${base - 71}" rx="13" ry="18" fill="${g.rad("neon", [[0, "#ff7fb0", 0.8], [1, "#ff7fb0", 0]])}"/><rect class="neon" x="256" y="${base - 80}" width="7" height="18" rx="1.5" fill="#ff8fba"/><path d="M258 ${base - 76} h3 M258 ${base - 71} h3 M258 ${base - 66} h3" stroke="#fff0f6" stroke-width="1"/>`
+      : `<rect x="256" y="${base - 80}" width="7" height="18" rx="1.5" fill="${s.pane}" opacity="0.7"/>`,
+    `<path d="M259.5 ${base - 62} v12" stroke="${s.near}" stroke-width="1.2"/>`,
     `</g>`,
   ].join("");
 }
 
+/** Косые струи: их наклон (на каждую единицу вниз — 0,3 влево) и шаг пунктира вдоль струи. */
+const SLANT = 0.3;
+const RAIN = Object.freeze({
+  far: { fall: 60, dash: 7, step: 21, from: 6, width: 0.7, seconds: 0.95 },
+  near: { fall: 80, dash: 14, step: 26, from: 0, width: 1.1, seconds: 0.62 },
+});
 /**
- * Дождь: длинные косые линии пунктиром. Страница двигает пунктир (`stroke-dashoffset`) ровно на его период —
- * капли падают без рывка в конце круга; без движения (тест, «уменьшить движение») это просто штрихи.
+ * Струи одного плана в координатах стекла (0, 0 — левый верхний угол окна). Пунктир повторяется вдоль струи с
+ * шагом `fall` по высоте: сдвиг слоя на (−fall × 0,3; fall) даёт тот же рисунок — так дождь идёт без рывка.
  */
-function rain(part) {
-  const ink = lit(part) ? "#cfd9f2" : "#ffffff";
-  const base = WIN.y + WIN.h + 8;
-  const line = (x, index, dash, gap) => `<path class="drop d${index % 4}" d="M${x} ${WIN.y - 14} L${n(x - (base - WIN.y + 14) * 0.3)} ${base}" stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${(index * 37) % (dash + gap)}"/>`;
-  const near = Array.from({ length: 13 }, (_, index) => line(150 + index * 25, index, 11, 69)).join("");
-  const far = Array.from({ length: 14 }, (_, index) => line(138 + index * 24, index + 2, 6, 54)).join("");
+function rainLines(name) {
+  const { fall, dash, step, from } = RAIN[name];
+  const period = fall * Math.sqrt(1 + SLANT * SLANT);
+  const top = -fall - 12, bottom = WIN.h + 12;
+  const lines = [];
+  for (let x = from, index = 0; x < WIN.w + fall * SLANT + (bottom - top) * SLANT + step; x += step, index += 1) {
+    lines.push(`<path d="M${n(x)} ${top} L${n(x - (bottom - top) * SLANT)} ${bottom}" stroke-dasharray="${dash} ${n(period - dash)}" stroke-dashoffset="${n((index * 37 + (index % 3) * 11) % period)}"/>`);
+  }
+  return lines.join("");
+}
+/**
+ * На сколько страница сдвигает слой дождя за один оборот: доли ширины и высоты стекла в процентах и время в
+ * секундах. Те же числа записаны в стилях страницы (`@keyframes rain-far`, `rain-near`) — их сверяет тест.
+ */
+export const RAIN_SHIFT = Object.freeze(Object.fromEntries(Object.entries(RAIN).map(([name, { fall, seconds }]) => [name, Object.freeze({ x: -fall * SLANT / WIN.w * 100, y: fall / WIN.h * 100, seconds })])));
+const rainInk = (part, name) => `fill="none" stroke="${SKY[part].rain}" stroke-linecap="round" stroke-width="${RAIN[name].width}" stroke-opacity="${name === "near" ? (lit(part) ? 0.4 : 0.6) : (lit(part) ? 0.24 : 0.4)}"`;
+
+// ── стены и пол ──────────────────────────────────────────────────────────────
+const FLOOR_ROWS = Object.freeze([372, 393, 418, 448, 482, 520]);
+const FLOOR_JOINTS = Object.freeze([[64, 196, 318], [130, 262, 372], [38, 180, 300], [112, 244, 356], [56, 206, 330]]);
+const GRAIN = Object.freeze([[20, 384, 30], [150, 381, 44], [280, 386, 36], [70, 407, 50], [300, 404, 40], [200, 410, 30], [90, 436, 46], [240, 430, 52], [340, 438, 34], [30, 468, 54], [170, 462, 48], [290, 470, 60], [100, 502, 60], [250, 498, 50], [350, 506, 36]]);
+
+function walls(g, c) {
+  const hole = `M${WIN.x} ${WIN.y}V${WIN.y + WIN.h}H${WIN.x + WIN.w}V${WIN.y}Z`;
+  const wall = g.lin("wall", [[0, dk(c.wall, 0.12)], [0.1, c.wall], [0.8, c.wall], [1, dk(c.wall, 0.05)]]);
+  const stripes = g.raw("paper", id => `<pattern id="${id}" width="20" height="20" patternUnits="userSpaceOnUse"><rect width="10" height="20" fill="${lt(c.wall, 0.4)}" opacity="0.3"/></pattern>`);
+  const tones = [c.floor, lt(c.floor, 0.08), dk(c.floor, 0.07), lt(c.floor, 0.03)];
+  const planks = [];
+  FLOOR_ROWS.slice(0, -1).forEach((top, row) => {
+    const bottom = FLOOR_ROWS[row + 1], edges = [0, ...FLOOR_JOINTS[row], 400];
+    for (let index = 0; index < edges.length - 1; index += 1) planks.push(`<rect x="${edges[index]}" y="${top}" width="${edges[index + 1] - edges[index]}" height="${bottom - top}" fill="${tones[(index * 2 + row) % tones.length]}"/>`);
+  });
+  const seams = [...FLOOR_ROWS.slice(1, -1).map(y => `M0 ${y}H400`), ...FLOOR_JOINTS.flatMap((list, row) => list.map(x => `M${x} ${FLOOR_ROWS[row]}V${FLOOR_ROWS[row + 1]}`))].join(" ");
+  const grain = GRAIN.map(([x, y, w]) => `M${x} ${y} q${w / 2} -2.4 ${w} 0`).join(" ");
+  const grooves = Array.from({ length: 16 }, (_, index) => `M${12.5 + index * 25} 305V357`).join(" ");
   return [
-    `<g clip-path="url(#glass)" fill="none" stroke="${ink}" stroke-linecap="round">`,
-    `<g class="rain far" stroke-width="0.7" stroke-opacity="${lit(part) ? 0.22 : 0.36}">${far}</g>`,
-    `<g class="rain near" stroke-width="1" stroke-opacity="${lit(part) ? 0.36 : 0.55}">${near}</g>`,
-    `</g>`,
-    `<g clip-path="url(#glass)" fill="${ink}" fill-opacity="${lit(part) ? 0.3 : 0.55}">${DROPS.map(([x, y]) => `<path d="M${x} ${y} q2.2 4 0 6 q-2.2 -2 0 -6z"/>`).join("")}</g>`,
+    // Стена — рамкой вокруг окна: само стекло остаётся прозрачным. Поверх — полоска обоев.
+    `<path fill="${wall}" fill-rule="evenodd" d="M0 0H400V372H0Z ${hole}"/>`,
+    `<path fill="${stripes}" fill-rule="evenodd" d="M0 0H400V296H0Z ${hole}"/>`,
+    // Панели низа стены.
+    `<rect x="0" y="296" width="400" height="66" fill="${g.lin("panel", [[0, c.panel], [1, dk(c.panel, 0.1)]])}"/>`,
+    `<path d="${grooves}" stroke="${dk(c.panel, 0.18)}" stroke-width="1.1"/><path d="${grooves}" stroke="${lt(c.panel, 0.3)}" stroke-width="0.8" transform="translate(1.2 0)" opacity="0.7"/>`,
+    `<rect x="0" y="293" width="400" height="5.5" fill="${lt(c.panel, 0.34)}"/><rect x="0" y="298.5" width="400" height="2.5" fill="${dk(c.panel, 0.3)}" opacity="0.45"/>`,
+    // Плинтус.
+    `<rect x="0" y="360" width="400" height="12" fill="${c.skirting}"/><rect x="0" y="360" width="400" height="1.6" fill="${lt(c.skirting, 0.6)}"/><rect x="0" y="369.6" width="400" height="2.4" fill="${dk(c.skirting, 0.35)}" opacity="0.55"/>`,
+    // Пол: доски нескольких тонов, швы и волокна; у стены — тень.
+    planks.join(""),
+    `<path d="${seams}" stroke="${c.floorLine}" stroke-width="1" opacity="0.7"/>`,
+    `<path d="${grain}" fill="none" stroke="${c.floorLine}" stroke-width="0.7" opacity="0.32"/>`,
+    `<rect x="0" y="372" width="400" height="16" fill="${g.lin("floorTop", [[0, "#1a0f1e", 0.28], [1, "#1a0f1e", 0]])}"/>`,
   ].join("");
 }
 
-// ── стены и мебель ───────────────────────────────────────────────────────────
-function walls(c) {
-  const planks = [396, 424, 456, 492].map(y => `<path d="M0 ${y} H400" stroke="${c.plank}" stroke-width="1.2"/>`).join("");
-  const joints = [[70, 372, 396], [250, 372, 396], [150, 396, 424], [330, 396, 424], [40, 424, 456], [220, 424, 456], [120, 456, 492], [300, 456, 492], [200, 492, 520]]
-    .map(([x, from, to]) => `<path d="M${x} ${from} V${to}" stroke="${c.plank}" stroke-width="1"/>`).join("");
-  return [
-    // Стена — рамкой вокруг окна: само стекло остаётся прозрачным.
-    `<path fill="${c.wall}" fill-rule="evenodd" d="M0 0H400V372H0Z M${WIN.x} ${WIN.y}V${WIN.y + WIN.h}H${WIN.x + WIN.w}V${WIN.y}Z"/>`,
-    `<rect x="0" y="300" width="400" height="72" fill="${c.wallLow}" opacity="0.55"/>`,
-    `<rect x="0" y="364" width="400" height="8" fill="${c.skirting}"/>`,
-    `<rect x="0" y="372" width="400" height="148" fill="${c.floor}"/>${planks}${joints}`,
-  ].join("");
-}
-
-function windowFrame(c) {
+/** Капли на стекле: [x, y, размер]. Каждая пятая медленно сползает (страница двигает её сама). */
+const DROPS = Object.freeze([[146, 86, 1], [171, 142, 1.2], [199, 70, 0.9], [229, 124, 1.1], [247, 190, 1.3], [271, 82, 1], [300, 154, 0.9], [318, 126, 1.2], [338, 62, 1], [357, 176, 1.1], [372, 108, 0.9], [140, 208, 1], [290, 226, 1.2], [188, 232, 0.9], [226, 60, 0.8], [352, 232, 1], [262, 136, 0.8], [310, 200, 1], [158, 170, 0.9], [206, 196, 1.1]]);
+/** Само стекло: тень от рамы сверху, запотевший низ, блики и капли. Лежит поверх дождя, под рамой. */
+function glass(g, part) {
   const { x, y, w, h } = WIN;
+  const ink = lit(part) ? "#dfe6ff" : "#ffffff";
+  const clip = g.raw("pane", id => `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}"/></clipPath>`);
+  const drop = ([dx, dy, k], index) => `<g transform="translate(${dx} ${dy}) scale(${k})"><g${index % 5 === 0 ? ` class="slide s${(index / 5) % 3}"` : ""}><path d="M0 -10 V-3" stroke="${ink}" stroke-width="0.7" stroke-linecap="round" opacity="0.22"/><path d="M0 -3.2 q2.7 3.4 0 5.8 q-2.7 -2.4 0 -5.8z" fill="${ink}" opacity="0.42"/><circle cx="-0.6" cy="0.6" r="0.6" fill="#ffffff" opacity="0.85"/></g></g>`;
   return [
-    `<g fill="${c.frame}">`,
-    `<path fill-rule="evenodd" d="M${x - 7} ${y - 7}H${x + w + 7}V${y + h}H${x - 7}Z M${x} ${y}V${y + h}H${x + w}V${y}Z"/>`,
-    `<rect x="${x + 86}" y="${y}" width="5" height="${h}"/><rect x="${x + 174}" y="${y}" width="5" height="${h}"/>`,
-    `<rect x="${x}" y="${y + 62}" width="${w}" height="3.5"/>`,
+    `<g clip-path="${clip}">`,
+    `<rect x="${x}" y="${y}" width="${w}" height="28" fill="${g.lin("glassTop", [[0, "#0b1030", 0.36], [1, "#0b1030", 0]])}"/>`,
+    `<rect x="${x}" y="${y + h - 56}" width="${w}" height="56" fill="${g.lin("glassFog", [[0, "#ffffff", 0], [1, "#ffffff", lit(part) ? 0.12 : 0.22]])}"/>`,
+    `<g fill="#ffffff" opacity="${lit(part) ? 0.04 : 0.08}"><path d="M${x + 30} ${y} h34 l-66 ${h} h-34z"/><path d="M${x + 78} ${y} h10 l-66 ${h} h-10z"/><path d="M${x + 226} ${y} h22 l-66 ${h} h-22z"/></g>`,
+    DROPS.map(drop).join(""),
     `</g>`,
-    `<path d="M${x - 7} ${y + h}H${x + w + 7}" stroke="${c.frameDark}" stroke-width="1.5"/>`,
   ].join("");
 }
 
-function sill(c) {
-  return `<rect x="112" y="262" width="288" height="11" rx="1.5" fill="${c.sill}"/><rect x="112" y="271" width="288" height="5" fill="${c.sillEdge}"/>`;
+function windowFrame(g, c) {
+  const { x, y, w, h } = WIN;
+  const bar = (bx, by, bw, bh, upright) => [
+    `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="${c.frame}"/>`,
+    upright
+      ? `<rect x="${bx}" y="${by}" width="1.3" height="${bh}" fill="${lt(c.frame, 0.7)}"/><rect x="${bx + bw - 1.5}" y="${by}" width="1.5" height="${bh}" fill="${c.frameDark}" opacity="0.85"/>`
+      : `<rect x="${bx}" y="${by}" width="${bw}" height="1.2" fill="${lt(c.frame, 0.7)}"/><rect x="${bx}" y="${by + bh - 1.4}" width="${bw}" height="1.4" fill="${c.frameDark}" opacity="0.85"/>`,
+  ].join("");
+  return [
+    `<path fill="${c.frame}" fill-rule="evenodd" d="M${x - 9} ${y - 9}H${x + w + 9}V${y + h}H${x - 9}Z M${x} ${y}V${y + h}H${x + w}V${y}Z"/>`,
+    `<path d="M${x - 9} ${y - 8.2}H${x + w + 9}" stroke="${lt(c.frame, 0.8)}" stroke-width="1.6"/>`,
+    `<path d="M${x} ${y + h}V${y}H${x + w}" fill="none" stroke="${c.frameDark}" stroke-width="2.2" opacity="0.9"/><path d="M${x + w} ${y}V${y + h}" stroke="${lt(c.frame, 0.6)}" stroke-width="1.2" opacity="0.7"/>`,
+    `<path d="M${x - 9} ${y - 9}V${y + h} M${x + w + 9} ${y - 9}V${y + h}" stroke="${c.frameDark}" stroke-width="1" opacity="0.7"/>`,
+    bar(x, y + 60, w, 5, false), bar(x + 85, y, 6, h, true), bar(x + 173, y, 6, h, true),
+    // Ручка на средней створке.
+    `<rect x="${x + 174.6}" y="${y + 146}" width="2.8" height="13" rx="1.4" fill="${c.metal}"/><rect x="${x + 174.6}" y="${y + 146}" width="2.8" height="4.4" rx="1.4" fill="${c.metalDark}"/>`,
+  ].join("");
+}
+
+function sill(g, c) {
+  return [
+    `<rect x="106" y="279" width="294" height="9" fill="${g.lin("sillShade", [[0, "#1a0f1e", 0.22], [1, "#1a0f1e", 0]])}"/>`,
+    `<rect x="106" y="262" width="296" height="12.5" rx="1.5" fill="${g.lin("sill", [[0, lt(c.sill, 0.5)], [1, c.sill]])}"/>`,
+    `<rect x="106" y="273.5" width="296" height="5.5" rx="1" fill="${c.sillEdge}"/><rect x="106" y="273.5" width="296" height="1" fill="${dk(c.sillEdge, 0.14)}" opacity="0.5"/>`,
+  ].join("");
+}
+
+/** Штора слева, собранная подхватом; правая — её отражение (видна только кромка у края рисунка). */
+function curtain(g, c) {
+  const cloth = g.lin("curtain", [[0, c.curtainDark], [0.25, c.curtain], [0.6, lt(c.curtain, 0.4)], [1, c.curtainDark]], [0, 0, 1, 0]);
+  const fold = (d, w = 2.4) => `<path d="${d}" stroke="${c.curtainDark}" stroke-width="${w}" opacity="0.55"/>`;
+  const gleam = (d) => `<path d="${d}" stroke="${lt(c.curtain, 0.7)}" stroke-width="1.6" opacity="0.6"/>`;
+  return [
+    `<path d="M100 29 H152 C152 86 147 136 129 177 L101 177 Z" fill="${cloth}"/>`,
+    `<path d="M101 186 H128 C134 212 135 240 134 262 q-4 4 -8 0 q-4 4 -8 0 q-4 4 -8 0 q-5 3 -9 0 Z" fill="${cloth}"/>`,
+    `<g fill="none" stroke-linecap="round">`,
+    fold("M109 30 C110 90 108 140 105 176"), fold("M120 30 C121 90 117 140 111 176"), fold("M131 30 C132 88 126 138 117 176"), fold("M142 30 C143 86 135 136 123 176", 2),
+    gleam("M114.5 31 C115.5 90 112 140 108 175"), gleam("M125.5 31 C126.5 88 121 138 114 175"), gleam("M136.5 31 C137.5 86 130 136 120 175"),
+    fold("M107 187 C106 215 105 240 105 262"), fold("M115 187 C117 215 117 240 117 262"), fold("M123 187 C127 212 128 240 127 262", 2),
+    gleam("M111 188 C111.5 215 111 240 111 261"), gleam("M119.5 188 C122 214 122.5 240 122 261"),
+    `</g>`,
+    // Подхват: красная лента.
+    `<path d="M99.6 176.6 Q115 183.4 130.6 176.6 L130.8 183.6 Q115 190.4 99.6 183.6Z" fill="${c.tie}"/><path d="M100 178 Q115 184.6 130.4 178" fill="none" stroke="${lt(c.tie, 0.45)}" stroke-width="1" opacity="0.7"/><path d="M100 183 Q115 189.6 130.4 183" fill="none" stroke="${dk(c.tie, 0.3)}" stroke-width="1" opacity="0.6"/>`,
+  ].join("");
+}
+function curtains(g, c) {
+  const one = curtain(g, c);
+  const rings = Array.from({ length: 6 }, (_, index) => `<ellipse cx="${104 + index * 9}" cy="27.5" rx="1.5" ry="2.7" fill="none" stroke="${c.rod}" stroke-width="0.9"/>`).join("");
+  return [
+    `<rect x="93" y="28" width="314" height="5" rx="2" fill="#1a0f1e" opacity="0.14"/>`,
+    `<rect x="92" y="25.6" width="316" height="3.6" rx="1.8" fill="${c.rod}"/><rect x="92" y="25.6" width="316" height="1.1" rx="0.5" fill="${lt(c.rod, 0.4)}"/><circle cx="91" cy="27.4" r="3.8" fill="${c.rod}"/><circle cx="90" cy="26.2" r="1.2" fill="${lt(c.rod, 0.5)}"/>`,
+    one, rings,
+    `<g transform="translate(512 0) scale(-1 1)">${one}${rings}</g>`,
+  ].join("");
 }
 
 /** Гирлянда: на окне или — когда стоит ёлка — на ней. Горит вечером и ночью. */
-const BULBS = Object.freeze(["#ffd27a", "#ff8fa3", "#9fd0ff", "#b9f3a0", "#ffb86b"]);
-function garland(c, part, { onTree = false } = {}) {
-  if (onTree) return "";
-  const points = [];
-  for (let index = 0; index <= 12; index += 1) {
-    const x = 122 + index * 22.3;
-    points.push([x, 40 + Math.sin((index / 12) * Math.PI * 3) ** 2 * 10 + (index % 2 ? 2 : 0)]);
-  }
-  // Хвост гирлянды спускается по левой стороне рамы: его она и поправляет.
-  const tail = [[121, 62], [119, 92], [121, 124], [118, 156], [120, 190], [118, 222], [120, 252]];
-  const wire = `M${points.map(([x, y]) => `${n(x)} ${n(y)}`).join(" L")} M${n(points[0][0])} ${n(points[0][1])} L${tail.map(([x, y]) => `${x} ${y}`).join(" L")}`;
-  const bulbs = [...points.slice(1), ...tail].map(([x, y], index) => bulb(x, y + 3, BULBS[index % BULBS.length], c, part, index)).join("");
-  return `<path d="${wire}" fill="none" stroke="${c.ink}" stroke-width="0.9" stroke-linejoin="round"/>${bulbs}`;
+const BULBS = Object.freeze(["#ffe1a0", "#ffc670", "#ff9fb4", "#ffe1a0", "#a6dcff", "#ffd48a"]);
+function bulb(g, x, y, index, c, part) {
+  const colour = BULBS[index % BULBS.length];
+  const cap = `<rect x="${n(x - 1.1)}" y="${n(y - 1.8)}" width="2.2" height="2.2" rx="0.5" fill="${dk(c.rod, 0.3)}"/>`;
+  const shape = `M${n(x)} ${n(y)} q2.7 2.8 0 6.2 q-2.7 -3.4 0 -6.2z`;
+  if (!lit(part)) return `${cap}<path d="${shape}" fill="${tint(lt(colour, 0.3), part)}" opacity="0.95"/><circle cx="${n(x - 0.5)}" cy="${n(y + 2.2)}" r="0.6" fill="#ffffff" opacity="0.85"/>`;
+  const halo = g.rad(`bulb${index % BULBS.length}`, [[0, colour, 0.8], [0.3, colour, 0.34], [1, colour, 0]]);
+  return `<g class="bulb b${index % 4}"><circle cx="${n(x)}" cy="${n(y + 3)}" r="12" fill="${halo}"/>${cap}<path d="${shape}" fill="${lt(colour, 0.3)}"/><circle cx="${n(x)}" cy="${n(y + 3.3)}" r="1.1" fill="#ffffff"/></g>`;
 }
-function bulb(x, y, colour, c, part, index) {
-  if (!lit(part)) return `<circle cx="${n(x)}" cy="${n(y)}" r="2.6" fill="${tint(colour, part)}" opacity="0.85"/>`;
-  return `<g class="bulb b${index % 4}"><circle cx="${n(x)}" cy="${n(y)}" r="9" fill="${colour}" opacity="0.2"/><circle cx="${n(x)}" cy="${n(y)}" r="2.8" fill="${colour}"/></g>`;
+function garland(g, c, part, { onTree = false } = {}) {
+  if (onTree) return "";
+  const hooks = [120, 154, 188, 222, 256, 290, 324, 358, 392];
+  const top = 38;
+  let wire = `M${hooks[0]} ${top}`;
+  const spots = [];
+  for (let index = 0; index < hooks.length - 1; index += 1) {
+    const from = hooks[index], to = hooks[index + 1], dip = 9 + (index % 2 ? 2.5 : 0);
+    wire += ` Q${(from + to) / 2} ${top + dip * 2} ${to} ${top}`;
+    // Три лампочки на пролёт — на той же дуге.
+    for (const t of [0.22, 0.5, 0.78]) spots.push([from + (to - from) * t, top + 4 * t * (1 - t) * dip]);
+  }
+  // Хвост гирлянды спускается по шторе у левого края окна: его она и поправляет.
+  const tail = [[122, 64], [119, 92], [123, 120], [119, 148], [122, 172], [124, 200], [121, 226], [124, 250]];
+  wire += ` M${hooks[0]} ${top} Q117 50 ${tail[0][0]} ${tail[0][1]} ${tail.slice(1).map(([x, y]) => `T${x} ${y}`).join(" ")}`;
+  const nails = hooks.map(x => `<circle cx="${x}" cy="${top}" r="1.2" fill="${dk(c.rod, 0.3)}"/>`).join("");
+  return `<path d="${wire}" fill="none" stroke="${dk(c.rod, 0.2)}" stroke-width="0.7" stroke-linejoin="round" stroke-linecap="round"/>${nails}${[...spots, ...tail].map(([x, y], index) => bulb(g, x, y + 0.8, index, c, part)).join("")}`;
 }
 
-function starMap(c) {
-  const stars = [[30, 62], [42, 74], [52, 64], [64, 78], [76, 66], [86, 92], [26, 96], [58, 98], [40, 54], [90, 56], [72, 100]];
+// ── на стене ─────────────────────────────────────────────────────────────────
+function sparkle(x, y, k = 1) {
+  return `<path d="M${x} ${n(y - 3 * k)} l${n(0.8 * k)} ${n(2.2 * k)} l${n(2.2 * k)} ${n(0.8 * k)} l${n(-2.2 * k)} ${n(0.8 * k)} l${n(-0.8 * k)} ${n(2.2 * k)} l${n(-0.8 * k)} ${n(-2.2 * k)} l${n(-2.2 * k)} ${n(-0.8 * k)} l${n(2.2 * k)} ${n(-0.8 * k)}z"/>`;
+}
+/** Карта звёздного неба: Кассиопея («W»), ковш и планета с кольцом. */
+function starMap(g, c) {
+  const sky = g.rad("map", [[0, lt(c.navy, 0.2)], [1, c.navy]]);
+  const cass = [[25, 58], [34, 69], [44, 60], [54, 70], [63, 59]];
+  const dipper = [[58, 90], [68, 91], [69, 100], [59, 99], [58, 90]];
+  const handle = [[68, 91], [76, 86], [84, 84], [92, 87]];
+  const small = [[21, 51], [40, 49], [73, 51], [89, 55], [92, 68], [23, 79], [41, 83], [48, 102], [27, 104], [80, 104], [90, 97], [52, 53], [80, 72], [36, 96], [46, 76], [86, 62]];
+  const line = (list) => `M${list.map(([x, y]) => `${x} ${y}`).join(" L")}`;
   return [
-    `<rect x="16" y="44" width="84" height="68" rx="2" fill="${c.woodDark}"/><rect x="19" y="47" width="78" height="62" fill="${c.navy}"/>`,
-    `<path d="M30 62 L42 74 L52 64 L64 78 L76 66" fill="none" stroke="${c.star}" stroke-width="0.7" opacity="0.7"/>`,
-    stars.map(([x, y], index) => `<circle cx="${x}" cy="${y}" r="${index < 5 ? 1.5 : 0.9}" fill="${c.star}"/>`).join(""),
-    `<circle cx="84" cy="74" r="5" fill="none" stroke="${c.star}" stroke-width="0.5" opacity="0.5"/>`,
+    `<rect x="16" y="45" width="86" height="70" rx="2" fill="#1a0f1e" opacity="0.18"/>`,
+    `<rect x="14" y="42" width="86" height="70" rx="2" fill="${c.woodDark}"/><rect x="14" y="42" width="86" height="2" rx="1" fill="${lt(c.woodDark, 0.25)}"/>`,
+    `<rect x="18" y="46" width="78" height="62" fill="${sky}"/>`,
+    `<g fill="none" stroke="${c.star}" stroke-width="0.4" opacity="0.22"><circle cx="57" cy="77" r="27"/><circle cx="57" cy="77" r="15"/><path d="M57 46V108 M18 77H96"/></g>`,
+    `<path d="${line(cass)} ${line(dipper)} ${line(handle)}" fill="none" stroke="${c.star}" stroke-width="0.6" opacity="0.6" stroke-linejoin="round"/>`,
+    `<g fill="${c.star}">${[...cass, ...dipper.slice(0, 4), ...handle.slice(1)].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.4"/>`).join("")}${small.map(([x, y], index) => `<circle cx="${x}" cy="${y}" r="${index % 3 ? 0.6 : 0.9}" opacity="${index % 2 ? 0.7 : 1}"/>`).join("")}${sparkle(82, 61, 0.9)}${sparkle(37, 90, 0.7)}</g>`,
+    // Планета с кольцом.
+    `<circle cx="30" cy="94" r="4.6" fill="${lt(c.gold, 0.1)}"/><path d="M26.4 91.8 q3.6 -2.4 7.4 0.4" fill="none" stroke="${dk(c.gold, 0.25)}" stroke-width="0.9"/><ellipse cx="30" cy="94" rx="8.4" ry="2.2" fill="none" stroke="${c.star}" stroke-width="0.8" transform="rotate(-18 30 94)"/>`,
+    `<rect x="18" y="46" width="78" height="62" fill="none" stroke="${dk(c.navy, 0.4)}" stroke-width="1" opacity="0.6"/>`,
+  ].join("");
+}
+/** Её рисунок: Байт и сердечко, на двух полосках цветного скотча. */
+function drawing(c) {
+  return `<g transform="rotate(-3 36 140)">${[
+    `<rect x="19" y="121.5" width="36" height="40" rx="1" fill="#1a0f1e" opacity="0.16"/>`,
+    `<rect x="18" y="120" width="36" height="40" rx="1" fill="${c.paper}"/><path d="M48 160 l6 -6 v6z" fill="${c.paperDark}"/>`,
+    // Байт: уши, морда, глаза, усы.
+    `<path d="M26 137 l1 -8 l5 4 q4 -2 8 0 l5 -4 l1 8 q2 10 -10 10 q-12 0 -10 -10z" fill="${c.cat}"/><circle cx="32" cy="138" r="1.5" fill="${c.ink}"/><circle cx="40" cy="138" r="1.5" fill="${c.ink}"/><path d="M34.8 141 h2.4 l-1.2 1.4z" fill="${c.nose}"/><path d="M29 141 h-5 M29 143 l-5 1.4 M43 141 h5 M43 143 l5 1.4" stroke="${c.ink}" stroke-width="0.5" stroke-linecap="round"/>`,
+    `<path d="M41 152 q-2.6 -3.4 0 -4.4 q1.6 -0.4 2 1.2 q0.4 -1.6 2 -1.2 q2.6 1 0 4.4 l-2 2z" fill="${c.red}"/>`,
+    `<path d="M23 153 q4 -3 8 0 q4 3 7 0" fill="none" stroke="${c.plaid}" stroke-width="1.2" stroke-linecap="round"/>`,
+    `<rect x="16" y="118.5" width="9" height="4" fill="${c.rugLight}" opacity="0.85" transform="rotate(-24 20 120)"/><rect x="47" y="118.5" width="9" height="4" fill="${c.plaidLight}" opacity="0.85" transform="rotate(24 52 120)"/>`,
+  ].join("")}</g>`;
+}
+function calendar(c) {
+  const days = [0, 1, 2, 3].map(row => [0, 1, 2, 3, 4].map(col => `<rect x="${n(67.4 + col * 5.4)}" y="${n(136 + row * 6)}" width="3.4" height="3.4" rx="0.7" fill="${row === 1 && col === 2 ? c.red : c.paperDark}"/>`).join("")).join("");
+  return [
+    `<rect x="65" y="121.5" width="34" height="42" rx="1.5" fill="#1a0f1e" opacity="0.16"/>`,
+    `<rect x="64" y="120" width="34" height="42" rx="1.5" fill="${c.paper}"/><path d="M64 121.5 q0 -1.5 1.5 -1.5 h31 q1.5 0 1.5 1.5 v9.5 h-34z" fill="${c.red}"/>`,
+    `<path d="M70 126 h10 M84 126 h8" stroke="${lt(c.red, 0.6)}" stroke-width="1.4" stroke-linecap="round"/>`,
+    [70, 77, 84, 91].map(x => `<rect x="${x}" y="117.6" width="1.6" height="5" rx="0.8" fill="${c.metalDark}"/>`).join(""),
+    days,
+    `<circle cx="79.9" cy="143.7" r="4.6" fill="none" stroke="${c.red}" stroke-width="1.3"/>`,
   ].join("");
 }
 
-function bookcase(c, has) {
-  const x = 10, y = 170, w = 96, h = 202;
-  const shelves = [218, 266, 314].map(level => `<rect x="${x + 4}" y="${level}" width="${w - 8}" height="5" fill="${c.wood}"/>`).join("");
-  const book = (bx, by, bw, bh, colour, tilt = 0) => `<rect x="${bx}" y="${by - bh}" width="${bw}" height="${bh}" rx="0.8" fill="${colour}"${tilt ? ` transform="rotate(${tilt} ${bx} ${by})"` : ""}/>`;
+// ── полка ────────────────────────────────────────────────────────────────────
+function mug(x, base, colour, { steam = false } = {}) {
+  return [
+    `<path d="M${x + 5.5} ${base - 9.5} q7.5 0 7.5 4.4 q0 4.4 -7.5 4.4" fill="none" stroke="${dk(colour, 0.12)}" stroke-width="2.2"/>`,
+    `<path d="M${x - 6.5} ${base - 13} h13 v9.5 q0 3.5 -3.5 3.5 h-6 q-3.5 0 -3.5 -3.5z" fill="${colour}"/>`,
+    `<path d="M${x + 3} ${base - 13} h3.5 v9.5 q0 3.5 -3.5 3.5z" fill="${dk(colour, 0.2)}" opacity="0.6"/><rect x="${x - 6.5}" y="${base - 13}" width="13" height="2" fill="${lt(colour, 0.45)}" opacity="0.8"/><rect x="${x - 4.6}" y="${base - 9.6}" width="1.6" height="6" rx="0.8" fill="#ffffff" opacity="0.35"/>`,
+    steam ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity="0.6"><path d="M${x - 2.4} ${base - 16} q-3 -4 0 -8 q3 -4 0 -7"/><path d="M${x + 2.6} ${base - 17} q3 -4 0 -8"/></g>` : "",
+  ].join("");
+}
+function bookcase(g, c, has, part) {
+  const x = 8, y = 170, w = 98, h = 202;
+  const shelves = [218, 266, 314];
+  const book = (bx, base, bw, bh, colour, { tilt = 0, band = "" } = {}) => `<g${tilt ? ` transform="rotate(${tilt} ${bx} ${base})"` : ""}><rect x="${bx}" y="${base - bh}" width="${bw}" height="${bh}" rx="0.9" fill="${colour}"/><rect x="${bx}" y="${base - bh}" width="1.2" height="${bh}" fill="${lt(colour, 0.35)}" opacity="0.7"/><rect x="${bx + bw - 1.3}" y="${base - bh}" width="1.3" height="${bh}" fill="${dk(colour, 0.3)}" opacity="0.6"/>${band ? `<rect x="${bx + 0.8}" y="${base - bh + 4}" width="${bw - 1.6}" height="2.4" fill="${band}"/><rect x="${bx + 0.8}" y="${base - 7}" width="${bw - 1.6}" height="1.4" fill="${band}" opacity="0.8"/>` : ""}</g>`;
+  // ВАЛЛ-И: коробочка на гусеницах, шея и два глаза-бинокля.
+  const walle = [
+    `<path d="M18.6 218 l2.6 -9 h5.4 l1.6 9z M32 218 l1.6 -9 h5.4 l2.6 9z" fill="${dk(c.walleDark, 0.45)}"/><path d="M20.4 215 h6.6 M20.8 212 h5.6 M33 215 h6.6 M33.6 212 h5.6" stroke="${lt(c.walleDark, 0.1)}" stroke-width="0.7"/>`,
+    `<rect x="22" y="197.4" width="16.4" height="14.6" rx="1.8" fill="${c.walle}"/><rect x="22" y="207" width="16.4" height="5" rx="1.4" fill="${c.walleDark}" opacity="0.75"/><rect x="24.4" y="199.6" width="6" height="4.4" rx="0.8" fill="${dk(c.walle, 0.3)}"/><circle cx="34.6" cy="201.8" r="1.3" fill="${c.red}"/><rect x="22" y="197.4" width="16.4" height="1.6" rx="0.8" fill="${lt(c.walle, 0.45)}"/>`,
+    `<path d="M22 203 l-3.4 4 M38.4 203 l3.4 4" stroke="${c.walleDark}" stroke-width="1.8" stroke-linecap="round"/>`,
+    `<rect x="29.3" y="191.6" width="1.9" height="6.4" fill="${c.walleDark}"/>`,
+    `<g transform="rotate(-9 26.4 188.4)"><rect x="22.6" y="184.4" width="7.4" height="8" rx="3.2" fill="${c.metal}"/><circle cx="26.3" cy="188.6" r="2.3" fill="${c.ink}"/><circle cx="25.6" cy="187.8" r="0.7" fill="#ffffff"/></g>`,
+    `<g transform="rotate(9 34 188.4)"><rect x="30.4" y="184.4" width="7.4" height="8" rx="3.2" fill="${c.metal}"/><circle cx="34.1" cy="188.6" r="2.3" fill="${c.ink}"/><circle cx="33.4" cy="187.8" r="0.7" fill="#ffffff"/></g>`,
+  ].join("");
   const top = [
-    // ВАЛЛ-И: коробочка на гусеницах, два глаза-бинокля.
-    `<g><rect x="22" y="200" width="18" height="14" rx="2" fill="${c.walle}"/><rect x="20" y="212" width="22" height="6" rx="3" fill="${c.walleDark}"/>`,
-    `<rect x="24" y="190" width="6.5" height="7" rx="2.5" fill="${c.metal}"/><rect x="31.5" y="190" width="6.5" height="7" rx="2.5" fill="${c.metal}"/>`,
-    `<circle cx="27.2" cy="193.5" r="1.7" fill="${c.ink}"/><circle cx="34.8" cy="193.5" r="1.7" fill="${c.ink}"/><rect x="30" y="196" width="2" height="5" fill="${c.walleDark}"/></g>`,
-    book(50, 218, 6, 30, c.plaidDark), book(57, 218, 5, 26, c.rug), book(63, 218, 7, 32, c.greenDark), book(71, 218, 5, 24, c.paperDark), book(78, 218, 6, 28, c.top, 9),
+    walle,
+    book(47, 218, 6, 32, c.plaidDark, { band: c.gold }), book(53.4, 218, 5, 27, c.rug), book(58.8, 218, 7, 34, c.greenDark, { band: c.paper }), book(66.2, 218, 5, 25, c.paperDark), book(71.6, 218, 6, 30, c.top, { band: c.jacket }),
+    book(80, 218, 5.6, 29, c.plaid, { tilt: 11 }),
+    // Две книги плашмя.
+    `<rect x="85" y="213.4" width="14" height="4.6" rx="0.9" fill="${c.chair}"/><rect x="86" y="209.2" width="12" height="4.2" rx="0.9" fill="${c.gold}"/><rect x="85" y="213.4" width="14" height="1" fill="${lt(c.chair, 0.3)}"/>`,
   ].join("");
   const middle = [
     // «Маленький принц» — жёлтый корешок со звездой; рядом — тома манги.
-    book(18, 266, 8, 34, c.gold), `<path d="M22 240 l1.2 2.6 2.8 .3 -2.1 1.9 .6 2.8 -2.5 -1.4 -2.5 1.4 .6 -2.8 -2.1 -1.9 2.8 -.3z" fill="${c.paper}"/>`,
-    [0, 1, 2, 3, 4, 5].map(index => `<rect x="${29 + index * 6}" y="238" width="5" height="28" rx="0.6" fill="${c.paper}"/><rect x="${29 + index * 6}" y="238" width="5" height="7" fill="${index % 2 ? c.top : c.jacket}"/>`).join(""),
-    has("снимок") ? `<rect x="72" y="242" width="24" height="24" rx="1.5" fill="${c.woodLight}"/><rect x="75" y="245" width="18" height="18" fill="${c.paper}"/><path d="M78 250h12M78 254h9M78 258h11" stroke="${c.ink}" stroke-width="1" opacity="0.6"/>` : book(72, 266, 6, 26, c.chairDark) + book(79, 266, 7, 30, c.plaid),
+    book(17, 266, 8.4, 36, c.gold), `<g fill="${c.paper}">${sparkle(21.2, 240, 1)}</g><rect x="18.4" y="256" width="5.6" height="1.4" fill="${dk(c.gold, 0.3)}"/>`,
+    [0, 1, 2, 3, 4, 5].map(index => `<rect x="${n(27.4 + index * 5.7)}" y="237" width="5.2" height="29" rx="0.6" fill="${c.paper}"/><rect x="${n(27.4 + index * 5.7)}" y="237" width="5.2" height="7.4" rx="0.6" fill="${index % 2 ? c.top : c.jacket}"/><circle cx="${n(30 + index * 5.7)}" cy="250" r="1.1" fill="${index % 2 ? c.jacket : c.top}"/><rect x="${n(28.6 + index * 5.7)}" y="258" width="2.8" height="1" fill="${c.paperDark}"/>`).join(""),
+    has("снимок")
+      ? `<rect x="70" y="240" width="27" height="26" rx="1.8" fill="${c.woodPale}"/><rect x="70" y="240" width="27" height="1.6" rx="0.8" fill="${lt(c.woodPale, 0.4)}"/><rect x="73.2" y="243.2" width="20.6" height="19.6" fill="${c.paper}"/><rect x="75.4" y="246" width="11" height="4.6" rx="2.2" fill="${c.plaidLight}"/><rect x="80.4" y="252.4" width="11.4" height="4.6" rx="2.2" fill="${c.rugLight}"/><path d="M76 259.6 h9" stroke="${c.paperDark}" stroke-width="1.2" stroke-linecap="round"/>`
+      : book(64.6, 266, 6, 27, c.chairDark) + book(71, 266, 7, 31, c.plaid, { band: c.cream }) + book(78.4, 266, 5, 24, c.rugLight) + book(84.6, 266, 6.4, 28, c.woodPale, { tilt: 9 }),
   ].join("");
   const low = [
-    mug(26, 314, c.mug, c), has("кружка") ? mug(44, 314, c.mug2, c) : "",
-    `<rect x="62" y="294" width="30" height="20" rx="1.5" fill="${c.green}"/><rect x="66" y="299" width="22" height="9" rx="1" fill="${c.paper}"/>`,
+    mug(27, 314, c.mug), has("кружка") ? mug(47, 314, c.mug2) : "",
+    // Жестянка с жасминовым чаем и банка с печеньем.
+    `<rect x="60" y="291" width="22" height="23" rx="2" fill="${c.green}"/><rect x="60" y="291" width="3" height="23" rx="1.5" fill="${lt(c.green, 0.3)}" opacity="0.6"/><rect x="59" y="288" width="24" height="5" rx="1.6" fill="${c.greenDark}"/><rect x="63.6" y="297" width="14.8" height="11" rx="1.2" fill="${c.paper}"/><circle cx="71" cy="301.6" r="1.4" fill="${c.gold}"/><g fill="#ffffff" stroke="${c.paperDark}" stroke-width="0.3"><circle cx="71" cy="299.4" r="1.4"/><circle cx="73.1" cy="301" r="1.4"/><circle cx="72.3" cy="303.5" r="1.4"/><circle cx="69.7" cy="303.5" r="1.4"/><circle cx="68.9" cy="301" r="1.4"/></g><circle cx="71" cy="301.6" r="1.1" fill="${c.gold}"/>`,
+    `<rect x="86" y="296" width="13" height="18" rx="2.6" fill="${lt(c.metal, 0.5)}" opacity="0.75"/><rect x="85.4" y="293" width="14.2" height="4" rx="1.4" fill="${c.woodPale}"/><circle cx="90" cy="308" r="2.4" fill="${c.box}"/><circle cx="95" cy="309.6" r="2.3" fill="${c.boxDark}"/><circle cx="92.6" cy="303.6" r="2.3" fill="${c.box}"/><rect x="87.6" y="298" width="1.4" height="13" rx="0.7" fill="#ffffff" opacity="0.6"/>`,
   ].join("");
   const bottom = [
-    `<rect x="18" y="330" width="34" height="34" rx="2" fill="${c.jacket}"/><circle cx="35" cy="341" r="6" fill="${c.chairDark}"/><circle cx="35" cy="355" r="4" fill="${c.chairDark}"/>`,
-    `<rect x="58" y="338" width="38" height="26" rx="2" fill="${c.box}"/><rect x="72" y="346" width="10" height="4" rx="1" fill="${c.boxDark}"/>`,
+    // Колонка: вечером из неё тихо играет lo-fi.
+    `<rect x="16" y="326" width="37" height="40" rx="3" fill="${c.jacket}"/><rect x="16" y="326" width="37" height="2" rx="1" fill="${c.jacketLight}"/>`,
+    `<circle cx="34.5" cy="339" r="8" fill="${dk(c.jacket, 0.35)}"/><circle cx="34.5" cy="339" r="5.4" fill="${c.jacketLight}"/><circle cx="34.5" cy="339" r="2.2" fill="${dk(c.jacket, 0.3)}"/><circle cx="34.5" cy="356" r="5.2" fill="${dk(c.jacket, 0.35)}"/><circle cx="34.5" cy="356" r="3.2" fill="${c.jacketLight}"/><circle cx="34.5" cy="356" r="1.3" fill="${dk(c.jacket, 0.3)}"/>`,
+    part === "вечер" ? `<circle cx="48.6" cy="330.6" r="1.2" fill="#7de0c8"/><g class="note" fill="${c.paper}" opacity="0.8"><path d="M58 326 v-9 l5 -1.6 v8.6" fill="none" stroke="${c.paper}" stroke-width="1"/><ellipse cx="56.6" cy="326" rx="1.9" ry="1.4"/><ellipse cx="61.6" cy="324" rx="1.9" ry="1.4"/></g>` : `<circle cx="48.6" cy="330.6" r="1.2" fill="${dk(c.jacket, 0.3)}"/>`,
+    // Плетёная корзина.
+    `<rect x="59" y="338" width="40" height="28" rx="3" fill="${c.box}"/><path d="M59 345 h40 M59 352 h40 M59 359 h40" stroke="${c.boxDark}" stroke-width="1" opacity="0.6"/><path d="M66 338 v28 M74 338 v28 M82 338 v28 M90 338 v28" stroke="${c.boxDark}" stroke-width="0.7" opacity="0.35"/><rect x="72" y="342.6" width="14" height="5" rx="2.5" fill="${dk(c.boxDark, 0.25)}"/><rect x="59" y="338" width="40" height="2" rx="1" fill="${lt(c.box, 0.35)}"/>`,
   ].join("");
+  const shade = g.lin("shelfShade", [[0, "#1a0f1e", 0.42], [1, "#1a0f1e", 0]]);
   return [
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${c.wood}"/><rect x="${x + 4}" y="${y + 5}" width="${w - 8}" height="${h - 9}" fill="${c.woodDark}"/>`,
-    top, middle, low, bottom, shelves,
-    `<rect x="${x - 2}" y="${y - 3}" width="${w + 4}" height="6" rx="1.5" fill="${c.woodLight}"/>`,
+    `<rect x="${x + w}" y="${y + 6}" width="7" height="${h - 6}" fill="${g.lin("caseShade", [[0, "#1a0f1e", 0.2], [1, "#1a0f1e", 0]], [0, 0, 1, 0])}"/>`,
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="2" fill="${c.wood}"/><rect x="${x + 5}" y="${y + 6}" width="${w - 10}" height="${h - 12}" fill="${c.woodDark}"/>`,
+    `<rect x="${x + 5}" y="${y + 6}" width="${w - 10}" height="9" fill="${shade}"/>${shelves.map(level => `<rect x="${x + 5}" y="${level + 5}" width="${w - 10}" height="9" fill="${shade}"/>`).join("")}`,
+    top, middle, low, bottom,
+    shelves.map(level => `<rect x="${x + 5}" y="${level}" width="${w - 10}" height="5" fill="${c.wood}"/><rect x="${x + 5}" y="${level}" width="${w - 10}" height="1.2" fill="${c.woodLight}"/>`).join(""),
+    `<rect x="${x}" y="${y}" width="5" height="${h}" fill="${c.woodLight}" opacity="0.5"/><rect x="${x + w - 5}" y="${y}" width="5" height="${h}" fill="${dk(c.wood, 0.25)}" opacity="0.5"/><rect x="${x}" y="${y + h - 6}" width="${w}" height="6" fill="${c.wood}"/>`,
+    `<rect x="${x - 3}" y="${y - 4}" width="${w + 6}" height="7" rx="1.8" fill="${c.woodLight}"/><rect x="${x - 3}" y="${y - 4}" width="${w + 6}" height="1.6" rx="0.8" fill="${c.woodPale}"/><rect x="${x - 1}" y="${y + 3}" width="${w + 2}" height="2.4" fill="#1a0f1e" opacity="0.25"/>`,
   ].join("");
 }
 
-function mug(x, base, colour, c, { steam = false } = {}) {
-  return [
-    `<path d="M${x + 5} ${base - 9} q7 0 7 4.5 q0 4.5 -7 4.5" fill="none" stroke="${colour}" stroke-width="2"/>`,
-    `<path d="M${x - 6} ${base - 12} h12 v9 q0 3 -3 3 h-6 q-3 0 -3 -3z" fill="${colour}"/><rect x="${x - 6}" y="${base - 12}" width="12" height="2" fill="${c.paper}" opacity="0.5"/>`,
-    steam ? `<g class="steam" fill="none" stroke="${c.steam}" stroke-width="1.3" stroke-linecap="round" opacity="0.6"><path d="M${x - 2} ${base - 15} q-3 -4 0 -8"/><path d="M${x + 2.5} ${base - 16} q3 -4 0 -8"/></g>` : "",
-  ].join("");
-}
-
-/** Кресло: `second` — второе (вещь «кресло»). Плед на спинке — отдельно (`plaidOnChair`). */
-function armchair(c, x, { second = false } = {}) {
+// ── кресла, плед, стол ───────────────────────────────────────────────────────
+/** Где стоит её кресло: середина сиденья и его верх. От этих чисел считаются она в кресле, плед и Байт на нём. */
+const CHAIR = Object.freeze({ x: 170, y: 344 });
+/** Второе кресло (вещь «кресло»): чуть дальше и меньше, выглядывает из-за первого. */
+const CHAIR2 = Object.freeze({ x: 254, y: 346, k: 0.74 });
+/** Колючка на подоконнике и то, насколько она и Байт светлее комнаты вечером и ночью. */
+const PLANT = Object.freeze({ x: 340 });
+const FIGURE_SOFT = 0.6;
+/** Кресло. Точка отсчёта — середина сиденья. `second` — второе (вещь «кресло»): песочное и поменьше. */
+function armchair(g, c, x, y, { second = false, k = 1 } = {}) {
   const [fill, dark, light] = second ? [c.chair2, c.chair2Dark, c.chair2Light] : [c.chair, c.chairDark, c.chairLight];
-  const w = second ? 72 : 86, top = second ? 300 : 288;
-  return [
-    `<ellipse cx="${x + w / 2}" cy="391" rx="${w / 2 - 6}" ry="4.5" fill="#000" opacity="0.22"/>`,
-    `<rect x="${x + 6}" y="378" width="6" height="16" rx="1" fill="${c.woodDark}"/><rect x="${x + w - 12}" y="378" width="6" height="16" rx="1" fill="${c.woodDark}"/>`,
-    `<path d="M${x + 9} ${top + 12} q0 -12 12 -12 h${w - 42} q12 0 12 12 v56 h-${w - 18}z" fill="${fill}"/>`,
-    `<path d="M${x + 15} ${top + 14} q0 -8 8 -8 h${w - 46} q8 0 8 8 v36 h-${w - 30}z" fill="${light}" opacity="0.45"/>`,
-    `<rect x="${x + 11}" y="340" width="${w - 22}" height="14" rx="5" fill="${light}"/>`,
-    `<rect x="${x}" y="326" width="17" height="56" rx="8" fill="${dark}"/><rect x="${x + w - 17}" y="326" width="17" height="56" rx="8" fill="${dark}"/>`,
-    `<rect x="${x + 11}" y="352" width="${w - 22}" height="30" rx="3" fill="${fill}"/>`,
+  const name = second ? "chair2" : "chair";
+  const back = g.lin(`${name}Back`, [[0, light], [0.5, fill], [1, dark]]);
+  const base = g.lin(`${name}Base`, [[0, fill], [1, dk(dark, 0.15)]]);
+  const arm = (side) => [
+    `<path d="M${side * 60} 40 V-22 Q${side * 60} -37 ${side * 49} -37 Q${side * 38} -37 ${side * 38} -22 V40 Z" fill="${dark}"/>`,
+    `<path d="M${side * 58.4} 38 V-22" stroke="${dk(dark, 0.2)}" stroke-width="2.4" opacity="${side < 0 ? 0 : 0.5}"/>`,
+    `<circle cx="${side * 49}" cy="-24" r="10.4" fill="${fill}"/><circle cx="${side * 49}" cy="-24" r="6.4" fill="none" stroke="${dark}" stroke-width="1.3" opacity="0.7"/><circle cx="${side * 49}" cy="-24" r="2.2" fill="${dark}"/>`,
+    `<path d="M${side * 49 - 7} -29.4 q7 -6.4 14 0" fill="none" stroke="${light}" stroke-width="1.6" stroke-linecap="round" opacity="0.8"/>`,
   ].join("");
-}
-
-/** Клетчатый плед: `d` — контур. Клетка — полосами по контуру. */
-function plaidShape(c, d, id) {
-  return [
-    `<defs><clipPath id="${id}"><path d="${d}"/></clipPath></defs><path d="${d}" fill="${c.plaid}"/>`,
-    `<g clip-path="url(#${id})" stroke="${c.plaidLight}" stroke-width="2.4" opacity="0.6">${[-80, -62, -44, -26, -8, 10, 28, 46, 64, 82, 100, 118, 136].map(shift => `<path d="M${shift} -60 l110 220"/>`).join("")}</g>`,
-    `<g clip-path="url(#${id})" stroke="${c.plaidDark}" stroke-width="2" opacity="0.5">${[-40, -22, -4, 14, 32, 50, 68, 86, 104, 122].map(shift => `<path d="M${shift + 60} -60 l-110 220"/>`).join("")}</g>`,
-  ].join("");
-}
-/** Плед, брошенный на спинку и подлокотник кресла. `big` — вещь «плед на двоих»: он шире. */
-function plaidOnChair(c, big) {
-  const d = big ? "M-6 0 q18 -8 40 -2 l8 44 q4 22 -4 40 l-30 6 q-14 -30 -14 -88z" : "M0 0 q14 -6 30 -2 l6 40 q2 16 -4 30 l-22 4 q-10 -22 -10 -72z";
-  return at(124, 292, plaidShape(c, d, "plaidA"));
-}
-
-function stool(c, x, y) {
-  return `<rect x="${x - 11}" y="${y}" width="22" height="5" rx="2" fill="${c.woodLight}"/><path d="M${x - 8} ${y + 5} l-2 ${392 - y - 5} M${x + 8} ${y + 5} l2 ${392 - y - 5}" stroke="${c.wood}" stroke-width="3" stroke-linecap="round"/><path d="M${x - 9} ${y + 22} h18" stroke="${c.wood}" stroke-width="2"/>`;
-}
-
-function desk(c) {
-  return [
-    `<rect x="304" y="326" width="6" height="64" fill="${c.wood}"/><rect x="390" y="326" width="6" height="64" fill="${c.wood}"/>`,
-    `<rect x="330" y="326" width="56" height="18" rx="1.5" fill="${c.wood}"/><rect x="352" y="333" width="12" height="3" rx="1.5" fill="${c.woodLight}"/>`,
-    `<rect x="298" y="318" width="102" height="8" rx="2" fill="${c.woodLight}"/>`,
-  ].join("");
-}
-
-/** Лампа на столе: абажур — янтарный или любимого цвета человека (`shade`). Вечером и ночью горит. */
-function lamp(c, part, shade) {
-  const colour = lit(part) ? shade : tint(shade, part);
   const body = [
-    `<rect x="372" y="313" width="18" height="5" rx="2" fill="${c.metalDark}"/><rect x="380" y="284" width="2.4" height="30" fill="${c.metalDark}"/>`,
-    `<path d="M369 286 l5 -20 h14 l5 20z" fill="${colour}"/>`,
-    lit(part) ? `<path d="M371 286 h20 l-2 3 h-16z" fill="#fff3d0" opacity="0.9"/>` : "",
+    shadow(g, 0, 50, 66, 7, 0.34),
+    // Ножки.
+    `<path d="M-55 39 h10 l-1.6 12.6 h-6.4z M55 39 h-10 l1.6 12.6 h6.4z" fill="${c.woodDark}"/>`,
+    // Спинка с подушкой, швом и пуговицами.
+    `<path d="M-51 12 V-48 Q-51 -80 -20 -80 H20 Q51 -80 51 -48 V12 Z" fill="${back}"/>`,
+    `<path d="M-38 6 V-46 Q-38 -68 -17 -68 H17 Q38 -68 38 -46 V6 Z" fill="${light}" opacity="0.5"/>`,
+    `<path d="M-45 -50 Q-45 -75 -20 -75 H20 Q45 -75 45 -50" fill="none" stroke="${lt(light, 0.3)}" stroke-width="2" stroke-linecap="round" opacity="0.55"/>`,
+    `<path d="M0 -68 V-2 M-38 -30 Q-19 -36 0 -30 Q19 -36 38 -30" fill="none" stroke="${dark}" stroke-width="1" opacity="0.45"/>`,
+    `<circle cx="-18" cy="-33" r="2.2" fill="${dark}"/><circle cx="18" cy="-33" r="2.2" fill="${dark}"/><circle cx="-18.6" cy="-33.6" r="0.8" fill="${light}"/><circle cx="17.4" cy="-33.6" r="0.8" fill="${light}"/>`,
+    // Сиденье и низ.
+    `<rect x="-40" y="10" width="80" height="30" rx="2" fill="${base}"/>`,
+    `<rect x="-40" y="-8" width="80" height="21" rx="8" fill="${g.lin(`${name}Seat`, [[0, lt(light, 0.12)], [1, fill]])}"/><path d="M-34 10.6 Q0 14 34 10.6" fill="none" stroke="${dark}" stroke-width="1.2" opacity="0.6"/><path d="M-32 -4.6 Q0 -7.4 32 -4.6" fill="none" stroke="${lt(light, 0.35)}" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>`,
+    arm(-1), arm(1),
   ].join("");
-  return body;
+  return at(x, y, body, k === 1 ? "" : ` scale(${k})`);
 }
-function lampGlow(part, shade) {
-  if (!lit(part)) return "";
+
+/** Клетка пледа: одна на все пледы рисунка. */
+const tartan = (g, c) => g.raw("tartan", id => `<pattern id="${id}" width="18" height="18" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)"><rect width="18" height="18" fill="${c.plaid}"/><rect width="6.4" height="18" fill="${c.plaidDark}" opacity="0.62"/><rect width="18" height="6.4" fill="${c.plaidDark}" opacity="0.62"/><rect x="11" width="2.2" height="18" fill="${c.plaidLight}" opacity="0.7"/><rect y="11" width="18" height="2.2" fill="${c.plaidLight}" opacity="0.7"/><rect x="2.8" width="0.8" height="18" fill="${c.cream}" opacity="0.6"/><rect y="2.8" width="18" height="0.8" fill="${c.cream}" opacity="0.6"/></pattern>`);
+/** Клетчатый плед: `d` — контур, `folds` — тёмные складки, `gleams` — светлые гребни, `fringe` — бахрома. */
+function plaidShape(g, c, d, { folds = [], gleams = [], fringe = "" } = {}) {
   return [
-    `<defs><radialGradient id="lampGlow"><stop offset="0" stop-color="${shade}" stop-opacity="0.5"/><stop offset="0.45" stop-color="${shade}" stop-opacity="0.2"/><stop offset="1" stop-color="${shade}" stop-opacity="0"/></radialGradient></defs>`,
-    `<circle class="glow" cx="381" cy="296" r="${part === "ночь" ? 122 : 104}" fill="url(#lampGlow)"/>`,
-    `<ellipse cx="366" cy="321" rx="34" ry="4" fill="#ffe7b0" opacity="0.32"/>`,
+    fringe ? `<path d="${fringe}" fill="none" stroke="${c.cream}" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/>` : "",
+    `<path d="${d}" fill="${tartan(g, c)}"/>`,
+    folds.map(fold => `<path d="${fold}" fill="none" stroke="${dk(c.plaidDark, 0.4)}" stroke-width="3" stroke-linecap="round" opacity="0.32"/>`).join(""),
+    gleams.map(gleam => `<path d="${gleam}" fill="none" stroke="${lt(c.plaidLight, 0.3)}" stroke-width="2" stroke-linecap="round" opacity="0.4"/>`).join(""),
+    `<path d="${d}" fill="none" stroke="${dk(c.plaidDark, 0.35)}" stroke-width="0.8" opacity="0.55"/>`,
+  ].join("");
+}
+/** Плед, брошенный на спинку и подлокотник кресла. `big` — вещь «плед на двоих»: он шире и длиннее. */
+function plaidOnChair(g, c, big) {
+  const d = big
+    ? "M26 -84 Q46 -90 64 -78 L71 -30 Q76 4 68 30 L42 34 Q34 2 33 -34 Q32 -60 26 -84Z"
+    : "M32 -82 Q46 -87 60 -78 L66 -34 Q70 -4 64 18 L44 22 Q38 -6 37 -36 Q36 -62 32 -82Z";
+  const fringe = big
+    ? "M44 34 l-1 6 M49 33.4 l0 6 M54 32.6 l0.6 6 M59 31.8 l1 6 M64 30.8 l1.6 6"
+    : "M46 22 l-1 5.4 M51 21.2 l0 5.6 M56 20.2 l0.8 5.6 M61 19 l1.4 5.4";
+  return at(CHAIR.x, CHAIR.y, plaidShape(g, c, d, {
+    fringe,
+    folds: big ? ["M40 -70 Q46 -30 44 26", "M58 -72 Q64 -30 60 24"] : ["M42 -70 Q47 -34 46 14", "M56 -72 Q61 -34 58 12"],
+    gleams: big ? ["M49 -78 Q55 -34 52 26"] : ["M49 -76 Q54 -36 52 14"],
+  }));
+}
+
+/** Табурет: где стоит у стола и на какой высоте сиденье (с него она дотягивается до столешницы, ступни — на полу). */
+const STOOL = Object.freeze({ x: 276, y: 352, rest: 377 });
+/** Где стоит табурет, когда она поправляет с него гирлянду. */
+const GARLAND_STOOL = 157;
+function stool(g, c, x, y) {
+  const floor = 393;
+  return [
+    shadow(g, x, floor + 1, 20, 3.6, 0.3),
+    `<path d="M${x - 10} ${y + 4} L${x - 14.5} ${floor} M${x + 10} ${y + 4} L${x + 14.5} ${floor}" stroke="${c.wood}" stroke-width="3.6" stroke-linecap="round"/><path d="M${x} ${y + 5} V${floor - 3}" stroke="${c.woodDark}" stroke-width="3.2" stroke-linecap="round"/>`,
+    `<path d="M${x - 12.4} ${y + 22} H${x + 12.4}" stroke="${c.woodDark}" stroke-width="2.2"/>`,
+    `<rect x="${x - 15}" y="${y}" width="30" height="6.6" rx="3.3" fill="${c.wood}"/><rect x="${x - 15}" y="${y}" width="30" height="3.4" rx="1.7" fill="${c.woodPale}"/><rect x="${x - 12}" y="${y + 0.8}" width="20" height="1" rx="0.5" fill="${lt(c.woodPale, 0.4)}" opacity="0.8"/>`,
   ].join("");
 }
 
-function kettle(c, { steam = false } = {}) {
+function desk(g, c) {
+  const top = 316;
   return [
-    `<path d="M336 304 q8 -6 10 2" fill="none" stroke="${c.metalDark}" stroke-width="2.4" stroke-linecap="round"/>`,
-    `<path d="M316 318 q-3 -16 10 -17 q13 1 10 17z" fill="${c.metal}"/><path d="M319 306 h14" stroke="${c.metalDark}" stroke-width="1.2"/>`,
-    `<path d="M318 300 q8 -9 16 0" fill="none" stroke="${c.ink}" stroke-width="1.8"/><circle cx="326" cy="300.5" r="1.8" fill="${c.ink}"/>`,
-    steam ? `<g class="steam" fill="none" stroke="${c.steam}" stroke-width="1.4" stroke-linecap="round" opacity="0.6"><path d="M347 298 q-3 -5 0 -9"/><path d="M351 300 q3 -5 0 -10"/></g>` : "",
+    shadow(g, 352, 394, 58, 6, 0.32),
+    `<rect x="391" y="${top + 6}" width="7" height="72" fill="${c.woodDark}"/>`,
+    `<rect x="301" y="${top + 6}" width="7" height="72" rx="1" fill="${c.wood}"/><rect x="301" y="${top + 6}" width="2" height="72" fill="${lt(c.wood, 0.25)}" opacity="0.7"/>`,
+    `<rect x="308" y="371" width="84" height="4" fill="${c.woodDark}"/>`,
+    // Ящик с ручкой.
+    `<rect x="315" y="${top + 6}" width="80" height="23" rx="1.5" fill="${c.wood}"/><rect x="319.5" y="${top + 10}" width="71" height="15" rx="1.5" fill="none" stroke="${c.woodDark}" stroke-width="1.1" opacity="0.75"/><rect x="320" y="${top + 10.6}" width="70" height="1.2" fill="${c.woodLight}" opacity="0.6"/><circle cx="355" cy="${top + 17.4}" r="2.6" fill="${c.woodPale}"/><circle cx="354.3" cy="${top + 16.6}" r="1" fill="${lt(c.woodPale, 0.5)}"/>`,
+    // Столешница.
+    `<rect x="296" y="${top + 7.4}" width="106" height="3.4" fill="#1a0f1e" opacity="0.24"/>`,
+    `<rect x="293" y="${top}" width="112" height="7.6" rx="2" fill="${g.lin("deskTop", [[0, c.woodPale], [1, c.woodLight]])}"/><rect x="293" y="${top}" width="112" height="1.5" rx="0.7" fill="${lt(c.woodPale, 0.45)}"/>`,
   ].join("");
 }
+/** Чайник с жасминовым чаем и чашка рядом. `steam` — только что наливали: над носиком пар. */
+function teapot(g, c, { steam = false } = {}) {
+  const body = g.lin("teapot", [[0, lt(c.teapot, 0.5)], [1, c.teapotDark]]);
+  return [
+    `<ellipse cx="331" cy="316.4" rx="17" ry="2.2" fill="#1a0f1e" opacity="0.2"/>`,
+    `<path d="M318.6 304 Q308 303.6 309.6 311 Q311.4 317 319.6 313.4" fill="none" stroke="${c.teapotDark}" stroke-width="2.6" stroke-linecap="round"/>`,
+    `<path d="M343 307 Q351.6 304.6 352.6 296.4 L349.4 295.6 Q348 301.6 342 302.6 Z" fill="${body}"/>`,
+    `<path d="M316.4 316 Q311.6 299.6 331 298.6 Q350.4 299.6 345.6 316 Z" fill="${body}"/>`,
+    `<path d="M315.2 309 Q331 313.6 346.8 309" fill="none" stroke="${c.top}" stroke-width="1.8"/><path d="M315.6 311.8 Q331 316.2 346.4 311.8" fill="none" stroke="${c.top}" stroke-width="0.8" opacity="0.7"/>`,
+    `<path d="M322.4 300 Q331 293.6 339.6 300 Z" fill="${c.teapotDark}"/><circle cx="331" cy="294.6" r="2.3" fill="${c.top}"/><circle cx="330.3" cy="293.9" r="0.8" fill="${lt(c.top, 0.5)}"/>`,
+    `<ellipse cx="322.6" cy="305" rx="2" ry="3.4" fill="#ffffff" opacity="0.55" transform="rotate(18 322.6 305)"/>`,
+    // Чашка.
+    `<path d="M366.4 310 q5 0 5 3 q0 3 -5 3" fill="none" stroke="${c.teapotDark}" stroke-width="1.6"/><path d="M356 308 h11 v4.4 q0 3.6 -3.6 3.6 h-3.8 q-3.6 0 -3.6 -3.6z" fill="${body}"/><ellipse cx="361.5" cy="308.2" rx="5.5" ry="1.3" fill="${steam ? dk(c.gold, 0.1) : c.teapotDark}"/>`,
+    steam ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" opacity="0.65"><path d="M350.6 292 q-3 -5 0 -9 q3 -4 0 -8"/><path d="M355 293.4 q3 -5 0 -10"/><path d="M361.4 304 q-2.4 -4 0 -7"/></g>` : "",
+  ].join("");
+}
+/** Блокнот с напоминаниями и карандаш. */
 function notebook(c) {
-  return `<rect x="344" y="313" width="22" height="5" rx="1" fill="${c.top}"/><rect x="345" y="312" width="20" height="2" fill="${c.paper}"/><path d="M366 311 l8 -5" stroke="${c.gold}" stroke-width="1.6" stroke-linecap="round"/>`;
+  return `<path d="M371 316 l3.4 -5 h17 l-2.6 5z" fill="${c.top}"/><path d="M372.6 314.8 l2.4 -3.4 h15 l-1.8 3.4z" fill="${c.paper}"/><path d="M376 313.6 h10 M377 312.2 h9" stroke="${c.paperDark}" stroke-width="0.6"/><path d="M374 311.4 l12 -3.4" stroke="${c.gold}" stroke-width="1.8" stroke-linecap="round"/><path d="M386 308 l2 -0.6" stroke="${c.ink}" stroke-width="1.8" stroke-linecap="round"/>`;
 }
-
-function rug(c) {
+/** Лампа на столе: абажур — янтарный или любимого цвета человека (`shade`). Вечером и ночью горит. */
+const LAMP = Object.freeze({ x: 385, y: 290 });
+function lamp(g, c, part, shade) {
+  const on = lit(part);
+  const colour = on ? shade : tint(shade, part);
+  const cloth = on
+    ? g.lin("shade", [[0, dk(shade, 0.12)], [0.55, shade], [1, lt(shade, 0.55)]])
+    : g.lin("shade", [[0, lt(colour, 0.12)], [1, dk(colour, 0.1)]]);
   return [
-    `<ellipse cx="200" cy="452" rx="150" ry="44" fill="${c.rug}"/><ellipse cx="200" cy="452" rx="132" ry="36" fill="none" stroke="${c.rugLight}" stroke-width="2.5" stroke-dasharray="2 7" stroke-linecap="round"/>`,
-    `<ellipse cx="200" cy="452" rx="92" ry="22" fill="${c.rugDark}" opacity="0.35"/>`,
+    `<ellipse cx="${LAMP.x}" cy="316.2" rx="10.4" ry="2" fill="#1a0f1e" opacity="0.22"/>`,
+    `<path d="M${LAMP.x - 9} 316 q0 -5 9 -5 q9 0 9 5z" fill="${c.metalDark}"/><rect x="${LAMP.x - 1.2}" y="${LAMP.y - 2}" width="2.4" height="24" fill="${c.metalDark}"/><rect x="${LAMP.x - 1.2}" y="${LAMP.y - 2}" width="0.9" height="24" fill="${lt(c.metalDark, 0.4)}" opacity="0.8"/>`,
+    on ? `<ellipse cx="${LAMP.x}" cy="${LAMP.y + 1.4}" rx="14" ry="3.4" fill="#fff4d2"/>` : "",
+    `<path d="M${LAMP.x - 16} ${LAMP.y} L${LAMP.x - 10.4} ${LAMP.y - 27} H${LAMP.x + 10.4} L${LAMP.x + 16} ${LAMP.y} Z" fill="${cloth}"/>`,
+    `<path d="M${LAMP.x - 10.4} ${LAMP.y - 27} H${LAMP.x + 10.4}" stroke="${on ? dk(shade, 0.3) : dk(colour, 0.25)}" stroke-width="1.6" stroke-linecap="round"/><path d="M${LAMP.x - 16} ${LAMP.y} H${LAMP.x + 16}" stroke="${on ? lt(shade, 0.7) : dk(colour, 0.22)}" stroke-width="1.4" stroke-linecap="round"/>`,
+    `<path d="M${LAMP.x - 6} ${LAMP.y - 25} L${LAMP.x - 9.4} ${LAMP.y - 2} M${LAMP.x + 6} ${LAMP.y - 25} L${LAMP.x + 9.4} ${LAMP.y - 2}" stroke="${on ? lt(shade, 0.35) : lt(colour, 0.2)}" stroke-width="0.8" opacity="0.5"/>`,
   ].join("");
 }
 
-function bowl(c, full) {
+// ── пол ──────────────────────────────────────────────────────────────────────
+function rug(g, c) {
+  const cx = 200, cy = 452;
+  const fringe = (side) => [-13, -6.5, 0, 6.5, 13].map(dy => `M${cx + side * 153.4} ${cy + dy} l${side * 8} ${n(dy * 0.16)}`).join(" ") + [-19, 19].map(dy => ` M${cx + side * 150} ${cy + dy} l${side * 7} ${n(dy * 0.2)}`).join("");
   return [
-    `<ellipse cx="40" cy="404" rx="16" ry="4.5" fill="${c.bowlDark}"/><path d="M24 398 h32 l-3 7 h-26z" fill="${c.bowl}"/><ellipse cx="40" cy="398" rx="16" ry="3.6" fill="${c.bowlDark}"/>`,
-    full ? `<ellipse cx="40" cy="397.4" rx="12.5" ry="2.8" fill="${c.food}"/><circle cx="36" cy="396.4" r="1.5" fill="${c.boxDark}"/><circle cx="43" cy="396.8" r="1.4" fill="${c.boxDark}"/>` : `<ellipse cx="40" cy="398.2" rx="12" ry="2.2" fill="${c.paper}" opacity="0.35"/>`,
+    shadow(g, cx, cy + 5, 166, 51, 0.24),
+    `<path d="${fringe(-1)} ${fringe(1)}" stroke="${c.cream}" stroke-width="1.5" stroke-linecap="round"/>`,
+    `<ellipse cx="${cx}" cy="${cy}" rx="156" ry="46" fill="${c.rugDark}"/>`,
+    `<ellipse cx="${cx}" cy="${cy - 1}" rx="153" ry="44" fill="${g.lin("rug", [[0, lt(c.rug, 0.1)], [1, dk(c.rug, 0.08)]])}"/>`,
+    `<ellipse cx="${cx}" cy="${cy - 1}" rx="141" ry="38.4" fill="none" stroke="${c.cream}" stroke-width="3.4"/><ellipse cx="${cx}" cy="${cy - 1}" rx="141" ry="38.4" fill="none" stroke="${c.rugDark}" stroke-width="3.4" stroke-dasharray="3 10"/>`,
+    `<ellipse cx="${cx}" cy="${cy - 1}" rx="129" ry="33" fill="none" stroke="${c.rugLight}" stroke-width="1" opacity="0.75"/>`,
+    `<ellipse cx="${cx}" cy="${cy - 1}" rx="88" ry="21" fill="${c.rugDark}" opacity="0.5"/><ellipse cx="${cx}" cy="${cy - 1}" rx="88" ry="21" fill="none" stroke="${c.rugLight}" stroke-width="1.4" stroke-dasharray="0.1 5.4" stroke-linecap="round"/>`,
+    `<ellipse cx="${cx}" cy="${cy - 1}" rx="44" ry="10" fill="${c.rug}" opacity="0.85"/><ellipse cx="${cx}" cy="${cy - 1}" rx="44" ry="10" fill="none" stroke="${c.cream}" stroke-width="0.8" opacity="0.6"/>`,
   ].join("");
 }
-function catPillow(c) {
-  return `<ellipse cx="300" cy="488" rx="29" ry="9.5" fill="${c.pillowDark}"/><ellipse cx="300" cy="485" rx="28" ry="8.5" fill="${c.pillow}"/><path d="M280 485 q20 4 40 0" fill="none" stroke="${c.pillowDark}" stroke-width="1"/>`;
+/** След лапки: подушечка и три пальца. */
+const paw = (x, y, colour, k = 1) => `<g transform="translate(${x} ${y}) scale(${k})" fill="${colour}"><ellipse cx="0" cy="1.4" rx="2.6" ry="2"/><circle cx="-2.8" cy="-1.4" r="1.1"/><circle cx="0" cy="-2.6" r="1.2"/><circle cx="2.8" cy="-1.4" r="1.1"/></g>`;
+/** Миска нарисована у точки (41, 404) и сдвинута к углу, ближе к зрителю: рядом с ней садится Байт. */
+const BOWL = Object.freeze({ dx: -3, dy: 5 });
+function bowl(g, c, full) {
+  return [
+    shadow(g, 41, 409, 25, 4.4, 0.34),
+    `<path d="M21 397 Q22 411 31 411 H51 Q60 411 61 397 Z" fill="${g.lin("bowl", [[0, c.bowl], [1, c.bowlDark]])}"/>`,
+    `<ellipse cx="41" cy="397" rx="20" ry="4.8" fill="${c.bowlDark}"/><ellipse cx="41" cy="397" rx="20" ry="4.8" fill="none" stroke="${lt(c.bowl, 0.4)}" stroke-width="1"/>`,
+    full
+      ? `<ellipse cx="41" cy="397.4" rx="16.4" ry="3.5" fill="${c.food}"/><g fill="${lt(c.food, 0.22)}"><circle cx="34" cy="396.4" r="1.9"/><circle cx="40" cy="395.6" r="2"/><circle cx="46.4" cy="396.6" r="1.9"/><circle cx="43" cy="398.4" r="1.7"/><circle cx="37" cy="398.6" r="1.7"/></g><g fill="${dk(c.food, 0.2)}"><circle cx="50" cy="398" r="1.5"/><circle cx="31.6" cy="398.2" r="1.4"/></g>`
+      : `<ellipse cx="41" cy="397.6" rx="16.4" ry="3.4" fill="${dk(c.bowlDark, 0.3)}"/><ellipse cx="38" cy="398.4" rx="8" ry="1.3" fill="#ffffff" opacity="0.14"/>`,
+    paw(41, 405, lt(c.bowl, 0.75), 0.9),
+    `<path d="M24.6 400 q1 6 4.4 8.4" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" opacity="0.4"/>`,
+  ].join("");
 }
+function catPillow(g, c) {
+  return [
+    shadow(g, 300, 492, 36, 6, 0.3),
+    `<ellipse cx="300" cy="489" rx="33" ry="10.4" fill="${c.pillowDark}"/><ellipse cx="300" cy="486" rx="32" ry="9.4" fill="${g.rad("pillow", [[0, lt(c.pillow, 0.4)], [1, c.pillow]])}"/>`,
+    `<path d="M270 487 q30 6.4 60 0" fill="none" stroke="${c.pillowDark}" stroke-width="1"/><g stroke="${c.pillowDark}" stroke-width="0.8" opacity="0.7"><path d="M300 486 l-20 -4 M300 486 l20 -4 M300 486 l-12 6 M300 486 l12 6 M300 486 v-8"/></g><circle cx="300" cy="486" r="2" fill="${c.rugLight}"/>`,
+  ].join("");
+}
+const BOX = Object.freeze({ x: 300, y: 386, w: 60, h: 36 });
 function boxBack(c) {
-  return `<path d="M292 398 h40 v8 h-40z" fill="${c.boxDark}"/><path d="M292 398 l-7 -7 M332 398 l7 -7" stroke="${c.boxDark}" stroke-width="3" stroke-linecap="round"/>`;
+  const { x, y, w } = BOX;
+  return `<path d="M${x} ${y + 5} h${w} v10 h-${w}z" fill="${dk(c.boxDark, 0.25)}"/><path d="M${x} ${y + 5} l-9 -8 h16 l5 8z M${x + w} ${y + 5} l9 -8 h-16 l-5 8z" fill="${c.boxDark}"/><path d="M${x - 9} ${y - 3} h16 M${x + w + 9} ${y - 3} h-16" stroke="${lt(c.box, 0.3)}" stroke-width="1"/>`;
 }
-function boxFront(c) {
-  return `<rect x="292" y="404" width="40" height="24" rx="1.5" fill="${c.box}"/><rect x="304" y="412" width="16" height="7" rx="1" fill="${c.paper}" opacity="0.7"/><path d="M308 415.5 h8" stroke="${c.greenDark}" stroke-width="1.4"/>`;
-}
-function yarn(c) {
-  return `<circle cx="118" cy="478" r="7" fill="${c.top}"/><path d="M112.5 475 q5.5 -4 11 0 M112 480 q6 4 12 0 M118 471 v14" fill="none" stroke="${c.rugLight}" stroke-width="1"/><path d="M124 482 q8 5 14 0 q5 -4 10 1" fill="none" stroke="${c.top}" stroke-width="1.6" stroke-linecap="round"/>`;
-}
-
-function cactus(c, x, base, wet, small = false) {
-  const green = wet ? c.green : c.greenDry, dark = wet ? c.greenDark : c.green;
-  const k = small ? 0.62 : 1;
-  const body = [
-    `<path d="M-8 0 h16 l-2 -11 h-12z" fill="${c.pot}"/><rect x="-9.5" y="-13.5" width="19" height="4" rx="1.5" fill="${c.potDark}"/><ellipse cx="0" cy="-13" rx="7.5" ry="1.6" fill="${wet ? c.soil : c.soilDry}"/>`,
-    `<path d="M-5.5 -13 v-15 q0 -6 5.5 -6 q5.5 0 5.5 6 v15z" fill="${green}"/>`,
-    small ? "" : `<path d="M5 -20 h4 q4 0 4 -4 v-4" fill="none" stroke="${green}" stroke-width="4.4" stroke-linecap="round"/><path d="M-5 -17 h-3 q-4 0 -4 -4 v-2" fill="none" stroke="${green}" stroke-width="4" stroke-linecap="round"/>`,
-    `<path d="M0 -32 v17 M-2.8 -30 v15 M2.8 -30 v15" stroke="${dark}" stroke-width="0.8" opacity="0.7"/>`,
-    // Политая Колючка цветёт; сухая — нет.
-    wet && !small ? `<circle cx="0" cy="-35" r="3" fill="${c.blush}"/><circle cx="0" cy="-35" r="1.2" fill="${c.gold}"/>` : "",
-  ].join("");
-  return at(x, base, body, k === 1 ? "" : ` scale(${k})`);
-}
-
-function slippers(c) {
-  const one = (x, y, turn) => `<g transform="rotate(${turn} ${x} ${y})"><ellipse cx="${x}" cy="${y}" rx="11" ry="5.5" fill="${c.slipperDark}"/><path d="M${x - 2} ${y - 5.5} q13 -1 13 5.5 q0 6 -13 5.5z" fill="${c.slipper}"/></g>`;
-  return one(34, 505, -8) + one(60, 507, 6);
-}
-function calendar(c) {
+function boxFront(g, c) {
+  const { x, y, w, h } = BOX;
   return [
-    `<rect x="64" y="120" width="34" height="42" rx="1.5" fill="${c.paper}"/><rect x="64" y="120" width="34" height="9" rx="1.5" fill="${c.red}"/>`,
-    [0, 1, 2, 3].map(row => [0, 1, 2, 3, 4].map(col => `<rect x="${68 + col * 5.6}" y="${134 + row * 6.4}" width="3.4" height="3.4" rx="0.6" fill="${c.paperDark}"/>`).join("")).join(""),
-    `<circle cx="80.9" cy="142.1" r="4.4" fill="none" stroke="${c.red}" stroke-width="1.4"/>`,
+    shadow(g, x + w / 2, y + h + 1, 36, 4, 0.3),
+    `<rect x="${x}" y="${y + 10}" width="${w}" height="${h - 10}" rx="1.5" fill="${g.lin("box", [[0, c.box], [1, c.boxDark]])}"/>`,
+    `<rect x="${x + w / 2 - 5}" y="${y + 10}" width="10" height="${h - 10}" fill="${lt(c.box, 0.3)}" opacity="0.7"/><rect x="${x}" y="${y + 10}" width="${w}" height="1.6" fill="${lt(c.box, 0.4)}"/>`,
+    paw(x + 14, y + 23, dk(c.boxDark, 0.25), 1.2),
+    `<path d="M${x + w - 18} ${y + 28} v-9 l-3.4 3.4 M${x + w - 18} ${y + 19} l3.4 3.4 M${x + w - 9} ${y + 28} v-9 l-3.4 3.4 M${x + w - 9} ${y + 19} l3.4 3.4" fill="none" stroke="${dk(c.boxDark, 0.25)}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`,
   ].join("");
 }
-function drawing(c) {
+function yarn(g, c) {
+  const x = 124, y = 480;
   return [
-    `<rect x="18" y="120" width="40" height="42" rx="1.5" fill="${c.woodLight}"/><rect x="21" y="123" width="34" height="36" fill="${c.paper}"/>`,
-    `<circle cx="46" cy="132" r="4" fill="${c.gold}"/><path d="M24 154 q8 -14 15 -4 q6 -10 14 4z" fill="${c.green}" opacity="0.8"/><path d="M27 138 q4 -6 8 0 q4 -6 8 0" fill="none" stroke="${c.top}" stroke-width="1.4" stroke-linecap="round"/>`,
+    shadow(g, x + 1, y + 10, 13, 3, 0.34),
+    `<path d="M${x + 8} ${y + 7} q9 6 16 0.6 q6 -4.6 12 0.6 q5 4 10 0.4" fill="none" stroke="${c.top}" stroke-width="1.7" stroke-linecap="round"/>`,
+    `<circle cx="${x}" cy="${y}" r="10.4" fill="${g.rad("yarn", [[0, lt(c.top, 0.3)], [0.7, c.top], [1, c.topDark]], ' cx="0.36" cy="0.32" r="0.75"')}"/>`,
+    `<g fill="none" stroke-linecap="round"><path d="M${x - 9.4} ${y - 3} q9.4 -6.4 18.8 0 M${x - 10} ${y + 2.4} q10 -5 20 0 M${x - 8.4} ${y + 6.4} q8.4 -3 16.8 0" stroke="${lt(c.top, 0.42)}" stroke-width="1" opacity="0.8"/><path d="M${x - 4} ${y - 9.4} q-5 9.4 0 18.8 M${x + 2.4} ${y - 10} q4.4 10 0 20 M${x + 6.6} ${y - 7.6} q3 7.6 0 15" stroke="${c.topDark}" stroke-width="1" opacity="0.7"/></g>`,
   ].join("");
 }
-function sillPillow(c) {
-  return `<path d="M150 262 q-3 -17 3 -20 h30 q6 3 3 20z" fill="${c.plaidLight}"/><path d="M155 246 h26" stroke="${c.paper}" stroke-width="1.2" opacity="0.7"/>`;
+function slippers(g, c) {
+  const one = (x, y, turn) => `<g transform="rotate(${turn} ${x} ${y})"><ellipse cx="${x}" cy="${y}" rx="12" ry="6" fill="${c.slipperDark}"/><ellipse cx="${x - 1}" cy="${y - 0.6}" rx="9.4" ry="4.2" fill="${lt(c.paper, 0.2)}" opacity="0.75"/><path d="M${x - 1} ${y - 6} q13 -1 13 6 q0 7 -13 6 q4 -6 0 -12z" fill="${c.slipper}"/><path d="M${x + 3} ${y - 4.4} q6 1 6.4 4.4" fill="none" stroke="${lt(c.slipper, 0.5)}" stroke-width="1.2" stroke-linecap="round"/><path d="M${x + 1.4} ${y - 2} l-3 -2 v4z M${x + 1.4} ${y - 2} l3 -2 v4z" fill="${c.top}"/></g>`;
+  return shadow(g, 47, 484, 32, 5, 0.26) + one(34, 478, -10) + one(60, 481, 6);
 }
-function sillSeat(c) {
-  return `<ellipse cx="282" cy="260" rx="17" ry="4.5" fill="${c.rugLight}"/><path d="M276 259 a1.6 1.6 0 1 0 0.1 0 M282 257 a1.8 1.8 0 1 0 0.1 0 M288 259 a1.6 1.6 0 1 0 0.1 0 M282 261.5 a2.4 1.6 0 1 0 0.1 0" fill="${c.paper}" opacity="0.8"/>`;
-}
-function tree(c, part) {
-  const tiers = [[0, -118, 15], [0, -92, 24], [0, -62, 32]].map(([x, y, half]) => `<path d="M${x} ${y} l${half} 42 h-${half * 2}z" fill="${c.treeGreen}"/>`).join("");
-  const spots = [[-6, -92], [7, -76], [-12, -58], [3, -52], [14, -40], [-20, -30], [-4, -26], [20, -24]];
-  const lights = spots.map(([x, y], index) => (lit(part)
-    ? `<g class="bulb b${index % 4}"><circle cx="${x}" cy="${y}" r="8" fill="${BULBS[index % 5]}" opacity="0.22"/><circle cx="${x}" cy="${y}" r="2.6" fill="${BULBS[index % 5]}"/></g>`
-    : `<circle cx="${x}" cy="${y}" r="2.6" fill="${tint(BULBS[index % 5], part)}"/>`)).join("");
-  return at(366, 506, [
-    `<rect x="-4" y="-22" width="8" height="14" fill="${c.wood}"/><path d="M-13 -10 h26 l-3 10 h-20z" fill="${c.pot}"/>`,
-    tiers, `<path d="M-10 -84 q10 8 22 2 M-18 -52 q18 12 36 2 M-24 -24 q24 10 50 0" fill="none" stroke="${c.ink}" stroke-width="0.8" opacity="0.7"/>`,
-    lights, `<path d="M0 -127 l2.4 5 5.4 .6 -4 3.7 1.1 5.4 -4.9 -2.7 -4.9 2.7 1.1 -5.4 -4 -3.7 5.4 -.6z" fill="${lit(part) ? "#ffe08a" : c.gold}"/>`,
+const TREE = Object.freeze({ x: 377, y: 500 });
+function tree(g, c, part) {
+  const on = lit(part);
+  const tier = (y, half, tall) => `<path d="M0 ${y} L${half} ${y + tall} q${-half / 4} 5 ${-half / 2} 0 q${-half / 4} 5 ${-half / 2} 0 q${-half / 4} 5 ${-half / 2} 0 q${-half / 4} 5 ${-half / 2} 0 Z" fill="${c.treeGreen}"/><path d="M0 ${y} L${half} ${y + tall} q${-half / 4} 5 ${-half / 2} 0 L0 ${y + tall * 0.5} Z" fill="${c.treeDark}" opacity="0.45"/>`;
+  const balls = [[-7, -84, c.red], [9, -70, c.gold], [-13, -52, c.plaidLight], [5, -46, c.red], [17, -34, c.gold], [-21, -22, c.red], [-3, -20, c.plaidLight], [22, -14, c.rugLight]];
+  const spots = [[2, -98], [-10, -72], [12, -58], [-4, -60], [-18, -40], [10, -30], [-10, -32], [24, -24], [-26, -12], [6, -10]];
+  const lights = spots.map(([x, y], index) => (on
+    ? `<g class="bulb b${index % 4}"><circle cx="${x}" cy="${y}" r="9" fill="${g.rad(`bulb${index % BULBS.length}`, [[0, BULBS[index % BULBS.length], 0.8], [0.3, BULBS[index % BULBS.length], 0.34], [1, BULBS[index % BULBS.length], 0]])}"/><circle cx="${x}" cy="${y}" r="1.7" fill="${lt(BULBS[index % BULBS.length], 0.4)}"/></g>`
+    : `<circle cx="${x}" cy="${y}" r="1.6" fill="${tint(lt(BULBS[index % BULBS.length], 0.3), part)}"/>`)).join("");
+  return at(TREE.x, TREE.y, [
+    shadow(g, 0, 1, 30, 5, 0.3),
+    `<rect x="-4" y="-24" width="8" height="16" fill="${c.wood}"/><path d="M-14 -11 h28 l-3.4 11 h-21.2z" fill="${c.pot}"/><rect x="-15.4" y="-13.4" width="30.8" height="4.4" rx="1.6" fill="${c.potDark}"/>`,
+    tier(-124, 17, 30), tier(-102, 26, 38), tier(-74, 35, 46),
+    `<path d="M-11 -88 q11 8 24 2 M-20 -56 q20 12 40 2 M-28 -24 q28 10 56 0" fill="none" stroke="${c.gold}" stroke-width="1" opacity="0.8"/>`,
+    balls.map(([x, y, colour]) => `<circle cx="${x}" cy="${y}" r="3.6" fill="${colour}"/><circle cx="${x - 1.2}" cy="${y - 1.2}" r="1.1" fill="#ffffff" opacity="0.7"/>`).join(""),
+    lights,
+    on ? `<circle cx="0" cy="-128" r="14" fill="${g.rad("treeStar", [[0, "#ffe9a0", 0.8], [1, "#ffe9a0", 0]])}"/>` : "",
+    `<path d="M0 -137 l2.7 5.6 6.1 0.7 -4.5 4.2 1.2 6.1 -5.5 -3 -5.5 3 1.2 -6.1 -4.5 -4.2 6.1 -0.7z" fill="${on ? "#ffe08a" : c.gold}"/>`,
   ].join(""));
 }
 
-// ── Аи ───────────────────────────────────────────────────────────────────────
-/** Она и Байт нарисованы мелко и увеличиваются при постановке: на телефоне весь рисунок — шириной с ладонь. */
-const HER_SCALE = 1.45;
-const CAT_SCALE = 1.34;
-/** Табурет: где стоит у стола и на какой высоте сиденье (с него она дотягивается до столешницы, ступни — на полу). */
-const STOOL = Object.freeze({ x: 282, y: 359 });
-/** Волосы сзади: длинные, прямые. Рисуются под телом. */
-function hairBack(c, long = 50) {
-  return `<path d="M-16.5 -3 C-18 -21 18 -21 16.5 -3 L19 ${long - 6} Q0 ${long + 2} -19 ${long - 6}Z" fill="${c.hair}"/>`;
+// ── подоконник ───────────────────────────────────────────────────────────────
+/** Колючка. Политая — зелёная и цветёт; сухая — тусклая, без цветка. `small` — второй, маленький кактус. */
+function cactus(g, c, x, base, wet, small = false) {
+  const green = wet ? c.green : c.greenDry, dark = wet ? c.greenDark : dk(c.greenDry, 0.2), pale = lt(green, 0.35);
+  if (small) {
+    return at(x, base, [
+      `<ellipse cx="0" cy="0.4" rx="8" ry="1.6" fill="#1a0f1e" opacity="0.2"/>`,
+      `<path d="M-6.4 0 h12.8 l-1.4 -9 h-10z" fill="${c.paper}"/><rect x="-7.4" y="-10.6" width="14.8" height="3" rx="1.2" fill="${c.paperDark}"/>`,
+      `<circle cx="0" cy="-15" r="6.6" fill="${c.green}"/><path d="M0 -21.4 v12 M-3.4 -20.4 q-2 5.4 0 11 M3.4 -20.4 q2 5.4 0 11" fill="none" stroke="${c.greenDark}" stroke-width="0.8" opacity="0.7"/>`,
+      `<circle cx="-2" cy="-21" r="1.7" fill="${c.gold}"/><circle cx="-2" cy="-21" r="0.7" fill="${c.red}"/>`,
+    ].join(""));
+  }
+  const spines = [[-7, -20], [-7, -30], [7, -22], [7, -34], [0, -43], [-16, -32], [16, -40], [-3.4, -26], [3.4, -36]].map(([sx, sy]) => `M${sx - 1.4} ${sy - 1} l2.8 2 M${sx + 1.4} ${sy - 1} l-2.8 2`).join(" ");
+  return at(x, base, [
+    `<ellipse cx="0" cy="0.6" rx="14" ry="2.2" fill="#1a0f1e" opacity="0.22"/>`,
+    `<ellipse cx="0" cy="-0.6" rx="12.6" ry="2.4" fill="${c.potDark}"/>`,
+    `<path d="M-10 -1 h20 l-2.2 -13 h-15.6z" fill="${g.lin("pot", [[0, lt(c.pot, 0.2)], [1, c.potDark]], [0, 0, 1, 0])}"/><rect x="-11.6" y="-17" width="23.2" height="4.6" rx="1.6" fill="${c.pot}"/><rect x="-11.6" y="-17" width="23.2" height="1.4" rx="0.7" fill="${lt(c.pot, 0.35)}"/><ellipse cx="0" cy="-16.4" rx="9" ry="1.6" fill="${wet ? c.soil : c.soilDry}"/>`,
+    `<path d="M-7 -27 h-4 q-5 0 -5 -5 v-4" fill="none" stroke="${green}" stroke-width="5.6" stroke-linecap="round"/><path d="M7 -30 h4 q5 0 5 -5 v-7" fill="none" stroke="${green}" stroke-width="5.4" stroke-linecap="round"/>`,
+    `<path d="M-7.4 -16 V-36 Q-7.4 -45.4 0 -45.4 Q7.4 -45.4 7.4 -36 V-16 Z" fill="${green}"/><path d="M2 -45 Q7.4 -44 7.4 -36 V-16 H3.4 Z" fill="${dark}" opacity="0.4"/>`,
+    `<path d="M0 -45 V-16 M-3.8 -43.6 V-16 M3.8 -43.6 V-16" stroke="${dark}" stroke-width="0.8" opacity="0.65"/><path d="M-5.6 -40 V-20" stroke="${pale}" stroke-width="1.2" stroke-linecap="round" opacity="0.6"/>`,
+    `<path d="${spines}" stroke="${lt(c.paper, 0.2)}" stroke-width="0.5" stroke-linecap="round" opacity="0.9"/>`,
+    // Политая Колючка цветёт; сухая — нет.
+    wet ? `<g transform="translate(0 -47.4)"><g fill="${c.blush}"><circle cx="0" cy="-3" r="2.3"/><circle cx="2.9" cy="-0.9" r="2.3"/><circle cx="1.8" cy="2.4" r="2.3"/><circle cx="-1.8" cy="2.4" r="2.3"/><circle cx="-2.9" cy="-0.9" r="2.3"/></g><circle cx="0" cy="0" r="1.7" fill="${c.gold}"/></g>` : "",
+  ].join(""));
+}
+/** Вторая подушка на подоконнике (вещь «подушка»): правее кресла — её видно и когда она в нём сидит. */
+function sillPillow(g, c) {
+  return at(66, 0, [
+    `<path d="M146 262 Q141 246 146 238 Q166 233 186 238 Q191 246 186 262 Z" fill="${g.lin("sillPillow", [[0, lt(c.plaidLight, 0.3)], [1, c.plaidLight]])}"/>`,
+    `<path d="M150 245 Q166 241 182 245 M148.6 252 Q166 248 183.4 252" fill="none" stroke="${c.paper}" stroke-width="1.6" opacity="0.8"/><path d="M146 262 Q141 246 146 238" fill="none" stroke="${c.plaid}" stroke-width="1" opacity="0.5"/>`,
+    `<path d="M146 238 l-3 -3 M186 238 l3 -3" stroke="${c.plaid}" stroke-width="1.6" stroke-linecap="round"/>`,
+  ].join(""));
+}
+/** Место на подоконнике рядом с Байтом (вещь «место»): плоская подушечка с лапками. */
+function sillSeat(g, c) {
+  return `<ellipse cx="290" cy="259.6" rx="20" ry="4.6" fill="${c.rug}"/><ellipse cx="290" cy="257.6" rx="19.4" ry="4.6" fill="${g.lin("sillSeat", [[0, lt(c.rugLight, 0.25)], [1, c.rugLight]])}"/>${paw(282, 257.4, c.paper, 0.6)}${paw(290, 256.4, c.paper, 0.6)}${paw(298, 257.4, c.paper, 0.6)}`;
+}
+
+// ── свет поверх комнаты ──────────────────────────────────────────────────────
+/** Пятно лампы и гирлянды на стене и столе — под фигурами: это свет на вещах, а не дымка перед ними. */
+function lampLight(g, part, shade) {
+  if (!lit(part)) return "";
+  const warm = mix(shade, "#ffd9a0", 0.4);
+  return [
+    `<circle class="glow" cx="${LAMP.x}" cy="${LAMP.y + 2}" r="${part === "ночь" ? 128 : 112}" fill="${g.rad("lampGlow", [[0, warm, 0.62], [0.32, warm, 0.26], [1, warm, 0]])}"/>`,
+    `<ellipse cx="366" cy="319" rx="42" ry="4.6" fill="#ffe9b8" opacity="0.4"/>`,
+    `<ellipse cx="256" cy="46" rx="176" ry="34" fill="${g.rad("garlandGlow", [[0, "#ffd58a", 0.2], [1, "#ffd58a", 0]])}"/>`,
+  ].join("");
+}
+/** Последний слой картинки: мягкая тень по углам; окно она не трогает. */
+function airLight(g, part) {
+  const hole = `M${WIN.x} ${WIN.y}V${WIN.y + WIN.h}H${WIN.x + WIN.w}V${WIN.y}Z`;
+  if (!lit(part)) {
+    return `<path fill="${g.rad("dayShade", [[0, "#1a0f1e", 0], [0.6, "#1a0f1e", 0], [1, "#1a0f1e", 0.2]], ' gradientUnits="userSpaceOnUse" cx="256" cy="210" r="400"')}" fill-rule="evenodd" d="M0 0H400V520H0Z ${hole}"/>`;
+  }
+  const depth = part === "ночь" ? 0.46 : 0.38;
+  return `<path fill="${g.rad("dusk", [[0, "#0e0a2c", 0], [0.24, "#0e0a2c", depth * 0.2], [0.6, "#0e0a2c", depth * 0.7], [1, "#0e0a2c", depth]], ` gradientUnits="userSpaceOnUse" cx="${LAMP.x}" cy="${LAMP.y + 10}" r="420"`)}" fill-rule="evenodd" d="M0 0H400V520H0Z ${hole}"/>`;
 }
 /**
- * Голова: лицо, прямая чёлка, пряди у щёк, алые глаза. `face` — выражение (MOODS), `look` — куда смотрит
- * (−1 влево, 0 прямо, 1 вправо). Точка отсчёта — центр лица.
+ * Свет на полу: днём — от окна, вечером и ночью — тёплое пятно под лампой и синева от окна. Ложится на пол до
+ * мебели и фигур: поверх них у света был бы край, и ноги ниже плинтуса выглядели бы выцветшими.
  */
-function head(c, face = "calm", look = 0) {
-  const dx = look * 2.2;
-  const eye = (x) => {
-    const cx = x + dx;
-    if (face === "sleep" || face === "happy") return `<path d="M${n(cx - 3)} 3.6 q3 ${face === "happy" ? -3.4 : 2.6} 6 0" fill="none" stroke="${c.hair}" stroke-width="1.5" stroke-linecap="round"/>`;
-    const lid = face === "tired" || face === "jealous" || face === "pout";
+function floorLight(g, part, shade) {
+  if (!lit(part)) {
+    const sun = part === "утро" ? "#fff0dc" : "#ffffff";
+    return `<path d="M132 372 H400 V470 L356 520 H30 Z" fill="${g.lin("dayFloor", [[0, sun, 0.2], [1, sun, 0]])}"/>`;
+  }
+  const warm = mix(shade, "#ffd9a0", 0.4);
+  return [
+    `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.2], [1, warm, 0]])}"/>`,
+    `<path d="M132 372 H400 L352 520 H30 Z" fill="${g.lin("nightFloor", [[0, "#9fb4ff", part === "ночь" ? 0.1 : 0.07], [1, "#9fb4ff", 0]])}"/>`,
+  ].join("");
+}
+
+// ── слои рисунка ─────────────────────────────────────────────────────────────
+const partIn = (view) => (PARTS.includes(view?.part) ? view.part : "день");
+/** Краски под час. `soft` — насколько слабее приглушать (для неё и Байта). */
+const palette = (part, soft = 0) => Object.fromEntries(Object.entries(DAY).map(([name, colour]) => [name, tint(colour, part, soft)]));
+
+/** За окном: небо и город. Зависит только от часа — страница рисует это один раз и при нажатиях не трогает. */
+export function drawBackdrop(part) {
+  const name = partIn({ part });
+  const g = inks("s-");
+  const body = outside(g, name);
+  return `<g class="backdrop" pointer-events="none">${g.defs()}${body}</g>`;
+}
+
+/**
+ * Дождь: два плана струй в координатах стекла (0, 0 — левый верхний угол окна, размер — `WIN.w` × `WIN.h`).
+ * На странице каждый план — свой слой, который целиком съезжает вниз и влево и начинает сначала: комната над ним
+ * при этом не перерисовывается. `plane` — "far" или "near"; без него — оба плана разом.
+ */
+export function drawRain(part, plane) {
+  const name = partIn({ part });
+  const planes = plane === "far" || plane === "near" ? [plane] : ["far", "near"];
+  return planes.map(key => `<g class="rain ${key}" pointer-events="none" ${rainInk(name, key)}>${rainLines(key)}</g>`).join("");
+}
+
+// ── Аи ───────────────────────────────────────────────────────────────────────
+// Облик — по картинке профиля: длинные прямые чёрные волосы, ровная чёлка и пряди у щёк, алые глаза, чокер с
+// колечком, красный топ с открытыми плечами, чёрная куртка, съехавшая на локти. Ростом она — в две пятых рисунка:
+// на телефоне видно лицо. Голова крупнее, чем у живого человека, — так рисуют героев в играх про уютные комнаты.
+
+/** Сужающаяся часть руки или ноги: от точки (x1, y1) шириной w1 до точки (x2, y2) шириной w2, с круглыми концами. */
+function taper(x1, y1, w1, x2, y2, w2, fill) {
+  const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+  const a = w1 / 2, b = w2 / 2;
+  return `<path d="M${n(x1 + nx * a)} ${n(y1 + ny * a)} L${n(x2 + nx * b)} ${n(y2 + ny * b)} A${n(b)} ${n(b)} 0 0 0 ${n(x2 - nx * b)} ${n(y2 - ny * b)} L${n(x1 - nx * a)} ${n(y1 - ny * a)} A${n(a)} ${n(a)} 0 0 0 ${n(x1 + nx * a)} ${n(y1 + ny * a)}Z" fill="${fill}"/>`;
+}
+const along = ([x1, y1], [x2, y2], share) => [x1 + (x2 - x1) * share, y1 + (y2 - y1) * share];
+
+/** Волосы за спиной: `long` — на сколько ниже центра лица они спускаются, `lean` — куда уходят концы. */
+function hairBack(f, long = 96, lean = 0) {
+  const b = long, x = lean;
+  const edge = [[26.6, -5], [21.4, -1], [19.4, -4.4], [10.6, 0], [8.6, -3.6], [-1, 1], [-3, -3.6], [-12.6, 0], [-14.6, -4.4], [-21.4, -1], [-26.6, -5]].map(([px, py]) => `L${n(px + x)} ${n(b + py)}`).join(" ");
+  const strands = [-18, -8.6, 2, 11.6, 20].map(sx => `M${sx} 22 Q${n(sx + x * 0.4 + 1)} ${n(b * 0.6)} ${n(sx + x)} ${n(b - 9)}`).join(" ");
+  return [
+    `<path d="M-24.6 -5 C-24.6 -20 -13.6 -32.4 0 -32.4 C13.6 -32.4 24.6 -20 24.6 -5 C26 24 ${n(27.4 + x)} ${n(b - 34)} ${n(26.6 + x)} ${n(b - 5)} ${edge} C${n(-27.4 + x)} ${n(b - 34)} -26 24 -24.6 -5Z" fill="${f.hair}"/>`,
+    `<path d="${strands}" fill="none" stroke="${f.hairMid}" stroke-width="1.2" stroke-linecap="round"/>`,
+    `<path d="M-13.4 26 Q${n(-12.4 + x * 0.4)} ${n(b * 0.6)} ${n(-11.4 + x)} ${n(b - 12)}" fill="none" stroke="${f.hairLight}" stroke-width="2.6" stroke-linecap="round" opacity="0.4"/>`,
+  ].join("");
+}
+
+/**
+ * Голова. Точка отсчёта — центр лица. `face` — выражение (MOODS), `look` — куда смотрит (−1 влево, 0 прямо,
+ * 1 вправо), `up` — вверх (1) или вниз (−1).
+ */
+function head(g, f, face = "calm", look = 0, up = 0) {
+  const dx = look * 2.6, dy = up * -1.4;
+  const px = look * 1.2, py = up * -1.3;
+  const closed = face === "happy" || face === "sleep";
+  const half = face === "tired" || face === "pout" || face === "jealous";
+  const iris = g.lin("iris", [[0, f.eyeDark], [0.5, f.eye], [1, f.eyeLight]]);
+  const eye = (side) => {
+    const ex = side * 9.9 + dx, ey = 6.9 + dy;
+    if (face === "happy") return `<path d="M${n(ex - 5.6)} ${n(ey + 1.8)} Q${n(ex)} ${n(ey - 6)} ${n(ex + 5.6)} ${n(ey + 1.8)}" fill="none" stroke="${f.hair}" stroke-width="2.2" stroke-linecap="round"/>`;
+    if (face === "sleep") return `<path d="M${n(ex - 5.6)} ${n(ey - 0.6)} Q${n(ex)} ${n(ey + 4.8)} ${n(ex + 5.6)} ${n(ey - 0.6)}" fill="none" stroke="${f.hair}" stroke-width="2" stroke-linecap="round"/><path d="M${n(ex - 3.4)} ${n(ey + 2.3)} l-1 1.8 M${n(ex)} ${n(ey + 3)} v2.1 M${n(ex + 3.4)} ${n(ey + 2.3)} l1 1.8" stroke="${f.hair}" stroke-width="0.9" stroke-linecap="round"/>`;
+    const ix = ex + px + (face === "pout" ? 1.4 : 0), iy = ey + 0.3 + py;
+    const open = [
+      `<ellipse cx="${n(ex)}" cy="${n(ey + 0.2)}" rx="6" ry="6.1" fill="${f.white}"/>`,
+      `<ellipse cx="${n(ix)}" cy="${n(iy)}" rx="4.8" ry="5.8" fill="${iris}"/>`,
+      `<ellipse cx="${n(ix)}" cy="${n(iy + 0.3)}" rx="2.1" ry="3" fill="${f.eyeDark}"/>`,
+      `<path d="M${n(ix - 3.8)} ${n(iy + 3.2)} Q${n(ix)} ${n(iy + 6.4)} ${n(ix + 3.8)} ${n(iy + 3.2)}" fill="none" stroke="${f.eyeLight}" stroke-width="1.3" stroke-linecap="round" opacity="0.8"/>`,
+      `<circle cx="${n(ix - 1.9)}" cy="${n(iy - 2.7)}" r="1.8" fill="#ffffff"/><circle cx="${n(ix + 2.1)}" cy="${n(iy + 2.5)}" r="0.9" fill="#ffffff" opacity="0.9"/>`,
+      `<path d="M${n(ex - 3.8)} ${n(ey + 6.3)} Q${n(ex)} ${n(ey + 7.3)} ${n(ex + 3.8)} ${n(ey + 6.3)}" fill="none" stroke="${f.skinLine}" stroke-width="0.9" stroke-linecap="round"/>`,
+    ];
+    if (!half) {
+      return `<g class="blink">${[
+        ...open,
+        `<path d="M${n(ex + side * 7)} ${n(ey - 1)} Q${n(ex + side * 5.6)} ${n(ey - 6)} ${n(ex)} ${n(ey - 6.3)} Q${n(ex - side * 4.9)} ${n(ey - 6.1)} ${n(ex - side * 6.1)} ${n(ey - 2.3)}" fill="none" stroke="${f.hair}" stroke-width="2.2" stroke-linecap="round"/>`,
+        `<path d="M${n(ex + side * 6.8)} ${n(ey - 1.4)} l${n(side * 2.1)} -1.7" stroke="${f.hair}" stroke-width="1.5" stroke-linecap="round"/>`,
+      ].join("")}</g>`;
+    }
+    // Полуприкрытые: веко опущено; у ревности внутренний край ниже (сердится), у усталости — внешний.
+    const inner = face === "jealous" ? 2.2 : face === "tired" ? -0.4 : 0.2, outer = face === "jealous" ? -1.1 : face === "tired" ? 1.3 : 0.2;
+    const drop = face === "tired" ? 1.7 : 0.4;
+    const yl = ey - 1.5 + drop + (side < 0 ? outer : inner), yr = ey - 1.5 + drop + (side < 0 ? inner : outer), ym = ey - 2.8 + drop;
     return [
-      `<ellipse cx="${n(cx)}" cy="3.4" rx="2.7" ry="${lid ? 2.2 : 3.3}" fill="${c.eye}"/>`,
-      `<ellipse cx="${n(cx + look * 0.5)}" cy="${lid ? 3.8 : 3.9}" rx="1.2" ry="${lid ? 1.3 : 1.8}" fill="${c.topDark}"/>`,
-      `<circle cx="${n(cx - 0.9)}" cy="2.2" r="0.8" fill="${c.white}"/>`,
-      `<path d="M${n(cx - 3.2)} ${lid ? 2.3 : 0.9} q3.2 ${lid ? -0.6 : -1.9} 6.4 0" fill="none" stroke="${c.hair}" stroke-width="${lid ? 1.7 : 1.3}" stroke-linecap="round"/>`,
+      ...open,
+      `<path d="M${n(ex - 7.4)} ${n(ey - 7.8)} H${n(ex + 7.4)} V${n(yr)} Q${n(ex)} ${n(ym)} ${n(ex - 7.4)} ${n(yl)}Z" fill="${f.skin}"/>`,
+      `<path d="M${n(ex - 7)} ${n(yl + 0.2)} Q${n(ex)} ${n(ym)} ${n(ex + 7)} ${n(yr + 0.2)}" fill="none" stroke="${f.hair}" stroke-width="2.2" stroke-linecap="round"/>`,
     ].join("");
   };
+  // Брови — тонкие, под самой чёлкой: по ним читается настроение.
+  const brow = (side) => {
+    const bx = side * 9.9 + dx, by = -1.2 + dy;
+    const [inY, outY] = { jealous: [1.6, -1.2], pout: [-1.2, 0.6], tired: [-0.9, 0.9], happy: [-0.8, 0.2], sleep: [0, 0.4] }[face] ?? [0, 0.3];
+    return `<path d="M${n(bx - side * 4.4)} ${n(by + inY)} Q${n(bx)} ${n(by - 1.1 + (inY + outY) / 2)} ${n(bx + side * 4.8)} ${n(by + outY)}" fill="none" stroke="${f.hair}" stroke-width="1" stroke-linecap="round" opacity="0.85"/>`;
+  };
+  const mx = dx * 1.1, my = 18 + dy;
+  const lip = (d, w = 1.2) => `<path d="${d}" fill="none" stroke="${f.lip}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
   const mouth = {
-    calm: `<path d="M${n(dx - 2)} 8.6 q2 1.2 4 0" fill="none" stroke="${c.topDark}" stroke-width="0.9" stroke-linecap="round"/>`,
-    smile: `<path d="M${n(dx - 2.6)} 8.2 q2.6 2.4 5.2 0" fill="none" stroke="${c.topDark}" stroke-width="1" stroke-linecap="round"/>`,
-    happy: `<path d="M${n(dx - 2.6)} 7.8 q2.6 4 5.2 0z" fill="${c.topDark}"/>`,
-    sleep: `<ellipse cx="${n(dx)}" cy="8.8" rx="1.1" ry="0.9" fill="${c.topDark}" opacity="0.7"/>`,
-    tired: `<path d="M${n(dx - 1.8)} 9 h3.6" stroke="${c.topDark}" stroke-width="0.9" stroke-linecap="round"/>`,
-    pout: `<path d="M${n(dx - 2)} 9.4 q2 -1.6 4 0" fill="none" stroke="${c.topDark}" stroke-width="1" stroke-linecap="round"/>`,
-    jealous: `<path d="M${n(dx - 2.2)} 9.2 q1.1 -1.4 2.2 0 q1.1 1.4 2.2 0" fill="none" stroke="${c.topDark}" stroke-width="0.9" stroke-linecap="round"/>`,
+    calm: lip(`M${n(mx - 2.6)} ${n(my)} q2.6 1.8 5.2 0`),
+    smile: lip(`M${n(mx - 3.8)} ${n(my - 0.8)} q3.8 3.8 7.6 0`, 1.3),
+    happy: `<path d="M${n(mx - 4.2)} ${n(my - 1.8)} q4.2 7.4 8.4 0z" fill="${f.eyeDark}"/><path d="M${n(mx - 2.2)} ${n(my + 1)} q2.2 1.8 4.4 0 q-2.2 -1.4 -4.4 0z" fill="${f.blush}"/>`,
+    sleep: `<ellipse cx="${n(mx)}" cy="${n(my + 0.2)}" rx="1.5" ry="1.2" fill="${f.lip}" opacity="0.8"/>`,
+    tired: lip(`M${n(mx - 2.6)} ${n(my + 0.4)} q1.3 -0.7 2.6 0 q1.3 0.7 2.6 0`, 1.1),
+    pout: lip(`M${n(mx - 2.8)} ${n(my + 1.2)} q2.8 -2.8 5.6 0`, 1.3),
+    jealous: lip(`M${n(mx - 3.6)} ${n(my + 0.6)} q1.8 -2.2 3.6 0 q1.8 2.2 3.6 0`, 1.2),
   }[face] ?? "";
+  const rosy = face === "pout" || face === "jealous" ? 0.62 : face === "tired" ? 0.2 : 0.44;
+  const cheek = (side) => `<ellipse cx="${n(side * 13.8 + dx)}" cy="${n(13.6 + dy)}" rx="4.2" ry="2.3" fill="${f.blush}" opacity="${rosy}"/>${face === "pout" || face === "jealous" ? `<path d="M${n(side * 13.8 + dx - 2.4)} ${n(14.6 + dy)} l1.1 -2.2 M${n(side * 13.8 + dx)} ${n(14.6 + dy)} l1.1 -2.2 M${n(side * 13.8 + dx + 2.4)} ${n(14.6 + dy)} l1.1 -2.2" stroke="${f.blush}" stroke-width="0.7" stroke-linecap="round"/>` : ""}`;
+  const lock = (side) => `<path d="M${side * 24.8} -8 C${side * 26.2} 6 ${side * 25.6} 18 ${side * 24.4} 28 L${side * 20.8} 26.8 L${side * 17.2} 28.2 C${side * 18.4} 16 ${side * 18.6} 4 ${side * 16.6} -8 Z" fill="${f.hair}"/><path d="M${side * 21.4} -2 Q${side * 22.4} 12 ${side * 21} 24.6" fill="none" stroke="${f.hairMid}" stroke-width="1.2" stroke-linecap="round"/>`;
   return [
-    `<ellipse cx="0" cy="1" rx="13" ry="12.4" fill="${c.skin}"/>`,
-    face === "sleep" || face === "tired" ? "" : `<ellipse cx="${n(-7.6 + dx)}" cy="7.2" rx="2.4" ry="1.3" fill="${c.blush}" opacity="0.55"/><ellipse cx="${n(7.6 + dx)}" cy="7.2" rx="2.4" ry="1.3" fill="${c.blush}" opacity="0.55"/>`,
-    eye(-5.4), eye(5.4), mouth,
-    face === "jealous" ? `<path d="M${n(-8.4 + dx)} -1.6 l5 1.6 M${n(8.4 + dx)} -1.6 l-5 1.6" stroke="${c.hair}" stroke-width="1" stroke-linecap="round"/>` : "",
-    // Чёлка — ровным срезом; пряди — вдоль щёк.
-    `<path d="M-14.6 -1.4 C-16 -19.5 16 -19.5 14.6 -1.4 L13 -1.8 Q0 -4.4 -13 -1.8Z" fill="${c.hair}"/>`,
-    `<path d="M-14.8 -3 q-1.4 9 0.2 17 l3.6 -0.6 q-1.4 -8 -0.4 -16z M14.8 -3 q1.4 9 -0.2 17 l-3.6 -0.6 q1.4 -8 0.4 -16z" fill="${c.hair}"/>`,
-    `<path d="M-8 -13.4 q8 -3.4 15 0.6" fill="none" stroke="${c.hairLight}" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>`,
+    `<path d="M-20.5 -6 C-21.6 9 -14 22 0 24.2 C14 22 21.6 9 20.5 -6 C20 -22 -20 -22 -20.5 -6Z" fill="${f.skin}" stroke="${f.skinLine}" stroke-width="0.7"/>`,
+    cheek(-1), cheek(1),
+    eye(-1), eye(1),
+    brow(-1), brow(1),
+    // Тень от чёлки на лбу.
+    `<path d="M-19.6 -6 H19.6 L19.9 -1.4 Q0 2.2 -19.9 -1.4Z" fill="${f.eyeDark}" opacity="0.13"/>`,
+    closed ? "" : `<path d="M${n(dx * 1.3 + 0.4)} ${n(12.8 + dy)} l-0.9 1.7" stroke="${f.skinLine}" stroke-width="1" stroke-linecap="round"/>`,
+    mouth,
+    lock(-1), lock(1),
+    // Чёлка — ровным срезом, с просветами между прядями.
+    `<path d="M-24.8 -5 C-24.8 -20 -13.8 -32.6 0 -32.6 C13.8 -32.6 24.8 -20 24.8 -5 L18.4 -4.6 Q9.6 -2.6 0 -3.6 Q-9.6 -2.6 -18.4 -4.6Z" fill="${f.hair}"/>`,
+    `<path d="M-10.4 -2.6 l1.3 -4.8 l1.3 4.7z M6.6 -2.8 l1.3 -4.8 l1.3 4.8z" fill="${f.skin}"/>`,
+    `<path d="M-13.6 -5 Q-15 -15 -10 -26 M-4.4 -4.6 Q-5 -15 -1.6 -27.4 M4 -4.6 Q5 -15 2.6 -27.4 M13.2 -5 Q14.6 -15 10.2 -26" fill="none" stroke="${f.hairMid}" stroke-width="1.1" stroke-linecap="round"/>`,
+    // Блик на волосах — «кольцо».
+    `<path d="M-18 -17 Q-9 -22.6 0 -22 Q10 -22.2 18.2 -16.4" fill="none" stroke="${f.hairShine}" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="6.4 2.6 2.4 2.6 9 2.4 3.6 2.6 8 40" opacity="0.6"/>`,
   ].join("");
 }
-/** Шея с чокером и кофта с курткой. Точка отсчёта — центр лица; низ кофты — на `waist`. */
-function torso(c, { waist = 36, arms = "down" } = {}) {
-  const sleeve = (d) => `<path d="${d}" fill="none" stroke="${c.jacket}" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"/>`;
-  const hand = (x, y) => `<circle cx="${x}" cy="${y}" r="3" fill="${c.skin}"/>`;
-  const limbs = {
-    down: sleeve("M-10 18 L-12.5 33") + sleeve("M10 18 L12.5 33") + hand(-12.8, 35.4) + hand(12.8, 35.4),
-    up: sleeve("M-10 18 L-19 6 L-17 -9") + sleeve("M10 18 L19 6 L17 -9") + hand(-16.6, -12) + hand(16.6, -12),
-    oneUp: sleeve("M-10 18 L-12.5 33") + hand(-12.8, 35.4) + sleeve("M10 18 L21 9 L24 -9") + hand(24.4, -12.4),
-    reach: sleeve("M10 18 L12.5 33") + hand(12.8, 35.4) + sleeve("M-10 18 L-20 15 L-29 8") + hand(-31.4, 6.4),
-    hold: sleeve("M-10 18 L-13 27 L-5 31") + sleeve("M10 18 L13 27 L5 31") + hand(-3.4, 31.4) + hand(3.4, 31.4),
-    cross: sleeve("M-10 18 L-12 27 L5 28.5") + sleeve("M10 18 L12 27 L-5 30.5") + hand(6.6, 28) + hand(-6.6, 31),
-    wave: sleeve("M-10 18 L-12.5 33") + hand(-12.8, 35.4) + sleeve("M10 18 L21 14 L29 5") + hand(31, 3),
-  }[arms] ?? "";
+
+/** Шея с чокером и колечком. Точка отсчёта — основание шеи; голова — на 30 выше. */
+function neck(f) {
   return [
-    `<rect x="-3.2" y="11" width="6.4" height="6" fill="${c.skinDark}"/><rect x="-3.6" y="13" width="7.2" height="2.2" rx="1" fill="${c.jacket}"/><circle cx="0" cy="15.6" r="1.1" fill="none" stroke="${c.silver}" stroke-width="0.7"/>`,
-    `<path d="M-9.5 16.5 q9.5 -2.4 19 0 l1.8 ${waist - 16.5} h-22.6z" fill="${c.top}"/>`,
-    `<path d="M-11 16.6 q-3 1 -3.2 5 l-0.6 ${waist - 22} h5.6 l1.4 -${waist - 20}z M11 16.6 q3 1 3.2 5 l0.6 ${waist - 22} h-5.6 l-1.4 -${waist - 20}z" fill="${c.jacket}"/>`,
-    limbs,
+    `<path d="M-4.7 -12 L-4.9 1.4 L4.9 1.4 L4.7 -12Z" fill="${f.skin}"/>`,
+    `<path d="M-4.7 -11 Q0 -5.4 4.7 -11 V-12 H-4.7Z" fill="${f.skinDark}"/>`,
+    `<rect x="-5.2" y="-6" width="10.4" height="3.5" rx="1" fill="${f.jacket}"/><rect x="-5.2" y="-6" width="10.4" height="1" rx="0.5" fill="${f.jacketLight}"/>`,
+    `<circle cx="0" cy="-1" r="1.9" fill="none" stroke="${f.silver}" stroke-width="1"/>`,
   ].join("");
 }
-/** Стоит. Точка отсчёта — пол между ступнями. */
-function standing(c, { face, arms = "down", look = 0, extra = "" } = {}) {
-  const body = [
-    hairBack(c, 52),
-    `<path d="M-6 44 L-6.4 64 M6 44 L6.4 64" stroke="${c.stocking}" stroke-width="5.4" stroke-linecap="round"/><path d="M-6.4 66 h-3.2 M6.4 66 h3.2" stroke="${c.stocking}" stroke-width="4.4" stroke-linecap="round"/>`,
-    `<path d="M-11.6 35 h23.2 l3.4 12.5 q-15 3.6 -30 0z" fill="${c.jacket}"/><path d="M-6 37 l-1.6 10 M0 37 v11 M6 37 l1.6 10" stroke="${c.jacketLight}" stroke-width="0.8"/>`,
-    torso(c, { arms }), head(c, face, look), extra,
-  ].join("");
-  return at(0, -68, body);
-}
-/** В кресле: видно по пояс, ноги — под пледом. Точка отсчёта — сиденье. */
-function inChair(c, { face, arms = "hold", wrap = false, book = "" } = {}) {
-  const lap = wrap
-    // «Завёрнута в плед по самый нос»: плед закрывает всё до глаз.
-    ? plaidShape(c, "M-22 -22 q22 -11 44 0 l6 44 q2 12 -6 18 h-44 q-8 -6 -6 -18z", "plaidW")
-    : plaidShape(c, "M-21 -6 q21 -8 42 0 l6 28 q2 12 -6 18 h-42 q-8 -6 -6 -18z", "plaidL");
+
+/** Плечи и красный топ спереди. Точка отсчёта — основание шеи; талия — на 39 ниже. `turn` — вполоборота вправо. */
+function chest(f, turn = 0) {
+  const l = -21.6 + turn * 9, r = 21.6 - turn * 2, cx = turn * 4;
   return [
-    at(0, -44, hairBack(c, 44) + (wrap ? "" : torso(c, { arms, waist: 38 })) + head(c, face, 0)),
-    lap, book ? at(0, -12, book) : "",
+    `<path d="M${n(cx - 4.7)} -1.6 L${n(l + 4.6)} 3 Q${l} 5 ${l} 10 V17 H${r} V10 Q${r} 5 ${n(r - 4.6)} 3 L${n(cx + 4.7)} -1.6Z" fill="${f.skin}"/>`,
+    `<path d="M${n(cx - 13)} 5.6 q4.6 1.7 8.6 0.9 M${n(cx + 13)} 5.6 q-4.6 1.7 -8.6 0.9" fill="none" stroke="${f.skinLine}" stroke-width="0.7" stroke-linecap="round" opacity="0.7"/>`,
+    `<path d="M${n(l + 5)} 11 Q${n(cx)} 14.6 ${n(r - 5)} 11 L${n(r - 5.4)} 20 Q${n(r - 8)} 30 ${n(r - 9.2)} 40 H${n(l + 9.2)} Q${n(l + 8)} 30 ${n(l + 5.4)} 20Z" fill="${f.top}"/>`,
+    `<path d="M${n(l + 9)} 26 Q${n(cx)} 31 ${n(r - 9)} 26 L${n(r - 9.2)} 40 H${n(l + 9.2)}Z" fill="${f.topDark}" opacity="0.3"/>`,
+    `<path d="M${n(r - 12)} 13 L${n(r - 5)} 11 L${n(r - 5.4)} 20 Q${n(r - 8)} 30 ${n(r - 9.2)} 40 H${n(r - 13.4)}Z" fill="${f.topDark}" opacity="0.35"/>`,
+    `<path d="M${n(l + 5)} 11 Q${n(cx)} 14.6 ${n(r - 5)} 11 l-0.2 3.2 Q${n(cx)} 17.8 ${n(l + 5.2)} 14.2Z" fill="${f.topLight}"/>`,
   ].join("");
 }
+
 /**
- * Сидит боком, ноги вправо (на табурете — вниз, на подоконнике — колени подтянуты). Точка отсчёта — сиденье.
- * Руки: rest — лежат на столе; write — пишет на листке; cup — держит кружку на столе; hug — обнимает колени с кружкой.
+ * Рука: плечо → локоть → кисть. Плечо голое, с середины — рукав куртки, съехавшей на локти. `tool` — что в руке
+ * (рисуется под пальцами).
  */
-function sitting(c, { face, look = 1, knees = false, arms = "rest" } = {}) {
-  const legs = knees
-    ? `<path d="M2 -3.5 L17 -18 L27 -3" fill="none" stroke="${c.stocking}" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M27 -2.6 h5" stroke="${c.stocking}" stroke-width="4.8" stroke-linecap="round"/>`
-    : `<path d="M2 -3.5 L17 -3.5 L18 22" fill="none" stroke="${c.stocking}" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 24 h4.4" stroke="${c.stocking}" stroke-width="4.8" stroke-linecap="round"/>`;
-  const sleeve = (d) => `<path d="${d}" fill="none" stroke="${c.jacket}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`;
-  const hand = (x, y) => `<circle cx="${x}" cy="${y}" r="2.9" fill="${c.skin}"/>`;
-  const sheet = `<path d="M15 -28.6 l15 -1 l1 1.4 l-15 1z" fill="${c.paper}"/><path d="M22 -29.6 l13 0.4 l0.4 1.4 l-13 -0.2z" fill="${c.paperDark}"/>`;
-  const far = { rest: "M8 -30 L15 -24.5 L22 -30.5", write: "M8 -30 L16 -25 L25 -31", cup: "M8 -30 L15 -26 L19.5 -32", hug: "M8 -30 L15 -25 L21 -27" }[arms] ?? "";
-  const near = { rest: "M-7 -30 L1 -21 L13 -29.5", write: "M-7 -30 L1 -21 L14 -29.5", cup: "M-7 -30 L2 -22 L14.5 -32", hug: "M-7 -30 L3 -20 L16 -25" }[arms] ?? "";
-  const farHand = { rest: hand(24.4, -31), write: `${hand(27.4, -31.6)}<path d="M28 -32.6 l3.6 -7" stroke="${c.gold}" stroke-width="1.5" stroke-linecap="round"/>`, cup: hand(21, -33), hug: hand(23, -27.4) }[arms] ?? "";
-  const nearHand = { rest: hand(15.4, -30.2), write: hand(16.4, -30.2), cup: hand(16, -33), hug: hand(18.2, -25.6) }[arms] ?? "";
-  const prop = {
-    write: sheet,
-    cup: `<g transform="translate(24 -28.4)">${mug(0, 0, c.mug, c, { steam: true })}</g>`,
-    hug: `<g transform="translate(25 -19.6)">${mug(0, 0, c.mug, c, { steam: true })}</g>`,
-  }[arms] ?? "";
+function arm(f, shoulder, elbow, hand, { tool = "", dark = false } = {}) {
+  const [sx, sy] = shoulder, [ex, ey] = elbow, [hx, hy] = hand;
+  const [px, py] = along(shoulder, elbow, 0.4), [wx, wy] = along(elbow, hand, 0.84);
+  const sleeve = `M${n(px)} ${n(py)} L${n(ex)} ${n(ey)} L${n(wx)} ${n(wy)}`;
+  const cloth = dark ? dk(f.jacket, 0.2) : f.jacket;
   return [
-    at(-1, -50, hairBack(c, 46)),
-    `<path d="M-10 -8 q0 -6 6 -6 h12 q7 0 9 6 l1 7 h-28z" fill="${c.jacket}"/>`,
-    sleeve(far), farHand,
+    `<path d="M${n(sx)} ${n(sy)} L${n(px)} ${n(py)}" stroke="${f.skin}" stroke-width="8.8" stroke-linecap="round"/>`,
+    `<path d="M${n(wx)} ${n(wy)} L${n(hx)} ${n(hy)}" stroke="${f.skin}" stroke-width="5.6" stroke-linecap="round"/>`,
+    `<path d="${sleeve}" fill="none" stroke="${dark ? f.jacket : f.jacketLight}" stroke-width="10.6" stroke-linecap="round" stroke-linejoin="round"/>`,
+    `<path d="${sleeve}" fill="none" stroke="${cloth}" stroke-width="9" stroke-linecap="round" stroke-linejoin="round" transform="translate(0.7 0.8)"/>`,
+    tool,
+    `<circle cx="${n(hx)}" cy="${n(hy)}" r="4.5" fill="${f.skin}" stroke="${f.skinLine}" stroke-width="0.6"/>`,
+  ].join("");
+}
+
+/**
+ * Нога: бедро → колено → ступня. Сверху — кожа, ниже — тёмный чулок (`share` — с какой доли бедра он начинается).
+ * `toe` — куда смотрит носок.
+ */
+function leg(f, hip, knee, ankle, { toe = 0.4, dark = false, share = 0.54 } = {}) {
+  const [hx, hy] = hip, [kx, ky] = knee, [ax, ay] = ankle;
+  const [mx, my] = along(hip, knee, share);
+  const stock = dark ? dk(f.stocking, 0.28) : f.stocking, skin = dark ? f.skinDark : f.skin;
+  const wide = 13.6 + (10.8 - 13.6) * share;
+  const dx = kx - hx, dy = ky - hy, len = Math.hypot(dx, dy) || 1, nx = -dy / len * (wide / 2 - 0.2), ny = dx / len * (wide / 2 - 0.2);
+  return [
+    taper(hx, hy, 13.6, kx, ky, 10.8, skin),
+    taper(mx, my, wide, kx, ky, 10.8, stock),
+    taper(kx, ky, 10.8, ax, ay, 7.2, stock),
+    `<ellipse cx="${n(ax + toe * 5)}" cy="${n(ay + 3.2)}" rx="${n(4.6 + Math.abs(toe) * 3)}" ry="4" fill="${stock}"/>`,
+    `<path d="M${n(mx + nx)} ${n(my + ny)} L${n(mx - nx)} ${n(my - ny)}" stroke="${dark ? f.stocking : f.stockingLight}" stroke-width="2.6" stroke-linecap="round"/>`,
+    dark ? "" : `<path d="M${n(kx - 2)} ${n(ky + 4)} L${n(ax - 1)} ${n(ay - 4)}" stroke="${f.stockingLight}" stroke-width="1.3" stroke-linecap="round" opacity="0.6"/>`,
+  ].join("");
+}
+
+/** Складчатая юбка спереди. Точка отсчёта — основание шеи. */
+function skirt(f, swing = 0) {
+  const s = swing;
+  return [
+    `<path d="M-12.8 37 H12.8 L${n(22 + s)} 62.6 Q${n(s)} 68.6 ${n(-22 + s)} 62.6Z" fill="${f.jacket}"/>`,
+    `<path d="M-7.4 40 L${n(-12.8 + s)} 64.8 M-2.5 40 L${n(-4.4 + s)} 66.4 M2.5 40 L${n(4.4 + s)} 66.4 M7.4 40 L${n(12.8 + s)} 64.8" stroke="${f.jacketLight}" stroke-width="0.9" stroke-linecap="round"/>`,
+    `<path d="M${n(-21.4 + s)} 61.4 Q${n(s)} 67.2 ${n(21.4 + s)} 61.4" fill="none" stroke="${f.jacketLight}" stroke-width="1.1" opacity="0.8"/>`,
+    `<rect x="-13" y="36" width="26" height="3.6" rx="1.2" fill="${f.jacketLight}"/>`,
+  ].join("");
+}
+
+/** Полы куртки по бокам: она съехала с плеч и висит на локтях. Точка отсчёта — основание шеи. */
+function jacketSides(f) {
+  const side = (s) => `<path d="M${s * 14.4} 17 L${s * 21.6} 14.6 Q${s * 25.6} 32 ${s * 24.4} 54 L${s * 14.6} 56.4 Q${s * 13} 40 ${s * 14.4} 17Z" fill="${f.jacket}"/><path d="M${s * 15.2} 22 Q${s * 14} 40 ${s * 15.6} 55" fill="none" stroke="${f.jacketLight}" stroke-width="1.1" stroke-linecap="round"/>`;
+  return side(-1) + side(1);
+}
+
+/** Руки стоя: плечо, локоть, кисть для левой (от зрителя) и правой руки. Точка отсчёта — основание шеи. */
+const SHOULDER = Object.freeze([[-18.8, 6.6], [18.8, 6.6]]);
+const ARMS = Object.freeze({
+  down: [[[-22.6, 27], [-21.6, 47]], [[22.6, 27], [21.6, 47]]],
+  up: [[[-31, -2], [-39, -25]], [[30, -6], [34, -31]]],
+  point: [[[-22.6, 27], [-21.6, 47]], [[29, -9], [35, -35]]],
+  reach: [[[-22, 26], [-9, 25]], [[33, 5], [47, -7]]],
+  wand: [[[-27.4, 23], [-17.6, 37]], [[30, 17], [41, 12]]],
+});
+
+/** Стоит лицом к зрителю. Точка отсчёта — пол между ступнями; рост — 200. `tools` — что в левой и в правой руке. */
+function standing(g, f, { face = "calm", look = 0, up = 0, arms = "down", step = false, lean = 0, tools = ["", ""], front = "" } = {}) {
+  const [left, right] = ARMS[arms] ?? ARMS.down;
+  const legs = step
+    ? leg(f, [-7.2, -88], [-9.6, -47], [-7, -6], { toe: -0.5 }) + leg(f, [7.2, -88], [17, -55], [10.6, -22], { toe: 0.9 })
+    : leg(f, [-7.2, -88], [-7.6, -47], [-8, -6], { toe: -0.4 }) + leg(f, [7.2, -88], [7.6, -47], [8, -6], { toe: 0.4 });
+  const upper = [
+    jacketSides(f), chest(f),
+    arm(f, SHOULDER[0], ...left, { tool: tools[0] }), arm(f, SHOULDER[1], ...right, { tool: tools[1] }),
+    neck(f), front,
+    at(0, -30, head(g, f, face, look, up)),
+  ].join("");
+  return [
+    at(0, -172, hairBack(f, 100, lean)),
     legs,
-    `<path d="M-9 -34 q9 -2.4 18 0 l1.6 23 h-21.2z" fill="${c.top}"/><path d="M-10.4 -33.8 q-3 1 -3 5 l-0.4 18 h5 l1.2 -22z" fill="${c.jacket}"/>`,
-    `<rect x="-3.2" y="-39.4" width="6.4" height="6" fill="${c.skinDark}"/><rect x="-3.6" y="-37.4" width="7.2" height="2.2" rx="1" fill="${c.jacket}"/>`,
-    prop, sleeve(near), nearHand, at(0, -50, head(c, face, look)),
+    at(0, -142, skirt(f, step ? 2 : 0)),
+    `<g class="breath">${at(0, -142, upper)}</g>`,
   ].join("");
 }
-/** Сидит спиной: видны волосы и плечи. Точка отсчёта — сиденье. */
-function fromBehind(c) {
+
+/** Раскрытая книга обложкой к зрителю: «Маленький принц» — жёлтая, со звездой. */
+function openBook(f) {
+  return `<path d="M-14.6 -9.4 L0 -7.2 L14.6 -9.4 V8.4 L0 10.6 L-14.6 8.4Z" fill="${f.gold}"/><path d="M-14.6 8.4 L0 10.6 L14.6 8.4" fill="none" stroke="${f.paper}" stroke-width="1.6"/><path d="M0 -7.2 V10.6" stroke="${dk(f.gold, 0.3)}" stroke-width="1.8"/><g fill="${f.paper}">${sparkle(7.4, -0.6, 1.5)}</g><path d="M-11 -3.6 l7 1 M-11 0 l7 1" stroke="${dk(f.gold, 0.25)}" stroke-width="1" stroke-linecap="round"/>`;
+}
+const zzz = (f, x, y) => `<g class="zzz" fill="${f.paper}" stroke="${f.ink}" stroke-width="0.5" font-family="system-ui, sans-serif" font-weight="700"><text x="${x}" y="${y}" font-size="11">z</text><text x="${x + 9}" y="${y - 11}" font-size="14">z</text><text x="${x + 20}" y="${y - 25}" font-size="17">Z</text></g>`;
+
+/**
+ * В кресле, лицом к зрителю: ноги под пледом, из-под него видны носки. Точка отсчёта — середина сиденья.
+ * `arms`: hold — держит книгу, cross — скрестила руки, rest — руки на пледе. `wrap` — завёрнута по самый нос.
+ */
+function inChair(g, f, { face = "calm", arms = "hold", wrap = false, look = 0 } = {}) {
+  const shoulders = SHOULDER.map(([x, y]) => [x, y]);
+  const pair = {
+    hold: [arm(f, shoulders[0], [-22.6, 27], [-13.4, 31.6]), arm(f, shoulders[1], [22.6, 27], [13.4, 31.6])],
+    cross: [arm(f, shoulders[0], [-21.6, 27], [8.6, 24.6]), arm(f, shoulders[1], [21.6, 28], [-8.6, 28.6])],
+    rest: [arm(f, shoulders[0], [-23.6, 26], [-9.6, 36]), arm(f, shoulders[1], [23.6, 26], [9.6, 36])],
+  }[arms] ?? ["", ""];
+  const feet = `<ellipse cx="-10.4" cy="46.4" rx="7" ry="4.2" fill="${f.stocking}"/><ellipse cx="10.4" cy="46.4" rx="7" ry="4.2" fill="${f.stocking}"/><path d="M-13 44.6 q2.6 -1.6 5.2 0 M7.8 44.6 q2.6 -1.6 5.2 0" fill="none" stroke="${f.stockingLight}" stroke-width="1" stroke-linecap="round"/>`;
+  const lap = plaidShape(g, f, wrap
+    ? "M-34 -64 Q-33 -79 -16 -76 Q0 -71.4 16 -76 Q33 -79 34 -64 L37.4 4 Q40.6 28 33.6 43 Q0 49.6 -33.6 43 Q-40.6 28 -37.4 4Z"
+    : "M-29.6 -24 Q-14 -30.6 0 -27.4 Q14 -30.6 29.6 -24 L35.4 4 Q39.4 28 33.4 43 Q0 49.6 -33.4 43 Q-39.4 28 -35.4 4Z", {
+    folds: wrap ? ["M-18 -62 Q-22 -20 -16 38", "M19 -60 Q24 -20 17 38", "M-2 -66 Q2 -30 -1 40"] : ["M-15 -16 Q-21 12 -15 39", "M16 -15 Q22 12 16 39", "M0 -20 Q-2 10 0 42"],
+    gleams: wrap ? ["M-9 -66 Q-11 -24 -7 38", "M10 -66 Q13 -24 9 38"] : ["M-8 -22 Q-11 10 -7 40", "M9 -22 Q12 10 8 40"],
+    fringe: "M-30 44.4 l-1 5 M-22 45.6 l-0.6 5 M-14 46.6 l-0.4 5 M-5 47.2 v5 M5 47.2 v5 M14 46.6 l0.4 5 M22 45.6 l0.6 5 M30 44.4 l1 5",
+  });
+  if (wrap) {
+    return [
+      at(0, -90, hairBack(f, 78)),
+      `<g class="breath">${at(0, -60, jacketSides(f) + chest(f) + neck(f))}${at(0, -90, head(g, f, "sleep", 0, -0.4), " rotate(7 0 26)")}</g>`,
+      feet, lap,
+      // Пальцы придерживают край пледа.
+      `<circle cx="-13" cy="-71" r="4.2" fill="${f.skin}" stroke="${f.skinLine}" stroke-width="0.6"/><circle cx="13" cy="-71" r="4.2" fill="${f.skin}" stroke="${f.skinLine}" stroke-width="0.6"/>`,
+    ].join("");
+  }
   return [
-    `<path d="M-13 -2 q0 -7 7 -7 h12 q7 0 7 7 v3 h-26z" fill="${c.jacket}"/>`,
-    `<path d="M-13.5 -32 q13.5 -5 27 0 l2 26 h-31z" fill="${c.jacket}"/>`,
-    `<path d="M-16 -50 C-17.5 -70 17.5 -70 16 -50 L18.5 -8 Q0 0 -18.5 -8Z" fill="${c.hair}"/>`,
-    `<path d="M-7 -62 q7 -4 14 0 M-9 -40 v26 M0 -44 v32 M9 -40 v26" fill="none" stroke="${c.hairLight}" stroke-width="1.1" stroke-linecap="round" opacity="0.7"/>`,
+    at(0, -90, hairBack(f, 78)),
+    feet,
+    `<g class="breath">${at(0, -60, jacketSides(f) + chest(f) + neck(f))}</g>`,
+    lap,
+    `<g class="breath">${at(0, -60, (arms === "hold" ? at(0, 31, openBook(f)) : "") + pair.join(""))}${at(0, -90, head(g, f, face, look, arms === "hold" ? -0.6 : 0))}</g>`,
   ].join("");
 }
-/** Лежит на подушках, укрыта пледом. Точка отсчёта — середина. */
-function lying(c, { face }) {
+
+/**
+ * Сидит вполоборота, ноги вправо: на табурете — вниз (`knees: false`), на подоконнике — колени подтянуты.
+ * Точка отсчёта — сиденье под ней. Руки: rest — лежат на столе, write — пишет, cup — держит кружку над столом,
+ * hug — обнимает колени, в другой руке кружка.
+ */
+function sitting(g, f, { face = "calm", look = 1, knees = false, arms = "rest" } = {}) {
+  const near = [-8.8, -53.4], far = [17.8, -53.4];
+  const cup = (x, base) => mug(x, base, f.mug, { steam: true });
+  const legs = knees
+    ? leg(f, [5, -9.6], [31.6, -39], [47, -8], { toe: 1, dark: true, share: 0.7 }) + leg(f, [3, -8.6], [27, -37], [42, -7], { toe: 1, share: 0.7 })
+    : leg(f, [8, -9.6], [41, -12], [34, 30.4], { toe: 0.8, dark: true, share: 0.8 }) + leg(f, [6, -8.6], [38, -10.4], [26.6, 32.4], { toe: 0.8, share: 0.8 });
+  const skirtSide = knees
+    ? `<path d="M-11.6 -22 H12 L22 -29 L29 -21 L17 -3 Q4 2 -11 1 Q-15 -10 -11.6 -22Z" fill="${f.jacket}"/><path d="M-3 -19 L3 0.4 M6 -19.6 L13 -2 M13 -21 L22 -12" stroke="${f.jacketLight}" stroke-width="0.9" stroke-linecap="round"/>`
+    : `<path d="M-11.6 -22 H13 Q25 -21 28.6 -14 L29.6 -2 Q12 3 -11 1 Q-15 -10 -11.6 -22Z" fill="${f.jacket}"/><path d="M-3 -19 L2 0.8 M5 -19.6 L13 0.4 M13 -19.4 L24 -1.4" stroke="${f.jacketLight}" stroke-width="0.9" stroke-linecap="round"/><path d="M29.4 -3 Q12 2 -10.6 0.2" fill="none" stroke="${f.jacketLight}" stroke-width="1" opacity="0.8"/>`;
+  const band = `<rect x="-11.8" y="-23" width="25" height="3.6" rx="1.2" fill="${f.jacketLight}"/>`;
+  const jacketBack = `<path d="M-10 -45 Q-19 -43 -19 -32 L-17 -3 L-8.6 0 L-9.6 -40Z" fill="${f.jacket}"/><path d="M-17.6 -30 L-16 -5" stroke="${f.jacketLight}" stroke-width="1.1" stroke-linecap="round"/>`;
+  const torso = at(1, -60, chest(f, 1)) + at(5, -60, neck(f));
+  const face3 = at(6.6, -90, head(g, f, face, look, 0));
+  const hair = at(4.6, -90, hairBack(f, knees ? 84 : 88, -5));
+  const set = {
+    rest: { farArm: arm(f, far, [23, -36], [33.4, -40.6], { dark: true }), nearArm: arm(f, near, [-3.6, -31], [22, -40.4]), prop: "" },
+    write: {
+      farArm: arm(f, far, [24, -36], [37, -40.6], { dark: true }),
+      nearArm: arm(f, near, [-3, -31.6], [24.4, -41], { tool: `<path d="M28.6 -37 L22.6 -49" stroke="${f.gold}" stroke-width="2" stroke-linecap="round"/><path d="M28.6 -37 l-0.8 -1.6" stroke="${f.ink}" stroke-width="2" stroke-linecap="round"/>` }),
+      prop: `<path d="M18 -36.6 L41 -38 L43 -36.4 L20 -35Z" fill="${f.paper}"/><path d="M24 -36.6 l12 -0.8" stroke="${f.paperDark}" stroke-width="0.7"/>`,
+    },
+    cup: { farArm: arm(f, far, [25, -37.6], [35, -45], { dark: true }), nearArm: arm(f, near, [-2, -32.6], [24, -45]), prop: cup(29.6, -39) },
+    hug: { farArm: arm(f, far, [27.6, -44.6], [35.6, -50.6], { dark: true }), nearArm: arm(f, near, [5, -33], [27, -30.6]), prop: cup(40, -45) },
+  }[arms] ?? { farArm: "", nearArm: "", prop: "" };
+  return knees
+    ? [hair, legs, skirtSide, jacketBack, `<g class="breath">${torso}${band}${set.prop}${set.farArm}${set.nearArm}${face3}</g>`].join("")
+    : [hair, set.farArm, legs, skirtSide, jacketBack, `<g class="breath">${torso}${band}${set.prop}${set.nearArm}${face3}</g>`].join("");
+}
+
+/** Сидит на подоконнике спиной к комнате: волосы до пояса, плечи, с которых съехала куртка, рядом кружка. Точка отсчёта — подоконник. */
+function fromBehind(g, f, { cup = true } = {}) {
+  const hair = "M-24.6 -95 C-24.6 -110 -13.6 -122.4 0 -122.4 C13.6 -122.4 24.6 -110 24.6 -95 C25.6 -70 22.6 -40 20.4 -15 L15.4 -11.6 L13.6 -14.8 L7 -10.6 L5 -14.2 L-1 -10 L-3 -14.2 L-9.4 -10.6 L-11.4 -14.8 L-16 -11.6 L-20.4 -15 C-22.6 -40 -25.6 -70 -24.6 -95Z";
   return [
-    `<ellipse cx="-44" cy="-4" rx="26" ry="13" fill="${c.pillowDark}"/><ellipse cx="-46" cy="-8" rx="24" ry="12" fill="${c.pillow}"/>`,
-    `<path d="M-60 -16 q-10 18 -2 24 l34 -2 q-6 -16 -8 -26z" fill="${c.hair}"/>`,
-    plaidShape(c, "M-26 -14 q34 -12 62 -4 q16 2 22 10 q3 8 -4 12 h-78 q-8 -6 -2 -18z", "plaidG"),
-    `<path d="M58 -4 q8 -8 12 0 q2 6 -4 8" fill="${c.plaid}"/>`,
-    at(-40, -17, head(c, face, 0), " rotate(-12)"),
+    cup ? mug(41, 0, f.mug, { steam: true }) : "",
+    // Юбка, голые плечи и спина куртки.
+    `<path d="M-21.6 -17 Q0 -23 21.6 -17 L24 -1 Q0 3.4 -24 -1Z" fill="${f.jacket}"/><path d="M-9 -16 L-11 1 M0 -17 V1.6 M9 -16 L11 1" stroke="${f.jacketLight}" stroke-width="0.9" stroke-linecap="round"/>`,
+    `<path d="M-24 -50 Q-24 -59 -11 -61.6 H11 Q24 -59 24 -50 V-44 H-24Z" fill="${f.skin}"/>`,
+    `<path d="M-22 -47 Q0 -41 22 -47 L22.6 -14 Q0 -8.6 -22.6 -14Z" fill="${f.jacket}"/><path d="M-22 -47 Q0 -41 22 -47" fill="none" stroke="${f.jacketLight}" stroke-width="1.8"/>`,
+    arm(f, [-22, -54], [-29.6, -29], [-28.6, -5.4]), arm(f, [22, -54], [29.6, -29], [28.6, -5.4]),
+    `<g class="breath"><path d="${hair}" fill="${f.hair}"/>`,
+    `<path d="M-16 -68 Q-15 -40 -13.6 -20 M-7 -66 Q-6.6 -40 -6 -17 M3 -66 Q3.4 -40 3 -17 M12 -68 Q12 -40 11 -19 M19 -72 Q19.4 -46 17 -22" fill="none" stroke="${f.hairMid}" stroke-width="1.2" stroke-linecap="round"/>`,
+    `<path d="M-11.6 -66 Q-11 -42 -10 -22" fill="none" stroke="${f.hairLight}" stroke-width="2.6" stroke-linecap="round" opacity="0.4"/>`,
+    `<path d="M-18 -107 Q-9 -112.6 0 -112 Q10 -112.2 18.2 -106.4" fill="none" stroke="${f.hairShine}" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="6.4 2.6 2.4 2.6 9 2.4 3.6 2.6 8 40" opacity="0.6"/>`,
+    `<path d="M0 -122 Q1.4 -108 0.6 -96" fill="none" stroke="${f.hairMid}" stroke-width="1.2" stroke-linecap="round"/></g>`,
+  ].join("");
+}
+
+/** Лежит на ковре: голова на подушках, сама под пледом, рука поверх. Точка отсчёта — середина. */
+function lying(g, f, { face = "tired" } = {}) {
+  const cover = plaidShape(g, f, "M-41 -20 Q-12 -37 30 -27 Q64 -22 85 -16 Q99 -10 96.6 0 Q94 8 84 9.4 L-33 10.4 Q-47 -2 -41 -20Z", {
+    folds: ["M-12 -30 Q-2 -10 -14 8", "M26 -26 Q36 -8 24 8", "M62 -20 Q70 -6 60 8"],
+    gleams: ["M6 -30 Q16 -12 6 6", "M46 -23 Q54 -8 44 7"],
+    fringe: "M86 9 l3.4 4 M91 6.6 l4.4 2.6 M95 2 l5 1 M96.6 -3 l5 -0.6",
+  });
+  return [
+    shadow(g, -4, 11, 112, 9, 0.3),
+    // Две подушки: синяя — под спину, большая светлая — под голову.
+    `<ellipse cx="-40" cy="-21" rx="26" ry="14" fill="${f.plaidLight}" transform="rotate(-14 -40 -21)"/><ellipse cx="-40" cy="-21" rx="26" ry="14" fill="none" stroke="${f.plaid}" stroke-width="1" opacity="0.5" transform="rotate(-14 -40 -21)"/>`,
+    `<ellipse cx="-70" cy="-3" rx="48" ry="17.6" fill="${f.pillowDark}"/><ellipse cx="-71" cy="-7.6" rx="46" ry="16.6" fill="${f.pillow}"/><path d="M-110 -9 q39 9 78 0" fill="none" stroke="${f.pillowDark}" stroke-width="1"/><path d="M-112 -12 l-5 -4 M-27 -12 l5 -4" stroke="${f.pillowDark}" stroke-width="2" stroke-linecap="round"/>`,
+    // Волосы рассыпались по подушке.
+    `<path d="M-82 -34 Q-103 -20 -99 -2 Q-96 7 -76 6.4 L-48 5 L-38 -22Z" fill="${f.hair}"/><path d="M-80 -22 Q-93 -10 -90 0 M-68 -14 Q-80 -4 -75 4 M-56 -12 Q-62 -4 -56 3" fill="none" stroke="${f.hairMid}" stroke-width="1.2" stroke-linecap="round"/>`,
+    `<g class="breath">${cover}`,
+    arm(f, [-36, -17], [-17, -4.6], [0, -9.4]),
+    at(-57, -27, head(g, f, face, 0, 0), " rotate(-16)"),
+    `</g>`,
   ].join("");
 }
 
@@ -570,178 +1198,237 @@ function lying(c, { face }) {
  * Где она и как нарисована — по позе. Возвращает один из слоёв: `sillSeat` — на подоконнике, `seat` — в кресле,
  * `front` — на полу перед мебелью (тогда `y` — где её ступни: кто ниже, тот ближе и рисуется позже).
  */
-function her(c, pose, key, view = {}) {
+function her(g, c, f, pose, key, view = {}) {
   const face = MOODS[key] ?? "calm";
-  // Фигура ставится в точку (x, y) и увеличивается; `box` — её края в собственных единицах: по ним область нажатия
-  // (`zone` — уже в единицах рисунка; сама область ложится отдельным слоем, поверх картинки).
+  // Фигура ставится в точку (x, y); `box` — её края в собственных единицах: по ним область нажатия. `mirror` —
+  // развёрнута влево. Сама область ложится отдельным слоем, поверх картинки.
   let zone = null;
-  const put = (x, y, body, [left, top, right, bottom], { cls = "", extra = "" } = {}) => {
-    zone = [x + left * HER_SCALE, y + top * HER_SCALE, (right - left) * HER_SCALE, (bottom - top) * HER_SCALE];
-    return [cls ? `<g class="${cls}">` : "", `<g transform="translate(${n(x)} ${n(y)}) scale(${HER_SCALE})">${body}</g>`, cls ? `</g>` : "", extra].join("");
+  const put = (x, y, body, [left, top, right, bottom], { mirror = false, cls = "", extra = "" } = {}) => {
+    zone = [mirror ? x - right : x + left, y + top, right - left, bottom - top];
+    const inner = at(x, y, body, mirror ? " scale(-1 1)" : "");
+    return `${cls ? `<g class="${cls}">${inner}</g>` : inner}${extra}`;
   };
-  const STAND = [-20, -88, 20, 0], WAVE = [-34, -88, 20, 0], SIT = [-20, -70, 34, 26];
-  // Байт точит когти о кресло — на ковре она встаёт чуть в стороне, а не перед ним.
-  const aside = view.cat?.shape === "claw" && view.cat?.place === "chair" ? 30 : 0;
+  const floor = (x, y) => shadow(g, x, y + 1, 27, 5, 0.34);
+  // Байт точит когти о кресло или из-под кресла торчит его хвост — на ковре она встаёт чуть в стороне, а не перед ним.
+  const pet = view.cat ?? null;
+  const aside = pet && ((pet.shape === "claw" && pet.place === "chair") || (pet.shape === "tail" && pet.place === "under")) ? 62 : 0;
+  // Байт у неё на коленях — книга отложена, руки на пледе.
+  const lapCat = Boolean(pet) && ((pet.place === "chair" && pet.shape !== "claw") || (pet.place === "plaid" && pet.shape !== "tail"));
+  // Вторая подушка лежит на подоконнике справа от неё — кружке там места нет.
+  const pillow = Array.isArray(view.things) && view.things.includes("подушка");
+  const book = `<g transform="translate(-9.6 21) rotate(-8)"><rect x="-7.4" y="-10" width="14.8" height="20" rx="1.4" fill="${f.plaid}"/><rect x="-7.4" y="-10" width="3" height="20" rx="1" fill="${f.plaidDark}"/><path d="M-1.6 -5 h6 M-1.6 -1.6 h6" stroke="${f.plaidLight}" stroke-width="1.1" stroke-linecap="round"/></g>`;
+  const wand = `<path d="M37.6 13.4 L64 3.4" stroke="${f.woodPale}" stroke-width="2.2" stroke-linecap="round"/><path class="ribbon" d="M64 3.4 q10 9 2.6 22 q-8.6 13 3 26 q8 9.6 0.4 21" fill="none" stroke="${f.eye}" stroke-width="2.8" stroke-linecap="round"/>`;
   const placed = () => {
     switch (pose) {
-      case "shelf": return { y: 396, front: put(126, 396, flip(standing(c, { face, arms: "wave", look: 1 })), WAVE) };
-      case "map": return { y: 398, front: put(66, 398, flip(standing(c, { face, arms: "oneUp", look: 1 })), WAVE) };
-      case "garland": return { y: 393, front: `${stool(c, 146, STOOL.y)}${put(146, STOOL.y, flip(standing(c, { face, arms: "oneUp", look: 1 })), WAVE)}` };
-      case "dance": return { y: 448, front: put(236 + aside, 448, standing(c, { face: face === "calm" ? "happy" : face, arms: "up" }), STAND, { cls: "sway" }) };
-      case "ribbon": return { y: 448, front: put(226 + aside, 448, standing(c, { face, arms: "wave", look: 1, extra: `<path class="ribbon" d="M31 3 q10 6 4 16 q-6 10 6 18 q8 6 2 16" fill="none" stroke="${c.eye}" stroke-width="2" stroke-linecap="round"/>` }), [-20, -88, 44, 0]) };
-      case "chair": return { seat: put(163, 352, inChair(c, { face, arms: key === "ревность" ? "cross" : "hold", book: key === "ревность" || key === "устала" ? "" : `<path d="M-9 -8 l9 2 l9 -2 v11 l-9 2 l-9 -2z" fill="${c.gold}"/><path d="M0 -6 v11" stroke="${c.woodDark}" stroke-width="0.8"/>` }), [-22, -64, 22, 30]) };
-      case "nap": return { seat: put(163, 352, inChair(c, { face: "sleep", wrap: true }), [-22, -64, 22, 30], { extra: zzz(c, 192, 292) }) };
-      case "sill": return { sillSeat: put(176, 262, sitting(c, { face, look: 1, knees: true, arms: "hug" }), [-20, -70, 34, 2]) };
-      case "back": return { sillSeat: put(182, 262, fromBehind(c), [-19, -70, 19, 2]) };
-      case "lie": return { y: 458, front: put(204, 458, lying(c, { face: face === "calm" ? "tired" : face }), [-72, -36, 72, 10], { extra: face === "sleep" ? zzz(c, 160, 396) : "" }) };
-      case "desk":
-      default: return {
-        y: 393, stoolUsed: true,
-        front: `${stool(c, STOOL.x, STOOL.y)}${put(STOOL.x, STOOL.y, sitting(c, { face, look: 0.6, arms: key === "дело" || key === "ревность" ? "write" : key === "обида" || view.tea ? "cup" : "rest" }), SIT)}`,
-      };
+    case "shelf": return { y: 398, front: floor(130, 398) + put(130, 398, standing(g, f, { face, arms: "reach", look: 1, tools: [book, ""] }), [-30, -204, 53, 2], { mirror: true }) };
+    case "map": return { y: 400, front: floor(78, 400) + put(78, 400, standing(g, f, { face, arms: "point", look: 1, up: 1 }), [-30, -204, 41, 2], { mirror: true }) };
+    case "garland": return { y: 393, front: stool(g, c, GARLAND_STOOL, STOOL.y) + put(GARLAND_STOOL, STOOL.y, standing(g, f, { face, arms: "point", look: 1, up: 1 }), [-30, -204, 41, 2], { mirror: true }) };
+    case "dance": return { y: 452, front: floor(240 + aside, 452) + put(240 + aside, 452, standing(g, f, { face: face === "calm" ? "happy" : face, arms: "up", step: true, lean: 5 }), [-44, -204, 40, 2], { cls: "sway" }) };
+    case "ribbon": return { y: 452, front: floor(214 + aside, 452) + put(214 + aside, 452, standing(g, f, { face, arms: "wand", look: 1, tools: ["", wand] }), [-30, -204, 72, 2]) };
+    case "chair": return { seat: put(CHAIR.x, CHAIR.y, inChair(g, f, { face, arms: key === "ревность" || key === "обида" ? "cross" : key === "устала" || lapCat ? "rest" : "hold" }), [-37, -124, 37, 50]) };
+    case "nap": return { seat: put(CHAIR.x, CHAIR.y, inChair(g, f, { wrap: true }), [-38, -124, 38, 50], { extra: zzz(f, CHAIR.x + 30, CHAIR.y - 112) }) };
+    case "sill": return { sillSeat: put(182, 262, sitting(g, f, { face, look: 1, knees: true, arms: "hug" }), [-26, -124, 54, 2]) };
+    case "back": return { sillSeat: put(188, 262, fromBehind(g, f, { cup: !pillow }), [-34, -124, pillow ? 34 : 49, 3]) };
+    case "lie": return { y: 472, front: put(210, 462, lying(g, f, { face: face === "calm" ? "tired" : face }), [-118, -60, 102, 12], { extra: face === "sleep" ? zzz(f, 130, 405) : "" }) };
+    case "desk":
+    default: return {
+      y: 393, stoolUsed: true,
+      front: stool(g, c, STOOL.x, STOOL.y) + put(STOOL.x, STOOL.y, sitting(g, f, { face, look: 0.7, arms: key === "дело" || key === "ревность" ? "write" : key === "обида" || view.tea ? "cup" : "rest" }), [-26, -124, 50, 42]),
+    };
     }
   };
   return { ...placed(), zone };
 }
-function zzz(c, x, y) {
-  return `<g class="zzz" fill="${c.paper}" font-family="system-ui, sans-serif" font-weight="700" opacity="0.85"><text x="${x}" y="${y}" font-size="9">z</text><text x="${x + 7}" y="${y - 9}" font-size="11">z</text><text x="${x + 16}" y="${y - 20}" font-size="13">Z</text></g>`;
-}
 
 // ── Байт ─────────────────────────────────────────────────────────────────────
-/** Морда: `eyes` — open, closed, narrow, wide. Точка отсчёта — центр. */
-function catHead(c, eyes = "open") {
-  const eye = (x) => {
-    if (eyes === "closed") return `<path d="M${x - 2.6} 0.4 q2.6 2.2 5.2 0" fill="none" stroke="${c.ink}" stroke-width="1.1" stroke-linecap="round"/>`;
-    const tall = eyes === "narrow" ? 1.5 : eyes === "wide" ? 3.4 : 2.7;
-    return `<ellipse cx="${x}" cy="0" rx="2.6" ry="${tall}" fill="${c.catEye}"/><ellipse cx="${x}" cy="0" rx="${eyes === "wide" ? 1.5 : 0.8}" ry="${tall - 0.3}" fill="${c.ink}"/>`;
+// Серый кот: полоски на спине, лбу и хвосте, светлая грудь и лапы, жёлтые глаза. Сидя — ей по колено.
+const fur = (g, f) => g.lin("fur", [[0, lt(f.cat, 0.2)], [0.55, f.cat], [1, mix(f.cat, f.catDark, 0.6)]]);
+const stripes = (f, d, w = 1.7) => `<path d="${d}" fill="none" stroke="${f.catDark}" stroke-width="${w}" stroke-linecap="round" opacity="0.85"/>`;
+/** Хвост: толстая линия с полосками поперёк и тёмным кончиком. `cls` — как он движется. */
+function catTail(f, d, rings, { cls = "tailwag", tip = "" } = {}) {
+  return `<g class="${cls}"><path d="${d}" fill="none" stroke="${f.cat}" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"/>${rings ? stripes(f, rings, 1.6) : ""}${tip ? `<path d="${tip}" fill="none" stroke="${f.catDark}" stroke-width="6.4" stroke-linecap="round"/>` : ""}</g>`;
+}
+const catPaw = (f, x, y, rx = 4.2) => `<ellipse cx="${x}" cy="${y}" rx="${rx}" ry="2.7" fill="${f.catLight}"/><path d="M${x - 1.4} ${y - 0.6} v2 M${x + 1.2} ${y - 0.6} v2" stroke="${f.cat}" stroke-width="0.7" stroke-linecap="round"/>`;
+
+/** Морда. Точка отсчёта — центр. `eyes` — open, closed, narrow, wide. */
+function catHead(g, f, eyes = "open") {
+  const eye = (s) => {
+    const x = s * 6.6, y = -1.8;
+    if (eyes === "closed") return `<path d="M${n(x - 3.6)} ${n(y - 0.2)} q3.6 3.2 7.2 0" fill="none" stroke="${f.ink}" stroke-width="1.4" stroke-linecap="round"/>`;
+    const wide = eyes === "wide";
+    const ball = [
+      `<ellipse cx="${n(x)}" cy="${n(y)}" rx="${wide ? 4 : 3.6}" ry="${wide ? 4.4 : 4}" fill="${g.lin("catEye", [[0, f.catEyeDark], [0.45, f.catEye], [1, lt(f.catEye, 0.35)]])}" stroke="${f.ink}" stroke-width="0.7"/>`,
+      wide ? `<circle cx="${n(x)}" cy="${n(y + 0.2)}" r="2.7" fill="#1c1a22"/>` : `<ellipse cx="${n(x)}" cy="${n(y + 0.1)}" rx="1.35" ry="3.2" fill="#1c1a22"/>`,
+      `<circle cx="${n(x - 1.1)}" cy="${n(y - 1.6)}" r="${wide ? 1.2 : 0.95}" fill="#ffffff"/>${wide ? `<circle cx="${n(x + 1.3)}" cy="${n(y + 1.6)}" r="0.7" fill="#ffffff"/>` : ""}`,
+    ];
+    if (eyes !== "narrow") return `<g class="blink">${ball.join("")}</g>`;
+    // Прищур: веко опущено, внутренний край ниже — недоволен или задумал шалость.
+    const yl = y - 0.2 + (s < 0 ? -1.4 : 1), yr = y - 0.2 + (s < 0 ? 1 : -1.4);
+    return [...ball, `<path d="M${n(x - 4.6)} ${n(y - 5.4)} H${n(x + 4.6)} V${n(yr)} L${n(x - 4.6)} ${n(yl)}Z" fill="${f.cat}"/>`, `<path d="M${n(x - 4.4)} ${n(yl)} L${n(x + 4.4)} ${n(yr)}" stroke="${f.ink}" stroke-width="1.3" stroke-linecap="round"/>`].join("");
   };
+  const ear = (s) => `<path d="M${s * 14.8} -4.6 L${s * 13.6} -22 L${s * 2.2} -12.6Z" fill="${f.cat}"/><path d="M${s * 12.6} -8.6 L${s * 12} -17.8 L${s * 5.6} -12.4Z" fill="${f.catEar}"/>`;
   return [
-    `<path d="M-9.4 -4 L-8.4 -13.5 L-2 -8z M9.4 -4 L8.4 -13.5 L2 -8z" fill="${c.cat}"/><path d="M-7.6 -6 L-7.4 -10.8 L-4.2 -8z M7.6 -6 L7.4 -10.8 L4.2 -8z" fill="${c.catEar}"/>`,
-    `<ellipse cx="0" cy="0" rx="10.4" ry="8.8" fill="${c.cat}"/><ellipse cx="0" cy="3.4" rx="5" ry="3.6" fill="${c.catLight}"/>`,
-    `<path d="M-2.4 -8.6 v3 M0 -8.8 v3.6 M2.4 -8.6 v3" stroke="${c.catDark}" stroke-width="1" stroke-linecap="round"/>`,
-    eye(-4.2), eye(4.2),
-    `<path d="M-1.3 2.2 h2.6 l-1.3 1.5z" fill="${c.nose}"/><path d="M0 3.7 q-1.6 1.8 -3 0.4 M0 3.7 q1.6 1.8 3 0.4" fill="none" stroke="${c.ink}" stroke-width="0.7" stroke-linecap="round"/>`,
-    `<path d="M-6 3 l-6.4 -1 M-6 4.4 l-6.4 1.4 M6 3 l6.4 -1 M6 4.4 l6.4 1.4" stroke="${c.catLight}" stroke-width="0.6" stroke-linecap="round"/>`,
+    ear(-1), ear(1),
+    `<path d="M-15.4 -1 C-15.4 -10 -9 -13.8 0 -13.8 C9 -13.8 15.4 -10 15.4 -1 L19 3 L15.2 3.8 L17.4 7.6 L12.6 7.6 C9 10.8 5 12 0 12 C-5 12 -9 10.8 -12.6 7.6 L-17.4 7.6 L-15.2 3.8 L-19 3Z" fill="${fur(g, f)}"/>`,
+    stripes(f, "M0 -13.2 v4.6 M-4.6 -12.6 l0.9 3.9 M4.6 -12.6 l-0.9 3.9", 1.6),
+    stripes(f, "M-15 0.6 h3.6 M15 0.6 h-3.6 M-14.6 -3 l3.4 0.7 M14.6 -3 l-3.4 0.7", 1.2),
+    `<ellipse cx="0" cy="5.2" rx="7.8" ry="5.4" fill="${f.catLight}"/>`,
+    eye(-1), eye(1),
+    `<path d="M-2 2.3 h4 l-2 2.4z" fill="${f.nose}"/>`,
+    `<path d="M0 4.7 v1.3 M0 6 q-2.4 2.2 -4.4 0.2 M0 6 q2.4 2.2 4.4 0.2" fill="none" stroke="${f.ink}" stroke-width="0.85" stroke-linecap="round"/>`,
+    `<path d="M-8.6 4.4 L-22 2 M-8.6 5.8 L-22.6 6.2 M-8.6 7 L-21 10 M8.6 4.4 L22 2 M8.6 5.8 L22.6 6.2 M8.6 7 L21 10" stroke="${f.white}" stroke-width="0.6" stroke-linecap="round" opacity="0.9"/>`,
   ].join("");
 }
-const tailPath = (c, d, extra = "") => `<path class="tailwag" d="${d}" fill="none" stroke="${c.cat}" stroke-width="4.6" stroke-linecap="round"${extra}/>`;
-/** Байт. Точка отсчёта — пол под ним. Фигуры в профиль смотрят влево. */
-function catShape(c, shape, { eyes = "open" } = {}) {
+
+/**
+ * Байт. Точка отсчёта — середина у пола; смотрит влево или на зрителя. Фигуры: sit — сидит; lie — лежит; curl —
+ * спит клубком; walk — идёт; play — в прыжке за игрушкой; eat — ест; claw — точит когти, стоя; eyes — одни глаза
+ * из темноты; tail — один хвост.
+ */
+function catShape(g, f, shape, { eyes = "open", angry = false } = {}) {
+  const coat = fur(g, f);
+  const wag = angry ? "tailwag angry" : "tailwag";
   switch (shape) {
     case "lie": return [
-      tailPath(c, "M20 -6 q14 0 12 -12"),
-      `<ellipse cx="4" cy="-8.6" rx="19" ry="8.8" fill="${c.cat}"/><path d="M-4 -16 l2 5 M3 -17 l1 5.4 M10 -16.4 l0 5" stroke="${c.catDark}" stroke-width="1.6" stroke-linecap="round"/>`,
-      `<ellipse cx="-13" cy="-1.6" rx="6" ry="2.4" fill="${c.catLight}"/><ellipse cx="-3" cy="-1.2" rx="5" ry="2.2" fill="${c.catLight}"/>`,
-      at(-14, -13, catHead(c, eyes)),
+      catTail(f, "M22 -5 Q35 -3 31 4 Q26 6.6 6 3.6", "M30.6 -1 l3.4 -1.6 M29.6 4.4 l1.4 3 M20 3.2 l-0.6 3.4 M12 2.4 l-0.6 3.4", { cls: wag }),
+      `<path d="M-24 0 C-29 -8 -24 -19.6 -9 -21 C6 -23.4 23 -21 27 -10.6 C29 -4 27 0 22 0Z" fill="${coat}"/>`,
+      stripes(f, "M-1 -21.6 q-1.6 5 0.6 9.4 M7 -22.2 q-1.6 5 0.6 9.6 M15 -21.4 q-1.2 5 1 9 M22 -18 q-0.6 4 1 7.4"),
+      catPaw(f, -22, -2.2, 6), catPaw(f, -12.6, -1.6, 6),
+      at(-18, -22, catHead(g, f, eyes)),
     ].join("");
     case "curl": return [
-      `<ellipse cx="0" cy="-9" rx="17" ry="9.6" fill="${c.cat}"/><path d="M-2 -18 q4 2 3 6 M6 -17.6 q4 2 3 6" fill="none" stroke="${c.catDark}" stroke-width="1.6" stroke-linecap="round"/>`,
-      `<path d="M16 -8 q4 9 -10 8.4 q-12 -0.4 -18 -3" fill="none" stroke="${c.catDark}" stroke-width="4.4" stroke-linecap="round"/>`,
-      at(-9, -9.4, catHead(c, "closed"), " scale(0.86)"),
+      `<ellipse cx="1" cy="-11.6" rx="23" ry="12.4" fill="${coat}"/>`,
+      stripes(f, "M-2 -23.6 q-1.8 5 0.2 9 M6 -23.6 q-1 5 1 9.4 M14 -21.6 q0 4.6 2 8.4 M-10 -22 q-2.4 4.4 -1 8.4"),
+      // Голова уложена на лапы, хвост обнимает бок.
+      `<g transform="translate(-13.4 -9.6) rotate(-14)"><path d="M-12 -2.6 L-11.6 -14.6 L-3 -8.6Z M9 -6 L13.4 -15.4 L15.4 -4Z" fill="${f.cat}"/><path d="M-10.6 -5 L-10.4 -11.4 L-5.6 -8Z" fill="${f.catEar}"/><ellipse cx="0" cy="0" rx="13.4" ry="10" fill="${coat}"/>${stripes(f, "M0 -9.6 v3.6 M-4 -9 l0.8 3.2 M4 -9 l-0.8 3.2", 1.4)}<ellipse cx="-1" cy="4.2" rx="6.4" ry="4.2" fill="${f.catLight}"/><path d="M-9 -0.4 q3 2.6 6 0 M2 -0.4 q3 2.6 6 0" fill="none" stroke="${f.ink}" stroke-width="1.3" stroke-linecap="round"/><path d="M-2.6 2.2 h3.4 l-1.7 2z" fill="${f.nose}"/></g>`,
+      catTail(f, "M23 -9 Q27 2.6 8 2 Q-8 1.6 -17 -1", "M19 0.6 l1.6 3 M10 -0.6 l0.4 3.4 M1 -1 l0 3.4 M-8 -1.6 l-0.6 3.2", { cls: "", tip: "M-13 -0.2 L-17 -1" }),
     ].join("");
     case "walk": return [
-      tailPath(c, "M19 -19 q10 -4 8 -19"),
-      `<path d="M-9 -10 v10 M-3 -10 v10 M9 -10 v10 M15 -10 v10" stroke="${c.catDark}" stroke-width="3.6" stroke-linecap="round"/>`,
-      `<ellipse cx="3" cy="-17" rx="18" ry="8.4" fill="${c.cat}"/><path d="M0 -24.6 l1 5 M7 -25 l0 5 M13 -24 l-1 5" stroke="${c.catDark}" stroke-width="1.6" stroke-linecap="round"/>`,
-      at(-16, -22, catHead(c, eyes)),
+      catTail(f, "M21 -25 Q33 -33 30 -49", "M26.6 -31.6 l3.4 2.4 M29.4 -37.6 l3.6 0.6 M28.6 -43.6 l3.6 -0.8", { cls: wag, tip: "M30.4 -46 L30 -49" }),
+      `<path d="M-6 -14 L-3.4 -2.6 M19 -15 L22.6 -2.6" stroke="${f.catDark}" stroke-width="5.6" stroke-linecap="round"/>`,
+      catPaw(f, -3, -1.6, 3.8), catPaw(f, 23, -1.6, 3.8),
+      `<path d="M-19 -22 C-19 -30.6 -8 -32.6 4 -32 C18 -32 25 -26.6 24 -18.6 C23 -12 12 -10.6 0 -11.2 C-10 -11.2 -19 -13 -19 -22Z" fill="${coat}"/>`,
+      stripes(f, "M-3 -32 q-1.6 4.6 0.2 8.6 M5 -32.4 q-1.4 4.8 0.4 9 M13 -31.6 q-1 4.6 0.8 8.6 M20 -28.6 q-0.4 3.6 1 6.6"),
+      `<path d="M-13 -14 L-18.6 -2.6 M13 -14 L9 -2.6" stroke="${f.cat}" stroke-width="5.8" stroke-linecap="round"/>`,
+      catPaw(f, -19.4, -1.6, 3.8), catPaw(f, 8.4, -1.6, 3.8),
+      at(-21, -30, catHead(g, f, eyes)),
     ].join("");
     case "play": return [
-      tailPath(c, "M17 -24 q9 -8 4 -20"),
-      `<path d="M14 -14 l4 14 M9 -13 l1 13" stroke="${c.catDark}" stroke-width="3.8" stroke-linecap="round"/>`,
-      `<ellipse cx="2" cy="-15" rx="18" ry="8.2" fill="${c.cat}" transform="rotate(-20 2 -15)"/>`,
-      `<path d="M-12 -8 l-13 2 M-10 -5 l-12 9" stroke="${c.cat}" stroke-width="4" stroke-linecap="round"/><circle cx="-26" cy="-6" r="2.4" fill="${c.catLight}"/><circle cx="-22.6" cy="4.4" r="2.4" fill="${c.catLight}"/>`,
-      at(-15, -13, catHead(c, "wide")),
-      // Бантик на нитке — добыча.
-      `<g class="toy"><path d="M-37 -24 q-4 10 0 22" fill="none" stroke="${c.paper}" stroke-width="0.8"/><path d="M-37 -1 l-6 -4 v8z M-37 -1 l6 -4 v8z" fill="${c.eye}"/><circle cx="-37" cy="-1" r="1.6" fill="${c.topDark}"/></g>`,
+      // В прыжке: тело вытянуто, передние лапы вперёд, игрушечная мышь убегает.
+      `<ellipse cx="2" cy="1" rx="24" ry="3" fill="#1a0f1e" opacity="0.22"/>`,
+      `<g class="toy"><ellipse cx="-43" cy="-3.4" rx="5.6" ry="3.6" fill="${f.rugLight}"/><circle cx="-45.6" cy="-6.2" r="1.7" fill="${f.rugLight}"/><circle cx="-46.6" cy="-3" r="0.7" fill="${f.ink}"/><path d="M-37.6 -3 q4 -3 6 1" fill="none" stroke="${f.rugLight}" stroke-width="1.1" stroke-linecap="round"/></g>`,
+      catTail(f, "M24 -30 Q38 -34 37 -50", "M30.6 -32.6 l1.6 -3.4 M35.4 -37 l3.4 -1.4 M35.6 -43.6 l3.6 0", { cls: "tailwag angry", tip: "M37.2 -47 L37 -50" }),
+      `<path d="M17 -22 L27 -9.6 M22 -26 L33 -15" stroke="${f.catDark}" stroke-width="5.6" stroke-linecap="round"/>`,
+      catPaw(f, 28.6, -8.6, 3.6), catPaw(f, 34.4, -14, 3.6),
+      `<path d="M-21 -19 C-21 -27 -11 -33 2 -36 C16 -39 27 -35 27 -27 C27 -19.6 17 -15 4 -12.6 C-9 -10 -21 -11 -21 -19Z" fill="${coat}"/>`,
+      stripes(f, "M-2 -35 q-0.6 4.6 1.6 8.4 M6 -37 q-0.4 4.8 1.6 8.6 M14 -37.4 q0 4.6 1.8 8.2 M21 -35 q0.2 3.6 1.6 6.4"),
+      `<path d="M-13 -15 L-27 -9 M-16 -19 L-30 -16" stroke="${f.cat}" stroke-width="5.8" stroke-linecap="round"/>`,
+      catPaw(f, -28.4, -8.6, 3.8), catPaw(f, -31.4, -15.6, 3.8),
+      at(-19, -28, catHead(g, f, eyes === "open" ? "wide" : eyes), " rotate(-8)"),
     ].join("");
     case "eat": return [
-      tailPath(c, "M19 -6 q12 -1 13 -10"),
-      `<ellipse cx="5" cy="-10" rx="17" ry="10" fill="${c.cat}"/><path d="M2 -19 l1 5 M9 -19.6 l0 5" stroke="${c.catDark}" stroke-width="1.6" stroke-linecap="round"/>`,
-      `<ellipse cx="-7" cy="-1.4" rx="5" ry="2.2" fill="${c.catLight}"/>`,
-      `<g class="munch">${at(-13, -7.4, catHead(c, "closed"), " rotate(-16)")}</g>`,
+      catTail(f, "M22 -7 Q35 -6.6 37 -16", "M28.6 -9.6 l1 3.6 M34 -9 l2.6 2.4 M35 -14 l3.6 0.4", { cls: wag }),
+      `<path d="M-13 0 C-19 -6 -17 -18.6 -4 -22 C10 -25.4 23 -21 25 -10.6 C26 -4 23 0 19 0Z" fill="${coat}"/>`,
+      stripes(f, "M0 -22.6 q-1.6 4.8 0.4 9 M8 -23.6 q-1.4 5 0.6 9.4 M16 -21.6 q-0.8 4.6 1.2 8.4"),
+      catPaw(f, -10, -1.6, 4.6), catPaw(f, 14, -1.6, 5),
+      `<g class="munch">${at(-17, -11.6, catHead(g, f, "closed"), " rotate(-10)")}</g>`,
     ].join("");
     case "claw": return [
-      tailPath(c, "M5 -4 q14 2 15 -10"),
-      `<path d="M-3 -6 v6 M5 -6 v6" stroke="${c.catDark}" stroke-width="4" stroke-linecap="round"/>`,
-      `<ellipse cx="0" cy="-19" rx="8.8" ry="16" fill="${c.cat}" transform="rotate(-10 0 -19)"/>`,
-      `<g class="scratch"><path d="M-5 -30 l-10 -5 M-3 -26 l-11 1" stroke="${c.cat}" stroke-width="4" stroke-linecap="round"/><circle cx="-15.6" cy="-35.4" r="2.3" fill="${c.catLight}"/><circle cx="-14.6" cy="-25" r="2.3" fill="${c.catLight}"/></g>`,
-      at(-4, -40, catHead(c, "narrow")),
+      // Стоит на задних лапах, передние — на боку кресла.
+      catTail(f, "M11 -6 Q28 -5 26.6 -22", "M18 -5.6 l0.6 3.6 M25 -9 l3.4 1.6 M25.4 -16 l3.6 -0.4", { cls: "tailwag angry", tip: "M26.8 -19 L26.6 -22" }),
+      `<path d="M4 -8 L5.4 -2.6 M12 -9 L13.6 -2.6" stroke="${f.catDark}" stroke-width="6" stroke-linecap="round"/>`,
+      catPaw(f, 4.6, -1.6, 4.4), catPaw(f, 13.6, -1.6, 4.4),
+      `<path d="M-2 -2 C-9 -11 -14 -29 -8 -40 C-2 -46.6 9 -42 11 -29 C13 -18 17 -9 15 -2Z" fill="${coat}"/>`,
+      stripes(f, "M9.6 -32 q-4 0.4 -6.6 2.6 M11.4 -25.6 q-4 0.4 -6.6 2.6 M13 -19 q-4 0.4 -6.6 2.6 M14.4 -12.4 q-3.6 0.4 -6 2.4"),
+      `<path d="M-6.6 -28 Q-2 -21 -3 -9.6 Q-8 -17 -8.6 -25Z" fill="${f.catLight}" opacity="0.9"/>`,
+      `<g class="scratch"><path d="M-6 -35 L-23 -50.6 M-3 -38 L-19.6 -58.6" stroke="${f.cat}" stroke-width="5.8" stroke-linecap="round"/>${catPaw(f, -24.4, -51.6, 3.6)}${catPaw(f, -21, -59.6, 3.6)}</g>`,
+      at(3, -46.6, catHead(g, f, eyes === "open" ? "narrow" : eyes), " rotate(-10)"),
     ].join("");
     case "eyes": return [
-      `<ellipse cx="0" cy="-5" rx="20" ry="5.5" fill="#000" opacity="0.45"/>`,
-      `<g class="blink"><ellipse cx="-4.6" cy="-6" rx="3" ry="2.6" fill="#f2ea5c"/><ellipse cx="4.6" cy="-6" rx="3" ry="2.6" fill="#f2ea5c"/><ellipse cx="-4.6" cy="-6" rx="0.9" ry="2.3" fill="#15131a"/><ellipse cx="4.6" cy="-6" rx="0.9" ry="2.3" fill="#15131a"/></g>`,
+      // Темнота, из которой смотрят два глаза.
+      `<ellipse cx="0" cy="-5" rx="19" ry="6" fill="#120c18" opacity="0.55"/>`,
+      [-6, 6].map(x => `<ellipse cx="${x}" cy="-5.4" rx="4" ry="${eyes === "narrow" ? 2.4 : 3.4}" fill="${DAY.catEye}"/><ellipse cx="${x}" cy="-5.4" rx="1.2" ry="${eyes === "narrow" ? 2.2 : 3}" fill="#17131c"/><circle cx="${x - 1.2}" cy="-6.4" r="0.8" fill="#ffffff"/>`).join(""),
+      eyes === "narrow" ? `<path d="M-10.6 -8.6 L-2 -6.6 M10.6 -8.6 L2 -6.6" stroke="#120c18" stroke-width="2.2" stroke-linecap="round"/>` : "",
     ].join("");
-    case "tail": return `<path class="tailwag angry" d="M0 0 q12 -1 18 -9 q4 -6 10 -4" fill="none" stroke="${c.cat}" stroke-width="5" stroke-linecap="round"/><path d="M22 -11 l3 -2 M16 -6.6 l3 -2.6" stroke="${c.catDark}" stroke-width="1.6" stroke-linecap="round"/>`;
+    case "tail": return catTail(f, "M-2 -2 Q9 -4 10 -15 Q10.6 -23 16.6 -24", "M3.6 -3.4 l1.6 3.4 M8.6 -9 l3.4 1.2 M9.8 -16 l3.6 -0.4 M12 -22.6 l2 3", { cls: wag, tip: "M14 -23.4 L16.6 -24" });
     case "sit":
     default: return [
-      tailPath(c, "M9 -4 q14 2 13 -9"),
-      `<path d="M-11 0 q-2 -22 11 -23 q13 1 11 23z" fill="${c.cat}"/><ellipse cx="0" cy="-8" rx="5.6" ry="7.4" fill="${c.catLight}"/>`,
-      `<ellipse cx="-4.6" cy="-1.4" rx="3.6" ry="2.2" fill="${c.catLight}"/><ellipse cx="4.6" cy="-1.4" rx="3.6" ry="2.2" fill="${c.catLight}"/>`,
-      at(0, -27, catHead(c, eyes)),
+      catTail(f, "M10 -5 Q28 -3 26 -18", "M17 -4.6 l0.6 3.6 M24 -7.6 l3.4 1.8 M25 -14 l3.6 -0.2", { cls: wag, tip: "M26.2 -15 L26 -18" }),
+      `<path d="M-14 0 C-18.6 -12 -14 -28 0 -30.6 C14 -28 18.6 -12 14 0Z" fill="${coat}"/>`,
+      stripes(f, "M-15.4 -15 q3.4 -1.2 5.4 1 M-16 -9.6 q3.4 -1.2 5.6 1 M15.4 -15 q-3.4 -1.2 -5.4 1 M16 -9.6 q-3.4 -1.2 -5.6 1"),
+      `<path d="M-7 -25 Q0 -15 7 -25 Q6.4 -9 0 -5.6 Q-6.4 -9 -7 -25Z" fill="${f.catLight}"/>`,
+      `<rect x="-8.4" y="-14" width="6.6" height="13.4" rx="3.3" fill="${f.cat}"/><rect x="1.8" y="-14" width="6.6" height="13.4" rx="3.3" fill="${f.cat}"/>`,
+      catPaw(f, -5.2, -1.8), catPaw(f, 5.2, -1.8),
+      at(0, -39, catHead(g, f, eyes)),
     ].join("");
   }
 }
+
+/** Сколько места занимает каждая фигура Байта: [слева, сверху, справа, снизу] от его точки отсчёта. */
+const CAT_BOX = Object.freeze({
+  sit: [-22, -62, 30, 2], lie: [-38, -46, 37, 6], curl: [-30, -30, 28, 5], walk: [-42, -54, 34, 2], play: [-50, -56, 40, 3],
+  eat: [-38, -36, 40, 3], claw: [-30, -72, 30, 2], eyes: [-22, -18, 22, 8], tail: [-12, -30, 26, 4],
+});
 /**
- * Точка, где стоит Байт, и к какому слою он относится (`front` — на полу: там фигуры рисуются по глубине, и `depth`
- * — глубина, если она не совпадает с `y`). `herOnRug` — она сама на ковре: кот подвинется.
+ * Где Байт: точка на рисунке и слой. `pose` — её поза: он не садится ей на лицо и не прячется за ней.
+ * Слои: front — на полу, по глубине вместе с ней; lap — на сиденье кресла или у неё на коленях; sill, desk, top,
+ * box, under — на подоконнике, столе, шкафу, в коробке, под креслом. `only` — здесь его видно только так.
  */
-function catSpot(place, shape, { herOnRug = false, plaidOnHer = false, herLies = false, herOnStool = false } = {}) {
+function catSpot(place, shape, pose = null) {
+  const herLies = pose === "lie", inChair = pose === "chair" || pose === "nap";
+  const lap = { x: CHAIR.x + 2, y: CHAIR.y - (inChair ? 4 : 7), layer: "lap" };
   switch (place) {
-    case "bowl": return { x: shape === "walk" ? 92 : 80, y: 408, layer: "front" };
-    case "sill": return { x: 252, y: 262, layer: "sill" };
-    case "chair": return shape === "claw" ? { x: 222, y: 394, layer: "front" } : { x: 163, y: 346, layer: "lap" };
-    case "pillow": return { x: 300, y: 487, layer: "front" };
-    case "desk": return { x: 362, y: 318, layer: "desk" };
-    case "box": return { x: 312, y: 420, layer: "box" };
+    case "bowl": return { x: shape === "eat" ? 82 : shape === "walk" ? 104 : shape === "lie" ? 100 : 90, y: shape === "eat" ? 418 : 420, layer: "front" };
+    // Она за столом — её голова как раз перед серединой подоконника: Байт садится левее, а не за её затылком.
+    case "sill": return { x: pose === "desk" ? 226 : 262, y: 262, layer: "sill", shade: true };
+    case "chair": return shape === "claw" ? { x: 247, y: 396, layer: "front" } : lap;
+    case "pillow": return { x: 300, y: 485, layer: "front", bare: true };
+    case "desk": return { x: 364, y: 316, layer: "desk", shade: true };
+    case "box": return { x: BOX.x + BOX.w / 2 + 1, y: BOX.y + 21, layer: "box" };
     // Она лежит на ковре — Байт устраивается у неё под боком, а не на лице.
-    case "near": return herLies ? { x: 268, y: 484, layer: "front" } : { x: herOnRug ? 168 : 196, y: 486, layer: "front", big: true };
-    case "top": return { x: 60, y: 168, layer: "top" };
-    case "under": return { x: 163, y: 395, layer: "under" };
-    // Плед на ней — Байт устроился поверх него, у ног: рисуется после неё (`depth`), хотя стоит чуть дальше.
-    // Она на табуретке перед креслом (вешает гирлянду) — Байт сдвигается к краю, чтобы не прятаться за ней.
-    case "plaid": return plaidOnHer ? { x: 284, y: 452, layer: "front", depth: 460 } : { x: herOnStool ? 178 : 156, y: 372, layer: "front" };
+    case "near": return { x: herLies ? 262 : 176, y: 497, layer: "front", k: 1.2 };
+    // На шкафу — с правого края, хвостом к стене: так он закрывает календарь, а её рисунок остаётся виден.
+    case "top": return { x: 82, y: 166, layer: "top", shade: true, mirror: true };
+    case "under": return shape === "tail" ? { x: 216, y: 395, layer: "front", depth: 390 } : { x: CHAIR.x, y: 396, layer: "under", only: "eyes" };
+    case "plaid":
+      // Плед на ней — Байт под ним или поверх него; плед на кресле — хвост торчит из-под пледа.
+      if (herLies) return shape === "tail" ? { x: 297, y: 471, layer: "front", depth: 480 } : { x: 262, y: 455, layer: "front", depth: 480, bare: true };
+      if (shape === "tail") return inChair ? { x: 201, y: 389, layer: "lap" } : { x: 203, y: 339, layer: "lap", mirror: true };
+      return lap;
     case "rug":
-    default: return herLies ? { x: 268, y: 484, layer: "front" } : { x: herOnRug ? 306 : 214, y: herOnRug ? 462 : 452, layer: "front" };
+    default: return herLies ? { x: 252, y: 495, layer: "front" } : pose === "ribbon" ? { x: 300, y: 462, layer: "front" } : pose === "dance" ? { x: 312, y: 464, layer: "front" } : { x: 206, y: 456, layer: "front" };
   }
 }
-function cat(c, view, where) {
+function cat(g, f, view, pose) {
   const asked = CAT_SHAPES.includes(view?.shape) ? view.shape : "sit";
   const place = CAT_PLACES.includes(view?.place) ? view.place : "rug";
-  const spot = catSpot(place, asked, where);
+  const spot = catSpot(place, asked, pose);
   // На кресле Байт лежит или спит клубком: сидя он закрыл бы ей лицо, когда она в этом кресле.
-  const shape = spot.layer === "lap" && asked !== "lie" && asked !== "curl" ? "lie" : asked;
+  const shape = spot.only ?? (spot.layer === "lap" && asked !== "lie" && asked !== "curl" && !(asked === "tail" && place === "plaid") ? "lie" : asked);
   const key = view?.key ?? "";
   const eyes = shape === "lie" && (key === "голоден" || key === "игра" || key === "ласка" || key === "сыт") ? "closed" : key === "обижен" || key === "шалит" ? "narrow" : key === "голоден" ? "wide" : "open";
-  const facesRight = (place === "bowl" && shape !== "walk") ? false : place === "sill" || place === "desk";
-  const body = catShape(c, shape, { eyes });
-  const drawn = facesRight && shape !== "sit" && shape !== "curl" ? flip(body) : body;
+  const k = spot.k ?? 1, small = shape === "eyes" || shape === "tail";
+  const body = catShape(g, f, shape, { eyes, angry: key === "обижен" || key === "шалит" });
   const extra = [
-    shape === "curl" ? zzz(c, 10, -22) : "",
+    shape === "curl" ? `<g transform="scale(0.72)">${zzz(f, 14, -44)}</g>` : "",
     // Наигрался — рядом ленточка, которую он сторожит.
-    key === "игра" && shape === "lie" ? `<path d="M-30 -2 q-8 -6 -14 0 q-6 6 -13 0" fill="none" stroke="${c.eye}" stroke-width="2" stroke-linecap="round"/>` : "",
+    key === "игра" && shape === "lie" ? `<path d="M-32 -1.6 q-8 -7 -15 0 q-7 7 -14 0" fill="none" stroke="${f.eye}" stroke-width="2.4" stroke-linecap="round"/>` : "",
   ].join("");
-  // Из-под кресла и из коробки видны только глаза или хвост: они не увеличиваются, и область у них своя.
-  const small = shape === "eyes" || shape === "tail";
-  const k = small ? 1 : spot.big ? 1.56 : CAT_SCALE;
-  // У неё на коленях область ниже: её лицо над ним остаётся её лицом.
-  const [left, top, w, h] = small ? [-22, -20, 52, 26] : spot.layer === "lap" ? [-30, -26, 60, 32] : [-30, -50, 60, 56];
+  const [left, top, right, bottom] = CAT_BOX[shape];
+  const box = spot.mirror ? [spot.x - right * k, spot.y + top * k, (right - left) * k, (bottom - top) * k] : [spot.x + left * k, spot.y + top * k, (right - left) * k, (bottom - top) * k];
+  // Тень под ним: на полу — пятно, на подоконнике, столе и шкафу — полоска.
+  const under = small || spot.bare || spot.layer === "lap" || spot.layer === "box" || shape === "play" ? ""
+    : spot.shade ? `<ellipse cx="${spot.x + (shape === "sit" ? 3 : 0)}" cy="${spot.y + 0.6}" rx="${shape === "sit" ? 19 : 27}" ry="2.2" fill="#1a0f1e" opacity="0.24"/>`
+      : shadow(g, spot.x + (shape === "sit" ? 3 : 0), spot.y + 1, (shape === "sit" || shape === "claw" ? 22 : 32) * k, 4.6 * k, 0.34);
   return {
     layer: spot.layer, depth: spot.depth ?? spot.y,
-    svg: at(spot.x, spot.y, `<g class="cat ${shape}">${drawn}${extra}</g>`, ` scale(${k})`),
-    // Область нажатия — в единицах рисунка; от миски, чайника и клубка она отступает (`besideCare`).
-    zone: besideCare(within([spot.x + left * k, spot.y + top * k, w * k, h * k]), [spot.x, spot.y - (small ? 7 : 12 * k)]),
+    svg: under + at(spot.x, spot.y, `<g class="cat ${shape}">${body}${extra}</g>`, `${spot.mirror ? " scale(-1 1)" : ""}${k === 1 ? "" : ` scale(${k})`}`),
+    // Область нажатия — в единицах рисунка; от миски, чайника, клубка и Колючки она отступает (`besideCare`).
+    zone: besideCare(within(box), [spot.x, spot.y - (small ? 8 : 14 * k)]),
   };
 }
 
 // ── вся комната ──────────────────────────────────────────────────────────────
-const partIn = (view) => (PARTS.includes(view?.part) ? view.part : "день");
-
-/** За окном: небо, город и дождь. Зависит только от часа — страница рисует это один раз и при нажатиях не трогает. */
-export function drawBackdrop(part) {
-  const name = partIn({ part });
-  return `<g class="backdrop" pointer-events="none">${outside(name)}${rain(name)}</g>`;
-}
-
 /**
  * Комната без того, что за окном: картинка и поверх неё — слой нажатий. `view`:
  *   part — «утро», «день», «вечер», «ночь»;
@@ -752,78 +1439,90 @@ export function drawBackdrop(part) {
  */
 export function drawInside(view = {}) {
   const part = partIn(view);
-  const c = Object.fromEntries(Object.entries(DAY).map(([name, colour]) => [name, tint(colour, part)]));
+  const g = inks("r-");
+  const c = palette(part), f = palette(part, FIGURE_SOFT);
   const things = new Set(Array.isArray(view.things) ? view.things : []);
   const has = (key) => things.has(key);
   const pose = view.her ? (HER_POSES.includes(view.her.pose) ? view.her.pose : "desk") : null;
-  const she = pose ? her(c, pose, view.her.key, view) : {};
-  const herOnRug = pose === "dance" || pose === "ribbon" || pose === "lie";
+  const she = pose ? her(g, c, f, pose, view.her.key, view) : {};
   const plaidOnHer = pose === "lie" || pose === "nap" || pose === "chair";
-  const pet = view.cat ? cat(c, view.cat, { herOnRug, plaidOnHer: pose === "lie", herLies: pose === "lie", herOnStool: pose === "garland" }) : null;
+  const pet = view.cat ? cat(g, f, view.cat, pose) : null;
   const on = (layer) => (pet?.layer === layer ? pet.svg : "");
   // На полу — по глубине: кто ниже на рисунке, тот ближе к зрителю и закрывает дальнего.
   const herDepth = she.y ?? 400;
   const stage = [she.front ? { depth: herDepth, svg: she.front } : null, pet?.layer === "front" ? { depth: pet.depth, svg: pet.svg } : null]
     .filter(Boolean).sort((a, b) => a.depth - b.depth).map(item => item.svg).join("");
-  // Она стоит на полу ближе Байта и закрывает его собой — тогда и палец встречает её первой. Иначе первым — он:
-  // он маленький, а сидит у неё на коленях, выглядывает из-под кресла или из коробки.
-  const herCloser = Boolean(she.front && pet?.layer === "front" && herDepth > pet.depth);
-  const shade = /^#[0-9a-f]{6}$/iu.test(String(view.lamp ?? "")) ? view.lamp : DAY.lamp;
+  // Коробка стоит ближе к зрителю, чем её ступни за столом: тогда коробка рисуется после неё.
+  const boxNear = pose === "desk";
+  // Она стоит на полу ближе Байта и закрывает его собой — тогда и палец встречает её первой: он на кресле, под
+  // креслом, на подоконнике, а она перед ними. Иначе первым — он: он маленький, а сидит у неё на коленях, на полу
+  // перед ней или в коробке у её ног.
+  const herCloser = Boolean(she.front && pet && (pet.layer === "front" ? herDepth > pet.depth : !(pet.layer === "box" && boxNear)));
+  const shade = /^#[0-9a-f]{6}$/iu.test(String(view.lamp ?? "")) && has("абажур") ? view.lamp : DAY.lamp;
   // Вещь рисуется, только если она у человека есть. Плед, которым она укрыта, с кресла снят — нажать на него там нельзя.
-  const thing = (key, body) => (has(key) ? body : "");
+  const thing = (key, body) => (has(key) ? body() : "");
   const shown = (key) => has(key) && !(key === "плед" && plaidOnHer);
+  const stoolFree = !(she.stoolUsed || pose === "garland");
+  const box = boxBack(c) + on("box") + boxFront(g, c);
 
   const art = [
-    walls(c), windowFrame(c),
-    garland(c, part, { onTree: has("ёлка") }),
-    starMap(c),
-    thing("рисунок", drawing(c)),
-    thing("календарь", calendar(c)),
-    bookcase(c, has), on("top"),
-    sill(c),
-    thing("подушка", sillPillow(c)),
-    thing("место", sillSeat(c)),
+    glass(g, part), walls(g, c), windowFrame(g, c),
+    curtains(g, c), garland(g, c, part),
+    starMap(g, c),
+    thing("рисунок", () => drawing(c)),
+    thing("календарь", () => calendar(c)),
+    sill(g, c),
+    bookcase(g, c, has, part), on("top"),
+    thing("подушка", () => sillPillow(g, c)),
+    thing("место", () => sillSeat(g, c)),
     she.sillSeat ?? "", on("sill"),
-    cactus(c, 344, 262, view.plant !== "dry"),
-    thing("кактус", cactus(c, 368, 262, true, true)),
+    cactus(g, c, PLANT.x, 262, view.plant !== "dry"),
+    thing("кактус", () => cactus(g, c, 368, 262, true, true)),
+    // Свет лампы на стене — под мебелью и фигурами.
+    lampLight(g, part, shade), floorLight(g, part, shade),
     // Кресла, плед, стол.
-    armchair(c, 120), on("under"), plaidOnHer ? "" : (thing("плед", plaidOnChair(c, true)) || plaidOnChair(c, false)),
+    thing("кресло", () => armchair(g, c, CHAIR2.x, CHAIR2.y, { second: true, k: CHAIR2.k })),
+    armchair(g, c, CHAIR.x, CHAIR.y), on("under"), plaidOnHer ? "" : plaidOnChair(g, c, has("плед")),
     she.seat ?? "", on("lap"),
-    thing("кресло", armchair(c, 202, { second: true })),
-    desk(c),
-    at(4, 0, kettle(c, { steam: Boolean(view.tea) })),
-    notebook(c), on("desk"), lamp(c, part, shade),
-    she.stoolUsed || pose === "garland" ? "" : stool(c, STOOL.x, STOOL.y),
+    stoolFree ? stool(g, c, STOOL.rest, STOOL.y) : "",
+    desk(g, c),
+    notebook(c), teapot(g, c, { steam: Boolean(view.tea) }), on("desk"), lamp(g, c, part, shade),
     // Пол.
-    rug(c),
-    bowl(c, Boolean(view.fed)),
-    yarn(c),
-    boxBack(c), on("box"), boxFront(c),
-    catPillow(c),
-    thing("тапочки", at(0, -28, slippers(c))),
+    rug(g, c),
+    at(BOWL.dx, BOWL.dy, bowl(g, c, Boolean(view.fed))),
+    yarn(g, c),
+    boxNear ? "" : box,
+    catPillow(g, c),
+    thing("тапочки", () => slippers(g, c)),
     stage,
-    thing("ёлка", tree(c, part)),
-    lampGlow(part, shade),
+    boxNear ? box : "",
+    thing("ёлка", () => tree(g, c, part)),
+    airLight(g, part),
     `<rect class="frame" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" fill="none"/>`,
   ].join("");
 
   // Слой нажатий: кто ниже в списке, тот ближе к пальцу.
-  const thingZones = (front) => Object.entries(THING_ZONES).filter(([key]) => shown(key) && FRONT_THINGS.has(key) === front).map(([key, [label, box]]) => tap(`thing:${key}`, label, box));
+  const thingZone = ([key, [label, box]]) => tap(`thing:${key}`, label, box);
+  const owned = Object.entries(THING_ZONES).filter(([key]) => shown(key));
   const herZone = she.zone ? tap("her", "Аи", she.zone, "her") : "";
   // Нажать на Байта — погладить: слово то же, что у кнопки «Погладить» и у сердца.
   const catZone = pet ? tap("pet", "Байт", pet.zone, "cat") : "";
+  // «Место рядом с Байтом» — у него под боком и потому поверх него; но когда она сидит перед подоконником,
+  // закрывая место собой, палец встречает её.
+  const seatZone = owned.filter(([key]) => key === "место").map(thingZone);
   const zones = [
     tap("window", "Окно", [WIN.x, WIN.y, WIN.w, WIN.h]),
-    ...thingZones(false),
-    ...(herCloser ? [catZone, herZone] : [herZone, catZone]),
-    ...thingZones(true),
+    ...owned.filter(([key]) => !FRONT_THINGS.has(key)).map(thingZone),
+    ...(herCloser ? [catZone, ...seatZone, herZone] : [herZone, catZone, ...seatZone]),
+    ...owned.filter(([key]) => FRONT_THINGS.has(key) && key !== "место").map(thingZone),
     ...Object.entries(CARE_ZONES).map(([act, [label, id, box]]) => tap(act, label, box, id)),
   ].join("");
 
-  return `<g class="art" pointer-events="none">${art}</g><g class="zones">${zones}</g>`;
+  return `<g class="art" pointer-events="none">${g.defs()}${art}</g><g class="zones">${zones}</g>`;
 }
 
-/** Весь рисунок сразу — для снимков и тестов; страница рисует его двумя частями. */
+/** Весь рисунок сразу — для снимков и тестов; страница рисует его тремя слоями. */
 export function drawRoom(view = {}) {
-  return `${drawBackdrop(view?.part)}${drawInside(view)}`;
+  const part = partIn(view);
+  return `${drawBackdrop(part)}<g clip-path="url(#s-glass)" pointer-events="none"><g transform="translate(${WIN.x} ${WIN.y})">${drawRain(part)}</g></g>${drawInside(view)}`;
 }

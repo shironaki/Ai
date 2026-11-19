@@ -80,7 +80,7 @@ try {
   const seen = await page.evaluate(() => ({
     state: document.querySelector("#app").dataset.state, light: document.querySelector("#app").dataset.light,
     zones: [...document.querySelectorAll("#room .zones [data-act]")].map(node => node.dataset.act),
-    art: document.querySelectorAll("#room .art *").length, rain: document.querySelectorAll("#backdrop .rain").length,
+    art: document.querySelectorAll("#room .art *").length, rain: document.querySelectorAll(".rainbox .rain").length,
     foot: document.querySelector("#foot").textContent, scene: !document.querySelector("#scene").hidden,
   }));
   if (seen.state !== "ready") fail(`комната не открылась: состояние «${seen.state}», её слова: «${await said()}»`);
@@ -157,22 +157,26 @@ try {
 
   // ── 3. кто получает нажатие — на всех рисунках ─────────────────────────────
   console.log("3. Кто получает нажатие");
-  const report = await page.evaluate(async () => {
-    const scene = await import("./scene.js");
-    const backdrop = document.querySelector("#backdrop"), inside = document.querySelector("#inside");
-    const broken = new Map(), covered = new Map(), free = new Map();
-    let drawings = 0, checks = 0;
-    const note = (map, key, label) => { const entry = map.get(key) ?? { count: 0, where: [] }; entry.count += 1; if (entry.where.length < 3) entry.where.push(label); map.set(key, entry); };
-    const owner = (x, y) => { checks += 1; return document.elementFromPoint(x, y); };
-    /** Есть ли в области хоть одна точка, где нажатие получает она сама: сетка шесть на шесть. */
-    const reachable = (node, box) => {
-      for (let i = 1; i <= 6; i += 1) for (let j = 1; j <= 6; j += 1) if (owner(box.left + box.width * i / 7, box.top + box.height * j / 7)?.closest?.("[data-act]") === node) return true;
-      return false;
-    };
-    for (const part of ["день", "ночь"]) {
+  // По куску на каждый свет и набор вещей: один долгий вызов упирается в предел ожидания браузера.
+  const tally = { drawings: 0, checks: 0, broken: new Map(), covered: new Map(), free: new Map() };
+  const merge = (map, list) => { for (const { key, count, where } of list) { const entry = map.get(key) ?? { count: 0, where: [] }; entry.count += count; entry.where.push(...where.slice(0, 3 - entry.where.length)); map.set(key, entry); } };
+  for (const part of ["день", "ночь"]) for (const full of [false, true]) {
+    const chunk = await page.evaluate(async (part, full) => {
+      const scene = await import("./scene.js");
+      const backdrop = document.querySelector("#backdrop"), inside = document.querySelector("#inside");
+      const broken = new Map(), covered = new Map(), free = new Map();
+      let drawings = 0, checks = 0;
+      const note = (map, key, label) => { const entry = map.get(key) ?? { count: 0, where: [] }; entry.count += 1; if (entry.where.length < 3) entry.where.push(label); map.set(key, entry); };
+      const owner = (x, y) => { checks += 1; return document.elementFromPoint(x, y); };
+      /** Есть ли в области хоть одна точка, где нажатие получает она сама: сетка шесть на шесть. */
+      const reachable = (node, box) => {
+        for (let i = 1; i <= 6; i += 1) for (let j = 1; j <= 6; j += 1) if (owner(box.left + box.width * i / 7, box.top + box.height * j / 7)?.closest?.("[data-act]") === node) return true;
+        return false;
+      };
+      const things = full ? [...scene.THINGS] : [];
       backdrop.innerHTML = scene.drawBackdrop(part);
-      for (const things of [[], [...scene.THINGS]]) for (const pose of scene.HER_POSES) for (const place of scene.CAT_PLACES) for (const shape of scene.CAT_SHAPES) {
-        const label = `${part}/${things.length ? "вещи" : "пусто"}/${pose}/${shape}.${place}`;
+      for (const pose of scene.HER_POSES) for (const place of scene.CAT_PLACES) for (const shape of scene.CAT_SHAPES) {
+        const label = `${part}/${full ? "вещи" : "пусто"}/${pose}/${shape}.${place}`;
         inside.innerHTML = scene.drawInside({ part, her: { pose, key: "дело" }, cat: { shape, place, key: "сыт" }, plant: "dry", things, lamp: "#7fd0c8" });
         drawings += 1;
         for (const node of inside.querySelectorAll(".zones [data-act]")) {
@@ -196,12 +200,21 @@ try {
           else note(covered, `${act} ← ${who}`, label);
         }
       }
-    }
-    const acts = new Set(["window", ...scene.THINGS.map(key => `thing:${key}`)]);
-    for (const act of acts) if (!free.get(act)) note(broken, `${act}: нет ни одного рисунка, где место свободно целиком`, "все рисунки");
-    const list = (map) => [...map.entries()].map(([key, value]) => ({ key, ...value })).sort((a, b) => b.count - a.count);
-    return { drawings, checks, broken: list(broken), covered: list(covered) };
-  });
+      const list = (map) => [...map.entries()].map(([key, value]) => ({ key, ...value }));
+      return { drawings, checks, broken: list(broken), covered: list(covered), free: [...free.entries()], things: [...scene.THINGS] };
+    }, part, full);
+    tally.drawings += chunk.drawings;
+    tally.checks += chunk.checks;
+    merge(tally.broken, chunk.broken);
+    merge(tally.covered, chunk.covered);
+    for (const [act, count] of chunk.free) tally.free.set(act, (tally.free.get(act) ?? 0) + count);
+    tally.things = chunk.things;
+  }
+  for (const act of ["window", ...tally.things.map(key => `thing:${key}`)]) {
+    if (!tally.free.get(act)) tally.broken.set(`${act}: нет ни одного рисунка, где место свободно целиком`, { count: 1, where: ["все рисунки"] });
+  }
+  const sorted = (map) => [...map.entries()].map(([key, value]) => ({ key, ...value })).sort((a, b) => b.count - a.count);
+  const report = { drawings: tally.drawings, checks: tally.checks, broken: sorted(tally.broken), covered: sorted(tally.covered) };
   console.log(`  рисунков ${report.drawings}, проверок ${report.checks}`);
   for (const item of report.broken) fail(`${item.key} — ${item.count} раз: ${item.where.join(" | ")}`);
   if (report.covered.length) console.log(`  фигура заслоняет вещь целиком (не ошибка — нажатие по праву её): ${report.covered.map(item => `${item.key} ×${item.count}`).join("; ")}`);
