@@ -1,12 +1,14 @@
 /**
- * Комната Аи — страница (мини-приложение, сборка 0.39.0): нажатия, связь с сердцем, раскладка по разметке.
+ * Комната Аи — страница (мини-приложение, сборка 0.40.0): нажатия, связь с сердцем, раскладка по разметке.
  *
  * Что нарисовать — `scene.js`; что показать по ответу сердца — `logic.js` (оба проверяются тестами без браузера).
  * Здесь — только то, чему нужен браузер и Telegram:
  *   • связь: `Telegram.WebApp.Serverless.call("room", { do }, (err, result) => …)` — платформа сама прикладывает
  *     подпись Telegram, а функция `endpoints/room` получает проверенного человека;
  *   • открыта не из Telegram (нет подписи) — витрина: комната по часам устройства, забота понарошку;
- *   • ошибка связи — словами в её реплике и кнопкой «Попробовать ещё раз», а не пустым экраном.
+ *   • ошибка связи — словами в её реплике и кнопкой «Попробовать ещё раз», а не пустым экраном;
+ *   • её картинки (папка `her/`, с 0.40.0): грузится только та, что нужна сейчас; не загрузилась — она нарисована
+ *     кодом, как раньше, а комната открывается в любом случае.
  */
 import * as scene from "./scene.js";
 import * as logic from "./logic.js";
@@ -14,8 +16,8 @@ import * as logic from "./logic.js";
 // Имена берутся из модулей целиком, а не по одному. Страница — четыре файла, и после новой публикации браузер
 // может какое-то время держать старую копию любого из них. Импорт по именам такого не прощает: нет в старом
 // `scene.js` нового имени — и страница не запускается вовсе. Так имя просто окажется пустым; всё, что добавлено
-// после первой публикации (сейчас — `drawRain`), перед вызовом проверяется.
-const { drawBackdrop, drawRain, drawInside } = scene;
+// после первой публикации (`drawRain`, `spriteOf`, `drawSprite`), перед вызовом проверяется.
+const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite } = scene;
 const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, refused, explain, unwrap, demoLook, demoCare, demoPick } = logic;
 
 const tg = window.Telegram?.WebApp ?? null;
@@ -27,11 +29,73 @@ const canCall = Boolean(inTelegram && tg.Serverless && typeof tg.Serverless.call
 const local = /^(?:localhost|127\.0\.0\.1)$/u.test(location.hostname);
 const params = local ? Object.fromEntries(new URLSearchParams(location.hash.replace(/^#/u, ""))) : {};
 const WAIT_MS = 20_000;
+// Сколько ждать её картинку, прежде чем нарисовать её кодом. Придёт позже — картинка встанет на место.
+const SPRITE_WAIT_MS = 6_000;
 
 let state = { ...blank(new Date().getHours()), demo: !inTelegram };
 let header = "";
 // Что уже нарисовано: рисунок меняется, только когда изменилось то, что на нём видно.
 const drawn = { part: "", view: "" };
+
+// ── Она картинкой ────────────────────────────────────────────────────────────
+// Картинка на каждое её состояние — отдельным модулем в папке `her/`: `export default { w, h, cx, src }`. Модуль
+// грузится, когда понадобился. Его определение кладётся в рисунок один раз (в «кладовую», `<defs id="store">`), а
+// комната при каждой перерисовке только ссылается на него — так она не моргает от нажатий.
+// `sprites`: имя → спрайт; `false` — не загрузился (она нарисована кодом); имени нет — ещё в пути (её пока не видно).
+const sprites = {};
+const asked = new Set();
+const kept = [];
+const canPaint = typeof spriteOf === "function" && typeof drawSprite === "function";
+
+/** Определение картинки — в кладовую рисунка. Кладовой в разметке нет (старая копия `index.html`) — создаётся. */
+function store(name, sprite) {
+  const room = $("room");
+  if (!room) return false;
+  let shelf = $("store");
+  if (!shelf) {
+    shelf = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    shelf.id = "store";
+    room.prepend(shelf);
+  }
+  const holder = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  // Негодную картинку рисунок не примет — вернёт пустую строку.
+  holder.innerHTML = drawSprite(name, sprite);
+  if (!holder.firstChild) return false;
+  shelf.append(holder);
+  return true;
+}
+/** Картинка разобрана заранее — тогда она появляется сразу целиком, а не кусками. */
+function decoded(sprite) {
+  try {
+    const image = new Image();
+    image.src = sprite.src;
+    kept.push(image);
+    return typeof image.decode === "function" ? image.decode().catch(() => {}) : Promise.resolve();
+  } catch { return Promise.resolve(); }
+}
+function settle(name, sprite) {
+  if (sprites[name] === sprite || (sprites[name] && !sprite)) return;
+  sprites[name] = sprite;
+  // Перерисовать — только если на рисунке сейчас нужна именно эта картинка: лишняя перерисовка запускает заново
+  // гирлянду и хвост Байта.
+  if (spriteOf(viewOf(state)) !== name) return;
+  drawn.view = "";
+  paint();
+}
+function fetchSprite(name) {
+  if (!canPaint || !name || asked.has(name)) return;
+  asked.add(name);
+  const late = setTimeout(() => settle(name, false), SPRITE_WAIT_MS);
+  import(`./her/${name}.js`)
+    .then(async (module) => {
+      const sprite = module?.default;
+      if (!sprite || typeof sprite.src !== "string") throw new Error("empty");
+      await decoded(sprite);
+      clearTimeout(late);
+      settle(name, store(name, sprite) ? sprite : false);
+    })
+    .catch(() => { clearTimeout(late); settle(name, false); });
+}
 
 const plural = (count, one, few, many) => {
   const tens = count % 100, ones = count % 10;
@@ -74,7 +138,13 @@ function paint() {
     }
     drawn.part = view.part;
   }
-  if (drawn.view !== key) { $("inside").innerHTML = drawInside(view); drawn.view = key; }
+  if (canPaint) {
+    const name = spriteOf(view);
+    fetchSprite(name);
+    // Она с блокнотом — следующей может понадобиться картинка с кружкой (ей нальют чай): пусть будет под рукой.
+    if (name === "work" && sprites.work) fetchSprite("tea");
+  }
+  if (drawn.view !== key) { $("inside").innerHTML = drawInside(view, canPaint ? { sprites } : undefined); drawn.view = key; }
   const say = $("say");
   if (say.textContent !== state.said) {
     say.textContent = state.said;

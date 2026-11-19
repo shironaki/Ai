@@ -8,6 +8,7 @@
  *   bash scripts/verify.sh sheet /tmp/things.png things      каждая вещь крупно
  *   bash scripts/verify.sh sheet /tmp/zones.png zones        места нажатий поверх рисунка
  *   bash scripts/verify.sh sheet /tmp/x.png /tmp/spec.json   свой лист
+ *   bash scripts/verify.sh sheet /tmp/old.png her день drawn она, нарисованная кодом (запасной вид, без картинок)
  *
  * Зачем. Тесты знают, что рисунок цел, а `verify.sh page` — что всё нажимается. Похожа ли она на себя, не
  * закрыл ли кот её лицо, не ушла ли ночью в темноту, не легла ли полоса света поперёк ног — видно только
@@ -22,24 +23,37 @@
  * ширина, высота], "view": { "part": "ночь", "her": { "pose": "nap", "key": "сон" }, "cat": { "shape": "curl",
  * "place": "pillow", "key": "спит" }, "things": ["плед"], "tea": true, "fed": true, "plant": "wet", "lamp":
  * "#f08ab5" } }] }`. `view` — то же описание, что получает `drawRoom`; `crop` можно не писать. `width` —
- * ширина листа в точках: рисунки переносятся по ней; `zones` — показать места нажатий.
+ * ширина листа в точках: рисунки переносятся по ней; `zones` — показать места нажатий; `"sprites": false` у
+ * листа или у рисунка — она нарисована кодом, а не картинкой.
+ *
+ * Она на листах — как на странице: картинкой из `miniapp/her/` (с 0.40.0). Четвёртое слово `drawn` рисует её
+ * кодом: таким остаётся запасной вид, и его тоже надо видеть.
  *
  * Браузер — тот же, что у `verify.sh page`: зависимостью проекта он не становится, файл запускается из
- * временной папки. Аргументы: <корень репозитория> <снимок.png> [набор или файл.json] [час].
+ * временной папки. Аргументы: <корень репозитория> <снимок.png> [набор или файл.json] [час] [drawn].
  */
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
-const [, , root, out, set = "rooms", hour = "день"] = process.argv;
-if (!root || !out) { console.error("Нужно: node room-sheet.mjs <корень репозитория> <снимок.png> [rooms|her|cat|things|zones|файл.json] [час]"); process.exit(2); }
+const [, , root, out, set = "rooms", hour = "день", look = ""] = process.argv;
+if (!root || !out) { console.error("Нужно: node room-sheet.mjs <корень репозитория> <снимок.png> [rooms|her|cat|things|zones|файл.json] [час] [drawn]"); process.exit(2); }
 
 const load = (path) => import(pathToFileURL(resolve(root, path)).href);
 const scene = await load("miniapp/scene.js");
 const room = await load("tgcloud/lib/room.js");
 const { createPhrasebook } = await load("tgcloud/lib/phrasebook.js");
-const { WIDTH, HEIGHT, PARTS, HER_POSES, THINGS, drawRoom, drawInside } = scene;
+const { WIDTH, HEIGHT, PARTS, HER_POSES, THINGS, HER_SPRITES = {}, drawRoom, drawInside } = scene;
+
+// Её картинки — те же модули, что грузит страница. Нет модуля — на листе она будет нарисована кодом, как на
+// странице, когда картинка не загрузилась.
+const sprites = {};
+for (const name of Object.keys(HER_SPRITES)) {
+  try { sprites[name] = (await load(`miniapp/her/${name}.js`)).default; } catch { sprites[name] = false; }
+}
+const painted = look !== "drawn";
+const how = (off = false) => (painted && !off ? { sprites } : {});
 
 const part = PARTS.includes(hour) ? hour : "день";
 const ALL = [...THINGS];
@@ -50,7 +64,7 @@ const view = (when, pose, key, cat, things = ALL, extra = {}) => {
 };
 /** Место нажатия на рисунке: по `id` (она — `her`, Байт — `cat`) или по действию (`thing:плед`). */
 const zoneOf = (described, mark) => {
-  const found = new RegExp(`<g class="tap"[^>]*${mark}[^>]*><rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"`, "u").exec(drawInside(described));
+  const found = new RegExp(`<g class="tap"[^>]*${mark}[^>]*><rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"`, "u").exec(drawInside(described, how()));
   return found ? found.slice(1).map(Number) : [0, 0, WIDTH, HEIGHT];
 };
 const meet = (one, two) => one[0] < two[0] + two[2] && two[0] < one[0] + one[2] && one[1] < two[1] + two[3] && two[1] < one[1] + one[3];
@@ -95,10 +109,11 @@ const SETS = {
     ].map(([when, pose, key, cat, things, extra]) => ({ label: `${when} · ${pose}/${key} · ${cat}${things && !things.length ? " · без вещей" : ""}`, view: view(when, pose, key, cat, things, extra) })),
   }),
   her: () => ({
-    zoom: 1.25, dpr: 2,
-    views: herPairs().map(([pose, key]) => {
-      const described = view(part, pose, key, "eyes.under.обижен", ["плед"]);
-      return { label: `${pose} / ${key}`, view: described, crop: around(zoneOf(described, 'id="her"'), 150, 215) };
+    zoom: painted ? 1 : 1.25, dpr: 2,
+    // Картинкой — по одной на состояние (и «дело» с чаем в руках); кодом — каждая поза с каждым лицом из словаря.
+    views: (painted ? [["desk", "дело"], ["desk", "дело", { tea: true }], ["chair", "уют"], ["dance", "игра"], ["nap", "сон"], ["chair", "устала"], ["back", "обида"], ["desk", "ревность"]] : herPairs()).map(([pose, key, extra = {}]) => {
+      const described = view(part, pose, key, "eyes.under.обижен", ["плед"], extra);
+      return { label: `${painted ? "" : `${pose} / `}${key}${extra.tea ? " + чай" : ""}`, view: described, crop: around(zoneOf(described, 'id="her"'), painted ? 210 : 150, painted ? 300 : 215) };
     }),
   }),
   cat: () => ({
@@ -145,9 +160,10 @@ try {
 const zoom = sheet.zoom ?? 1;
 // Места нажатий: вещи — жёлтым, она — алым, Байт — синим, забота — зелёным; окно — одной рамкой, иначе оно красит всё.
 const paint = sheet.zones ? `<style>.zones rect{fill:#ffd400!important;fill-opacity:.14!important;stroke:#ffd400;stroke-width:1}.zones [data-act="window"] rect{fill-opacity:0!important;stroke-dasharray:4 3}.zones #her rect{fill:#ff2d6f!important;stroke:#ff2d6f}.zones #cat rect{fill:#2d9bff!important;stroke:#2d9bff}${["water", "tea", "feed", "play"].map(act => `.zones [data-act="${act}"] rect`).join(",")}{fill:#22d36b!important;stroke:#22d36b}</style>` : "";
-const cells = sheet.views.map(({ label = "", view: described, crop }) => {
+const cells = sheet.views.map(({ label = "", view: described, crop, sprites: wanted }) => {
+  const sprites_off = wanted === false;
   const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${drawRoom(described)}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${drawRoom(described, how(sheet.sprites === false || sprites_off))}</svg>`;
   return `<figure><img width="${w * zoom}" height="${h * zoom}" src="data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}"><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
 });
 // Рисунки идут строками и переносятся по ширине листа: вырезки бывают разного размера.

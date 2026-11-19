@@ -8,8 +8,10 @@
 #   bash scripts/verify.sh node24   только прогон на Node 24
 #   bash scripts/verify.sh page     страница комнаты в настоящем браузере: каждое место нажато, движение,
 #                                   старые копии (после любой правки в miniapp/; вторым словом — снимок)
-#   bash scripts/verify.sh sheet <снимок.png> [rooms|her|cat|things|zones|файл.json] [час]
+#   bash scripts/verify.sh sheet <снимок.png> [rooms|her|cat|things|zones|файл.json] [час] [drawn]
 #                                   лист рисунков комнаты — посмотреть глазами (после правки рисунка)
+#   bash scripts/verify.sh sprite <картинка.png> <имя> [высота] [качество] [ось]
+#                                   спрайт Аи: картинка на зелёном фоне → модуль miniapp/her/<имя>.js
 #
 # Зависимостей у проекта нет и не будет (на платформе нет npm), поэтому eslint и
 # Node 24 ставятся во временную папку (VERIFY_TMP, по умолчанию /tmp) при первом
@@ -127,6 +129,16 @@ sheet() {
   (cd "$PAGE" && node room-sheet.mjs "$ROOT" "$@")
 }
 
+# Спрайт Аи из картинки на зелёном фоне — в модуль страницы: сценарий — scripts/room-sprite.mjs.
+sprite() {
+  if [ -z "${2:-}" ]; then echo "Нужно: bash scripts/verify.sh sprite <картинка.png> <имя латиницей> [высота] [качество]"; return 1; fi
+  browser
+  cp "$ROOT/scripts/room-sprite.mjs" "$PAGE/room-sprite.mjs"
+  local input="$1"; shift
+  case "$input" in /*) ;; *) input="$PWD/$input" ;; esac
+  (cd "$PAGE" && node room-sprite.mjs "$ROOT" "$input" "$@")
+}
+
 case "${1:-quick}" in
   quick) lint; ci ;;
   all) lint; ci; node24 ;;
@@ -135,5 +147,6 @@ case "${1:-quick}" in
   node24) node24 ;;
   page) page "${2:-}" ;;
   sheet) shift; sheet "$@" ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  sprite) shift; sprite "$@" ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

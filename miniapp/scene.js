@@ -1,5 +1,5 @@
 /**
- * Комната Аи — рисунок (мини-приложение; нарисован заново в сборке 0.39.0).
+ * Комната Аи — рисунок (мини-приложение; нарисован заново в сборке 0.39.0; с 0.40.0 она сама — картинкой).
  *
  * Чистая функция: по описанию «что сейчас в комнате» возвращает разметку SVG. Ни страницы, ни Telegram здесь
  * нет — поэтому рисунок проверяется тестами (`tests/miniapp.test.mjs`): каждая поза Аи, каждая поза Байта и
@@ -21,6 +21,8 @@
  *     (Колючка, чайник, миска, клубок).
  *   • Её облик — по картинке профиля: длинные прямые чёрные волосы с ровной чёлкой, алые глаза, чокер с
  *     колечком, красный топ с открытыми плечами, чёрная куртка.
+ *   • С 0.40.0 она стоит в комнате картинкой в рост (спрайты в папке `her/`, раздел «Аи картинкой» ниже): так
+ *     выбрал владелец. Фигура, нарисованная кодом, осталась запасной — на случай, когда картинки нет.
  */
 
 export const WIDTH = 400;
@@ -1240,6 +1242,154 @@ function her(g, c, f, pose, key, view = {}) {
   return { ...placed(), zone };
 }
 
+// ── Аи картинкой ─────────────────────────────────────────────────────────────
+// С 0.40.0 её рисует не код. Владелец посмотрел на фигурку из простых форм и выбрал другой облик: картинку в рост,
+// как на портрете. Картинки (спрайты) лежат рядом, в папке `her/`, по модулю на состояние; их рисует нейросеть по
+// её портрету, а в модуль превращает `scripts/room-sprite.mjs`. Здесь — только то, какой спрайт нужен и куда его
+// поставить. Она стоит ближе к зрителю, чем мебель, и потому крупнее её: рост — три четверти рисунка, лицо видно.
+// Фигура, нарисованная кодом выше, осталась запасной: её видно, когда спрайта нет (старая копия страницы, обрыв).
+
+/** Спрайты и их высота на рисунке. Стоя — 390; `sleep` — она спит сидя на полу, закутавшись в плед. */
+export const HER_SPRITES = Object.freeze({ tea: 390, work: 390, play: 390, tired: 390, pout: 390, jealous: 390, sleep: 164 });
+/** Какой спрайт у какого состояния (ключи те же, что у лиц: `MOODS`). */
+const SPRITE_OF = Object.freeze({ "дело": "work", "уют": "tea", "игра": "play", "сон": "sleep", "устала": "tired", "обида": "pout", "ревность": "jealous" });
+/** Имя спрайта для этого вида комнаты; `null` — её в комнате нет. Ей налили чай — она с кружкой, а не с блокнотом. */
+export function spriteOf(view = {}) {
+  if (!view?.her) return null;
+  const name = Object.hasOwn(SPRITE_OF, view.her.key) ? SPRITE_OF[view.her.key] : "tea";
+  return name === "work" && view.tea ? "tea" : name;
+}
+/** Свет часа на картинке: она нарисована при дневном свете, вечером и ночью её накрывает тень комнаты. */
+const SPRITE_TINT = Object.freeze({ "утро": ["#ffe1cc", 0.05], "вечер": ["#2a1c45", 0.24], "ночь": ["#0e1238", 0.36] });
+/** Картинка спрайта попадает в разметку как есть — поэтому только строка base64 и ничего больше. */
+const SPRITE_SRC = /^data:image\/(?:webp|png);base64,[A-Za-z0-9+/=]+$/u;
+const fitsSprite = (sprite) => Boolean(sprite) && typeof sprite === "object" && Number.isFinite(sprite.w) && Number.isFinite(sprite.h) && sprite.w > 0 && sprite.h > 0
+  && typeof sprite.src === "string" && SPRITE_SRC.test(sprite.src);
+/**
+ * Сама картинка — её определение. На странице оно кладётся в рисунок один раз и остаётся там, а комната, сколько
+ * бы её ни перерисовывали, только ссылается на него по имени (`<use>`): так картинка не грузится заново при каждом
+ * нажатии и она не моргает. `drawRoom` кладёт определение сам — листам и тестам хватает одной строки.
+ */
+export function drawSprite(name, sprite) {
+  if (!Object.hasOwn(HER_SPRITES, name) || !fitsSprite(sprite)) return "";
+  return `<image id="r-her-${name}" width="${n(sprite.w)}" height="${n(sprite.h)}" preserveAspectRatio="none" href="${sprite.src}"/>`;
+}
+
+/**
+ * Где её ступни: у переднего края ковра. Ниже нельзя: на странице поверх нижнего края рисунка лежит полоса с её
+ * словами — ботинки ушли бы под неё. Сидя — чуть дальше от края.
+ */
+const FEET = 500, FEET_SIT = 490;
+/**
+ * Где она встаёт: у того, о чём её слова. Позу сердце шлёт по её реплике («за столом», «у полки», «в кресле»);
+ * картинок на каждую позу нет, но встать рядом с названным местом она может.
+ */
+const SPRITE_AT = Object.freeze({ desk: 252, shelf: 160, map: 160, chair: 190, lie: 190, nap: 224, sill: 226, back: 226, garland: 226, dance: 226, ribbon: 226 });
+/** Все её места по порядку: если на первом она закрыла бы Байта, встаёт на следующее. */
+const SPRITE_SPOTS = Object.freeze([252, 190, 226, 160]);
+/** Полуширина тела: волосы, куртка, плед на плечах. По ней считается, что она закрывает собой. */
+const SPRITE_HALF = Object.freeze({ tired: 70, jealous: 64 });
+/** Ноги: от и до по ширине, от оси тела. В игре одна нога отведена в сторону. */
+const SPRITE_LEGS = Object.freeze({ play: [-30, 72] });
+/** Сколько у двух областей общего. */
+const overlap = ([ax, ay, aw, ah], [bx, by, bw, bh]) => Math.max(0, Math.min(ax + aw, bx + bw) - Math.max(ax, bx)) * Math.max(0, Math.min(ay + ah, by + bh) - Math.max(ay, by));
+/** Что она закрывает, встав в точку x. Стоя: волосы и куртка — до бёдер, ниже — ноги. Сидя: голова с плечами и ниже — плед горкой. */
+function spriteCovers(name, x) {
+  const tall = HER_SPRITES[name];
+  if (name === "sleep") return [[x - 60, FEET_SIT - tall + 8, 120, tall * 0.5 - 8], [x - 92, FEET_SIT - tall * 0.5, 184, tall * 0.5]];
+  const half = SPRITE_HALF[name] ?? 58, [from, to] = SPRITE_LEGS[name] ?? [-30, 30], top = FEET - tall;
+  return [[x - half, top, half * 2, tall * 0.53], [x + from, top + tall * 0.53, to - from, tall * 0.47]];
+}
+/**
+ * Места Байта, когда она стоит картинкой: по нескольку на каждое слово сердца, от привычного к запасным. Она
+ * большая и стоит перед мебелью — он садится туда, где она его не закрывает (`herStand`).
+ */
+function catAhead(place, shape, herX, sits = false) {
+  const lap = (x) => ({ x, y: CHAIR.y - 7, layer: "lap" });
+  switch (place) {
+    case "sill": return [262, 294, 164, 148].map(x => ({ x, y: 262, layer: "sill", shade: true }));
+    case "chair": return shape === "claw" ? [{ x: 247, y: 396, layer: "front" }, { x: 190, y: 404, layer: "front" }, { x: 108, y: 398, layer: "front", mirror: true }] : [lap(172), lap(154)];
+    case "pillow": return [{ x: 300 + PILLOW_ASIDE, y: 485, layer: "front", bare: true }];
+    // «Рядом с ней» — у её ног. Сначала с той стороны, где нет клубка: сядь Байт на клубок — нажатие по праву
+    // клубка, а место для самого Байта ушло бы вниз, под полосу с её словами. Спит она на полу, в пледе, и
+    // занимает середину ковра — он садится у её плеча, выше клубка.
+    case "near": return sits ? [{ x: 104, y: 456, layer: "front" }] : (herX <= 226 ? [herX + 68, herX - 68] : [herX - 68, herX + 68]).map(x => ({ x, y: 497, layer: "front", k: 1.2 }));
+    case "under": return shape === "tail" ? [216, 194, 150].map(x => ({ x, y: 395, layer: "front", depth: 390 })) : [CHAIR.x, 150, 190].map(x => ({ x, y: 396, layer: "under", only: "eyes" }));
+    case "plaid": return shape === "tail" ? [{ x: 203, y: 339, layer: "lap", mirror: true }] : [lap(172), lap(154)];
+    case "rug": return [206, 150, 296, 112].map(x => ({ x, y: 456, layer: "front" }));
+    // Миска, стол, коробка, шкаф — в стороне от неё: места те же, что и без картинки.
+    default: return [catSpot(place, shape, null)];
+  }
+}
+/** Какую долю Байта она закрыла бы — меньше этого не в счёт: край хвоста за её волосами его не прячет. */
+const HIDDEN_OK = 0.15;
+/** Клубок — забота: сядь Байт на него, клубка не видно, а нажатие по праву клубка. Место на клубке — как закрытое ею. */
+const YARN = CARE_ZONES.play[2];
+/**
+ * Где встать ей и где сесть Байту, чтобы оба были видны. Сначала — её место по словам (`SPRITE_AT`) и его
+ * привычное место; занято — его запасные; все закрыты — она отходит на следующее своё место. Если свободной пары
+ * нет вовсе, берётся та, где он закрыт меньше всего.
+ */
+function herStand(name, pose, pet) {
+  const first = SPRITE_AT[pose] ?? SPRITE_SPOTS[0];
+  const spots = [first, ...SPRITE_SPOTS.filter(x => x !== first)];
+  if (!pet) return { x: first, spot: null };
+  const { asked, place } = catAsked(pet);
+  let best = null;
+  for (const x of spots) {
+    const covers = spriteCovers(name, x);
+    for (const spot of catAhead(place, asked, x, name === "sleep")) {
+      const box = catBoxAt(spot, catShapeAt(spot, asked, place));
+      const hidden = (covers.reduce((sum, cover) => sum + overlap(cover, box), 0) + overlap(YARN, box)) / (box[2] * box[3]);
+      if (hidden <= HIDDEN_OK) return { x, spot };
+      if (!best || hidden < best.hidden) best = { x, spot, hidden };
+    }
+  }
+  return best;
+}
+
+/**
+ * Что движется рядом с неподвижной картинкой: пар над кружкой, «z z Z» над спящей. Место — в долях картинки
+ * (ширины и высоты), снято с самих картинок; перерисовали спрайт — проверить по листу `her`.
+ */
+const SPRITE_MARKS = Object.freeze({ tea: ["steam", 0.11, 0.222], sleep: ["zzz", 0.6, 0.13] });
+
+/**
+ * Для тестов и листов: где она встанет картинкой и какая доля Байта при этом закрыта ею или лежит на клубке (по
+ * тем же меркам, по каким выбирается место). `null` — её в комнате нет.
+ */
+export function spriteStand(view = {}) {
+  const name = spriteOf(view);
+  if (!name) return null;
+  const pose = HER_POSES.includes(view.her.pose) ? view.her.pose : "desk";
+  const stand = herStand(name, pose, view.cat ?? null);
+  if (!stand.spot) return { name, x: stand.x, cat: null, hidden: 0 };
+  const { asked, place } = catAsked(view.cat);
+  const box = catBoxAt(stand.spot, catShapeAt(stand.spot, asked, place));
+  return { name, x: stand.x, cat: box, hidden: (spriteCovers(name, stand.x).reduce((sum, cover) => sum + overlap(cover, box), 0) + overlap(YARN, box)) / (box[2] * box[3]) };
+}
+
+/** Она — картинкой: ссылка на определение спрайта (`drawSprite`), тень под ногами, свет часа и место нажатия. */
+function herPainted(g, f, part, name, sprite, x) {
+  const tall = HER_SPRITES[name], sits = name === "sleep";
+  const k = tall / sprite.h, wide = sprite.w * k, axis = Number.isFinite(sprite.cx) && sprite.cx > 0.1 && sprite.cx < 0.9 ? sprite.cx : 0.5;
+  const feet = sits ? FEET_SIT : FEET, top = feet - tall, left = x - wide * axis;
+  const picture = `<use href="#r-her-${name}" transform="translate(${n(left)} ${n(top)}) scale(${Math.round(k * 10000) / 10000})"/>`;
+  const box = `x="${n(left)}" y="${n(top)}" width="${n(wide)}" height="${n(tall)}"`;
+  const tint = SPRITE_TINT[part];
+  // Тень часа ложится только на неё: маской служит сама картинка.
+  const shade = tint ? `<mask id="r-herMask" style="mask-type:alpha" maskUnits="userSpaceOnUse" ${box}>${picture}</mask><rect ${box} fill="${tint[0]}" opacity="${tint[1]}" mask="url(#r-herMask)"/>` : "";
+  const [mark, mx, my] = SPRITE_MARKS[name] ?? [], px = left + wide * (mx ?? 0), py = top + tall * (my ?? 0);
+  const alive = mark === "steam" ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity="0.6"><path d="M${n(px - 2.4)} ${n(py)} q-3 -4 0 -8 q3 -4 0 -7"/><path d="M${n(px + 2.8)} ${n(py - 1)} q3 -4 0 -8"/></g>`
+    : mark === "zzz" ? zzz(f, n(px), n(py)) : "";
+  return {
+    y: feet, painted: name,
+    front: `${shadow(g, x + (sits ? 0 : 2), feet - 2, sits ? wide * 0.44 : 36, sits ? 7 : 6, 0.34)}${picture}${shade}${alive}`,
+    // Нажатие — по ней самой, а не по всей картинке: волосы и плед по краям не отнимают нажатий у вещей за ней.
+    zone: sits ? [x - wide * 0.3, top + 14, wide * 0.6, tall - 20] : [x - 28, top + 6, 56, tall - 12],
+  };
+}
+
 // ── Байт ─────────────────────────────────────────────────────────────────────
 // Серый кот: полоски на спине, лбу и хвосте, светлая грудь и лапы, жёлтые глаза. Сидя — ей по колено.
 const fur = (g, f) => g.lin("fur", [[0, lt(f.cat, 0.2)], [0.55, f.cat], [1, mix(f.cat, f.catDark, 0.6)]]);
@@ -1364,6 +1514,8 @@ function catShape(g, f, shape, { eyes = "open", angry = false } = {}) {
   }
 }
 
+/** Когда она стоит картинкой, подушка Байта лежит правее: посреди ковра — её место. */
+const PILLOW_ASIDE = 32;
 /** Сколько места занимает каждая фигура Байта: [слева, сверху, справа, снизу] от его точки отсчёта. */
 const CAT_BOX = Object.freeze({
   sit: [-22, -62, 30, 2], lie: [-38, -46, 37, 6], curl: [-30, -30, 28, 5], walk: [-42, -54, 34, 2], play: [-50, -56, 40, 3],
@@ -1399,12 +1551,20 @@ function catSpot(place, shape, pose = null) {
     default: return herLies ? { x: 252, y: 495, layer: "front" } : pose === "ribbon" ? { x: 300, y: 462, layer: "front" } : pose === "dance" ? { x: 312, y: 464, layer: "front" } : { x: 206, y: 456, layer: "front" };
   }
 }
-function cat(g, f, view, pose) {
-  const asked = CAT_SHAPES.includes(view?.shape) ? view.shape : "sit";
-  const place = CAT_PLACES.includes(view?.place) ? view.place : "rug";
-  const spot = catSpot(place, asked, pose);
-  // На кресле Байт лежит или спит клубком: сидя он закрыл бы ей лицо, когда она в этом кресле.
-  const shape = spot.only ?? (spot.layer === "lap" && asked !== "lie" && asked !== "curl" && !(asked === "tail" && place === "plaid") ? "lie" : asked);
+/** О чём просит сердце: фигура и место Байта (незнакомые — «сидит на ковре»). */
+const catAsked = (view) => ({ asked: CAT_SHAPES.includes(view?.shape) ? view.shape : "sit", place: CAT_PLACES.includes(view?.place) ? view.place : "rug" });
+/** Какой фигурой он будет в этом месте. На кресле Байт лежит или спит клубком: сидя он закрыл бы ей лицо, когда она в этом кресле. */
+const catShapeAt = (spot, asked, place) => spot.only ?? (spot.layer === "lap" && asked !== "lie" && asked !== "curl" && !(asked === "tail" && place === "plaid") ? "lie" : asked);
+/** Сколько места он занимает на рисунке в этом месте этой фигурой. */
+function catBoxAt(spot, shape) {
+  const k = spot.k ?? 1, [left, top, right, bottom] = CAT_BOX[shape];
+  return within(spot.mirror ? [spot.x - right * k, spot.y + top * k, (right - left) * k, (bottom - top) * k] : [spot.x + left * k, spot.y + top * k, (right - left) * k, (bottom - top) * k]);
+}
+/** Байт. `spot` — место, выбранное заранее (когда она стоит картинкой: `herStand`); иначе — по её позе. */
+function cat(g, f, view, pose, given = null) {
+  const { asked, place } = catAsked(view);
+  const spot = given ?? catSpot(place, asked, pose);
+  const shape = catShapeAt(spot, asked, place);
   const key = view?.key ?? "";
   const eyes = shape === "lie" && (key === "голоден" || key === "игра" || key === "ласка" || key === "сыт") ? "closed" : key === "обижен" || key === "шалит" ? "narrow" : key === "голоден" ? "wide" : "open";
   const k = spot.k ?? 1, small = shape === "eyes" || shape === "tail";
@@ -1414,8 +1574,7 @@ function cat(g, f, view, pose) {
     // Наигрался — рядом ленточка, которую он сторожит.
     key === "игра" && shape === "lie" ? `<path d="M-32 -1.6 q-8 -7 -15 0 q-7 7 -14 0" fill="none" stroke="${f.eye}" stroke-width="2.4" stroke-linecap="round"/>` : "",
   ].join("");
-  const [left, top, right, bottom] = CAT_BOX[shape];
-  const box = spot.mirror ? [spot.x - right * k, spot.y + top * k, (right - left) * k, (bottom - top) * k] : [spot.x + left * k, spot.y + top * k, (right - left) * k, (bottom - top) * k];
+  const box = catBoxAt(spot, shape);
   // Тень под ним: на полу — пятно, на подоконнике, столе и шкафу — полоска.
   const under = small || spot.bare || spot.layer === "lap" || spot.layer === "box" || shape === "play" ? ""
     : spot.shade ? `<ellipse cx="${spot.x + (shape === "sit" ? 3 : 0)}" cy="${spot.y + 0.6}" rx="${shape === "sit" ? 19 : 27}" ry="2.2" fill="#1a0f1e" opacity="0.24"/>`
@@ -1424,7 +1583,7 @@ function cat(g, f, view, pose) {
     layer: spot.layer, depth: spot.depth ?? spot.y,
     svg: under + at(spot.x, spot.y, `<g class="cat ${shape}">${body}${extra}</g>`, `${spot.mirror ? " scale(-1 1)" : ""}${k === 1 ? "" : ` scale(${k})`}`),
     // Область нажатия — в единицах рисунка; от миски, чайника, клубка и Колючки она отступает (`besideCare`).
-    zone: besideCare(within(box), [spot.x, spot.y - (small ? 8 : 14 * k)]),
+    zone: besideCare(box, [spot.x, spot.y - (small ? 8 : 14 * k)]),
   };
 }
 
@@ -1436,17 +1595,28 @@ function cat(g, f, view, pose) {
  *   cat — { shape, place, key } или null;
  *   plant — "wet" | "dry"; things — ключи вещей; lamp — цвет абажура («#rrggbb»);
  *   fed — миска полна; tea — у неё в руках чай (чайник парит).
+ * `options.sprites` — её картинки, какие страница уже загрузила: `{ имя: { w, h, cx, src } }`. Есть нужная — она
+ * стоит картинкой. Ключа ещё нет — картинка грузится, и её самой пока не видно. Значение `false` (не загрузилась),
+ * негодная картинка или спрайтов не передали вовсе — она нарисована кодом, как до 0.40.0.
  */
-export function drawInside(view = {}) {
+export function drawInside(view = {}, options = {}) {
   const part = partIn(view);
   const g = inks("r-");
   const c = palette(part), f = palette(part, FIGURE_SOFT);
   const things = new Set(Array.isArray(view.things) ? view.things : []);
   const has = (key) => things.has(key);
-  const pose = view.her ? (HER_POSES.includes(view.her.pose) ? view.her.pose : "desk") : null;
-  const she = pose ? her(g, c, f, pose, view.her.key, view) : {};
-  const plaidOnHer = pose === "lie" || pose === "nap" || pose === "chair";
-  const pet = view.cat ? cat(g, f, view.cat, pose) : null;
+  const asked = view.her ? (HER_POSES.includes(view.her.pose) ? view.her.pose : "desk") : null;
+  const loaded = options && typeof options === "object" && options.sprites && typeof options.sprites === "object" ? options.sprites : null;
+  const name = asked && loaded ? spriteOf(view) : null, got = name && Object.hasOwn(loaded, name) ? loaded[name] : undefined;
+  const sprite = name && fitsSprite(got) ? got : null;
+  // Картинка ещё в пути: её самой не видно, а Байт уже сидит там, где будет сидеть при ней, — чтобы не прыгал.
+  const waits = Boolean(name) && got === undefined;
+  const ahead = Boolean(sprite || waits);
+  const pose = ahead ? null : asked;
+  const stand = ahead ? herStand(name, asked, view.cat) : null;
+  const pet = view.cat ? cat(g, f, view.cat, pose, stand?.spot) : null;
+  const she = sprite ? herPainted(g, f, part, name, sprite, stand.x) : pose ? her(g, c, f, pose, view.her.key, view) : {};
+  const plaidOnHer = sprite ? name === "tired" || name === "sleep" : pose === "lie" || pose === "nap" || pose === "chair";
   const on = (layer) => (pet?.layer === layer ? pet.svg : "");
   // На полу — по глубине: кто ниже на рисунке, тот ближе к зрителю и закрывает дальнего.
   const herDepth = she.y ?? 400;
@@ -1492,7 +1662,7 @@ export function drawInside(view = {}) {
     at(BOWL.dx, BOWL.dy, bowl(g, c, Boolean(view.fed))),
     yarn(g, c),
     boxNear ? "" : box,
-    catPillow(g, c),
+    ahead ? at(PILLOW_ASIDE, 0, catPillow(g, c)) : catPillow(g, c),
     thing("тапочки", () => slippers(g, c)),
     stage,
     boxNear ? box : "",
@@ -1521,8 +1691,12 @@ export function drawInside(view = {}) {
   return `<g class="art" pointer-events="none">${g.defs()}${art}</g><g class="zones">${zones}</g>`;
 }
 
-/** Весь рисунок сразу — для снимков и тестов; страница рисует его тремя слоями. */
-export function drawRoom(view = {}) {
-  const part = partIn(view);
-  return `${drawBackdrop(part)}<g clip-path="url(#s-glass)" pointer-events="none"><g transform="translate(${WIN.x} ${WIN.y})">${drawRain(part)}</g></g>${drawInside(view)}`;
+/**
+ * Весь рисунок сразу — для снимков и тестов; страница рисует его тремя слоями. `options` — как у `drawInside`.
+ * Определение её картинки (`drawSprite`) кладётся сюда же: рисунок целиком должен быть виден сам по себе.
+ */
+export function drawRoom(view = {}, options = {}) {
+  const part = partIn(view), name = spriteOf(view);
+  const store = name && options?.sprites ? drawSprite(name, options.sprites[name]) : "";
+  return `${drawBackdrop(part)}<g clip-path="url(#s-glass)" pointer-events="none"><g transform="translate(${WIN.x} ${WIN.y})">${drawRain(part)}</g></g>${store ? `<defs>${store}</defs>` : ""}${drawInside(view, options)}`;
 }
