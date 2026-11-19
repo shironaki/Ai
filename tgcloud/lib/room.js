@@ -505,6 +505,8 @@ export function nominative(phrase) {
   const end = words.findIndex(word => STOP_WORD.test(word.toLowerCase()));
   const head = end === -1 ? words : words.slice(0, end);
   if (!head.length || head.length > 4) return null;
+  // «Себя в шляпе» — «автопортрет в шляпе»: просьба «нарисуй себя в шляпе» — из её же списка умений.
+  if (head.length === 1 && Object.hasOwn(SELF_TITLE, head[0].toLowerCase())) return [SELF_TITLE[head[0].toLowerCase()], ...words.slice(end)].join(" ");
   const turned = [];
   for (const [index, word] of head.entries()) {
     const low = word.toLowerCase(), last = index === head.length - 1;

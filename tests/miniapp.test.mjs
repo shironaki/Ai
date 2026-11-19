@@ -118,11 +118,11 @@ test("рисунок: каждая поза Аи, каждая фигура и �
   // Абажур — любимого цвета человека.
   assert.ok(drawRoom({ ...bare, part: "вечер", things: ["абажур"], lamp: "#3f6fd8" }).includes("#3f6fd8"));
   assert.ok(!drawRoom({ ...bare, part: "вечер", things: [], lamp: "#3f6fd8" }).includes("#3f6fd9"));
-  // Час виден: вечером и ночью горит лампа, дождь идёт всегда.
+  // Час виден: вечером и ночью горит лампа. Неба не назвали (так отвечало сердце до 0.44.0) — за окном дождь, как прежде.
   for (const part of PARTS) {
     const markup = drawRoom({ ...bare, part });
     assert.equal(markup.includes('class="glow"'), part === "вечер" || part === "ночь", part);
-    assert.match(markup, /class="rain /u, `${part}: за окном всегда дождь`);
+    assert.match(markup, /class="rain /u, `${part}: неба не назвали — дождь`);
   }
   assert.notEqual(drawRoom({ ...bare, part: "день" }), drawRoom({ ...bare, part: "ночь" }));
   // Полная миска, политая Колючка и чай у неё в руках — видны.
