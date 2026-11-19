@@ -58,6 +58,12 @@ for (const name of Object.keys(HER_SPRITES)) {
 }
 const painted = look !== "drawn";
 const how = (off = false) => (painted && !off ? { sprites } : {});
+// Вторые кадры поз (0.45.0): на странице их переключают стили, на листе — слово `"frame": true` у рисунка: тогда
+// показан второй кадр вместо первого (без слова — первый, как и раньше).
+const frames = {};
+for (const [name] of Object.values(scene.HER_FRAMES ?? {})) {
+  try { frames[name] = (await load(`miniapp/her/${name}.js`)).default; } catch { /* кадра нет — рисунок без него */ }
+}
 
 const part = PARTS.includes(hour) ? hour : "день";
 const ALL = [...THINGS];
@@ -177,10 +183,13 @@ const zoom = sheet.zoom ?? 1;
 // Места нажатий: вещи — жёлтым, она — алым, Байт — синим, забота — зелёным; окно — одной рамкой, иначе оно красит всё.
 const paint = sheet.zones ? `<style>.zones rect{fill:#ffd400!important;fill-opacity:.14!important;stroke:#ffd400;stroke-width:1}.zones [data-act="window"] rect{fill-opacity:0!important;stroke-dasharray:4 3}.zones #her rect{fill:#ff2d6f!important;stroke:#ff2d6f}.zones #cat rect{fill:#2d9bff!important;stroke:#2d9bff}${["water", "tea", "feed", "play"].map(act => `.zones [data-act="${act}"] rect`).join(",")}{fill:#22d36b!important;stroke:#22d36b}</style>` : "";
 const lids = sheet.lids === false ? "<style>.wink{display:none}</style>" : "";
-const cells = sheet.views.map(({ label = "", view: described, crop, sprites: wanted }) => {
+const cells = sheet.views.map(({ label = "", view: described, crop, sprites: wanted, frame = false }) => {
   const sprites_off = wanted === false;
+  const base = how(sheet.sprites === false || sprites_off);
+  const shown = frame === true && base.sprites ? { sprites: { ...base.sprites, ...frames } } : base;
+  const second = frame === true ? "<style>.fr.a{display:none}</style>" : "";
   const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${lids}${drawRoom(described, how(sheet.sprites === false || sprites_off))}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${lids}${second}${drawRoom(described, shown)}</svg>`;
   return `<figure><img width="${w * zoom}" height="${h * zoom}" src="data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}"><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
 });
 // Рисунки идут строками и переносятся по ширине листа: вырезки бывают разного размера.
