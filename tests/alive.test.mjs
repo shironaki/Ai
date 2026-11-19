@@ -563,7 +563,7 @@ test("распорядок 0.44.0: она и Байт сами переходя�
   assert.deepEqual([logic.viewOf(sleepy).cat.shape, logic.viewOf(sleepy).cat.place], ["curl", "pillow"]);
 });
 
-test("сценка ставит её саму — и слова идут за рисунком: «значит, манга» — она в кресле с кружкой и говорит о манге; спящую сценка не будит", async () => {
+test("сценка ставит её саму — и слова идут за рисунком: «значит, манга» — она в кресле с книгой и говорит о манге; спящую сценка не будит", async () => {
   assert.deepEqual([...room.HER_CALM], ["дело", "уют", "игра"]);
   reset();
   const time = clock();
@@ -574,19 +574,20 @@ test("сценка ставит её саму — и слова идут за р
   const picked = await h.onRoom({ do: "pick", key: "book", pick: 1 }, from(id));
   // Ответ несёт её заново: она отдыхает («уют»), в кресле; первая её реплика — сами слова исхода.
   assert.match(picked.line, /^Значит, манга/u);
-  assert.deepEqual([picked.her.key, picked.her.pose, picked.her.line], ["уют", "chair", picked.line]);
-  assert.deepEqual(picked.her.beats[0], { pose: "chair", line: picked.line });
+  // С 0.45.0 она при этом читает (`read`): до того «значит, манга» показывалось картинкой с кружкой.
+  assert.deepEqual([picked.her.key, picked.her.pose, picked.her.line], ["уют", "read", picked.line]);
+  assert.deepEqual(picked.her.beats[0], { pose: "read", line: picked.line });
   // Дальше — её обычные реплики «с кружкой», кроме той, что тоже о кресле: о «Маленьком принце» после «значит, манга»
   // она не заговорит, и дважды подряд на одном месте не окажется.
-  const usual = fitting("она:уют", air).filter(line => room.herPose(line, "уют") !== "chair");
+  const usual = fitting("она:уют", air).filter(line => room.herPose(line, "уют") !== "read");
   assert.ok(usual.length >= 2, JSON.stringify(usual));
   assert.deepEqual(picked.her.beats.slice(1), usual.map(line => ({ pose: room.herPose(line, "уют"), line })));
 
-  // Страница: она в кресле с кружкой. Нажали на неё — говорит о манге, а не «я у стола с блокнотом».
+  // Страница: она в кресле с книгой. Нажали на неё — говорит о манге, а не «я у стола с блокнотом».
   const state = logic.applyPick(logic.applyLook(logic.blank(14), seen, NOON), picked);
   const view = logic.viewOf(state);
-  assert.deepEqual([view.her.pose, view.her.key, view.her.beat], ["chair", "уют", true]);
-  assert.equal(scene.spriteOf(view), "tea3");
+  assert.deepEqual([view.her.pose, view.her.key, view.her.beat], ["read", "уют", true]);
+  assert.equal(scene.spriteOf(view), "read");
   assert.deepEqual([state.said, logic.applyTap(state, "her").said], [picked.line, picked.line]);
   // Потом она живёт дальше — отдыхая: следующая реплика из тех же, со своим местом.
   const next = logic.nextBeat(state, "her");
@@ -594,18 +595,19 @@ test("сценка ставит её саму — и слова идут за р
   // Страница спросила комнату заново — она остаётся на своей реплике: обратно в кресло не прыгает.
   time.add(10 * 60_000);
   const tick = await h.onRoom({ do: "look", again: true }, from(id));
-  assert.deepEqual([tick.her.key, tick.her.pose, tick.her.line], ["уют", "chair", picked.line]);
+  assert.deepEqual([tick.her.key, tick.her.pose, tick.her.line], ["уют", "read", picked.line]);
   const ticked = logic.applyTick(next, tick, time.now());
   assert.deepEqual([ticked.her.beat, logic.changeOf(next, ticked).kind], [1, "same"]);
   // Зашёл заново, пока исход виден, — она там же и говорит то же.
   const again = await h.onRoom({ do: "look" }, from(id));
-  assert.deepEqual([again.her.key, again.her.pose, again.her.line], ["уют", "chair", picked.line]);
+  assert.deepEqual([again.her.key, again.her.pose, again.her.line], ["уют", "read", picked.line]);
   const entered = logic.applyLook(logic.blank(14), again, time.now());
   assert.ok(entered.said.split("\n").includes(picked.line), entered.said);
-  assert.equal(scene.spriteOf(logic.viewOf(entered)), "tea3");
-  // В чате — о том же месте: «чай, кресло, плед», а не «у стола с блокнотом».
+  assert.equal(scene.spriteOf(logic.viewOf(entered)), "read");
+  // В чате — о том же: «читаю в кресле», а не «у стола с блокнотом»; и не о другой книге, чем выбрана.
   await h.onMessage(message("зайду к тебе", { id }), KEY);
-  const inChair = fitting("она:уют", air).filter(line => room.herPose(line, "уют") === "chair");
+  const inChair = fitting("она:уют", air).filter(line => room.herPose(line, "уют") === "read");
+  assert.doesNotMatch(inChair.join(" "), /принц|манг/iu, "реплика «читаю» не называет книгу: её называет исход сценки или полка");
   assert.ok(inChair.length > 0 && inChair.some(line => last(id).includes(line)), last(id));
   // Через три часа исход больше не виден — она снова живёт по настроению: реплики её состояния, все до одной.
   time.set(NOON + room.FRESH_MS);
@@ -941,3 +943,191 @@ test("словарь 0.44.0: «у меня всегда дождь» не гов
   assert.equal(chats().length, 0, "модель не спрошена");
   assert.match(toChat(5)[0].text, /погод|город|выдумываю/u);
 });
+
+// ── сборка 0.45.0: торт на столе, полка с книгами, кадры внутри позы ─────────
+
+/** Вторые кадры поз — те же модули, что грузит страница. */
+const FRAME_SPRITES = Object.fromEntries(await Promise.all(Object.values(scene.HER_FRAMES ?? {}).map(async ([name]) => [name, (await import(`../miniapp/her/${name}.js`)).default])));
+
+test("торт 0.45.0: стоит на столе, как она и говорит, и рисуется после стола и лампы — мебель его не закрывает", () => {
+  // Что было (день рождения владельца, 19.11.2026): слова — «на столе торт со свечкой», рисунок — торт на табурете,
+  // задвинутом под стол, нарисованный раньше стола: ящик закрывал его целиком. Сердце было право, рисунок — нет.
+  const view = (things) => ({ part: "день", sky: "clear", her: null, cat: null, plant: "wet", things });
+  const bare = scene.drawInside(view([])), festive = scene.drawInside(view(["торт"]));
+  const zone = /data-act="thing:торт"[^>]*><rect x="([^"]+)" y="([^"]+)" width="([^"]+)" height="([^"]+)"/u.exec(festive).slice(1).map(Number);
+  // Место нажатия — над столешницей (её верх — 316, ящик — 322–345) и в её ширину (293–405): торт на столе.
+  assert.ok(zone[1] + zone[3] <= 326 && zone[1] >= 270, `место торта по высоте: ${zone}`);
+  assert.ok(zone[0] >= 293 && zone[0] + zone[2] <= 405, `место торта по ширине: ${zone}`);
+  // Рисуется после стола и лампы: всё, что торт добавил в рисунок, стоит в разметке позже ручки ящика и света лампы.
+  const cakeAt = festive.indexOf("url(#r-cake)"), deskAt = festive.lastIndexOf("url(#r-deskTop)"), lampAt = festive.lastIndexOf("url(#r-shade)");
+  assert.ok(deskAt > 0 && lampAt > deskAt && cakeAt > lampAt, `стол в разметке на ${deskAt}, лампа — на ${lampAt}, торт — на ${cakeAt}`);
+  assert.equal(bare.indexOf("url(#r-cake)"), -1, "без дня рождения торта нет");
+  assert.ok(festive.length > bare.length);
+  // Слова о торте называют то же место, что и рисунок.
+  assert.match(pool("вещь:торт")[0], /^На столе торт со свечкой/u);
+  assert.doesNotMatch(pool("вещь:торт").join(" "), /табурет/u);
+  // Проверка «каждая вещь видна» — в `verify.sh page`: её сценарий лежит рядом и вызывается оттуда.
+  assert.match(read("scripts/verify.sh"), /\n {2}\(cd "\$PAGE" && node room-check\.mjs [^\n]+\n {2}seen\n\}/u);
+  assert.match(read("scripts/room-seen.mjs"), /const SEEN = \{ "день": 0\.3, "ночь": 0\.15 \};/u);
+});
+
+test("кадры 0.45.0: второй кадр — та же поза, а не новая; лежит поверх первой и в списки поз не входит; не загрузился — стоит одной картинкой", () => {
+  const frames = Object.entries(scene.HER_FRAMES);
+  assert.deepEqual(frames.map(([base, [name, how]]) => `${base}>${name}:${how}`), ["tea3>tea3b:sip", "home-tea3>home-tea3b:sip", "work>workb:glance", "home-work>home-workb:glance", "home-play2>home-play2b:dance"]);
+  for (const [base, [name]] of frames) {
+    assert.ok(Object.hasOwn(scene.HER_SPRITES, base), base);
+    assert.ok(!Object.hasOwn(scene.HER_SPRITES, name), `${name}: кадр — не поза`);
+    assert.equal(scene.frameOf(base), name);
+    // Та же фигура того же роста: кадр кладётся с числами первой картинки (`tall`, место), своя у него только ось.
+    assert.equal(FRAME_SPRITES[name].h, SPRITES[base].h, name);
+    assert.ok(Math.abs(FRAME_SPRITES[name].w - SPRITES[base].w) <= 16, `${name}: ширина ${FRAME_SPRITES[name].w} против ${SPRITES[base].w}`);
+    assert.equal(FRAME_SPRITES[name].blink, undefined, `${name}: веки живут в первом кадре`);
+  }
+  for (const none of ["tea", "walk", "tea3b", "constructor", "", null, undefined, 7]) assert.equal(scene.frameOf(none), null, String(none));
+  // Кадр не попадает ни в один список поз: ни днём, ни вечером, ни по реплике.
+  const names = new Set(frames.map(([, [name]]) => name));
+  for (const key of Object.keys(scene.MOODS)) for (const part of scene.PARTS) for (const pose of scene.HER_POSES) for (const beat of [false, true]) {
+    for (const name of scene.spritesOf({ part, her: { pose, key, beat }, things: [] })) assert.ok(!names.has(name), `${key} ${part} ${pose}: ${name}`);
+  }
+
+  // На рисунке: оба кадра внутри «дыхания», второй — поверх первого и со своим видом движения.
+  const seated = { part: "день", sky: "clear", her: { pose: "chair", key: "уют", beat: true }, cat: null, plant: "wet", things: [] };
+  assert.equal(scene.spriteOf(seated), "tea3");
+  const both = scene.drawRoom(seated, { sprites: { ...SPRITES, ...FRAME_SPRITES } });
+  assert.match(both, /<g class="alive"><g class="fr a sip"><use href="#r-her-tea3" [^>]+\/><use class="wink" href="#r-her-tea3-blink"[^>]+\/><g class="steam"/u, "первый кадр: картинка, веки и пар над кружкой — вместе");
+  assert.match(both, /<\/g><g class="fr b sip"><use href="#r-her-tea3b" [^>]+\/><\/g><\/g>/u, "второй кадр — следом, поверх");
+  assert.match(both, /<image id="r-her-tea3b" /u, "определение второго кадра — в рисунке");
+  // Тот же сдвиг и тот же размер: кадр ложится на ту же фигуру (ось тела у кадров общая, рост — первой картинки).
+  const at = (name) => new RegExp(`<use href="#r-her-${name}" transform="translate\\(([-\\d.]+) ([-\\d.]+)\\) scale\\(([\\d.]+)\\)"`, "u").exec(both).slice(1).map(Number);
+  const [ax, ay, ak] = at("tea3"), [bx, by, bk] = at("tea3b");
+  assert.deepEqual([ay, ak], [by, bk]);
+  assert.ok(Math.abs((ax + SPRITES.tea3.w * SPRITES.tea3.cx * ak) - (bx + FRAME_SPRITES.tea3b.w * FRAME_SPRITES.tea3b.cx * bk)) < 0.2, "ось тела у кадров — в одной точке");
+  // Вечером — пара в свитере; пишет в блокнот — «glance»; танец в свитере — «dance».
+  for (const [view, base, name, how] of [
+    [{ ...seated, part: "вечер" }, "home-tea3", "home-tea3b", "sip"],
+    [{ ...seated, her: { pose: "desk", key: "дело", beat: true } }, "work", "workb", "glance"],
+    [{ ...seated, part: "ночь", her: { pose: "desk", key: "дело", beat: true, wear: "home" } }, "home-work", "home-workb", "glance"],
+    [{ ...seated, part: "вечер", her: { pose: "dance", key: "игра", beat: true } }, "home-play2", "home-play2b", "dance"],
+  ]) {
+    assert.equal(scene.spriteOf(view), base);
+    const drawn = scene.drawRoom(view, { sprites: { ...SPRITES, ...FRAME_SPRITES } });
+    assert.match(drawn, new RegExp(`<g class="fr a ${how}"><use href="#r-her-${base}" `, "u"), base);
+    assert.match(drawn, new RegExp(`<g class="fr b ${how}"><use href="#r-her-${name}" `, "u"), name);
+  }
+  // Второй кадр не загружен (или у позы его нет) — она одной картинкой, как раньше: ни одного слоя кадров.
+  const single = scene.drawRoom(seated, PAINTED);
+  assert.doesNotMatch(single, /class="fr /u);
+  assert.match(single, /<g class="alive"><use href="#r-her-tea3" /u);
+  assert.doesNotMatch(scene.drawRoom({ ...seated, her: { pose: "dance", key: "игра", beat: true } }, { sprites: { ...SPRITES, ...FRAME_SPRITES } }), /class="fr /u, "в куртке у танца второго кадра нет");
+  // Негодный кадр — тоже одной картинкой.
+  assert.doesNotMatch(scene.drawRoom(seated, { sprites: { ...SPRITES, tea3b: { ...FRAME_SPRITES.tea3b, src: "javascript:alert(1)" } } }), /class="fr |alert/u);
+
+  // Страница: движение кадров — стилями; при «меньше движения» второй кадр не показывается вовсе.
+  const html = read("miniapp/index.html");
+  assert.match(html, /#room \.fr\.b \{ opacity: 0; \}/u);
+  for (const how of ["sip", "glance", "dance"]) for (const layer of ["a", "b"]) assert.match(html, new RegExp(`#room \\.${how}\\.${layer} \\{ animation: \\w+ [\\d.]+s linear infinite; \\}`, "u"), `${how}.${layer}`);
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\) \{\n {2}#room \*,/u);
+  // И грузит второй кадр страница сама — после самой позы; старая копия `scene.js` кадров не знает, и это не поломка.
+  const app = read("miniapp/app.js");
+  assert.match(app, /const frameName = \(name\) => \(typeof frameOf === "function" \? frameOf\(name\) : null\);/u);
+  assert.match(app, /if \(sprites\[name\]\) fetchSprite\(frameName\(name\)\);/u);
+});
+
+test("полка с книгами 0.45.0: нажали — она берёт книгу и садится читать; полчаса или до чая; спящую и обиженную книга не трогает", async () => {
+  reset();
+  const time = clock();
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const before = await h.onRoom({ do: "look" }, from(5));
+  assert.ok(room.HER_CALM.includes(before.her.key), before.her.key);
+  assert.notEqual(before.her.pose, "read");
+
+  // Взяла книгу: слова — из запаса «полка», она сама — заново: отдыхает, в кресле с книгой, и говорит об этом.
+  const took = await h.onRoom({ do: "book" }, from(5));
+  assert.deepEqual([took.ok, took.do, took.taken, took.again], [true, "book", true, false]);
+  assert.ok(pool("полка").includes(took.line), took.line);
+  assert.deepEqual([took.her.key, took.her.pose], ["уют", "read"]);
+  assert.match(took.her.line, /^Читаю в кресле/u);
+  assert.deepEqual(took.her.beats[0], { pose: "read", line: took.her.line });
+  assert.ok(took.her.beats.length >= 3 && took.her.beats.slice(1).every(beat => beat.pose !== "read"), JSON.stringify(took.her.beats.map(beat => beat.pose)));
+  assert.ok(roomOf(5).book > 0);
+  // Заботой это не считается и в отношения не идёт.
+  assert.equal(roomOf(5).cared, "");
+
+  // Страница: она в кресле с книгой (картинка «read»), слова в полосе — её ответ; нажали на неё — говорит, что читает.
+  const state = logic.applyBook(logic.applyLook(logic.blank(14), before, NOON), took);
+  const view = logic.viewOf(state);
+  assert.deepEqual([view.her.pose, view.her.key, state.said, state.busy], ["read", "уют", took.line, ""]);
+  assert.equal(scene.spriteOf(view), "read");
+  assert.equal(scene.spriteOf({ ...view, part: "вечер" }), "home-read");
+  assert.equal(logic.applyTap(state, "her").said, took.her.line);
+  // Сидит в кресле — на том же месте, что с кружкой; плед остаётся на кресле.
+  assert.equal(scene.castOf(view, PAINTED).her.x, scene.castOf({ ...view, her: { ...view.her, pose: "chair" } }, PAINTED).her.x);
+
+  // Нажали ещё раз — она уже читает: другие слова, отметка времени прежняя.
+  const mark = roomOf(5).book;
+  time.add(60_000);
+  const twice = await h.onRoom({ do: "book" }, from(5));
+  assert.deepEqual([twice.taken, twice.again, twice.her.pose], [true, true, "read"]);
+  assert.ok(pool("полка:ещё").includes(twice.line), twice.line);
+  assert.equal(roomOf(5).book, mark);
+  // Зашёл заново или страница спросила сама — она читает; и в чате говорит о том же.
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(5))).her.pose, "read");
+  await h.onMessage(message("зайду к тебе"), KEY);
+  assert.match(last(), /Читаю в кресле/u);
+
+  // Налили чай — кружка сильнее книги: она с кружкой, а не с книгой.
+  time.add(60_000);
+  const tea = await h.onRoom({ do: "tea" }, from(5));
+  assert.equal(tea.ok, true);
+  const warm = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.equal(warm.her.key, "уют");
+  assert.notEqual(warm.her.pose, "read", "после чая она с кружкой");
+  assert.equal(room.readingNow(roomOf(5), time.now()), false, "после чая она не читает");
+  // Полчаса прошло — книга отложена сама собой.
+  assert.equal(room.READ_MS, 30 * 60_000);
+  assert.equal(room.readingNow({ book: 1000, tea: 0 }, 1000 + room.READ_MS - 1), true);
+  assert.equal(room.readingNow({ book: 1000, tea: 0 }, 1000 + room.READ_MS), false);
+  assert.equal(room.readingNow({ book: 1000, tea: 2000 }, 3000), false);
+  assert.equal(room.readingNow({ book: 3000, tea: 2000 }, 4000), true, "книга после чая — читает");
+  for (const none of [null, undefined, {}, { book: 0 }, { book: "x" }]) assert.equal(room.readingNow(none, 5000), false);
+
+  // Ночью она спит: книга остаётся на полке, она — где была; страница получает одни слова.
+  reset();
+  const night = clock(Date.parse("2026-11-18T23:30:00Z"));
+  const asleep = heart(ON, { now: night.now, random: () => 0 });
+  const dark = await asleep.onRoom({ do: "look" }, from(5));
+  assert.equal(dark.her.key, "сон");
+  const refused = await asleep.onRoom({ do: "book" }, from(5));
+  assert.deepEqual([refused.ok, refused.taken, refused.her], [true, false, undefined]);
+  assert.deepEqual(pool("полка:сон"), [refused.line]);
+  assert.equal(roomOf(5).book ?? 0, 0);
+  const still = logic.applyBook(logic.applyLook(logic.blank(2), dark, night.now()), refused);
+  assert.deepEqual([logic.viewOf(still).her.key, still.said], ["сон", refused.line]);
+  // На каждое состояние, когда ей не до книг, есть свои слова.
+  for (const key of Object.keys(scene.MOODS).filter(mood => !room.HER_CALM.includes(mood))) assert.ok(pool(`полка:${key}`).length >= 1, key);
+
+  // Место нажатия — две верхние полки шкафа; вещи на полках (кружка, рамка, свеча) лежат выше него и нажимаются сами.
+  const drawn = scene.drawInside({ part: "день", her: null, cat: null, things: ["кружка", "снимок", "свеча"] });
+  const order = [...drawn.matchAll(/data-act="([^"]+)"/gu)].map(found => found[1]);
+  assert.ok(order.includes("book"));
+  for (const key of ["кружка", "снимок", "свеча"]) assert.ok(order.indexOf("book") < order.indexOf(`thing:${key}`), key);
+  assert.ok(order.indexOf("window") < order.indexOf("book"));
+  // Витрина (без сердца): тот же ответ тем же путём; спящая — только слова.
+  const demo = logic.demoBook({ her: { key: "дело" } });
+  assert.deepEqual([demo.ok, demo.taken, demo.her.pose, room.herPose(demo.her.line, "уют")], [true, true, "read", "read"]);
+  assert.ok(pool("полка", { formal: true }).includes(demo.line) && pool("она:уют").includes(demo.her.line), "слова витрины — из словаря");
+  assert.deepEqual([logic.demoBook({ her: { key: "сон" } }).taken, logic.demoBook({ her: { key: "сон" } }).her], [false, undefined]);
+  // Сбой — её слова об ошибке, а не тишина.
+  assert.notEqual(logic.applyBook(state, null).said, "");
+  assert.equal(logic.applyBook(state, { ok: false, code: "storage" }).busy, "");
+});
+
+test("«считаю капли» — не «читаю»: место в её словах берётся по целому слову", () => {
+  for (const line of ["Устроилась на полу, в пледе: считаю капли. Сбилась на сороковой.", "Пересчитаю записки и вернусь.", "Считаю огни за окном."]) assert.notEqual(room.herPose(line, "сон"), "read", line);
+  for (const line of ["Читаю в кресле.", "Сижу и читаю мангу под гирляндой.", "Перечитываю «Маленького принца».", "Дочитываю главу.", "Листаю альбом.", "Сижу с книгой.", "В кресле, с мангой."]) assert.equal(room.herPose(line, "уют"), "read", line);
+  // Прежние места — на месте: «книги уже переставила» — у полки, «манга ждёт» под гирляндой — у гирлянды.
+  assert.equal(room.herPose("У полки, скрестив руки. Книги уже переставила — громче, чем нужно.", "обида"), "shelf");
+  assert.equal(room.herPose("Пью чай под гирляндой. Манга ждёт: третья глава, наконец-то.", "уют"), "garland");
+  assert.equal(room.herPose("Чай, кресло, плед и «Маленький принц» — в таком порядке. Пока на первом пункте.", "уют"), "chair");
+});
+

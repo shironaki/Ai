@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "7";
+export const PAGE = "8";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -240,6 +240,20 @@ export function applyCare(state, op, result) {
   };
 }
 
+/**
+ * Ответ на нажатие по полке с книгами (`do: "book"`, 0.45.0): она берёт книгу и садится читать — сердце шлёт её
+ * заново (`her`); когда ей не до книг, приходят одни слова, и она остаётся где была.
+ */
+export function applyBook(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  const her = result.her && typeof result.her === "object" && state.her ? herOf(result.her) : null;
+  return {
+    ...state, busy: "", tone: "", retry: false,
+    ...(her ? { her, turn: 0, lines: { ...state.lines, ...(text(result.her.line) ? { her: text(result.her.line) } : {}) } } : {}),
+    said: text(result.line) || "…",
+  };
+}
+
 /** Ответ на выбор в сценке дня (`do: "pick"`). */
 export function applyPick(state, result) {
   if (!result || result.ok !== true) {
@@ -376,6 +390,13 @@ export function demoCare(state, op) {
     ...(op === "tea" && (state.her?.key === "дело" || state.her?.key === "игра") ? { her: { key: "уют", pose: DEMO_HER["вечер"][1][0][0], line: DEMO_HER["вечер"][1][0][1], beats: DEMO_HER["вечер"][1].map(([pose, line]) => ({ pose, line })) } } : {}),
     plant: { state: op === "water" ? "wet" : state.plant }, done: { ...state.done, [op]: before + (early ? 0 : 1) }, cared: true,
   };
+}
+/** «Возьми книгу» на витрине: она садится читать, если не спит. */
+export function demoBook(state) {
+  if (state.her?.key === "сон") return { ok: true, do: "book", build: "", line: "…Сплю. Книга подождёт до утра.", taken: false };
+  // Те же слова, что прислало бы сердце: запасы «+комната:полка» и «+комната:она:уют».
+  const line = "Читаю в кресле. Глава такая, что не оторваться: Байт зовёт ужинать уже второй раз.";
+  return { ok: true, do: "book", build: "", line: "Возьму вот эту — «Маленького принца». Перечитываю каждую осень. Кресло, я иду.", taken: true, again: false, her: { key: "уют", pose: "read", line, beats: [{ pose: "read", line }] } };
 }
 /** «Погладить её» на витрине. */
 export function demoPat(state) {

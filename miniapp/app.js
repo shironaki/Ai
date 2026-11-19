@@ -25,10 +25,12 @@ import * as logic from "./logic.js";
 // может какое-то время держать старую копию любого из них. Импорт по именам такого не прощает: нет в старом
 // `scene.js` нового имени — и страница не запускается вовсе. Так имя просто окажется пустым; всё, что добавлено
 // после первой публикации (`drawRain`, `spriteOf`, `drawSprite`, `spritesOf`, `spriteStand`, `applyPat`, `nextTurn`,
-// а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`), перед
-// вызовом проверяется.
-const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf } = logic;
+// а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`, с 0.45.0 —
+// `frameOf`, `applyBook`, `demoBook`), перед вызовом проверяется.
+const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook } = logic;
+/** Второй кадр картинки (движение внутри позы, 0.45.0); прежний `scene.js` кадров не знает. */
+const frameName = (name) => (typeof frameOf === "function" ? frameOf(name) : null);
 // Что бывает за окном: с 0.44.0 — семь видов неба (погода города человека); прежняя логика знает два.
 const SKY_NAMES = Array.isArray(logic.SKIES) ? logic.SKIES : ["rain", "snow"];
 const skyName = (value) => (SKY_NAMES.includes(value) ? value : "rain");
@@ -118,7 +120,8 @@ function settle(name, sprite) {
   sprites[name] = sprite;
   // Перерисовать — только если на рисунке сейчас нужна именно эта картинка: лишняя перерисовка запускает заново
   // гирлянду и хвост Байта.
-  if (spriteOf(viewOf(state)) !== name) return;
+  const shown = spriteOf(viewOf(state));
+  if (shown !== name && frameName(shown) !== name) return;
   drawn.view = "";
   paint();
 }
@@ -394,6 +397,8 @@ function paint() {
     }
     // Картинка «идёт» в её нынешнем наряде: от места к месту она доходит шагом.
     if (sprites[name] && typeof walkOf === "function") fetchSprite(walkOf(view));
+    // Второй кадр её нынешней позы — после самой позы: без него она стоит одной картинкой, с ним — движется.
+    if (sprites[name]) fetchSprite(frameName(name));
   }
   if (drawn.view !== key || state.entering) {
     // Где она и Байт были на прежнем рисунке: прежняя поза тает, пока новая проявляется, а до другого места они
@@ -522,9 +527,22 @@ async function pat() {
   if (!result.again) heart("pat");
 }
 
+/** Полка с книгами (0.45.0): она берёт книгу и садится читать; её слова и новое место — от сердца. */
+async function book() {
+  if (typeof applyBook !== "function" || typeof demoBook !== "function") return;
+  scheduleTurn();
+  state = { ...state, busy: "book" };
+  paint();
+  const result = state.demo ? demoBook(state) : await call({ do: "book" });
+  state = applyBook(state, result);
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
+}
+
 async function act(name) {
   if (!state.ready || state.busy || acting) return;
   if (name === "pat") { await pat(); return; }
+  if (name === "book") { await book(); return; }
   // Любое нажатие отодвигает её и Байта следующий ход: дать прочесть ответ.
   scheduleTurn();
   if (!CARE.includes(name)) {

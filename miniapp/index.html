@@ -142,6 +142,20 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 /* Она картинкой. Моргает: заплатка «веки» видна седьмую долю секунды, дважды за шесть с половиной секунд; без
    движения её не видно вовсе — глаза открыты. Смена позы: прежняя картинка тает, новая проявляется. */
 #room .wink { opacity: 0; animation: wink 6.4s step-end infinite; }
+/* Кадры внутри позы (0.45.0): второй кадр лежит поверх первого. Отпивает — изредка; пишет — подолгу, поднимает глаза — ненадолго; танец — в такт. */
+#room .fr.b { opacity: 0; }
+#room .sip.a { animation: sipA 14s linear infinite; }
+#room .sip.b { animation: sipB 14s linear infinite; }
+#room .glance.a { animation: glanceA 11s linear infinite; }
+#room .glance.b { animation: glanceB 11s linear infinite; }
+#room .dance.a { animation: flipA 1.1s linear infinite; }
+#room .dance.b { animation: flipB 1.1s linear infinite; }
+@keyframes sipB { 0%, 70% { opacity: 0; } 73%, 86% { opacity: 1; } 89%, 100% { opacity: 0; } }
+@keyframes sipA { 0%, 72.9% { opacity: 1; } 73%, 86% { opacity: 0; } 86.1%, 100% { opacity: 1; } }
+@keyframes glanceB { 0%, 58% { opacity: 1; } 61%, 88% { opacity: 0; } 91%, 100% { opacity: 1; } }
+@keyframes glanceA { 0%, 57.9% { opacity: 0; } 58%, 91% { opacity: 1; } 91.1%, 100% { opacity: 0; } }
+@keyframes flipA { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes flipB { 0%, 49.9% { opacity: 0; } 50%, 100% { opacity: 1; } }
 @keyframes wink { 0% { opacity: 0; } 46% { opacity: 1; } 48.2% { opacity: 0; } 93% { opacity: 1; } 95.2% { opacity: 0; } }
 #room .leave { opacity: 0; animation: leave 0.5s ease-in; }
 @keyframes leave { from { opacity: 1; } 45% { opacity: 1; } to { opacity: 0; } }

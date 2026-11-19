@@ -73,7 +73,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex,
-  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS } from "./room.js";
+  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -1870,6 +1870,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   function herState(turn, feel, state, today) {
     const mood = herKey(feel.mood, feel.hour, { tea: state?.tea, at: now() });
+    // Ей предложили книгу (нажали на полку, 0.45.0): полчаса она в кресле с книгой — если спокойна и после этого
+    // ей не налили чай. Это свежее сценки дня: читает она то, что взяла сейчас.
+    if (HER_CALM.includes(mood) && readingNow(state, now())) return { key: "уют", put: "read", said: "" };
     const look = HER_CALM.includes(mood) ? sceneLook(state?.scene, { today, at: now() }) : null;
     if (!look?.her) return { key: mood, put: "", said: "" };
     const record = state.scene, outcome = record.pick === 0 || record.pick === 1 ? sceneByKey(record.key)?.options[record.pick]?.[1] : "";
@@ -2185,6 +2188,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (done.first) await roomCared(userId, turn);
         if (!done.again) await keepThread(turn, "погладить тебя по голове", raw);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), again: Boolean(done.again), shy: false, counted: Boolean(done.first), ...stageNote() };
+      }
+      if (op === "book") {
+        // Полка с книгами (идея 167, 0.45.0): она берёт книгу и садится читать — на полчаса или пока не нальют чай.
+        // Когда ей не до книг (обида, ревность, усталость, сон), она так и говорит, и книга остаётся на полке.
+        const before = await room.read(userId, today);
+        const mood = herState(turn, feel, before, today).key;
+        if (!HER_CALM.includes(mood)) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `полка:${mood}`) || "Не сейчас. Книга подождёт."), taken: false };
+        const done = await room.book(userId, { day: today });
+        const raw = roomLine(turn, done.again ? "полка:ещё" : "полка") || "Возьму книгу.";
+        if (!done.again) await keepThread(turn, "[в комнате] предложил тебе почитать", raw);
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), taken: true, again: Boolean(done.again), her: herNow(done.state), ...stageNote() };
       }
       if (op === "pick") {
         const picked = await room.choose(userId, String(input?.key ?? "").slice(0, 24), Number(input?.pick), { day: today });

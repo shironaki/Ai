@@ -149,6 +149,7 @@ page() {
   local before=""
   if [ -d "$PAGE/previous/miniapp" ]; then before="$PAGE/previous/miniapp"; fi
   (cd "$PAGE" && node room-check.mjs "$ROOT/miniapp" "${1:--}" "$before")
+  seen
 }
 
 # Лист рисунков комнаты: тот же браузер, сценарий — scripts/room-sheet.mjs.
@@ -177,6 +178,13 @@ blink() {
   local input="$1"; shift
   case "$input" in /*) ;; *) input="$PWD/$input" ;; esac
   (cd "$PAGE" && node room-blink.mjs "$ROOT" "$input" "$@")
+}
+
+# Каждая вещь комнаты видна на рисунке, а не закрыта мебелью: сценарий — scripts/room-seen.mjs.
+seen() {
+  browser
+  cp "$ROOT/scripts/room-seen.mjs" "$PAGE/room-seen.mjs"
+  (cd "$PAGE" && node room-seen.mjs "$ROOT")
 }
 
 # Сжать по высоте полосу картинки (голени сидящей): сценарий — scripts/room-squeeze.mjs.
@@ -212,5 +220,6 @@ case "${1:-quick}" in
   blink) shift; blink "$@" ;;
   ref) shift; ref "$@" ;;
   squeeze) shift; squeeze "$@" ;;
+  seen) seen ;;
   *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

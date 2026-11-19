@@ -207,6 +207,20 @@ try {
       }
     }
   }
+  // Полка с книгами (0.45.0): нажали — она отвечает и садится читать (картинка «read»); спит — только отвечает.
+  {
+    const before = await said();
+    if (!seen.zones.includes("book")) fail("полка с книгами: места на рисунке нет");
+    else if (await tapZone("book")) {
+      const after = await said();
+      if (!after || after === before) fail("полка с книгами: её слова не изменились");
+      else if (!/^…Сплю/u.test(after)) {
+        let reads = false;
+        for (let i = 0; i < 40 && !reads; i += 1) { await pause(150); reads = await page.evaluate(() => Boolean(document.querySelector('#inside use[href="#r-her-read"], #inside use[href="#r-her-home-read"]'))); }
+        if (!reads) fail("полка с книгами: она не села читать — картинки «read» на рисунке нет");
+      }
+    }
+  }
   // Кнопки под рисунком: второй раз за день — другие слова; кнопка остаётся отмеченной.
   for (const act of ["pet", "feed", "play", "tea", "water"]) {
     const before = await said();
@@ -631,8 +645,9 @@ try {
     tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
     const open = async (hash) => { await tab.goto(`${origin}/index.html#${hash}`, { waitUntil: "load", timeout: 30_000 }); await tab.reload({ waitUntil: "load" }); await pause(700); };
     const now = () => tab.evaluate(() => {
-      const visible = (node) => { for (let at = node; at && at.id !== "inside"; at = at.parentElement) if (Number(getComputedStyle(at).opacity) <= 0.02) return false; return true; };
-      const hers = [...document.querySelectorAll("#inside > .art use")].filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !href.endsWith("-blink"));
+      // Второй кадр позы (`.fr.b`, 0.45.0) — не другая картинка: в счёт идёт первый кадр, виден он сейчас или нет.
+      const visible = (node) => { for (let at = node; at && at.id !== "inside"; at = at.parentElement) if (!at.classList?.contains("fr") && Number(getComputedStyle(at).opacity) <= 0.02) return false; return true; };
+      const hers = [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !href.endsWith("-blink"));
       const strides = [...document.querySelectorAll("#inside .stride")];
       return {
         say: document.getElementById("say").textContent, light: document.getElementById("app").dataset.light, hers: [...new Set(hers)],

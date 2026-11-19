@@ -308,8 +308,8 @@ export const SCENES = Object.freeze([
     options: [["Задёрнуть шторы", "Шторы задёрнуты, лампа горит. Дождь остался снаружи, уют — внутри.", { fx: ["curtains"] }],
       ["Слушать вместе", "Стою у окна и слушаю. Под такой дождь даже молчать хорошо. Спасибо, что {ты рядом|вы рядом}.", { her: "sill" }]] },
   { key: "book", loot: "закладка из «Маленького принца»", text: "Не могу выбрать, что читать вечером. Помоги{|те}.",
-    options: [["«Маленький принц»", "Значит, «Маленький принц». Перечитаю про Лиса: «ты навсегда в ответе за тех, кого приручил».", { her: "chair" }],
-      ["Манга", "Значит, манга. Третья глава ждала меня полгода — сегодня её день.", { her: "chair" }]] },
+    options: [["«Маленький принц»", "Значит, «Маленький принц». Перечитаю про Лиса: «ты навсегда в ответе за тех, кого приручил».", { her: "read" }],
+      ["Манга", "Значит, манга. Третья глава ждала меня полгода — сегодня её день.", { her: "read" }]] },
   { key: "box", loot: "уголок от чайной коробки", text: "Байт залез в коробку из-под чая и не может вылезти. Или не хочет.",
     show: { cat: ["curl", "box"] },
     options: [["Достать Байта", "Байт извлечён. Через минуту он залез обратно. Коробка теперь его — официально.", { cat: ["curl", "box"] }],
@@ -399,23 +399,26 @@ export function catState({ hour = 12, last = "", lastAt = 0, at = 0, fed = false
 
 // ── картинка мини-приложения: что нарисовать ─────────────────────────────────
 /**
- * Где она на картинке. Порядок важен: «читаю мангу под гирляндой» — кресло, а «поправляю гирлянду» — у окна.
+ * Где она на картинке. Порядок важен: «читаю мангу под гирляндой» — в кресле с книгой, а «поправляю гирлянду» — у окна.
  * desk — за столом; shelf — у полок; chair — в кресле; nap — спит в кресле под пледом; sill — на подоконнике;
  * back — у окна спиной к двери; map — у карты звёзд; garland — поправляет гирлянду; dance — танцует;
- * ribbon — дразнит Байта ленточкой; lie — лежит на подушках.
+ * ribbon — дразнит Байта ленточкой; lie — лежит на подушках; read — читает в кресле (0.45.0).
  */
-export const HER_POSES = Object.freeze(["desk", "shelf", "chair", "nap", "sill", "back", "map", "garland", "dance", "ribbon", "lie"]);
+export const HER_POSES = Object.freeze(["desk", "shelf", "chair", "nap", "sill", "back", "map", "garland", "dance", "ribbon", "lie", "read"]);
 const HER_POSE = Object.freeze([
   ["back", /спиной/u],
   ["sill", /подоконник/u],
   ["map", /карту звёздного|кассиопе/u],
+  // read — сидит в кресле с книгой (0.45.0): до этого «читаю» показывалось картинкой с кружкой.
+  // «Считаю капли» — не «читаю»: слово берётся целиком, с начала.
+  ["read", /(?<![а-яё])(?:читаю|перечитываю|дочитываю|листаю)|с книгой|с мангой/u],
   ["garland", /гирлянд/u],
   ["dance", /танцу/u],
   ["ribbon", /ленточк/u],
   ["shelf", /полк|книги|валл-и/u],
   ["lie", /^лежу|подушках|на полу/u],
   ["nap", /сплю|дремлю|по самый нос/u],
-  ["chair", /кресл|плед|читаю|отдыхаю/u],
+  ["chair", /кресл|плед|отдыхаю/u],
   ["desk", /стол|блокнот|записк|пью чай|рисую/u],
 ]);
 const HER_DEFAULT = Object.freeze({ "дело": "desk", "уют": "chair", "игра": "dance", "сон": "nap", "устала": "chair", "обида": "back", "ревность": "desk" });
@@ -543,9 +546,14 @@ export function colourHex(name) {
 // `pat` — погладить её саму (0.41.0): считается как забота, но Байта не касается.
 const CARE = Object.freeze(["pet", "feed", "play", "tea", "water", "pat"]);
 
+/** Сколько она читает после того, как ей предложили книгу (нажатие на полку). */
+export const READ_MS = 30 * 60 * 1000;
+/** Читает ли она сейчас по этой записи: книгу взяла не раньше получаса назад и после этого ей не наливали чай. */
+export const readingNow = (state, at) => Number(state?.book) > 0 && at - Number(state.book) < READ_MS && Number(state.book) >= (Number(state?.tea) || 0);
+
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, seen: [], scene: null, near: 0, loot: [] });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -609,6 +617,18 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     return { ok: true, early: false, again, peace, first: first && saved, state: next, saved };
   }
 
+  /**
+   * Ей предложили почитать (нажали на полку с книгами, 0.45.0): отметка времени — полчаса после этого она в кресле
+   * с книгой (`READ_MS`; чай, налитый позже, сильнее). `again` — она уже читает. В отношения не идёт: это не забота.
+   */
+  async function book(userId, { day } = {}) {
+    const state = await read(userId, day);
+    const at = now();
+    const again = Number(state.book) > 0 && at - Number(state.book) < READ_MS;
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, book: again ? state.book : at };
+    return { ok: true, again, state: next, saved: await write(userId, next) };
+  }
+
   /** Байта хотели обидеть: он прячется (до трёх часов — или пока не приласкают). В отношения это не идёт: игра. */
   async function scare(userId, { day } = {}) {
     const state = await read(userId, day);
@@ -637,5 +657,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId, state) { return write(userId, { ...state, at: state.at || now(), near: now() }); }
 
-  return { read, visit, care, choose, scare, near, look };
+  return { read, visit, care, book, choose, scare, near, look };
 }
