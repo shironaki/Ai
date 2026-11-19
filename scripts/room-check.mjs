@@ -1,4 +1,4 @@
-/* global document, getComputedStyle */
+/* global document, getComputedStyle, requestAnimationFrame */
 /**
  * Страница комнаты в настоящем браузере: всё, что человек нажимает, нажимает этот скрипт.
  *
@@ -25,8 +25,10 @@
  *      отозваться на заботу. В 0.39.0 шесть смесей из четырнадцати оставляли пустую страницу: новый `app.js`
  *      брал из `scene.js` имя, которого в прежнем рисунке нет, и писал в слой, которого нет в прежней разметке.
  *      Прежнюю страницу достаёт из истории `verify.sh` (последний коммит с другим номером страницы).
- *   6. её картинка не загрузилась (папки `her/` на сервере нет): комната открывается, она нарисована кодом,
- *      забота нажимается.
+ *   6. её картинка не загрузилась: папки `her/` на сервере нет — или файл пришёл, а картинка в нём не читается
+ *      (браузер не знает формата, страница не даёт её показать). Комната открывается, она нарисована кодом,
+ *      забота нажимается. Второй случай без проверки оставил бы её невидимой: ссылка на картинку в рисунке
+ *      есть, а показать нечего.
  *
  * Браузер (puppeteer-core и @sparticuz/chromium) зависимостью проекта не становится: `verify.sh` ставит его
  * во временную папку и запускает этот файл оттуда. Аргументы: <папка страницы> [куда положить снимок]
@@ -55,14 +57,20 @@ try {
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
 /** Какие файлы сейчас отдаются из прежней страницы (шаг 5); обычно — никакие. */
 let stale = new Set();
-/** Отдаются ли её картинки (шаг 6 проверяет страницу без них). */
+/** Её картинки (шаг 6): `true` — отдаются; `false` — их нет на сервере; "broken" — файл есть, картинка в нём не читается. */
 let pictures = true;
+const BROKEN = 'export default { w: 318, h: 900, cx: 0.5, src: "data:image/webp;base64,AAAA" };\n';
 const server = createServer(async (request, response) => {
   const path = normalize(decodeURIComponent(new URL(request.url, "http://x").pathname)).replace(/^(\.\.[/\\])+/u, "");
   const name = path === "/" ? "index.html" : path.replace(/^[/\\]+/u, "");
   const file = join(stale.has(name) ? previous : folder, name);
   try {
-    if (!pictures && /^her[/\\]/u.test(name)) throw new Error("картинок нет");
+    if (pictures !== true && /^her[/\\]/u.test(name)) {
+      if (pictures !== "broken") throw new Error("картинок нет");
+      response.writeHead(200, { "content-type": TYPES[".js"], "cache-control": "no-store" });
+      response.end(BROKEN);
+      return;
+    }
     const body = await readFile(file);
     response.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
     response.end(body);
@@ -229,6 +237,9 @@ try {
         inside.innerHTML = looks ? scene.drawInside(view, { sprites }) : scene.drawInside(view);
         if (looks && !inside.querySelector("use")) note(broken, "her: картинки на рисунке нет", label);
         drawings += 1;
+        // Передышка браузеру: пока сценарий не отпустит его, он не выбрасывает снятые рисунки и их движение. Без
+        // неё на 10 тысячах рисунков браузер занимал 3,6 ГБ из четырёх и через раз падал («Target closed»); с ней — 1,3 ГБ.
+        if (drawings % 40 === 0) await new Promise((done) => { const timer = setTimeout(done, 60); requestAnimationFrame(() => { clearTimeout(timer); done(); }); });
         for (const node of inside.querySelectorAll(".zones [data-act]")) {
           const act = node.dataset.act, box = node.getBoundingClientRect();
           let own = 0;
@@ -382,8 +393,8 @@ try {
 
   // ── 6. картинка не загрузилась ─────────────────────────────────────────────
   console.log("6. Без её картинки");
-  pictures = false;
-  {
+  for (const [mode, what] of [[false, "картинки на сервере нет"], ["broken", "картинка пришла, но не читается"]]) {
+    pictures = mode;
     const tab = await browser.newPage();
     const broken = [];
     tab.on("pageerror", (error) => broken.push(String(error)));
@@ -402,13 +413,13 @@ try {
       await pause(350);
       fed = await tab.$eval('#actions button[data-act="feed"]', (node) => node.classList.contains("done"));
     } catch { fed = false; }
-    if (got.state !== "ready") fail(`без картинки комната не открылась: состояние «${got.state}»${broken.length ? ` — ${broken[0].slice(0, 170)}` : ""}`);
-    else if (broken.length) fail(`без картинки — ошибка на странице: ${broken[0].slice(0, 170)}`);
-    else if (got.use || got.kept) fail(`картинки на сервере нет, а на рисунке она есть: ссылок ${got.use}, в кладовой ${got.kept}`);
-    else if (!got.her || !got.breath) fail(`без картинки она не нарисована кодом: мест нажатия ${got.her}, дышащих частей ${got.breath}`);
-    else if (!got.moving) fail("нарисованная кодом, она не дышит и не моргает");
-    else if (!fed) fail("без картинки забота не нажимается");
-    else console.log(`  комната открылась, она нарисована кодом (дышит и моргает: ${got.moving}), забота нажимается`);
+    if (got.state !== "ready") fail(`${what}: комната не открылась — состояние «${got.state}»${broken.length ? `, ${broken[0].slice(0, 170)}` : ""}`);
+    else if (broken.length) fail(`${what}: ошибка на странице — ${broken[0].slice(0, 170)}`);
+    else if (got.use || got.kept) fail(`${what}, а рисунок на неё ссылается (ссылок ${got.use}, в кладовой ${got.kept}): её не видно вовсе`);
+    else if (!got.her || !got.breath) fail(`${what}: она не нарисована кодом — мест нажатия ${got.her}, дышащих частей ${got.breath}`);
+    else if (!got.moving) fail(`${what}: нарисованная кодом, она не дышит и не моргает`);
+    else if (!fed) fail(`${what}: забота не нажимается`);
+    else console.log(`  ${what}: комната открылась, она нарисована кодом (дышит и моргает: ${got.moving}), забота нажимается`);
     await tab.close();
   }
   pictures = true;

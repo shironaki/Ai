@@ -64,14 +64,25 @@ function store(name, sprite) {
   shelf.append(holder);
   return true;
 }
-/** Картинка разобрана заранее — тогда она появляется сразу целиком, а не кусками. */
+/**
+ * Читается ли картинка — и заодно разобрать её заранее: тогда она появляется сразу целиком, а не кусками. `false` —
+ * браузер её показать не может (не знает формата, или страница не даёт показывать такие картинки): тогда она
+ * будет нарисована кодом. Без этого вопроса рисунок сослался бы на картинку, которой не видно, — и её не было бы вовсе.
+ */
 function decoded(sprite) {
-  try {
-    const image = new Image();
-    image.src = sprite.src;
-    kept.push(image);
-    return typeof image.decode === "function" ? image.decode().catch(() => {}) : Promise.resolve();
-  } catch { return Promise.resolve(); }
+  return new Promise((resolve) => {
+    try {
+      const image = new Image();
+      kept.push(image);
+      image.onerror = () => resolve(false);
+      image.onload = () => {
+        if (!(image.naturalWidth > 0)) { resolve(false); return; }
+        if (typeof image.decode === "function") image.decode().then(() => resolve(true), () => resolve(true));
+        else resolve(true);
+      };
+      image.src = sprite.src;
+    } catch { resolve(false); }
+  });
 }
 function settle(name, sprite) {
   if (sprites[name] === sprite || (sprites[name] && !sprite)) return;
@@ -90,7 +101,7 @@ function fetchSprite(name) {
     .then(async (module) => {
       const sprite = module?.default;
       if (!sprite || typeof sprite.src !== "string") throw new Error("empty");
-      await decoded(sprite);
+      if (!(await decoded(sprite))) throw new Error("unreadable");
       clearTimeout(late);
       settle(name, store(name, sprite) ? sprite : false);
     })

@@ -1104,6 +1104,13 @@ test("страница: папка уходит на платформу как �
   assert.match(app, /if \(!canPaint \|\| !name \|\| asked\.has\(name\)\) return;/u);
   assert.match(app, /import\(`\.\/her\/\$\{name\}\.js`\)/u);
   assert.match(app, /\.catch\(\(\) => \{ clearTimeout\(late\); settle\(name, false\); \}\);/u);
+  // Модуль пришёл, а картинку в нём браузер показать не может (не знает формата, страница не даёт) — это тоже
+  // «не загрузилась»: иначе рисунок сослался бы на картинку, которой не видно, и её в комнате не было бы вовсе.
+  // Так и было до выпуска 0.40.0: ошибка разбора картинки проглатывалась. Случай открывает `verify.sh page` (шаг 6).
+  assert.match(app, /image\.onerror = \(\) => resolve\(false\);/u);
+  assert.match(app, /if \(!\(image\.naturalWidth > 0\)\) \{ resolve\(false\); return; \}/u);
+  assert.match(app, /if \(!\(await decoded\(sprite\)\)\) throw new Error\("unreadable"\);/u);
+  assert.match(read("scripts/room-check.mjs"), /"картинка пришла, но не читается"/u);
   assert.match(app, /\$\("inside"\)\.innerHTML = drawInside\(view, canPaint \? \{ sprites \} : undefined\);/u);
   assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ["`./her/${name}.js`"], "страница грузит по ходу дела только её картинки");
   for (const name of ["scene.js", "logic.js"]) {
