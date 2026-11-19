@@ -242,7 +242,8 @@ try {
   if (!scene.picked || !/Новая сценка — завтра\./u.test(scene.text)) fail(`исход сценки не показан: «${scene.text}»`);
   // После всех нажатий её картинка — та же: в кладовой не прибавилось копий, комната по-прежнему ссылается на неё.
   const later = await painted();
-  if (new Set(later.kept).size !== later.kept.length || later.kept.length > 8) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
+  // С 0.45.0 в кладовой больше картинок: вторые кадры поз и «читает» (нажатие на полку) с её веками.
+  if (new Set(later.kept).size !== later.kept.length || later.kept.length > 12) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
   if (!later.shown || later.inline) fail(`после нажатий её картинки не видно: ${JSON.stringify(later.used)}`);
   console.log(`  нажато: забота на рисунке и кнопками, она, окно, вещей — ${Object.keys(lines.things).length}, сценка`);
   if (shot) { await page.screenshot({ path: shot, fullPage: false }); console.log(`  снимок: ${shot}`); }
@@ -490,10 +491,11 @@ try {
     await tab.goto(day, { waitUntil: "load", timeout: 30_000 });
     await pause(900);
     const shownNow = () => tab.evaluate(() => ({
-      used: [...document.querySelectorAll("#inside > .art use")].map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
+      // Второй кадр позы (`.fr.b`, 0.45.0) — не другая поза: ни в «нарисовано», ни в «видно» он не идёт.
+      used: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
       // Прежняя поза остаётся в рисунке до следующей перерисовки, но уже растаявшей: что на ней сейчас ВИДНО —
       // это ссылки без тех, чья группа «тает» дошла до прозрачности.
-      seen: [...document.querySelectorAll("#inside > .art use")].filter(node => { const gone = node.closest(".leave, .stride"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
+      seen: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(node => { const gone = node.closest(".leave, .stride"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
         .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
       kept: [...document.querySelectorAll("#store image")].map(node => node.id),
       leave: document.querySelectorAll("#inside .leave").length, arrive: document.querySelectorAll("#inside .arrive").length,
@@ -527,6 +529,19 @@ try {
     // С 0.44.0 она сидит в кресле комнаты: пуфа, который появлялся вместе с ней, больше нет.
     if (!third.used.includes("#r-her-tea3") || third.pouf) fail(`третья поза — сидит в кресле: ${JSON.stringify(third.used)}, пуфов — ${third.pouf}`);
     if (new Set(third.kept).size !== third.kept.length) fail(`картинки в кладовой повторяются: ${JSON.stringify(third.kept)}`);
+    // Кадры внутри позы (0.45.0): в кресле с кружкой слоёв два — второй кадр поверх первого, и оба движутся.
+    if (!await waitKept("r-her-tea3b")) fail("второй кадр позы «tea3» не подгрузился");
+    else {
+      let frames = null;
+      for (let spent = 0; spent < 5000 && !(frames?.layers === 2 && frames.moving >= 2); spent += 300) {
+        await pause(300);
+        frames = await tab.evaluate(() => ({
+          layers: document.querySelectorAll("#inside .fr").length, second: document.querySelector("#inside .fr.b use")?.getAttribute("href") ?? "",
+          moving: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside .fr")).length,
+        }));
+      }
+      if (frames?.layers !== 2 || frames.second !== "#r-her-tea3b" || frames.moving < 2) fail(`кадры позы «tea3»: слоёв — ${frames?.layers}, второй кадр — «${frames?.second}», движется — ${frames?.moving}`);
+    }
     // Сама — без нажатия: срок назван в адресе (на странице в Telegram он — от 24 до 40 секунд).
     await tab.goto(`${day}&turn=700`, { waitUntil: "load", timeout: 30_000 });
     await tab.reload({ waitUntil: "load" });

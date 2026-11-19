@@ -54,7 +54,7 @@ let header = "";
 // её картинка и место, где она стоит, место и фигура Байта — по ним прежняя поза тает, а до нового места они
 // доходят шагом. `back` и `inside` — приставки имён слоёв: когда час сменяется при открытой странице, прежний слой
 // тает поверх нового, и имена у них должны быть разными.
-const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-" };
+const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-", until: 0 };
 // Сколько прежний слой тает поверх нового (то же число — в стилях: `.fading`).
 const FADE_MS = 1600;
 // Сколько её нет, пока она переодевается.
@@ -121,9 +121,24 @@ function settle(name, sprite) {
   // Перерисовать — только если на рисунке сейчас нужна именно эта картинка: лишняя перерисовка запускает заново
   // гирлянду и хвост Байта.
   const shown = spriteOf(viewOf(state));
-  if (shown !== name && frameName(shown) !== name) return;
-  drawn.view = "";
-  paint();
+  if (shown === name) { drawn.view = ""; paint(); return; }
+  // Второй кадр позы, что сейчас на рисунке, пришёл позже неё самой: показать — но не посреди перехода.
+  if (sprite && frameName(shown) === name) frameLater();
+}
+/**
+ * Второй кадр пришёл, когда поза уже на рисунке: перерисовка покажет его, но она же оборвала бы переход — прежняя
+ * поза ещё тает, или она ещё идёт. Поэтому перерисовка ждёт конца перехода (`drawn.until`).
+ */
+let frameTimer = 0;
+function frameLater() {
+  clearTimeout(frameTimer);
+  frameTimer = setTimeout(() => {
+    if (Date.now() < drawn.until) { frameLater(); return; }
+    const frame = frameName(spriteOf(viewOf(state)));
+    if (!frame || !sprites[frame] || acting) return;
+    drawn.view = "";
+    paint();
+  }, Math.max(0, drawn.until - Date.now()) + 60);
 }
 /** Все позы этого состояния по порядку; в прежнем рисунке их одна. */
 const posesOf = (view) => (canTurn ? spritesOf(view) : []);
@@ -295,6 +310,8 @@ function fetchSprite(name) {
       if (!(await decoded(sprite))) throw new Error("unreadable");
       clearTimeout(late);
       settle(name, store(name, sprite) ? sprite : false);
+      // Следом за позой — её второй кадр (0.45.0): когда поза выйдет на рисунок, кадр уже будет здесь.
+      fetchSprite(frameName(name));
     })
     .catch(() => { clearTimeout(late); settle(name, false); });
 }
@@ -415,6 +432,9 @@ function paint() {
     $("inside").innerHTML = drawInside(view, options);
     drawn.view = key;
     drawn.cast = castNow(view);
+    // До какого времени на рисунке идёт переход (она идёт, тает, проявляется): запоздавший второй кадр его не обрывает.
+    const stride = $("inside").querySelector(".stride"), moving = stride || $("inside").querySelector(".leave, .arrive");
+    if (moving) drawn.until = Date.now() + (stride ? (Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5) * 1000 : 0) + FADE_MS + 200;
   }
   const say = $("say");
   if (say.textContent !== state.said) {
