@@ -1866,7 +1866,8 @@ function catAhead(place, shape, herX, name = "") {
   // Она стоит перед креслом — подлокотник за ней: такое место годится, только если она его не закрывает.
   const arm = (side) => ({ x: chairAt(side * 49, 0)[0], y: chairAt(0, -35)[1], bare: true, only: shape === "curl" ? "curl" : "lie", mirror: side < 0, ...(kind === "seat" ? { layer: "front", depth: FEET + 1 } : { layer: "lap" }) });
   switch (place) {
-    case "sill": return [262, 294, 164, 148].map(x => ({ x, y: 262, layer: "sill", shade: true }));
+    // Последнее место (0.49.0) — правее, у самой Колючки: свернувшись, он шире, а она с пледом закрывает середину.
+    case "sill": return [262, 294, 164, 148, 304].map(x => ({ x, y: 262, layer: "sill", shade: true }));
     case "chair": return shape === "claw" ? [{ x: chairAt(-60, 0)[0] - 13, y: CLAW_Y, layer: "front", mirror: true }, { x: chairAt(60, 0)[0] + 12, y: CLAW_Y, layer: "front" }]
       : kind === "seat" ? [arm(1), arm(-1)] : [lap(-22), lap(26), arm(-1), arm(1)];
     case "pillow": return [{ x: 300 + PILLOW_ASIDE, y: 485, layer: "front", bare: true }];

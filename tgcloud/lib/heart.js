@@ -73,7 +73,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES } from "./keepsake.js";
-import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, sceneByKey, herPose, catPose, catAfter, colourHex,
+import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, ROOM_RECENT_KEY, RECENT_MAX, sceneByKey, herPose, catPose, catAfter, colourHex,
   skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
   READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
@@ -1839,7 +1839,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * Слова о самом мини-приложении: открыть его, убрать и вернуть кнопку в меню. И «покажи трофеи Байта»: слово
    * «покажи» обычно просит картинку — эти слова должны дойти до комнаты раньше.
    */
-  const ROOM_DOOR = new Set(["open", "menuoff", "menuon", "loot"]);
+  const ROOM_DOOR = new Set(["open", "menuoff", "menuon", "loot", "noteoff", "noteon", "album", "oops", "giftflower", "giftbook", "gifttoy"]);
+  // Писать первой о событии своего дня (идея 176, 0.49.0) — тем, кто бывает в комнате. Выключается словом «не пиши».
+  const ROOM_NOTES = config.ROOM_NOTES !== false;
+  /** Не чаще раза в двое суток человеку; только днём по его часам; только тому, кто заходил в последние две недели и не меньше трёх раз. */
+  const NOTE_EVERY_MS = 2 * 86_400_000, NOTE_RECENT_MS = 14 * 86_400_000, NOTE_VISITS = 3, NOTE_HOURS = Object.freeze([10, 21]);
+  /** Событие годится для письма три часа после начала: позже — уже не новость. */
+  const NOTE_FRESH_MIN = 180;
+  /** Раз в шесть часов человек отмечается в списке заходивших — не при каждом заходе. */
+  const LISTED_EVERY_MS = 6 * 3_600_000;
   /** Кнопка в меню бота (слева от поля ввода, в личке у каждого): открывает комнату. `on: false` — вернуть обычное меню. */
   async function roomMenu(url, { on = true } = {}) {
     if (!has("setChatMenuButton")) return false;
@@ -2095,6 +2103,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Что за её окном: строки запасов с пометками погоды говорятся только под своё небо.
     await roomSky(turn);
     // «Что делаешь?» (0.48.0): шаг её дня — тот же, что на рисунке, — и что по плану дальше. Заходом не считается.
+    // «Не пиши» (0.49.0): она больше не пишет первой — ни о своём дне, ни (хозяину) «доброе утро»; «пиши мне» —
+    // снова можно. Только в личке: в группе эти слова — о другом.
+    if (asked.op === "noteoff" || asked.op === "noteon") {
+      if (!turn.isPrivate) return null;
+      const off = asked.op === "noteoff";
+      const done = await room.amend(userId, today, (state) => (Boolean(state.mute) === off ? null : { ...state, mute: off }));
+      // Хозяин сказал «не пиши первой» — это ещё и настройка привета (утро и ночь): её разберёт `firstWords` и ответит
+      // как раньше; здесь — только отметка «о своём дне не писать».
+      if (owner(userId) && GREET && parseGreet(prompt)) return null;
+      if (done.lost || !done.saved) return tell(ROOM_DOWN);
+      if (owner(userId) && GREET) await amendGreet(before => ({ ...before, morningOff: off, nightOff: off, at: now() })).catch(() => false);
+      return tell(roomLine(turn, off ? "первой:стоп" : "первой:можно") || (off ? "Хорошо. Первой писать не буду — пока не услышу «пиши мне»." : "Хорошо. Буду иногда писать первой — о том, что у меня случилось."));
+    }
     // Альбом словами (0.49.0): шесть последних записей; целиком и со снимками — в мини-приложении.
     if (asked.op === "album") {
       const album = await keepsakes.read(userId);
@@ -2449,6 +2470,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         }).filter(Boolean);
         if (story.length) story.push({ line: spoken(roomLine(turn, "встреча:конец") || "Вот так. Остальное — в альбоме.") });
         const own = ownThings(today, minute);
+        // Кто заходит — попадает в список «бывает в комнате» (0.49.0): по нему она находит, кому написать о событии
+        // своего дня. Отметка — раз в шесть часов, а не при каждом заходе.
+        if (!again && ROOM_NOTES && !(now() - Number(visit.state.listed) < LISTED_EVERY_MS)) {
+          try {
+            await store.update(ROOM_RECENT_KEY, (saved) => {
+              const users = { ...(saved?.users && typeof saved.users === "object" ? saved.users : {}), [String(userId)]: now() };
+              return { users: Object.fromEntries(Object.entries(users).sort((one, two) => Number(two[1]) - Number(one[1])).slice(0, RECENT_MAX)), at: now() };
+            });
+            await room.amend(userId, today, (state) => ({ ...state, listed: now() }));
+          } catch { /* список подождёт следующего захода */ }
+        }
         return {
           // `once` (0.49.0): это сердце помнит номера действий — страница может сама повторить запрос, не дошедший за срок.
           ok: true, do: "look", build: BUILD, formal, once: true, ...(again ? { again: true } : {}), ...(repeat ? { repeat: true } : {}),
@@ -4215,6 +4247,66 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           return { ...before, subs: { ...before.subs, [userId]: { ...entry, fails } } };
         }).catch(() => false);
       }
+    }
+    return sent;
+  }
+
+  /**
+   * Написать первой о событии своего дня (идея 176, 0.49.0; слово владельца, сообщение 48: «Писать, но если человек
+   * скажет не пиши или что-то типа того, то она не пишет, без дальнейших его просьб»). Кому: тем, кто бывает в комнате
+   * (заходил в последние две недели и не меньше трёх раз), днём по их часам, не чаще раза в двое суток и только пока
+   * событие свежее — первые три часа. Не пишет тому, кто сказал «не пиши» (`mute` в записи комнаты), и тому, кто
+   * заблокировал бота: после отказа Telegram отметка ставится сама. Будит её любое пробуждение сердца (`wake`).
+   */
+  let notesCheckedAt = 0;
+  async function roomNotes() {
+    if (!ROOM_NOTES || !ROOM || !PHRASES || !store.available || now() - notesCheckedAt < 15 * 60_000) return 0;
+    notesCheckedAt = now();
+    const recent = await store.getChecked(ROOM_RECENT_KEY).catch(() => ({ ok: false }));
+    if (!recent?.ok || !recent.value?.users) return 0;
+    const ids = Object.entries(recent.value.users).filter(([, at]) => now() - Number(at) < NOTE_RECENT_MS).map(([id]) => Number(id)).filter(id => Number.isSafeInteger(id) && id > 0).slice(0, 40);
+    let sent = 0;
+    for (const id of ids) {
+      try {
+        const manner = await mannerFor(id, { dry: true }).catch(() => null);
+        if (manner?.blocked) continue;
+        const turn = { actorId: id, chatId: id, isPrivate: true, inGroup: false, manner, extra: {} };
+        const zone = zoneOf(turn), local = localParts(now(), zone), today = calendarDate(now(), zone), minute = local.hh * 60 + local.mm;
+        if (local.hh < NOTE_HOURS[0] || local.hh >= NOTE_HOURS[1]) continue;
+        const event = eventFor(today);
+        if (!event || minute < event.from || minute > event.from + NOTE_FRESH_MIN) continue;
+        const state = await room.read(id, today);
+        if (state.lost || state.mute || Number(state.n) < NOTE_VISITS || state.noted === today || now() - Number(state.notedAt) < NOTE_EVERY_MS) continue;
+        // Только что был в комнате — видел сам.
+        if (now() - Number(state.near) < 3 * 3_600_000) continue;
+        const line = lineAt(turn, `первой:${event.pool}`, dayNo(today));
+        if (!line) continue;
+        // Отметка — заявкой: два пробуждения в одну секунду не напишут дважды.
+        let mine = false;
+        const claim = await room.amend(id, today, (fresh) => { mine = !fresh.mute && fresh.noted !== today; return mine ? { ...fresh, noted: today, notedAt: now(), notes: (Number(fresh.notes) || 0) + 1 } : null; });
+        if (!mine || !claim.saved) continue;
+        // В первом таком письме — как это выключить.
+        const hint = Number(claim.state.notes) <= 1 ? roomLine(turn, "первой:подсказка") || "Если писать первой не нужно — скажите «не пиши»." : "";
+        const text = [voiced(turn, line), hint ? voiced(turn, hint) : ""].filter(Boolean).join("\n");
+        const page = await roomPage().catch(() => "");
+        const door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
+        let delivered = false, refusedBy = "";
+        for (const extra of door ? [door, null] : [null]) {
+          try { await api.sendMessage({ chat_id: id, text, ...(extra ?? {}) }); delivered = true; break; } catch (error) { refusedBy = String(error?.message ?? error); }
+        }
+        if (!delivered) {
+          // Заблокировал бота или удалил чат — больше не пытаться; иной сбой — отметка дня снимается, попытка завтра.
+          const gone = /blocked|deactivated|chat not found|403/iu.test(refusedBy);
+          await room.amend(id, today, (fresh) => ({ ...fresh, ...(gone ? { mute: true } : { noted: "", notedAt: 0 }), notes: Math.max(0, (Number(fresh.notes) || 1) - 1) })).catch(() => null);
+          continue;
+        }
+        sent += 1;
+        await keepsakes.add(id, [{ k: "event", key: event.key, day: today, at: now(), told: true }]).catch(() => null);
+        try {
+          const history = await store.memory.load({ userId: id, chatId: id });
+          await store.memory.save({ userId: id, chatId: id, messages: [...(Array.isArray(history) ? history : []), { role: "assistant", content: text.slice(0, 600) }].slice(-12) });
+        } catch { /* нить подождёт */ }
+      } catch { /* один человек не должен остановить остальных */ }
     }
     return sent;
   }
@@ -7636,6 +7728,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Напоминания звонят при любом пробуждении: от будильника или от сообщения.
     try { await ring(); } catch { /* следующее пробуждение повторит */ }
     try { await greetOwner(); } catch { /* доброе утро подождёт до завтра */ }
+    try { await roomNotes(); } catch { /* о событии дня напишет в следующий раз */ }
     try { await prayerBell(); } catch { /* следующее пробуждение посчитает заново */ }
     try { await fastBell(); } catch { /* и о посте — тоже */ }
     try { await holidayCards(); } catch { /* праздник не важнее остального */ }
