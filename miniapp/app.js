@@ -592,12 +592,13 @@ async function lamp() {
 
 /**
  * Колонка (0.46.0): три минуты тихой музыки, и она танцует; нажали, пока играет, — выключили. Нажатие на колонку —
- * и есть просьба о звуке: выключенный звук включается (телефон даёт звук только с касания), как кнопкой «звук».
+ * и есть просьба о звуке: выключенный звук включается (телефон даёт звук только с касания) — на этот заход; запоминает
+ * выбор только кнопка «звук».
  */
 async function music() {
   if (typeof applyMusic !== "function" || typeof demoMusic !== "function") return;
   scheduleTurn();
-  if (!soundOn && canSound && !(state.music > 0)) keepSound(await startSound());
+  if (!soundOn && canSound && !(state.music > 0)) await startSound();
   state = { ...state, busy: "music" };
   paint();
   const result = state.demo ? demoMusic(state) : await call({ do: "music" });
@@ -663,6 +664,9 @@ $("retry").addEventListener("click", () => enter());
 
 // Звук: выключатель под рисунком. Запомненное «включено» ждёт первого касания страницы.
 $("sound")?.addEventListener("click", async () => {
+  // Звук уже включается: запомненное «включено» запустило его этим же касанием. Второй запуск вернул бы «не вышло» —
+  // и кнопка записала бы «выключено» и показала бы предупреждение при звуке, который играет.
+  if (soundBusy) return;
   if (soundOn) { stopSound(); keepSound(false); return; }
   const ok = await startSound();
   keepSound(ok);

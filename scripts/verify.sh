@@ -135,6 +135,15 @@ previous_page() {
   rm -rf "$PAGE/previous"
   now="$(sed -n 's/^export const PAGE = "\([0-9]*\)";.*/\1/p' "$ROOT/miniapp/logic.js")"
   if [ -z "$now" ]; then echo "прежняя страница: номер страницы в miniapp/logic.js не найден"; return 0; fi
+  # Сборка шла кусками, а номер страницы подняли в конце — тогда «последний коммит с другим номером» уже несёт
+  # новую страницу, и смесь проверялась бы сама с собой. Прежний выпуск можно назвать: PREVIOUS=<коммит>.
+  if [ -n "${PREVIOUS:-}" ]; then
+    mkdir -p "$PAGE/previous"
+    (cd "$ROOT" && git archive "$PREVIOUS" miniapp | tar -x -C "$PAGE/previous")
+    was="$(sed -n 's/^export const PAGE = "\([0-9]*\)";.*/\1/p' "$PAGE/previous/miniapp/logic.js")"
+    echo "прежняя страница: номер ${was:-?}, коммит ${PREVIOUS:0:7} — назван в PREVIOUS (сейчас — номер $now)"
+    return 0
+  fi
   for commit in $(cd "$ROOT" && git log --format=%H -n 300 -- miniapp/logic.js 2>/dev/null || true); do
     was="$(cd "$ROOT" && git show "$commit:miniapp/logic.js" 2>/dev/null | sed -n 's/^export const PAGE = "\([0-9]*\)";.*/\1/p' || true)"
     if [ -n "$was" ] && [ "$was" != "$now" ]; then

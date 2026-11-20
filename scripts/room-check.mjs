@@ -238,12 +238,18 @@ try {
         if (!quiet) fail("колонка: выключили — а ноты остались");
       }
     }
+    // Колонка включила звук на этот заход, не запоминая: выбор запоминает только кнопка «звук».
+    const sounded = await page.evaluate(() => ({ kept: localStorage.getItem("ai-room-sound"), on: document.getElementById("sound")?.getAttribute("aria-pressed") === "true" }));
+    if (sounded.kept === "1") fail("колонка: нажатие запомнило звук включённым — запоминать должна только кнопка «звук»");
+    // Вернуть как было: звук проверяется отдельно (шаг 7).
+    if (sounded.on) { await page.evaluate(() => document.getElementById("sound").click()); await pause(300); }
   }
   // Лампа (0.46.0): вечером и ночью нажатие гасит её (тёплого света лампы на рисунке нет) и зажигает; днём — только слова.
   {
     const before = await said();
     if (!seen.zones.includes("lamp")) fail("лампа: места на рисунке нет");
     else if (await tapZone("lamp")) {
+      // Мест два — гирлянда и сама лампа; `tapZone` нажимает первое, гирлянду.
       const after = await said();
       if (!after || after === before) fail("лампа: её слова не изменились");
       else if (!/^Днём/u.test(after)) {
@@ -277,8 +283,9 @@ try {
   if (!scene.picked || !/Новая сценка — завтра\./u.test(scene.text)) fail(`исход сценки не показан: «${scene.text}»`);
   // После всех нажатий её картинка — та же: в кладовой не прибавилось копий, комната по-прежнему ссылается на неё.
   const later = await painted();
-  // С 0.45.0 в кладовой больше картинок: вторые кадры поз и «читает» (нажатие на полку) с её веками.
-  if (new Set(later.kept).size !== later.kept.length || later.kept.length > 12) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
+  // С 0.45.0 в кладовой больше картинок: вторые кадры поз и «читает» (нажатие на полку) с её веками; с 0.46.0 —
+  // оба кадра шага, кадры ещё шести поз и танец (нажатие на колонку). Главное — что ни одна не лежит дважды.
+  if (new Set(later.kept).size !== later.kept.length || later.kept.length > 24) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
   if (!later.shown || later.inline) fail(`после нажатий её картинки не видно: ${JSON.stringify(later.used)}`);
   console.log(`  нажато: забота на рисунке и кнопками, она, окно, вещей — ${Object.keys(lines.things).length}, сценка`);
   if (shot) { await page.screenshot({ path: shot, fullPage: false }); console.log(`  снимок: ${shot}`); }
@@ -571,8 +578,9 @@ try {
       for (let spent = 0; spent < 5000 && !(frames?.layers === 2 && frames.moving >= 2); spent += 300) {
         await pause(300);
         frames = await tab.evaluate(() => ({
-          layers: document.querySelectorAll("#inside .fr").length, second: document.querySelector("#inside .fr.b use")?.getAttribute("href") ?? "",
-          moving: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside .fr")).length,
+          // Кадры самой позы — внутри `.alive`: у шага (0.46.0) свои два кадра, и после прихода они ещё в рисунке.
+          layers: document.querySelectorAll("#inside .alive .fr").length, second: document.querySelector("#inside .alive .fr.b use")?.getAttribute("href") ?? "",
+          moving: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside .alive .fr")).length,
         }));
       }
       if (frames?.layers !== 2 || frames.second !== "#r-her-tea3b" || frames.moving < 2) fail(`кадры позы «tea3»: слоёв — ${frames?.layers}, второй кадр — «${frames?.second}», движется — ${frames?.moving}`);
@@ -742,7 +750,8 @@ try {
     await tab.tap('#actions button[data-act="pet"]');
     await pause(500);
     await tab.tap('#actions button[data-act="pet"]');
-    const belly = await until(seen => /на спину/u.test(seen.say) && seen.cat.includes("belly"), 3000, 150);
+    // С 0.46.0 Байт идёт шагом (до четырёх с половиной секунд через всю комнату) — ждать его дольше.
+    const belly = await until(seen => /на спину/u.test(seen.say) && seen.cat.includes("belly"), 7000, 150);
     if (!belly) { const seen = await now(); fail(`погладили второй раз: слова «${seen.say.slice(0, 50)}», а Байт на рисунке — ${JSON.stringify(seen.cat)}`); }
 
     // Сценка дня видна на рисунке и уходит с него после выбора; Байт — там, где сказано.
@@ -750,7 +759,7 @@ try {
     const staged = await now();
     if (!staged.fx.includes("sock")) fail(`сценка «носок»: носка на рисунке нет (${JSON.stringify(staged.fx)})`);
     await tab.tap('#sceneChoice button[data-pick="0"]');
-    const played = await until(seen => !seen.fx.includes("sock") && seen.cat.includes("curl"), 3000, 150);
+    const played = await until(seen => !seen.fx.includes("sock") && seen.cat.includes("curl"), 8000, 150);
     if (!played) { const seen = await now(); fail(`сценка сыграна («унёс носок в коробку»), а на рисунке: носок — ${seen.fx.includes("sock")}, Байт — ${JSON.stringify(seen.cat)}`); }
 
     // Погода: семь видов неба. Дождь и гроза — струи, снег — хлопья, в сухую погоду слои пусты; гроза сверкает.

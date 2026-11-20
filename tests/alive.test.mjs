@@ -1267,11 +1267,19 @@ test("0.46.0, лампа: вечером и ночью нажатие гасит
   // Ночью — то же; днём лампа не горит и так, и выключатель рисунка не меняет.
   assert.doesNotMatch(scene.drawRoom({ ...view, part: "ночь", her: { pose: "nap", key: "сон", beat: true }, dark: true }, PAINTED), /lampGlow|lampFloor/u);
   assert.equal(scene.drawRoom({ ...view, part: "день", dark: true }, PAINTED), scene.drawRoom({ ...view, part: "день" }, PAINTED));
-  // Место нажатия — сама лампа; абажур любимого цвета (если он есть) — поверх колпака, ножка остаётся выключателем.
-  const zonesOf = (markup) => [...markup.matchAll(/class="tap" data-act="([^"]+)"/gu)].map(found => found[1]);
-  assert.ok(zonesOf(dim).includes("lamp"));
-  const owned = zonesOf(scene.drawRoom({ ...view, things: ["абажур"] }, PAINTED));
-  assert.ok(owned.indexOf("lamp") >= 0 && owned.indexOf("lamp") < owned.indexOf("thing:абажур"), owned.join());
+  // Мест нажатия два: гирлянда над окном и сама лампа — колпак с ножкой. Колпак — место вещи «абажур любимого
+  // цвета», перед ножкой в день рождения стоит торт: выключателем остаётся свободное; заняты оба — только гирлянда.
+  const boxes = (markup) => [...markup.matchAll(/class="tap" data-act="lamp"[^>]* id="(garland|switch)"><rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"/gu)].map(found => [found[1], ...found.slice(2).map(Number)]);
+  assert.deepEqual(boxes(dim), [["garland", 118, 30, 276, 28], ["switch", 364, 258, 36, 62]]);
+  assert.deepEqual(boxes(scene.drawRoom({ ...view, things: ["абажур"] }, PAINTED))[1], ["switch", 366, 292, 34, 28]);
+  assert.deepEqual(boxes(scene.drawRoom({ ...view, things: ["торт"] }, PAINTED))[1], ["switch", 364, 258, 36, 28]);
+  assert.deepEqual(boxes(scene.drawRoom({ ...view, things: ["абажур", "торт"] }, PAINTED)).map(box => box[0]), ["garland"]);
+  // Ни абажур, ни торт выключатель не заслоняет: их места с его местом не пересекаются.
+  const zoneOf = (markup, act) => markup.match(new RegExp(`data-act="${act}"[^>]*><rect x="([\\d.]+)" y="([\\d.]+)" width="([\\d.]+)" height="([\\d.]+)"`, "u")).slice(1).map(Number);
+  const apart = (a, b) => a[0] + a[2] <= b[0] || b[0] + b[2] <= a[0] || a[1] + a[3] <= b[1] || b[1] + b[3] <= a[1];
+  const shaded = scene.drawRoom({ ...view, things: ["абажур"] }, PAINTED), feast = scene.drawRoom({ ...view, things: ["торт"] }, PAINTED);
+  assert.ok(apart(boxes(shaded)[1].slice(1), zoneOf(shaded, "thing:абажур")), "абажур и ножка лампы");
+  assert.ok(apart(boxes(feast)[1].slice(1), zoneOf(feast, "thing:торт")), "торт и колпак лампы");
 
   // Днём: только слова, выключатель — как был.
   reset();
@@ -1426,7 +1434,9 @@ test("0.46.0, мелодия колонки: играет сам телефон 
   }
   // И в самой странице: колонка включает звук касанием, а мелодия продолжается, если звук включили позже.
   const app = read("miniapp/app.js");
-  assert.match(app, /if \(!soundOn && canSound && !\(state\.music > 0\)\) keepSound\(await startSound\(\)\);/u);
+  assert.match(app, /if \(!soundOn && canSound && !\(state\.music > 0\)\) await startSound\(\);/u);
+  // Кнопка «звук», нажатая первым же касанием при запомненном «включено», не спорит с запуском, который уже идёт.
+  assert.match(app, /\$\("sound"\)\?\.addEventListener\("click", async \(\) => \{\n(?:\s*\/\/[^\n]*\n)+\s+if \(soundBusy\) return;\n\s+if \(soundOn\) \{ stopSound\(\); keepSound\(false\); return; \}/u);
   assert.match(app, /function retune\(\) \{\n  const left = tuneUntil - Date\.now\(\);/u);
 });
 

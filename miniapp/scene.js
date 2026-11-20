@@ -160,9 +160,15 @@ const within = ([x, y, w, h]) => {
 const tap = (act, label, box, id = "") => `<g class="tap" data-act="${esc(act)}" role="button" tabindex="0" aria-label="${esc(label)}"${id ? ` id="${id}"` : ""}>${hit(...within(box))}</g>`;
 
 /** Что можно тронуть ради заботы: подпись, имя на странице и область. Эти области — поверх всех остальных. */
-/** Места нажатий 0.46.0: колонка на нижней полке и лампа на столе (колпак и ножка, до края рисунка). */
+/** Места нажатий 0.46.0: колонка на нижней полке; выключатель света — гирлянда над окном и сама лампа. */
 const SPEAKER_ZONE = Object.freeze([12, 322, 45, 46]);
-const LAMP_ZONE = Object.freeze([364, 258, 36, 62]);
+const GARLAND_ZONE = Object.freeze([118, 30, 276, 28]);
+/**
+ * Место нажатия на лампе: колпак и ножка. Но колпак — место вещи «абажур любимого цвета», если она у человека есть,
+ * а перед ножкой в день рождения стоит торт: выключателем остаётся то, что свободно. Заняты и колпак, и ножка —
+ * на лампе места нет (`null`): свет гасит гирлянда.
+ */
+const lampZone = (shade, cake) => (shade && cake ? null : shade ? [366, 292, 34, 28] : cake ? [364, 258, 36, 28] : [364, 258, 36, 62]);
 const CARE_ZONES = Object.freeze({
   water: ["Колючка", "plant", [320, 210, 38, 54]],
   tea: ["Чайник", "kettle", [308, 280, 46, 40]],
@@ -2371,6 +2377,7 @@ export function drawInside(view = {}, options = {}) {
   // Слой нажатий: кто ниже в списке, тот ближе к пальцу.
   const thingZone = ([key, [label, box]]) => tap(`thing:${key}`, label, box);
   const owned = Object.entries(THING_ZONES).filter(([key]) => shown(key));
+  const lampAt = lampZone(shown("абажур"), shown("торт"));
   const herZone = she.zone ? tap("her", "Аи", she.zone, "her") : "";
   // Голова — её отдельное место: по голове гладят (у нарисованной кодом фигуры его нет — там она мала).
   const headZone = she.head ? tap("pat", "Погладить Аи по голове", she.head, "pat") : "";
@@ -2381,16 +2388,17 @@ export function drawInside(view = {}, options = {}) {
   const seatZone = owned.filter(([key]) => key === "место").map(thingZone);
   const zones = [
     tap("window", "Окно", [WIN.x, WIN.y, WIN.w, WIN.h]),
+    // Выключатель света (0.46.0): гирлянда над окном и сама лампа — нажал, и лампа гаснет или загорается.
+    tap("lamp", "Гирлянда", GARLAND_ZONE, "garland"),
     // Полка с книгами (0.45.0): нажал — она берёт книгу и садится читать. Вещи на полках — поверх: они ниже в списке.
     tap("book", "Полка с книгами", BOOKS, "books"),
     // Колонка на нижней полке (0.46.0): нажал — три минуты музыки, она танцует. Поверх полки с книгами.
     tap("music", "Колонка", SPEAKER_ZONE, "speaker"),
+    ...(lampAt ? [tap("lamp", "Лампа", lampAt, "switch")] : []),
     ...owned.filter(([key]) => !FRONT_THINGS.has(key)).map(thingZone),
     // Коробка Байта: нажал — что он в неё натаскал. Сам Байт, если сидит в ней, — поверх.
     tap("box", "Коробка Байта", [BOX.x, BOX.y + 8, BOX.w, BOX.h - 8], "box"),
     ...(herCloser ? [catZone, ...seatZone, herZone, headZone] : [herZone, headZone, catZone, ...seatZone]),
-    // Лампа (0.46.0): нажал — свет гаснет или загорается. Абажур любимого цвета, если он есть, — поверх колпака.
-    tap("lamp", "Лампа", LAMP_ZONE, "switch"),
     ...owned.filter(([key]) => FRONT_THINGS.has(key) && key !== "место").map(thingZone),
     // Колючка на полу — и поливают её там, где она лежит.
     ...Object.entries(CARE_ZONES).map(([act, [label, id, box]]) => tap(act, label, act === "water" && fx.has("cactus") ? FALLEN.zone : box, id)),
