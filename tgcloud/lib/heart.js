@@ -2357,7 +2357,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const settledLine = () => { const lines = roomLines(turn, `байт:${key}`).filter(item => catFits(item, fits)); return lines.length ? lines[count % lines.length] : lineAt(turn, `байт:${key}`, count); };
         const raw = after || held ? "" : eats ? lineAt(turn, "байт:завтрак", count) : beside ? lineAt(turn, "байт:ночь", count)
           : hides ? lineAt(turn, "байт:гроза", count) : naps ? lineAt(turn, "байт:тихий час", count)
-            : special ? lineAt(turn, special, prank ? dayNo(today) : count) : beat ? beat.line : settledLine();
+            // Шалость — по дню (у всех одна); «к ней» приходится на каждый третий шаг — счёт по тройкам, иначе реплика была бы всегда одна.
+            : special ? lineAt(turn, special, prank ? dayNo(today) : comes ? Math.floor(count / 3) : count) : beat ? beat.line : settledLine();
         const moved = after ? catAfter(after, { again }) : null;
         const cat = after
           ? (moved ? { key, ...catPose(line, key, moved), beats: order, still: order.length < 2, steady: true } : null)
@@ -2464,8 +2465,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         for (const past of missed) entries.push({ k: "event", key: past.key, day: past.day, at: now(), told: true });
         const fresh = album.lost ? [] : (await keepsakes.add(userId, entries, album).catch(() => ({ added: [] }))).added;
         // Встреча-сценка: «чем занималась, что произошло, что хочет рассказать» — шаги с её местом (или местом Байта).
-        const story = missed.map((past) => {
-          const told = lineAt(turn, `было:${past.pool}`, dayNo(past.day), { "когда": agoWords(dayNo(today) - dayNo(past.day)) });
+        // Первая реплика запаса «было:…» начинает рассказ («Пока вас не было…»), вторая продолжает («Ещё: …»).
+        const story = missed.map((past, index) => {
+          const told = lineAt(turn, `было:${past.pool}`, index, { "когда": agoWords(dayNo(today) - dayNo(past.day)) });
           return told ? { line: spoken(told), ...(past.pose ? { her: { key: past.her, pose: past.pose } } : { cat: catPose(told, "шалит") }) } : null;
         }).filter(Boolean);
         if (story.length) story.push({ line: spoken(roomLine(turn, "встреча:конец") || "Вот так. Остальное — в альбоме.") });
