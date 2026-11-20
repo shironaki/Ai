@@ -28,7 +28,7 @@
 export const WIDTH = 400;
 export const HEIGHT = 520;
 export const PARTS = Object.freeze(["утро", "день", "вечер", "ночь"]);
-export const HER_POSES = Object.freeze(["desk", "shelf", "chair", "nap", "sill", "back", "map", "garland", "dance", "ribbon", "lie", "read"]);
+export const HER_POSES = Object.freeze(["desk", "shelf", "chair", "nap", "sill", "back", "map", "garland", "dance", "ribbon", "lie", "read", "feed", "dust", "sort"]);
 export const CAT_SHAPES = Object.freeze(["sit", "lie", "curl", "walk", "play", "eat", "claw", "eyes", "tail", "belly"]);
 export const CAT_PLACES = Object.freeze(["bowl", "sill", "chair", "rug", "pillow", "desk", "box", "near", "top", "under", "plaid"]);
 export const THINGS = Object.freeze(["кружка", "тапочки", "подушка", "снимок", "плед", "календарь", "кресло", "кактус", "место", "абажур", "рисунок", "ёлка", "торт", "свеча", "фонарь"]);
@@ -1618,7 +1618,9 @@ export const HER_WEARS = Object.freeze(["jacket", "home"]);
  *   seat — у сидящей: где её бёдра, в долях высоты картинки (эта линия ложится на сиденье кресла);
  *   half — полуширина того, что она закрывает собой; legs — ноги: от и до по ширине, от оси тела;
  *   head — где голова, в долях ширины и высоты картинки (по умолчанию — на оси тела, у верхнего края): по ней гладят;
- *   mark — что движется рядом с неподвижной картинкой: пар над кружкой или «z z Z», место — в тех же долях.
+ *   mark — что движется рядом с неподвижной картинкой: пар над кружкой или «z z Z», место — в тех же долях;
+ *   faces — куда смотрит картинка «идёт» (0.48.0); drop — где на полу падает корм, от оси тела: там ест Байт;
+ *   blush: false — румянца у этой позы нет: лицо повёрнуто или наклонено, пятно пришлось бы на нос или рот.
  * Доли сняты с самих картинок (лист с сеткой); перерисовали спрайт — проверить по листу `her`.
  */
 export const HER_SPRITES = Object.freeze({
@@ -1631,7 +1633,7 @@ export const HER_SPRITES = Object.freeze({
   work2: { tall: 390 },
   // Сидит в кресле и в других состояниях (0.47.0, идея 168): с блокнотом, под пледом с закрытыми глазами, скрестив
   // руки. Правки той же сидящей картинки, что с кружкой: рост, сиденье и голова — как у `tea3` (сверено наложением).
-  work3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  work3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], blush: false },
   play: { tall: 390, legs: [-30, 72], head: [0.66, 0.075] },
   play2: { tall: 380, half: 62, legs: [-36, 54], head: [0.51, 0.17] },
   play3: { tall: 215, kind: "crouch", half: 66, head: [0.6, 0.17] },
@@ -1644,7 +1646,13 @@ export const HER_SPRITES = Object.freeze({
   jealous2: { tall: 390, half: 64 },
   jealous3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   sleep: { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
-  // Идёт (0.44.0): не поза состояния, а то, как она переходит от места к месту; смотрит вправо, влево — отражением.
+  // Дела дня (0.48.0, сообщение 47: «кормит Байта», «наводит порядок, раскладывает книги»): смахивает пыль метёлкой,
+  // раскладывает книги, присела и насыпает корм. Все три смотрят влево: метёлка и книга тянутся к шкафу, корм
+  // сыплется влево и вниз. `drop` — где корм падает на пол, от оси её тела: там ест Байт (`catAhead`).
+  tidy: { tall: 390, head: [0.58, 0.09], blush: false },
+  books: { tall: 390, head: [0.54, 0.1], blush: false },
+  feed: { tall: 215, kind: "crouch", half: 66, head: [0.34, 0.15], drop: -96, blush: false },
+  // Идёт (0.44.0): не поза состояния, а то, как она переходит от места к месту.
   // `faces` — куда она на картинке идёт. Обе «идёт» нарисованы лицом влево (образец — `verify.sh ref walk,walkb,
   // home-walk,home-walkb`): идёт вправо — картинка отражается. До 0.48.0 код считал наоборот, и она шла задом наперёд.
   walk: { tall: 374, kind: "walk", faces: "left" },
@@ -1655,7 +1663,7 @@ export const HER_SPRITES = Object.freeze({
   "home-read": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   "home-work": { tall: 390 },
   "home-work2": { tall: 390 },
-  "home-work3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  "home-work3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], blush: false },
   "home-play": { tall: 390, legs: [-30, 72], head: [0.66, 0.075] },
   "home-play2": { tall: 380, half: 62, legs: [-36, 54], head: [0.51, 0.17] },
   "home-play3": { tall: 215, kind: "crouch", half: 66, head: [0.6, 0.17] },
@@ -1668,6 +1676,9 @@ export const HER_SPRITES = Object.freeze({
   "home-jealous2": { tall: 390, half: 64 },
   "home-jealous3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   "home-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
+  "home-tidy": { tall: 390, head: [0.58, 0.09], blush: false },
+  "home-books": { tall: 390, head: [0.54, 0.1], blush: false },
+  "home-feed": { tall: 215, kind: "crouch", half: 66, head: [0.34, 0.15], drop: -96, blush: false },
   "home-walk": { tall: 374, kind: "walk", faces: "left" },
 });
 /**
@@ -1680,14 +1691,16 @@ export const HER_SPRITES = Object.freeze({
 export const HER_FRAMES = Object.freeze({
   tea3: ["tea3b", "sip"], "home-tea3": ["home-tea3b", "sip"],
   work: ["workb", "glance"], "home-work": ["home-workb", "glance"],
-  play2: ["play2b", "dance"], "home-play2": ["home-play2b", "dance"],
+  play2: ["play2b", "dance", ""], "home-play2": ["home-play2b", "dance", ""],
   // 0.46.0. С кружкой у подоконника — отпивает; под гирляндой первая картинка сама «пьёт», поэтому кадр — «опустила
   // кружку», и показан он подолгу (`glance`); с книгой — переворачивает страницу; «идёт» — второй кадр шага
   // (`pace`: ноги вместе, ступня поднята) попеременно с первым (ноги в шаге). У «под гирляндой в свитере» кадра
   // пока нет: на нарисованном юбка вышла серой, а не тёмно-красной, — при смене кадров она бы мигала.
   tea: ["teab", "sip"], "home-tea": ["home-teab", "sip"],
   // 0.47.0: кадр «под гирляндой в свитере» нарисован заново — юбка осталась тёмно-красной.
-  tea2: ["tea2b", "glance"], "home-tea2": ["home-tea2b", "glance"],
+  // Третье слово (0.48.0) — на каком кадре она смотрит на зрителя: его страница показывает, когда на неё нажали.
+  // По умолчанию — на первом; под гирляндой первый кадр «пьёт» с закрытыми глазами — смотрит второй; танец не прерывается.
+  tea2: ["tea2b", "glance", "b"], "home-tea2": ["home-tea2b", "glance", "b"],
   read: ["readb", "sip"], "home-read": ["home-readb", "sip"],
   walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"],
 });
@@ -1719,7 +1732,8 @@ const SPRITE_FIRST = Object.freeze({
 const SPRITE_FOR = Object.freeze({
   // `chair` — «в кресле» — у каждого состояния теперь сидящая картинка (0.47.0): до этого «у кресла, скрестив руки» и
   // «молчу, завернувшись в плед» показывались стоящей фигурой, а запасная фигура кодом в этих же местах сидела.
-  "дело": { desk: "work", shelf: "work", sill: "work2", chair: "work3" },
+  // 0.48.0 — дела дня: «читаю учебник» — та же картинка с книгой; корм, метёлка и книги — свои картинки.
+  "дело": { desk: "work", shelf: "work", sill: "work2", chair: "work3", read: "read", feed: "feed", dust: "tidy", sort: "books" },
   // `read` — в кресле с книгой (0.45.0): сама, по распорядку, или когда её усадили читать (полка с книгами, сценка
   // «что читать»). Это единственная картинка «уюта» без кружки — и её реплика говорит о книге, а не о чае.
   "уют": { chair: "tea3", sill: "tea", garland: "tea2", map: "tea", read: "read" },
@@ -1805,7 +1819,7 @@ const FEET = 500, FEET_SIT = 490;
  * Где она встаёт: у того, о чём её слова. Позу сердце шлёт по её реплике («за столом», «у полки», «в кресле»);
  * сидит она только в кресле, а встать рядом с названным местом может любой картинкой.
  */
-const SPRITE_AT = Object.freeze({ desk: 252, shelf: 160, map: 160, chair: CHAIR.x, read: CHAIR.x, lie: 224, nap: 218, sill: 226, back: 226, garland: 226, dance: 226, ribbon: 226 });
+const SPRITE_AT = Object.freeze({ desk: 252, shelf: 160, map: 160, chair: CHAIR.x, read: CHAIR.x, lie: 224, nap: 218, sill: 226, back: 226, garland: 226, dance: 226, ribbon: 226, feed: 172, dust: 168, sort: 168 });
 /** Все её места по порядку: если на первом она закрыла бы Байта, встаёт на следующее. */
 const SPRITE_SPOTS = Object.freeze([252, CHAIR.x, 226, 160]);
 /** Сколько у двух областей общего. */
@@ -1846,6 +1860,8 @@ function catAhead(place, shape, herX, name = "") {
     // клубка, а место для самого Байта ушло бы вниз, под полосу с её словами. Спит она на полу, в пледе, и
     // занимает середину ковра — он садится у её плеча, выше клубка. Присела — он чуть дальше: у пола она шире.
     case "near": {
+      // Она насыпает корм (0.48.0) — Байт ест там, куда он сыплется: слева от неё, мордой к пакету, перед ней.
+      if (shape === "eat" && name && Number.isFinite(HER_SPRITES[name].drop)) return [{ x: herX + HER_SPRITES[name].drop, y: 497, layer: "front", depth: FEET + 1, k: 1.2, mirror: true }];
       if (kind === "floor") return [{ x: 96, y: 456, layer: "front" }];
       // Сколько места занимают у пола её ноги — столько и отступить: влево и вправо по-разному (нога отведена).
       const [from, to] = kind === "seat" ? [-40, 40] : kind === "crouch" ? [-64, 64] : (name && HER_SPRITES[name].legs) || [-30, 30];
@@ -1877,6 +1893,8 @@ function catAhead(place, shape, herX, name = "") {
 }
 /** Какую долю Байта она закрыла бы — меньше этого не в счёт: край хвоста за её волосами его не прячет. */
 const HIDDEN_OK = 0.15;
+/** В какой из прежних поз стоит фигура кодом, когда картинки позы 0.48.0 ещё нет: с метёлкой и с книгами — у полки, с кормом — рядом с Байтом. */
+const CODE_POSE = Object.freeze({ feed: "ribbon", dust: "shelf", sort: "shelf" });
 /** Клубок — забота: сядь Байт на него, клубка не видно, а нажатие по праву клубка. Место на клубке — как закрытое ею. */
 const YARN = CARE_ZONES.play[2];
 /**
@@ -1965,9 +1983,18 @@ function herWalking(g, part, walker, from, to) {
  * место, где её гладят (голова). `ghost` — её прежняя поза `{ name, sprite, x }`: она тает, пока новая проявляется;
  * стояла в другом месте и есть картинка «идёт» (`walker`) — доходит до нового места шагом.
  */
-function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null, frame = null) {
+function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null, frame = null, face = "") {
   const place = spritePlace(name, sprite, x), { tall, kind, wide, feet, top, left } = place, low = kind === "floor";
-  const lids = fitsBlink(sprite) ? `<use class="wink" href="#r-her-${name}-blink" ${place.at}/>` : "";
+  // Веки — заплатка с закрытыми глазами: моргает; клюёт носом (`face: "drowsy"`) — моргает медленно (`.slow`).
+  // Румянец (0.48.0) — два пятна под глазами, по месту той же заплатки; не виден, пока её не погладят или не нальют
+  // ей чай (стили страницы: `.patted`, `.glad`). Ложится он только на кожу: маской служит сама картинка — мимо
+  // фигуры его нет, — а смешение «умножением» прячет его на тёмных волосах: у лица в три четверти дальнее пятно
+  // приходится на волосы или мимо головы (лист с румянцем смотрели при 0.48.0 — без этого пятно висело в воздухе).
+  // У четырёх поз лицо повёрнуто или наклонено так, что пятно пришлось бы на нос или рот, — у них в таблице `blush: false`.
+  const eyes = fitsBlink(sprite) ? sprite.blink : null, blushId = g.id("herBlush"), rosy = HER_SPRITES[name].blush !== false;
+  const cheek = (share) => `<ellipse cx="${n(eyes.x + eyes.w * share)}" cy="${n(eyes.y + eyes.h * 1.12)}" rx="${n(eyes.w * 0.1)}" ry="${n(eyes.w * 0.055)}"/>`;
+  const blush = eyes && rosy ? `<mask id="${blushId}" style="mask-type:alpha" maskUnits="userSpaceOnUse" ${place.box}><use href="#r-her-${name}" ${place.at}/></mask><g class="blush" opacity="0" mask="url(#${blushId})" style="mix-blend-mode:multiply"><g fill="#ff5f7a" ${place.at}>${cheek(0.27)}${cheek(0.73)}</g></g>` : "";
+  const lids = eyes ? `<use class="wink${face === "drowsy" ? " slow" : ""}" href="#r-her-${name}-blink" ${place.at}/>${blush}` : "";
   const [mark, mx, my] = HER_SPRITES[name].mark ?? [], px = left + wide * (mx ?? 0), py = top + tall * (my ?? 0);
   const alive = mark === "steam" ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity="0.6"><path d="M${n(px - 2.4)} ${n(py)} q-3 -4 0 -8 q3 -4 0 -7"/><path d="M${n(px + 2.8)} ${n(py - 1)} q3 -4 0 -8"/></g>`
     : mark === "zzz" ? zzz(f, n(px), n(py)) : "";
@@ -1975,23 +2002,30 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   // Второй кадр той же позы (`HER_FRAMES`) — поверх первого, на том же месте: ось тела у них общая. Веки и пар —
   // внутри первого кадра: пока она отпивает, кружки на коленях нет, и пара над ней тоже.
   const lit = spriteLit(part, name, place, g.id("herMask"), lids);
-  const body = frame
-    ? `<g class="alive"><g class="fr a ${frame.how}">${lit}${alive}</g><g class="fr b ${frame.how}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x), g.id("herMaskB"))}</g></g>`
+  // Кадр, на котором она смотрит на зрителя, помечен `lk`, второй — `nl`: нажали на неё — страница показывает первый
+  // (`.poked`): подняла глаза. У танца пометок нет — он не прерывается.
+  const looks = frame ? HER_FRAMES[name]?.[2] ?? "a" : "", seen = (which) => (looks ? (looks === which ? " lk" : " nl") : "");
+  const core = frame
+    ? `<g class="alive"><g class="fr a ${frame.how}${seen("a")}">${lit}${alive}</g><g class="fr b ${frame.how}${seen("b")}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x), g.id("herMaskB"))}</g></g>`
     : `<g class="alive">${lit}</g>${alive}`;
+  // Стоя она ещё и чуть покачивается (0.48.0, «небольшие движения головы»): вся фигура, от ступней; голова идёт дальше всех.
+  const body = kind === "stand" ? `<g class="lean">${core}</g>` : core;
+  // Садится — опускается, встаёт — поднимается (0.48.0, «естественные переходы между сидячими и стоячими позами»).
+  const down = kind === "stand" ? "" : " lower", up = ghost && !["stand", "walk"].includes(kindOf(ghost.name)) ? " rise" : "";
   const before = ghost ? spritePlace(ghost.name, ghost.sprite, ghost.x) : null;
   // Идёт, а не тает на месте: когда стояла (или сидела) в другой точке, сама не на полу и картинка «идёт» загружена.
   const walk = ghost && walker && Math.abs(ghost.x - x) >= 12 && !low && kindOf(ghost.name) !== "floor" ? herWalking(g, part, walker, ghost.x, x) : null;
   const [hx, hy] = HER_SPRITES[name].head ?? [null, 0.07], headX = hx == null ? x : left + wide * hx, headY = top + tall * hy;
   const reach = low ? 30 : kind === "stand" ? 22 : 25;
   const shade = shadow(g, x + (low ? 0 : 2), feet - 2, low ? wide * 0.44 : kind === "stand" ? 36 : wide * 0.36, low ? 7 : 6, 0.34);
-  const was = before ? `<g class="leave">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>` : "";
+  const was = before ? `<g class="leave${up}">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>` : "";
   return {
     y: feet, painted: name, walk: walk?.seconds ?? 0, walkShape: walk?.shape ?? "",
     // Как проявляется новая поза и тает ли прежняя: так же появляется и уходит вечерняя тень на ней (`airOnHerMoving`).
-    enter: walk ? `<g class="arrive late" style="--t:${walk.seconds}s">` : before ? `<g class="arrive">` : "", left: Boolean(before),
+    enter: walk ? `<g class="arrive late${down}" style="--t:${walk.seconds}s">` : before ? `<g class="arrive${down}">` : "", left: Boolean(before),
     front: walk
-      ? `${was}${walk.svg}<g class="arrive late" style="--t:${walk.seconds}s">${shade}${body}</g>`
-      : `${shade}${before ? `${was}<g class="arrive">${body}</g>` : body}`,
+      ? `${was}${walk.svg}<g class="arrive late${down}" style="--t:${walk.seconds}s">${shade}${body}</g>`
+      : `${shade}${before ? `${was}<g class="arrive${down}">${body}</g>` : body}`,
     // Нажатие — по ней самой, а не по всей картинке: волосы и плед по краям не отнимают нажатий у вещей за ней.
     zone: low ? [x - wide * 0.3, top + 14, wide * 0.6, tall - 20] : kind === "stand" ? [x - 28, top + 6, 56, tall - 12] : [x - 36, top + 8, 72, tall - 14],
     // Голова — отдельное место поверх: по голове её гладят.
@@ -2297,7 +2331,8 @@ function cast(view, options) {
   // Картинка ещё в пути: её самой не видно, а Байт уже сидит там, где будет сидеть при ней, — чтобы не прыгал.
   const waits = Boolean(name) && got === undefined;
   const ahead = Boolean(sprite || waits);
-  const pose = ahead ? null : asked;
+  // Дела дня (0.48.0) нарисованы только картинками: пока картинки нет, фигура кодом стоит в ближайшей из прежних поз.
+  const pose = ahead ? null : CODE_POSE[asked] ?? asked;
   const stand = ahead ? herStand(name, asked, view.cat) : null;
   let spot = null, shape = null;
   if (view?.cat) {
@@ -2328,10 +2363,11 @@ function insideOf(view = {}, options = {}) {
   const has = (key) => things.has(key);
   const fx = fxIn(view);
   // Лужа на подоконнике — от открытого окна: створка открыта и при ней.
-  const ajar = fx.has("window") || fx.has("puddle");
+  // Окно открыто: его открыла сценка дня — или она сама, по нажатию (0.48.0): тогда слышна улица.
+  const ajar = fx.has("window") || fx.has("puddle") || view.open === true;
   // Каждая перемена от сценки — своей группой с именем: по нему её находят проверки страницы.
   const fxShown = (name, body, when = fx.has(name)) => (when ? `<g class="fx fx-${name}">${body()}</g>` : "");
-  const { loaded, name, sprite, ahead, pose, stand, spot } = cast(view, options);
+  const { loaded, name, sprite, ahead, pose, stand, spot, shape: petShape } = cast(view, options);
   // Байт: `options.catWas` — где он был на прежнем рисунке: перешёл — дойдёт шагом.
   const catWas = options?.catWas && typeof options.catWas === "object" ? options.catWas : null;
   const pet = view.cat ? cat(g, f, view.cat, pose, spot, catWas) : null;
@@ -2348,18 +2384,24 @@ function insideOf(view = {}, options = {}) {
   // Второй кадр её позы: загружен — она движется внутри позы; нет — стоит одной картинкой, как раньше.
   const alt = sprite && Object.hasOwn(HER_FRAMES, name) ? HER_FRAMES[name] : null;
   const frame = alt && loaded && fitsSprite(loaded[alt[0]]) ? { name: alt[0], sprite: loaded[alt[0]], how: alt[1] } : null;
-  const she = sprite ? herPainted(g, c, f, part, name, sprite, stand.x, door ?? was, walker, frame)
+  const she = sprite ? herPainted(g, c, f, part, name, sprite, stand.x, door ?? was, walker, frame, view.her?.face)
     // Её на рисунке нет, а только что была: уходит к шкафу, за левый край.
     : view.her?.away === true ? (before ? herLeaving(g, part, before, walker) : { note: changingNote() })
       : pose ? her(g, c, f, pose, view.her.key, view) : {};
   // Плед на ней — значит, на кресле его нет: это картинки «устала» и «спит».
   const plaidOnHer = sprite ? plaidWorn(name) : pose === "lie" || pose === "nap" || pose === "chair" || pose === "read";
-  const on = (layer) => (pet?.layer === layer ? pet.svg : "");
+  // Байт замечает, что она подошла (0.48.0, «реакция Байта на приближение Аи»): она дошла шагом и встала рядом — он
+  // вздрагивает, над ним вспыхивает «!». Спящий, спрятавшийся и тот, кто идёт сам, её не замечают.
+  const noticed = Boolean(pet) && !pet.walk && she.walk > 0 && Boolean(stand) && Boolean(spot) && Math.abs(spot.x - stand.x) < 130 && ["sit", "lie", "belly", "claw", "eat"].includes(petShape);
+  const [markX, markY] = noticed ? (([bx, by, bw]) => [bx + bw / 2, by - 5])(catBoxAt(spot, petShape)) : [0, 0];
+  const petSvg = !pet ? "" : !noticed ? pet.svg
+    : `<g class="notice" style="--t:${she.walk}s"><g class="hop">${pet.svg}</g><text class="mark" x="${n(markX)}" y="${n(markY)}" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="700" fill="#ffd166" stroke="#3a2412" stroke-width="0.7" paint-order="stroke" opacity="0">!</text></g>`;
+  const on = (layer) => (pet?.layer === layer ? petSvg : "");
   // На полу — по глубине: кто ниже на рисунке, тот ближе к зрителю и закрывает дальнего.
   const herDepth = she.y ?? 400;
   // Три места в списке частей: Байт позади неё, она, Байт перед ней. Её место — всегда среднее: перешёл он — её
   // часть та же, и страница её не трогает (`drawParts`).
-  const petOnFloor = pet?.layer === "front" ? pet.svg : "", petBehind = Boolean(petOnFloor) && Boolean(she.front) && pet.depth < herDepth;
+  const petOnFloor = pet?.layer === "front" ? petSvg : "", petBehind = Boolean(petOnFloor) && Boolean(she.front) && pet.depth < herDepth;
   // Коробка стоит ближе к зрителю, чем её ступни за столом: тогда коробка рисуется после неё.
   const boxNear = pose === "desk";
   // Она стоит на полу ближе Байта и закрывает его собой — тогда и палец встречает её первой: он на кресле, под

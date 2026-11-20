@@ -234,6 +234,8 @@ const RULES = Object.freeze([
   ["plant", /^(?:а\s+)?(?:колючка|(?:твой|твоя)\s+(?:кактус|колючка))\s+(?:жива|жив|цела|цел|растет|цветет|не\s+засохла|не\s+засох|как\s+там|в\s+порядке)$/u],
   ["plant", /^(?:а\s+)?(?:колючка|колючку)$/u],
   ["water", /^(?:можно\s+)?(?:я\s+)?(?:полить|полью|поливаю|полей|полил|полила)\s+(?:твой\s+|твою\s+|свой\s+|свою\s+)?(?:кактус|колючку|кактусик)(?:\s+можно)?$/u],
+  // «Что делаешь?» (0.48.0): отвечает её день — то же занятие, что на рисунке комнаты в эту минуту.
+  ["busy", /^(?:а\s+)?(?:ты\s+)?(?:что|чо|че|шо|чем)\s+(?:ты\s+)?(?:сейчас\s+)?(?:делаешь|делаеш|поделываешь|занята|занимаешься)(?:\s+сейчас)?$/u],
 ]);
 
 /**
@@ -261,8 +263,8 @@ const LOOSE = Object.freeze([
 
 /**
  * Слова о комнате: `{ op }` или `null`. `op`: enter (зайти), open (открыть мини-приложение), cat (как Байт),
- * plant (как Колючка), pet, feed, play, tea, water, news, call (позвать Байта), hurt — Байта хотят обидеть (она не
- * даст), menuoff и menuon — убрать и вернуть кнопку комнаты в меню бота (слово хозяина).
+ * plant (как Колючка), pet, feed, play, tea, water, news, call (позвать Байта), busy («что делаешь?» — шаг её дня,
+ * 0.48.0), hurt — Байта хотят обидеть (она не даст), menuoff и menuon — убрать и вернуть кнопку комнаты в меню бота (слово хозяина).
  * `near: true` — человек только что был в комнате: тогда годятся и короткие слова (`{ op, loose: true }`).
  * Описание комнаты («какая у тебя комната», «что у тебя в комнате») остаётся словарю: там она рассказывает,
  * а здесь — показывает, что происходит сейчас.
@@ -440,6 +442,89 @@ export function herKey(mood, hour = 12, { tea = 0, at = 0 } = {}) {
   return (key === "дело" || key === "игра") && Number(tea) > 0 && at - Number(tea) >= 0 && at - Number(tea) < TEA_WARM_MS ? "уют" : key;
 }
 
+// ── её день (0.48.0) ─────────────────────────────────────────────────────────
+/**
+ * Её день. До 0.48.0 занятие выбирало настроение, а страница каждые 20–40 секунд переводила её к следующей реплике
+ * по кругу. Владелец (сообщение 47): «смена анимации каждые 20–40 секунд — не то», «Аи должна иметь собственную
+ * повседневную жизнь, которая не начинается и не заканчивается сообщением пользователя», «если она говорит, что
+ * читает книгу, через несколько минут не должна внезапно утверждать, что всё это время готовила обед».
+ * Теперь день — эпизоды по местному времени человека, внутри эпизода — шаги по минутам. И эпизод, и шаг считаются
+ * из дня, минуты и состояния комнаты, а не выбираются наугад: рисунок, слова под ним, повторный заход и ответ в
+ * чате называют одно и то же занятие.
+ *   key    — состояние: по нему берётся картинка (`SPRITE_FOR` в рисунке);
+ *   pool   — запас реплик «+комната:<pool>»: каждая реплика — шаг, место — из её же слов (`herPose`);
+ *   title  — как эпизод называется в её словах о плане («дальше — уборка»); слов-примет места в нём быть не должно;
+ *   wear   — наряд: day — дневной, по погоде (`dressFor`); home — домашний;
+ *   story  — шаги идут по порядку и один раз (проснулась → покормила → смахнула пыль), а не по кругу;
+ *   active — занятие требует сил: уставшая, она его откладывает;
+ *   face   — мимика эпизода: drowsy — клюёт носом (моргает медленно).
+ */
+export const EPISODES = Object.freeze({
+  "сон": { key: "сон", pool: "она:сон", title: "сон", wear: "home" },
+  "подъём": { key: "дело", pool: "день:подъём", title: "подъём и завтрак Байта", wear: "day", story: true },
+  "занятия": { key: "дело", pool: "день:занятия", title: "занятия", wear: "day", active: true },
+  "чай": { key: "уют", pool: "день:чай", title: "чай", wear: "day" },
+  "игра": { key: "игра", pool: "она:игра", title: "игра с Байтом", wear: "day", active: true },
+  "дела": { key: "дело", pool: "она:дело", title: "дела по списку", wear: "day", active: true },
+  "порядок": { key: "дело", pool: "день:порядок", title: "уборка", wear: "day", active: true },
+  "вечер": { key: "уют", pool: "она:уют", title: "вечер с чаем", wear: "home" },
+  "ждёт": { key: "уют", pool: "день:ждёт", title: "тихий вечер у лампы", wear: "home" },
+  "дрёма": { key: "уют", pool: "день:дрёма", title: "последняя страница", wear: "home", story: true, face: "drowsy" },
+});
+/** Суббота и воскресенье: в выходной она встаёт позже. `day` — «2026-11-20». */
+const weekendOn = (day) => { const at = Date.parse(`${String(day).slice(0, 10)}T12:00:00Z`); return Number.isFinite(at) && [0, 6].includes(new Date(at).getUTCDay()); };
+/**
+ * План дня: эпизоды по порядку, каждый — `{ name, from, to }` в минутах от полуночи. Границы плавают на четверть
+ * часа — у каждого дня свои, но весь день одни и те же, и у всех людей одинаковые: день — её, а не гостя. Две
+ * границы точные: в шесть вечера она переодевается в домашнее, в одиннадцать ложится. Чай и игра с Байтом после
+ * полудня идут в том порядке, какой выпал дню.
+ */
+export function dayPlan(day = "") {
+  const shift = (salt, span) => (hashOf(`day:${day}:${salt}`) % (span * 2 + 1)) - span;
+  const wake = 7 * 60 + shift("wake", 20) + (weekendOn(day) ? 50 : 0);
+  const rest = 12 * 60 + 45 + shift("rest", 15);
+  const [one, two] = hashOf(`day:${day}:order`) % 2 ? ["игра", "чай"] : ["чай", "игра"];
+  const marks = [
+    ["сон", 0], ["подъём", wake], ["занятия", wake + 60], [one, rest], [two, rest + 50], ["дела", rest + 100],
+    ["порядок", 17 * 60 + shift("tidy", 15)], ["вечер", 18 * 60], ["ждёт", 21 * 60 + shift("wait", 15)], ["дрёма", 22 * 60 + 30], ["сон", 23 * 60],
+  ];
+  return marks.map(([name, from], index) => ({ name, from, to: marks[index + 1]?.[1] ?? 1440 }));
+}
+/** Эпизод, который идёт в эту минуту (`minutes` — от полуночи, можно с долей), с его описанием; `index` — который по счёту в плане. */
+export function stageAt(plan, minutes) {
+  const index = Math.max(0, plan.findIndex(item => minutes >= item.from && minutes < item.to));
+  return { ...EPISODES[plan[index].name], ...plan[index], index };
+}
+/** Сколько минут длится шаг внутри эпизода: от двенадцати до восемнадцати — у каждого дня своя длина. */
+export const STEP_MIN = Object.freeze([12, 18]);
+/**
+ * Который шаг идёт и сколько до следующего. `count` — сколько шагов (реплик) у занятия; `from`, `to` — границы
+ * занятия, `at` — сейчас (всё в минутах от полуночи); `seed` — зерно дня: с какого шага начать и сколько шаг длится.
+ * `story` — шаги по порядку и один раз: время занятия делится между ними поровну. Иначе шаги идут по кругу.
+ * Возвращает `{ index, left }`: номер шага и миллисекунды до следующего (или до конца занятия).
+ */
+export function stepAt({ count = 0, from = 0, to = 1440, at = 0, seed = 0, story = false } = {}) {
+  const end = Math.max(from + 1, to), left = (edge) => Math.max(0, Math.round((Math.min(end, edge) - at) * 60_000));
+  if (!(count > 1)) return { index: 0, left: left(end) };
+  if (story) {
+    const each = (end - from) / count, index = Math.max(0, Math.min(count - 1, Math.floor((at - from) / each)));
+    return { index, left: left(from + (index + 1) * each) };
+  }
+  const every = STEP_MIN[0] + (seed % (STEP_MIN[1] - STEP_MIN[0] + 1)), slot = Math.max(0, Math.floor((at - from) / every));
+  return { index: (slot + seed) % count, left: left(from + (slot + 1) * every) };
+}
+/**
+ * В чём она днём — по погоде (сообщение 47: «надевать ту или иную одежду так же можно по погоде»): дождь, гроза
+ * или снег — свитер, сухо — куртка. Вечером и ночью — домашнее, что бы ни было за окном.
+ */
+export const dressFor = (sky) => (sky === "rain" || sky === "storm" || sky === "snow" ? "home" : "jacket");
+/** Сколько Байт остаётся на одном месте: семь минут — и следующая реплика его состояния (до 0.48.0 — полминуты). */
+export const CAT_STEP_MS = 7 * 60_000;
+/** Окно открыто час (0.48.0): «проветрила и закрыла»; нажали ещё раз — закрыла раньше. */
+export const AIR_MS = 60 * 60_000;
+/** Открыто ли окно по этой записи: его открыли меньше часа назад (и не закрыли — тогда отметка стёрта). */
+export const airNow = (state, at) => Number(state?.open) > 0 && at - Number(state.open) >= 0 && at - Number(state.open) < AIR_MS;
+
 /**
  * Что с Байтом: ключ запаса «+комната:байт:…». Недавняя забота (до трёх часов) видна сразу — как и обида:
  * кого пугали, тот сидит под креслом, пока не приласкают; ночью он спит; днём некормленый — чаще всего голоден,
@@ -458,10 +543,15 @@ export function catState({ hour = 12, last = "", lastAt = 0, at = 0, fed = false
  * desk — за столом; shelf — у полок; chair — в кресле; nap — спит в кресле под пледом; sill — на подоконнике;
  * back — у окна спиной к двери; map — у карты звёзд; garland — поправляет гирлянду; dance — танцует;
  * ribbon — дразнит Байта ленточкой; lie — лежит на подушках; read — читает в кресле (0.45.0).
+ * Дела дня (0.48.0): feed — присела и насыпает Байту корм; dust — смахивает пыль метёлкой; sort — раскладывает книги.
  */
-export const HER_POSES = Object.freeze(["desk", "shelf", "chair", "nap", "sill", "back", "map", "garland", "dance", "ribbon", "lie", "read"]);
+export const HER_POSES = Object.freeze(["desk", "shelf", "chair", "nap", "sill", "back", "map", "garland", "dance", "ribbon", "lie", "read", "feed", "dust", "sort"]);
 const HER_POSE = Object.freeze([
   ["back", /спиной/u],
+  // Дела дня (0.48.0). Стоят выше «полки» и «подоконника»: «смахиваю пыль с полки» — это метёлка, а не блокнот у полки.
+  ["feed", /корм/u],
+  ["dust", /метёлк|пыль/u],
+  ["sort", /раскладываю|расставляю|стопк/u],
   ["sill", /подоконник/u],
   ["map", /карту звёздного|кассиопе/u],
   // read — сидит в кресле с книгой (0.45.0): до этого «читаю» показывалось картинкой с кружкой.
@@ -627,7 +717,7 @@ export const quietLeft = (state, at) => { const from = Number(state?.quiet?.at),
 export const CALL_MS = 30_000;
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, wear: null, brew: "", quiet: null, seen: [], scene: null, near: 0, loot: [] });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, wear: null, brew: "", quiet: null, open: 0, dress: null, seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -662,6 +752,8 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const next = {
       ...state, at: state.at || now(), near: now(), n: state.n + 1, day, done: state.done, seen: [...kept, ...fresh],
       ...(offered ? { scene: { day, key: offered.key, pick: null } } : {}),
+      // Что надеть днём, она решает один раз — при первом заходе к ней в этот день, по небу в эту минуту (0.48.0).
+      ...(sky && state.dress?.day !== day ? { dress: { day, name: dressFor(sky) } } : {}),
     };
     const saved = await write(userId, next);
     return { state: next, first, fresh, scene: saved ? offered : null, saved };
@@ -773,6 +865,16 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const next = { ...state, at: state.at || at, near: at, day, done: state.done, brew: chosen };
     return { ok: true, kind: chosen, same: chosen === before, state: next, saved: await write(userId, next) };
   }
+  /**
+   * Окно (нажали на него, 0.48.0): открыто — слышна улица, закрыто — звуки дома. Открытым стоит час (`AIR_MS`);
+   * нажали, пока открыто, — закрыли. `open` — открыто ли после нажатия. В отношения не идёт: это не забота.
+   */
+  async function air(userId, { day } = {}) {
+    const state = await read(userId, day);
+    const at = now();
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, open: airNow(state, at) ? 0 : at };
+    return { ok: true, open: next.open > 0, state: next, saved: await write(userId, next) };
+  }
   /** Байта хотели обидеть: он прячется (до трёх часов — или пока не приласкают). В отношения это не идёт: игра. */
   async function scare(userId, { day } = {}) {
     const state = await read(userId, day);
@@ -801,5 +903,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId, state) { return write(userId, { ...state, at: state.at || now(), near: now() }); }
 
-  return { read, visit, care, book, lamp, music, call, wear, brew, quiet, choose, scare, near, look };
+  return { read, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look };
 }

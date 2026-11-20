@@ -179,6 +179,12 @@ try {
   for (const act of ["pet", "feed", "play", "tea", "water"]) {
     const before = await said();
     if (!await tapZone(act)) continue;
+    // Чайник (0.48.0): сначала она спрашивает, какой чай налить, — под её словами три кнопки; забота — сам выбор.
+    if (act === "tea") {
+      const asked = await page.evaluate(() => { const box = document.getElementById("teas"); return Boolean(box) && !box.hidden; });
+      if (!asked) fail("«tea»: нажали на чайник — а выбора чая под её словами нет");
+      else { await page.evaluate(() => document.querySelector('#teas [data-tea="жасмин"]').click()); await pause(450); }
+    }
     const after = await said();
     if (!await done(act)) fail(`«${act}»: нажатие на рисунок заботой не стало (её слова: «${after}»)`);
     else if (after === before || !after) fail(`«${act}»: её слова не изменились`);
@@ -189,7 +195,8 @@ try {
     if (!await tapZone(act)) continue;
     const after = await said();
     if (!after) fail(`«${act}»: она молчит`);
-    else if (expected && after !== expected) fail(`«${act}»: сказано «${after}», а ждали «${expected}»`);
+    // Окно (0.48.0) по нажатию открывается: сначала её слова об этом, за ними — прежние, о том, что за окном.
+    else if (expected && after !== expected && !(act === "window" && after.endsWith(expected))) fail(`«${act}»: сказано «${after}», а ждали «${expected}»`);
   }
   // Погладить её по голове: её слова меняются, над головой — сердечко; во второй раз — другие слова, без сердечка.
   {
@@ -290,6 +297,38 @@ try {
         if (!(await dressed(await chip("wear")))) fail("кнопки: обратно наряд не сменился");
         await pause(1200);
       }
+    }
+  }
+  // Чайник, окно и она сама (0.48.0). Нажали на чайник — она спрашивает, какой чай налить, и под её словами три
+  // кнопки; выбрали — налит этот чай, кнопки убраны. Нажали на окно — створка открыта; ещё раз — закрыта. Нажали на
+  // неё — она поднимает глаза (страница ставит на рисунок слово «poked»).
+  {
+    const kinds = () => page.evaluate(() => { const box = document.getElementById("teas"); return box && !box.hidden ? [...box.querySelectorAll("button")].map(button => button.textContent.trim()) : []; });
+    if (!seen.zones.includes("tea")) fail("чайник: места на рисунке нет");
+    else if (await tapZone("tea")) {
+      const offered = await kinds();
+      if (offered.join(", ") !== "Жасмин, Улун, Мята") fail(`чайник: выбора чая под её словами нет (${offered.join(", ") || "скрыт"})`);
+      else {
+        const before = await said();
+        await page.evaluate(() => document.querySelector('#teas [data-tea="улун"]').click());
+        let poured = false;
+        for (let i = 0; i < 40 && !poured; i += 1) { await pause(150); poured = (await kinds()).length === 0 && (await said()) !== before; }
+        if (!poured) fail("чайник: выбрали улун — а выбор остался на месте или она ничего не сказала");
+        const chip = await page.evaluate(() => document.getElementById("brew")?.textContent.trim() ?? "");
+        if (chip !== "Чай: улун") fail(`чайник: налили улун — а на кнопке под рисунком «${chip}»`);
+      }
+    }
+    // Окно к этому шагу уже открыто или закрыто (на него нажимали выше): каждое нажатие меняет створку на рисунке.
+    const ajar = () => page.evaluate(() => Boolean(document.querySelector("#inside .fx-window")));
+    const flips = async (was) => { for (let i = 0; i < 40; i += 1) { await pause(150); if ((await ajar()) !== was) return true; } return false; };
+    if (!seen.zones.includes("window")) fail("окно: места на рисунке нет");
+    else {
+      const was = await ajar();
+      if (await tapZone("window") && !(await flips(was))) fail(`окно: нажали — а створка ${was ? "не закрылась" : "не открылась"}`);
+      else if (await tapZone("window") && !(await flips(!was))) fail(`окно: нажали ещё раз — а створка ${was ? "не открылась" : "не закрылась"}`);
+    }
+    if (seen.zones.includes("her") && await tapZone("her")) {
+      if (!(await page.evaluate(() => document.getElementById("inside").classList.contains("poked")))) fail("нажали на неё: она не подняла глаза — слова «poked» на рисунке нет");
     }
   }
   // Рисунок меняется по частям (0.48.0, «перед сменой анимации мерцает чёрным экран»): от одной перемены на странице

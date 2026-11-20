@@ -484,7 +484,8 @@ test("чай 0.44.0: налили — час она с кружкой, блок�
   // В чате — та же она: «зайду к тебе» — и слова о ней из запаса «с кружкой».
   await h.onMessage(message("зайду к тебе"), KEY);
   const air = { sky: seen.sky, part: seen.clock.part };
-  assert.ok(fitting("она:уют", air).some(line => last().includes(line)), last());
+  // (0.48.0: у налитого чая свой запас — «день:чай»: в каждой реплике кружка; до того она могла «читать» без неё.)
+  assert.ok(fitting("день:чай", air).some(line => last().includes(line)), last());
   for (const key of Object.keys(HANDS)) assert.ok(!fitting(`она:${key}`, air).some(line => last().includes(line)), last());
   // Без минуты час — ещё с кружкой (без чая в эту минуту она была бы занята).
   time.add(59 * 60_000);
@@ -598,8 +599,9 @@ test("сценка ставит её саму — и слова идут за р
   time.add(10 * 60_000);
   const tick = await h.onRoom({ do: "look", again: true }, from(id));
   assert.deepEqual([tick.her.key, tick.her.pose, tick.her.line], ["уют", "read", picked.line]);
+  // 0.48.0: её день ведёт сердце (`steady`) — после сверки она там, где сказано им: снова в кресле с книгой.
   const ticked = logic.applyTick(next, tick, time.now());
-  assert.deepEqual([ticked.her.beat, logic.changeOf(next, ticked).kind], [1, "same"]);
+  assert.deepEqual([ticked.her.steady, ticked.her.beat, logic.viewOf(ticked).her.pose], [true, 0, "read"]);
   // Зашёл заново, пока исход виден, — она там же и говорит то же.
   const again = await h.onRoom({ do: "look" }, from(id));
   assert.deepEqual([again.her.key, again.her.pose, again.her.line], ["уют", "read", picked.line]);
@@ -616,7 +618,10 @@ test("сценка ставит её саму — и слова идут за р
   const later = await h.onRoom({ do: "look", again: true }, from(id));
   const then = { sky: later.sky, part: later.clock.part };
   assert.notEqual(later.her.line, picked.line);
-  assert.deepEqual(later.her.beats.map(beat => beat.line).sort(), [...fitting(`она:${later.her.key}`, then)].sort());
+  // (0.48.0: «по настроению» — теперь по её дню: в пять вечера это эпизод «уборка» со своим запасом реплик.)
+  const stage = room.stageAt(room.dayPlan(TODAY), 17 * 60);
+  assert.deepEqual([later.her.stage, later.her.key], [stage.name, stage.key]);
+  assert.deepEqual(later.her.beats.map(beat => beat.line).sort(), [...fitting(stage.pool, then)].sort());
 
   // Ночью она спит — и сценка её не будит: выбор сделан, а она под пледом, и о ней ответ молчит.
   reset();
@@ -658,10 +663,12 @@ test("смена часа 0.44.0: страница сама спрашивает
   // Слова под рисунком — прежние: их меняет то, что происходит на рисунке, а не сам опрос.
   // До вечера двадцать секунд, но сердце называет не меньше тридцати: чаще страница комнату не спрашивает.
   assert.deepEqual([ticked.said, ticked.her.beat, ticked.clock], [state.said, 0, { left: 30_000, at: time.now(), day: TODAY }]);
-  // Она ушла на вторую реплику — после опроса остаётся на ней, а не возвращается к первой.
-  const onSecond = logic.nextBeat(state, "her");
-  assert.equal(logic.applyTick(onSecond, same, time.now()).her.beat, 1);
-  assert.equal(logic.changeOf(onSecond, logic.applyTick(onSecond, same, time.now())).kind, "same");
+  // Прежнее сердце (без `steady`): она ушла на вторую реплику — после опроса остаётся на ней, а не возвращается к
+  // первой. Сердце 0.48.0 ведёт её день само: после опроса она на том шаге, который назвало оно.
+  const onSecond = logic.nextBeat(state, "her"), old = { ...same, her: { ...same.her, steady: false }, cat: { ...same.cat, steady: false } };
+  assert.equal(logic.applyTick(onSecond, old, time.now()).her.beat, 1);
+  assert.equal(logic.changeOf(onSecond, logic.applyTick(onSecond, old, time.now())).kind, "same");
+  assert.equal(logic.applyTick(onSecond, same, time.now()).her.beat, 0);
   // Отказ или пустой ответ — комната остаётся какой была; до первого ответа опрашивать нечего.
   assert.equal(logic.applyTick(state, { ok: false, code: "storage", text: "Память недоступна." }, time.now()), state);
   assert.equal(logic.applyTick(state, null, time.now()), state);
@@ -702,12 +709,19 @@ test("смена часа 0.44.0: страница сама спрашивает
   const asleep = logic.applyTick(after, night, time.now());
   assert.deepEqual([logic.changeOf(after, asleep).kind, asleep.her.key, asleep.cat.key, asleep.cat.still], ["light", "сон", "спит", true]);
   assert.deepEqual(logic.changeOf(after, asleep).state.said.split("\n"), [night.window, night.her.line], "новый час — слова об окне и о ней");
-  // 05:00. Утро: из свитера в куртку — снова шкаф, слова утренние.
+  // 05:00. Светает, а она ещё спит (0.48.0: встаёт около семи): свет перетекает, наряд домашний — шкафа нет.
   time.set(Date.parse("2026-11-19T02:00:05Z"));
+  const dawn = await h.onRoom({ do: "look", again: true }, from(5));
+  const dozing = logic.applyTick(asleep, dawn, time.now());
+  assert.deepEqual([dawn.clock.part, dawn.her.key, dawn.her.wear, logic.changeOf(asleep, dozing).kind], ["утро", "сон", "home", "light"]);
+  // Подъём — около семи, у каждого дня своя минута (`dayPlan`). Час тот же, а наряд другой: из свитера в куртку (за
+  // окном сухо) — снова шкаф, слова утренние.
+  time.set(Date.parse("2026-11-19T00:00:00+03:00") + room.dayPlan("2026-11-19")[1].from * 60_000 + 5_000);
   const morning = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([morning.clock.part, morning.her.stage, morning.her.wear, room.dressFor(morning.sky)], ["утро", "подъём", "jacket", "jacket"]);
   assert.ok(pool("шкаф:утро").includes(morning.wardrobe.leave) && pool("переоделась:утро").includes(morning.wardrobe.back), JSON.stringify(morning.wardrobe));
-  const awake = logic.applyTick(asleep, morning, time.now());
-  assert.deepEqual([logic.changeOf(asleep, awake).kind, logic.changeOf(asleep, awake).leave], ["wardrobe", morning.wardrobe.leave]);
+  const awake = logic.applyTick(dozing, morning, time.now());
+  assert.deepEqual([logic.changeOf(dozing, awake).kind, logic.changeOf(dozing, awake).leave], ["wardrobe", morning.wardrobe.leave]);
   assert.equal(scene.walkOf(logic.viewOf(awake)), "walk");
   // 12:00. День: куртка та же — свет, без шкафа.
   time.set(Date.parse("2026-11-19T09:00:05Z"));
@@ -1017,8 +1031,9 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
   const seated = { part: "день", sky: "clear", her: { pose: "chair", key: "уют", beat: true }, cat: null, plant: "wet", things: [] };
   assert.equal(scene.spriteOf(seated), "tea3");
   const both = scene.drawRoom(seated, { sprites: { ...SPRITES, ...FRAME_SPRITES } });
-  assert.match(both, /<g class="alive"><g class="fr a sip"><use href="#r-her-tea3" [^>]+\/><use class="wink" href="#r-her-tea3-blink"[^>]+\/><g class="steam"/u, "первый кадр: картинка, веки и пар над кружкой — вместе");
-  assert.match(both, /<\/g><g class="fr b sip"><use href="#r-her-tea3b" [^>]+\/><\/g><\/g>/u, "второй кадр — следом, поверх");
+  // (0.48.0: кадр, на котором она смотрит на зрителя, помечен `lk`, второй — `nl`; рядом с веками — румянец, невидимый до ласки.)
+  assert.match(both, /<g class="alive"><g class="fr a sip lk"><use href="#r-her-tea3" [^>]+\/><use class="wink" href="#r-her-tea3-blink"[^>]+\/><mask id="r-herBlush"[^>]+><use href="#r-her-tea3" [^>]+\/><\/mask><g class="blush" opacity="0" [^>]+><g fill="#ff5f7a" [^>]+>(?:<ellipse [^>]+\/>){2}<\/g><\/g><g class="steam"/u, "первый кадр: картинка, веки, румянец и пар над кружкой — вместе");
+  assert.match(both, /<\/g><g class="fr b sip nl"><use href="#r-her-tea3b" [^>]+\/><\/g><\/g>/u, "второй кадр — следом, поверх");
   assert.match(both, /<image id="r-her-tea3b" /u, "определение второго кадра — в рисунке");
   // Тот же сдвиг и тот же размер: кадр ложится на ту же фигуру (ось тела у кадров общая, рост — первой картинки).
   const at = (name) => new RegExp(`<use href="#r-her-${name}" transform="translate\\(([-\\d.]+) ([-\\d.]+)\\) scale\\(([\\d.]+)\\)"`, "u").exec(both).slice(1).map(Number);
@@ -1036,8 +1051,9 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
   ]) {
     assert.equal(scene.spriteOf(view), base);
     const drawn = scene.drawRoom(view, { sprites: { ...SPRITES, ...FRAME_SPRITES } });
-    assert.match(drawn, new RegExp(`<g class="fr a ${how}"><use href="#r-her-${base}" `, "u"), base);
-    assert.match(drawn, new RegExp(`<g class="fr b ${how}"><use href="#r-her-${name}" `, "u"), name);
+    // Танец не прерывается и на нажатие: пометок взгляда у его кадров нет.
+    assert.match(drawn, new RegExp(`<g class="fr a ${how}${how === "dance" ? "" : " lk"}"><use href="#r-her-${base}" `, "u"), base);
+    assert.match(drawn, new RegExp(`<g class="fr b ${how}${how === "dance" ? "" : " nl"}"><use href="#r-her-${name}" `, "u"), name);
   }
   // Второй кадр не загружен (или у позы его нет) — она одной картинкой, как раньше: ни одного слоя кадров.
   const single = scene.drawRoom(seated, PAINTED);
@@ -1083,7 +1099,7 @@ test("полка с книгами 0.45.0: нажали — она берёт к
   const view = logic.viewOf(state);
   assert.deepEqual([view.her.pose, view.her.key, state.said, state.busy], ["read", "уют", took.line, ""]);
   assert.equal(scene.spriteOf(view), "read");
-  assert.equal(scene.spriteOf({ ...view, part: "вечер" }), "home-read");
+  assert.equal(scene.spriteOf({ ...view, part: "вечер", her: { ...view.her, wear: "home" } }), "home-read");
   assert.equal(logic.applyTap(state, "her").said, took.her.line);
   // Сидит в кресле — на том же месте, что с кружкой; плед остаётся на кресле.
   assert.equal(scene.castOf(view, PAINTED).her.x, scene.castOf({ ...view, her: { ...view.her, pose: "chair" } }, PAINTED).her.x);
@@ -1568,7 +1584,9 @@ test("0.46.0, гроза: Байт под пледом — наружу один
     // Обиженный уже спрятался — под кресло: гроза его под плед не переводит.
     sdk().kv.set(room.ROOM_KEY(id), JSON.stringify({ ...roomOf(id), last: "hurt", lastAt: time.now() }));
     const hurt = await h.onRoom({ do: "look", again: true }, from(id));
-    assert.deepEqual([hurt.cat.key, hurt.cat.place === "plaid"], ["обижен", false], String(id));
+    // (0.48.0: реплика о Байте считается из времени, а среди его обиженных есть и «из-под пледа торчит хвост» —
+    // поэтому сверяется не место, а запас: слова — его обиды, а не грозы.)
+    assert.deepEqual([hurt.cat.key, pool("байт:обижен").map(plain).includes(hurt.cat.line), pool("байт:гроза").map(plain).includes(hurt.cat.line)], ["обижен", true, false], String(id));
   }
   assert.ok(hidden >= 1, "хотя бы у одного гостя с грозой сценка дня Байта не держит");
   // Все фразы запаса — про плед: иначе слова разошлись бы с рисунком.
@@ -1927,7 +1945,7 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   const time = clock(NOON); // 14:00 по Москве: по часам она в куртке
   const h = heart(ON, { now: time.now, random: () => 0 });
   const first = await h.onRoom({ do: "look" }, from(5));
-  assert.equal(Object.hasOwn(first.her, "wear"), false, "наряд не назван — по часам");
+  assert.deepEqual([first.sky, first.her.wear], ["clear", "jacket"], "наряд назван всегда (0.48.0): днём — по погоде, в ясный день — куртка");
   // Без названия — в другой: днём это свитер. Слова — на пути к шкафу и по возвращении.
   const home = await h.onRoom({ do: "wear" }, from(5));
   assert.deepEqual([home.ok, home.do, home.wear, home.changed, home.her.wear], [true, "wear", "home", true, "home"]);
@@ -1950,7 +1968,7 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   assert.equal(logic.applyWear(change.state, same).kind, "same");
   // Обратно в куртку — то, что она надела бы и сама: выбор просто снимается.
   const jacket = await h.onRoom({ do: "wear" }, from(5));
-  assert.deepEqual([jacket.wear, jacket.changed, Object.hasOwn(jacket.her, "wear")], ["jacket", true, false]);
+  assert.deepEqual([jacket.wear, jacket.changed, jacket.her.wear], ["jacket", true, "jacket"]);
   assert.ok(pool("наряд:куртка").map(plain).includes(jacket.line) && pool("наряд:куртка:готово").map(plain).includes(jacket.back));
   assert.equal(roomOf(5).wear, null);
   assert.equal(scene.walkOf(logic.viewOf(logic.applyWear(change.state, jacket).state)), "walk");
@@ -1959,7 +1977,7 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   const day = logic.applyTick(before, await h.onRoom({ do: "look", again: true }, from(5)), time.now());
   time.set(Date.parse("2026-11-18T15:30:00Z"));
   const evening = await h.onRoom({ do: "look", again: true }, from(5));
-  assert.deepEqual([evening.clock.part, Object.hasOwn(evening.her, "wear")], ["вечер", false]);
+  assert.deepEqual([evening.clock.part, evening.her.wear], ["вечер", "home"]);
   assert.notEqual(logic.changeOf(day, logic.applyTick(day, evening, time.now())).kind, "wardrobe");
   // Вечером — куртка по просьбе: до одиннадцати; перед сном она переодевается сама.
   const late = await h.onRoom({ do: "wear" }, from(5));
@@ -1967,7 +1985,7 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   assert.deepEqual(roomOf(5).wear, { name: "jacket", until: Date.parse("2026-11-18T20:00:00Z") });
   time.set(Date.parse("2026-11-18T20:10:00Z"));
   const night = await h.onRoom({ do: "look", again: true }, from(5));
-  assert.deepEqual([night.clock.part, night.her.key, Object.hasOwn(night.her, "wear")], ["ночь", "сон", false]);
+  assert.deepEqual([night.clock.part, night.her.key, night.her.wear], ["ночь", "сон", "home"]);
   // Спит — не переодевается.
   const asleep = await h.onRoom({ do: "wear" }, from(5));
   assert.deepEqual([asleep.changed, asleep.wear], [false, "home"]);
@@ -2014,7 +2032,8 @@ test("0.47.0, чай на выбор: жасмин, улун, мята — по 
   const time = clock(NOON);
   const h = heart(ON, { now: time.now, random: () => 0 });
   const first = await h.onRoom({ do: "look" }, from(5));
-  assert.equal(first.brew, "жасмин", "с жасмина всё начинается: он её любимый");
+  // 0.48.0: чай назван каждому (`kind`), а поле `brew`, по которому страница показывает кнопки под рисунком, — хозяину.
+  assert.deepEqual([first.kind, first.brew, first.owner, first.kinds], ["жасмин", undefined, false, [...room.BREWS]], "с жасмина всё начинается: он её любимый");
   const oolong = await h.onRoom({ do: "brew" }, from(5));
   assert.deepEqual([oolong.ok, oolong.do, oolong.brew], [true, "brew", "улун"]);
   assert.ok(pool("заварка:улун").map(plain).includes(oolong.line), oolong.line);
@@ -2032,7 +2051,7 @@ test("0.47.0, чай на выбор: жасмин, улун, мята — по 
   await h.onRoom({ do: "brew", kind: "мята" }, from(5));
   // Запомнилось: назавтра — тот же, и первая кружка дня — о нём.
   time.add(24 * HOUR);
-  assert.equal((await h.onRoom({ do: "look" }, from(5))).brew, "мята");
+  assert.equal((await h.onRoom({ do: "look" }, from(5))).kind, "мята");
   const mint = await h.onRoom({ do: "tea" }, from(5));
   assert.ok(pool("чай:мята").map(plain).includes(mint.line), mint.line);
   // Жасмин — прежними словами.
@@ -2053,7 +2072,7 @@ test("0.47.0, чай на выбор: жасмин, улун, мята — по 
   await chat.onMessage(message("налью тебе улун"), KEY);
   assert.ok(pool("чай:улун").map(plain).some(line => last(5).includes(line)), last(5));
   assert.equal(roomOf(5).brew, "улун");
-  assert.equal((await chat.onRoom({ do: "look" }, from(5))).brew, "улун");
+  assert.equal((await chat.onRoom({ do: "look" }, from(5))).kind, "улун");
   await chat.onMessage(message("налью тебе чай с жасмином"), KEY);
   assert.equal(roomOf(5).brew, "жасмин");
   for (const [said, op] of [["налью тебе улун", "brewoolong"], ["держи улун", "brewoolong"], ["заварю тебе чай с мятой", "brewmint"], ["принёс мятный чай", "brewmint"], ["налью тебе жасминовый", "brewjasmine"], ["налью тебе чай", "tea"], ["налью тебе чаю", "tea"]]) assert.equal(room.parseRoom(said)?.op, op, said);
@@ -2065,7 +2084,9 @@ test("0.47.0, чай на выбор: жасмин, улун, мята — по 
   assert.equal(logic.applyBrew(state, oolong).said, oolong.line);
   assert.equal(logic.applyBrew(state, { ok: true, brew: "какао", line: "?" }).brew, "жасмин");
   assert.equal(logic.applyBrew(state, { ok: false, text: "нет связи" }).tone, "warn");
-  const { brew: _, ...old } = first;
+  // Прежнее сердце (до 0.47.0): о чае в ответе нет ни слова.
+  const old = { ...first };
+  for (const name of ["brew", "kind", "kinds", "owner"]) delete old[name];
   assert.equal(logic.applyLook(logic.blank(14), old, NOON).brew, "");
   assert.equal(logic.blank(14).brew, "");
   // Витрина: по кругу, словами словаря.
@@ -2208,4 +2229,303 @@ test("0.48.0, рисунок по частям: части складывают�
   assert.ok(walking.includes(hers) && !walking.includes(garland));
   // Ничего не изменилось — ни одна часть не другая: страница рисунка не трогает вовсе.
   assert.deepEqual(changed(atDesk, scene.drawParts(evening({ key: "дело", pose: "desk", beat: true }), PAINTED)), []);
+});
+
+// ── 0.48.0: её день (сообщение 47) ───────────────────────────────────────────
+
+test("0.48.0, её день: план из эпизодов по часам человека; границы у каждого дня свои, но весь день одни; шаг внутри эпизода длится минуты", () => {
+  const WEEK = ["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21", "2026-11-22"];
+  for (const day of WEEK) {
+    const plan = room.dayPlan(day), weekend = [0, 6].includes(new Date(`${day}T12:00:00Z`).getUTCDay());
+    assert.deepEqual(plan, room.dayPlan(day), `${day}: план дня не меняется от вопроса к вопросу`);
+    assert.deepEqual([plan[0].from, plan.at(-1).to], [0, 1440]);
+    for (const [index, item] of plan.entries()) {
+      assert.ok(room.EPISODES[item.name] && item.to > item.from, `${day}: ${item.name}`);
+      if (index) assert.equal(item.from, plan[index - 1].to, `${day}: «${item.name}» начинается там, где кончилось прежнее`);
+    }
+    // Порядок — как в примере владельца: пробуждение, занятия, отдых (чай и игра с Байтом), дела, вечер, сон.
+    const names = plan.map(item => item.name);
+    assert.deepEqual(names.filter(name => name !== "чай" && name !== "игра"), ["сон", "подъём", "занятия", "дела", "порядок", "вечер", "ждёт", "дрёма", "сон"], day);
+    assert.deepEqual(names.slice(3, 5).sort(), ["игра", "чай"], `${day}: чай и игра — после занятий, в порядке этого дня`);
+    const at = Object.fromEntries(plan.slice(1).map(item => [item.name, item.from])), late = weekend ? 50 : 0;
+    assert.ok(at["подъём"] >= 400 + late && at["подъём"] <= 440 + late, `${day}: подъём в ${at["подъём"]}-ю минуту`);
+    assert.equal(at["занятия"], at["подъём"] + 60);
+    assert.ok(at["порядок"] >= 1005 && at["порядок"] <= 1035 && at["ждёт"] >= 1245 && at["ждёт"] <= 1275, day);
+    assert.deepEqual([at["вечер"], at["дрёма"], at["сон"]], [18 * 60, 22 * 60 + 30, 23 * 60], `${day}: в шесть — домашнее, в одиннадцать — сон`);
+  }
+  assert.ok(new Set(WEEK.map(day => room.dayPlan(day)[1].from)).size >= 3, "подъём — не по будильнику: у каждого дня своя минута");
+  // Эпизод по минуте — со своим описанием: состояние (картинка), запас реплик, наряд.
+  const plan = room.dayPlan(TODAY), wake = plan[1].from;
+  assert.deepEqual((({ name, key, pool: words, wear, story, index }) => [name, key, words, wear, story, index])(room.stageAt(plan, wake + 0.5)), ["подъём", "дело", "день:подъём", "day", true, 1]);
+  assert.deepEqual([room.stageAt(plan, wake - 0.1).name, room.stageAt(plan, 0).name, room.stageAt(plan, 1439.9).name, room.stageAt(plan, 18 * 60).wear], ["сон", "сон", "сон", "home"]);
+  // Шаги рассказа (подъём): по порядку, поровну, один раз.
+  const story = (at) => room.stepAt({ count: 3, from: 420, to: 480, at, story: true });
+  assert.deepEqual([story(420), story(439.5), story(440), story(479.5)], [{ index: 0, left: 1_200_000 }, { index: 0, left: 30_000 }, { index: 1, left: 1_200_000 }, { index: 2, left: 30_000 }]);
+  // Шаги по кругу: от двенадцати до восемнадцати минут каждый — по зерну дня; с какого начать — тоже по нему.
+  for (const seed of [0, 3, 6, 7, 1234567]) {
+    const every = room.STEP_MIN[0] + (seed % 7), turn = (at) => room.stepAt({ count: 4, from: 600, to: 900, at, seed });
+    assert.ok(every >= 12 && every <= 18);
+    assert.deepEqual(turn(600), { index: seed % 4, left: every * 60_000 }, String(seed));
+    assert.equal(turn(600 + every - 0.01).index, seed % 4, "весь шаг — одно и то же занятие");
+    assert.equal(turn(600 + every).index, (seed + 1) % 4, "следующий шаг — следующая реплика");
+    assert.equal(turn(899.5).left, 30_000, "последний шаг кончается вместе с эпизодом");
+  }
+  assert.deepEqual(room.stepAt({ count: 1, from: 0, to: 60, at: 30 }), { index: 0, left: 1_800_000 });
+  assert.deepEqual(room.stepAt({ count: 0 }), { index: 0, left: 86_400_000 });
+  // Наряд днём — по погоде: в дождь, грозу и снег — свитер.
+  assert.deepEqual(room.SKIES.filter(sky => room.dressFor(sky) === "home").sort(), ["rain", "snow", "storm"]);
+  // «Что делаешь?» — слова о её дне; о планах на завтра — нет.
+  for (const said of ["что делаешь", "Что делаешь?", "чем занята", "а ты что делаешь", "что ты сейчас делаешь", "чем занимаешься"]) assert.deepEqual(room.parseRoom(said), { op: "busy" }, said);
+  assert.equal(room.parseRoom("что делаешь завтра вечером"), null);
+});
+
+test("0.48.0, её день в комнате: шаг один и тот же — на рисунке, при повторном вопросе и в чате; утром она кормит Байта, и он ест рядом; ночью спит, и он у неё под боком", async () => {
+  reset();
+  const plan = room.dayPlan(TODAY), wake = plan[1].from, midnight = Date.parse(`${TODAY}T00:00:00+03:00`);
+  // Подъём: три шага по двадцать минут — у окна с блокнотом, корм Байту, метёлка. Идёт пятая минута второго.
+  const time = clock(midnight + (wake + 25) * 60_000);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const seen = await h.onRoom({ do: "look" }, from(5));
+  const air = { sky: seen.sky, part: seen.clock.part };
+  assert.deepEqual([seen.her.stage, seen.her.key, seen.her.pose, seen.her.steady], ["подъём", "дело", "feed", true]);
+  assert.deepEqual(seen.her.beats[0], { pose: "feed", line: seen.her.line });
+  assert.ok(fitting("день:подъём", air).includes(seen.her.line) && /корм/u.test(seen.her.line), seen.her.line);
+  // Сколько до следующего шага — в ответе: страница спросит комнату заново к этому сроку (или раньше — когда Байт сменит место).
+  assert.equal(seen.her.left, 15 * 60_000);
+  assert.ok(seen.step >= 30_000 && seen.step <= seen.her.left && seen.step <= room.CAT_STEP_MS, String(seen.step));
+  // Байт — при ней: ест рядом, с места не ходит.
+  assert.deepEqual([seen.cat.shape, seen.cat.place, seen.cat.still], ["eat", "near", true]);
+  assert.ok(pool("байт:завтрак").map(plain).includes(seen.cat.line), seen.cat.line);
+  // Страница: картинка «насыпает корм»; Байт — слева от неё, куда сыплется корм, мордой к пакету.
+  const state = logic.applyLook(logic.blank(7), seen, time.now());
+  assert.match(scene.spriteOf(logic.viewOf(state)), /^(?:home-)?feed$/u);
+  const cast = scene.castOf(logic.viewOf(state), PAINTED);
+  assert.ok(cast.cat.x < cast.her.x && cast.cat.mirror === true && cast.cat.shape === "eat", JSON.stringify(cast));
+  // Через пять минут она говорит то же: спросили заново, спросили в чате, зашли словами.
+  time.add(5 * 60_000);
+  const again = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([again.her.pose, again.her.line, again.her.left], ["feed", seen.her.line, 10 * 60_000]);
+  await h.onMessage(message("что делаешь"), KEY);
+  assert.ok(last().includes(seen.her.line), last());
+  await h.onMessage(message("зайду к тебе"), KEY);
+  assert.ok(last().includes(seen.her.line), last());
+  // Шаг сменился: метёлка. Страница узнаёт об этом сама — и слова под рисунком теперь о новом шаге.
+  time.add(10 * 60_000 + 1000);
+  const next = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([next.her.stage, next.her.pose], ["подъём", "dust"]);
+  const change = logic.changeOf(state, logic.applyTick(state, next, time.now()));
+  assert.deepEqual([change.kind, change.state.her.beat, change.state.said, scene.spriteOf(logic.viewOf(change.state)).replace(/^home-/u, "")], ["quiet", 0, next.her.line, "tidy"]);
+  assert.notEqual(next.cat.shape, "eat", "она отошла — он доел");
+  assert.notEqual(next.cat.key, "голоден", "утром она его покормила: три часа он не голоден");
+
+  // Ночь: спит по своему дню — до подъёма (раньше вставала в пять); Байт спит у неё под боком.
+  time.set(midnight + 26 * HOUR);
+  const night = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([night.her.stage, night.her.key, night.her.wear, night.cat.shape, night.cat.place], ["сон", "сон", "home", "curl", "near"]);
+  assert.ok(pool("байт:ночь").map(plain).includes(night.cat.line), night.cat.line);
+  assert.equal(night.her.plan, undefined, "спит — не до планов");
+  time.set(midnight + 30 * HOUR);
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(5))).her.key, "сон", "в шесть утра она ещё спит");
+
+  // Что было до этого и что дальше — её словами; нажали на неё дважды подряд — она их и говорит.
+  reset();
+  const day = heart(ON, { now: () => NOON, random: () => 0 });
+  const noon = await day.onRoom({ do: "look" }, from(5));
+  const stage = room.stageAt(plan, 14 * 60), before = room.EPISODES[plan[stage.index - 1].name].title, after = plan[stage.index + 1];
+  const hhmm = `${String(Math.floor(after.from / 60)).padStart(2, "0")}:${String(after.from % 60).padStart(2, "0")}`;
+  assert.equal(noon.her.stage, stage.name);
+  assert.ok(noon.her.plan.includes(before) && noon.her.plan.includes(room.EPISODES[after.name].title) && noon.her.plan.includes(hhmm), noon.her.plan);
+  const once = logic.applyTap(logic.applyLook(logic.blank(14), noon, NOON), "her"), twice = logic.applyTap(once, "her"), thrice = logic.applyTap(twice, "her");
+  assert.deepEqual([once.said, twice.said, thrice.said], [noon.her.line, noon.her.plan, noon.her.line]);
+});
+
+test("0.48.0, причины и следствия: в свой перерыв она сама предлагает чай; чай выбирают у чайника; налили посреди дел — час она с кружкой; долго не был — встречает другими словами", async () => {
+  reset();
+  const plan = room.dayPlan(TODAY), midnight = Date.parse(`${TODAY}T00:00:00+03:00`), tea = plan.find(item => item.name === "чай"), work = plan.find(item => item.name === "дела");
+  const time = clock(midnight + (tea.from + 3) * 60_000);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  // Чайный перерыв начался: она сама спрашивает, какой налить, — страница показывает выбор под её словами.
+  const seen = await h.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([seen.her.stage, seen.her.key, seen.offer?.kind], ["чай", "уют", "tea"]);
+  assert.ok(pool("чай:предложить").map(plain).includes(seen.offer.text), seen.offer.text);
+  let state = logic.applyLook(logic.blank(13), seen, time.now());
+  assert.deepEqual([state.asking, state.said.split("\n").at(-1), state.kinds], ["tea", seen.offer.text, [...room.BREWS]]);
+  // Выбрали улун: заварка запомнена, слова — об улуне, вопрос снят; больше она не спрашивает.
+  const cup = await h.onRoom({ do: "tea", kind: "улун" }, from(5));
+  assert.deepEqual([cup.ok, cup.kind, roomOf(5).brew], [true, "улун", "улун"]);
+  assert.ok(pool("чай:улун").map(plain).includes(cup.line), cup.line);
+  state = logic.applyCare(state, "tea", cup);
+  assert.deepEqual([state.asking, state.brew], ["", "улун"]);
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(5))).offer, undefined);
+  assert.equal((await h.onRoom({ do: "tea", kind: "какао" }, from(5))).kind, "улун", "незнакомый чай заварку не меняет");
+  // Перерыв идёт давно — не спрашивает: предложение — в его начале.
+  reset();
+  const late = heart(ON, { now: () => midnight + (tea.from + 30) * 60_000, random: () => 0 });
+  assert.equal((await late.onRoom({ do: "look" }, from(5))).offer, undefined);
+
+  // Налили чай посреди дел — час она с кружкой: каждая реплика — о чае; потом возвращается к делам своего дня.
+  reset();
+  const busy = clock(midnight + (work.from + 5) * 60_000);
+  const g = heart(ON, { now: busy.now, random: () => 0 });
+  const first = await g.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([first.her.stage, first.her.key, first.offer], ["дела", "дело", undefined]);
+  assert.ok(fitting("зайти").map(plain).includes(first.greet), first.greet);
+  const poured = await g.onRoom({ do: "tea" }, from(5));
+  assert.deepEqual([poured.her.key, poured.her.left <= room.STEP_MIN[0] * 60_000], ["уют", true]);
+  for (const beat of poured.her.beats) assert.match(beat.line, /[Чч]ай|кружк/u, beat.line);
+  busy.add(61 * 60_000);
+  assert.equal((await g.onRoom({ do: "look", again: true }, from(5))).her.key, room.stageAt(plan, work.from + 66).key);
+  // Долго не был: три дня и больше — она встречает другими словами, с числом дней.
+  busy.add(4 * 24 * HOUR);
+  const back = await g.onRoom({ do: "look" }, from(5));
+  assert.ok(fitting("зайти:давно", { vars: { ...VARS, "дней": "4 дня" } }).map(plain).includes(back.greet), back.greet);
+  assert.match(back.greet, /4 дня/u);
+});
+
+test("0.48.0, окно, кнопки и наряд: окно открывается на час и закрывается по нажатию; кнопки под рисунком — хозяину; днём она одета по погоде", async () => {
+  reset();
+  const time = clock(NOON);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const seen = await h.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([seen.open, seen.owner, seen.brew, seen.kind], [false, false, undefined, "жасмин"]);
+  // Нажали на окно — открыла: слова по небу и то, что за окном.
+  const opened = await h.onRoom({ do: "window" }, from(5));
+  assert.deepEqual([opened.ok, opened.do, opened.open, opened.window], [true, "window", true, seen.window]);
+  assert.ok(fitting("створка:открыть", { sky: seen.sky }).map(plain).includes(opened.line), opened.line);
+  assert.equal(roomOf(5).cared, "", "окно — не забота");
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(5))).open, true);
+  // Страница: створка распахнута, под рисунком — её слова и слова об окне.
+  let state = logic.applyWindow(logic.applyLook(logic.blank(14), seen, NOON), opened);
+  assert.deepEqual([state.airy, state.open, logic.viewOf(state).open, state.said], [true, true, true, `${opened.line}\n${seen.window}`]);
+  assert.match(scene.drawRoom(logic.viewOf(state), PAINTED), /class="fx fx-window"/u);
+  assert.doesNotMatch(scene.drawRoom({ ...logic.viewOf(state), open: false }, PAINTED), /fx-window/u);
+  // Ещё раз — закрыла.
+  const shut = await h.onRoom({ do: "window" }, from(5));
+  assert.equal(shut.open, false);
+  assert.ok(pool("створка:закрыть").map(plain).includes(shut.line), shut.line);
+  state = logic.applyWindow(state, shut);
+  assert.equal(logic.viewOf(state).open, undefined);
+  // Открытое окно она закрывает сама — через час.
+  await h.onRoom({ do: "window" }, from(5));
+  time.add(room.AIR_MS - 1000);
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(5))).open, true);
+  time.add(2000);
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(5))).open, false);
+  // Прежнее сердце окна не открывает: нажатие на окно — её слова о том, что за ним, как раньше.
+  const old = { ...seen };
+  delete old.open;
+  assert.equal(logic.applyLook(logic.blank(14), old, NOON).airy, false);
+
+  // Кнопки под рисунком — хозяину: поле `brew`, по которому их показывала и прежняя страница, — только ему.
+  const mine = await h.onRoom({ do: "look" }, from(OWNER));
+  assert.deepEqual([mine.owner, mine.brew, mine.kind], [true, "жасмин", "жасмин"]);
+  assert.deepEqual([logic.applyLook(logic.blank(14), mine, NOON).owner, logic.applyLook(logic.blank(14), seen, NOON).owner], [true, false]);
+  // Сердце 0.47.0 слова «owner» не знает, а чай называет всем: кнопки — как тогда.
+  delete old.owner;
+  assert.equal(logic.applyLook(logic.blank(14), { ...old, brew: "улун" }, NOON).owner, true);
+
+  // Наряд днём — по погоде: решён при первом заходе в этот день и записан; до вечера она его не меняет.
+  const ids = Array.from({ length: 400 }, (_, index) => 100 + index), wetSky = (id) => ["rain", "snow", "storm"].includes(madeUpSky(id, time.now()));
+  const wet = ids.find(wetSky), dry = ids.find(id => !wetSky(id));
+  const rainy = await h.onRoom({ do: "look" }, from(wet)), clear = await h.onRoom({ do: "look" }, from(dry));
+  assert.deepEqual([rainy.her.wear, roomOf(wet).dress, clear.her.wear, roomOf(dry).dress], ["home", { day: TODAY, name: "home" }, "jacket", { day: TODAY, name: "jacket" }]);
+  time.set(NOON + 3 * HOUR - 60_000);
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(wet))).her.wear, "home");
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(dry))).her.wear, "jacket");
+  // Вечером — домашнее у всех.
+  time.set(NOON + 5 * HOUR);
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(dry))).her.wear, "home");
+});
+
+test("0.48.0, страница: день на витрине идёт по часам устройства; мимика — в рисунке; чай выбирают у чайника; за закрытым окном дождь тише музыки", () => {
+  const anySky = (name) => room.SKIES.flatMap(sky => fitting(name, { sky })).map(plain);
+  // Витрина: час и минута устройства → эпизод и шаг; слова — из словаря, место — из слов, картинка — есть.
+  for (const [hour, name] of [[7, "день:подъём"], [13, "день:чай"], [17, "день:порядок"]]) for (const minute of [0, 10, 20, 30]) {
+    const look = logic.demoLook(hour, { minute });
+    assert.ok(anySky(name).includes(look.her.line), `${hour}:${minute} — «${look.her.line}»`);
+    assert.equal(room.herPose(look.her.line, look.her.key), look.her.pose, look.her.line);
+    assert.deepEqual([look.her.steady, look.her.beats[0], look.step], [true, { pose: look.her.pose, line: look.her.line }, 600_000]);
+    assert.ok(scene.lookOf(look.her.key, look.her.pose), look.her.line);
+  }
+  // Кормит — Байт ест рядом; ночью спит — он под боком; в начале чайного перерыва сама предлагает чай.
+  const meal = logic.demoLook(7, { minute: 12 }), night = logic.demoLook(2, { minute: 0 }), tea = logic.demoLook(13, { minute: 5 });
+  assert.deepEqual([meal.her.pose, meal.cat.shape, meal.cat.place, night.cat.shape, night.cat.place], ["feed", "eat", "near", "curl", "near"]);
+  assert.ok(pool("байт:завтрак").includes(meal.cat.line) && pool("байт:ночь").includes(night.cat.line));
+  assert.ok(pool("чай:предложить").includes(tea.offer.text));
+  assert.equal(logic.demoLook(13, { minute: 40 }).offer, undefined);
+  // Шаг — десять минут: через десять минут — следующая реплика; сверка — к границе шага.
+  assert.notEqual(logic.demoLook(7, { minute: 0 }).her.line, logic.demoLook(7, { minute: 10 }).her.line);
+  assert.equal(logic.demoLook(7, { minute: 7.5 }).step, 150_000);
+  // Без минуты (тесты, снимки) и с названным часом — как раньше: первая реплика часа, распорядок списком.
+  assert.deepEqual([logic.demoLook(14).her.steady, logic.demoLook(7, { minute: 3, part: "день" }).her.steady, logic.demoLook(14).step], [undefined, undefined, undefined]);
+  // С `#turn=` страница листает шаги сама — для проверки в браузере.
+  assert.equal(logic.demoLook(9, { minute: 3, turn: "700" }).her.steady, undefined);
+
+  // Страница: её ведёт сердце (`steady`) — после сверки она на том шаге, что назван, и слова под рисунком — о нём.
+  let state = logic.applyLook(logic.blank(7), logic.demoLook(7, { minute: 2 }), 1000);
+  assert.deepEqual([state.her.steady, state.cat.steady, state.owner, state.airy, state.clock.left], [true, true, true, true, 480_000]);
+  const later = logic.applyTick(state, logic.demoLook(7, { minute: 12 }), 2000), change = logic.changeOf(state, later);
+  assert.deepEqual([later.her.beat, change.kind, change.state.said], [0, "quiet", later.her.beats[0].line]);
+  // Проснулась и оделась по-дневному: час тот же, наряд другой — сцена у шкафа.
+  const inHome = { ...state, her: { ...state.her, wear: "home" } }, inJacket = { ...state, her: { ...state.her, wear: "jacket" } };
+  assert.deepEqual([logic.changeOf(inHome, inJacket).kind, logic.changeOf(inHome, inHome).kind], ["wardrobe", "same"]);
+  // Чай: она спрашивает — выбор показан; налили — вопрос снят, чай запомнен; слова — этого чая.
+  state = logic.applyLook(logic.blank(13), tea, 1000);
+  assert.deepEqual([state.asking, state.offer], ["tea", tea.offer.text]);
+  const cup = logic.demoCare(state, "tea", "мята");
+  assert.ok(pool("чай:мята").map(plain).includes(cup.line), cup.line);
+  state = logic.applyCare(state, "tea", cup);
+  assert.deepEqual([state.asking, state.brew], ["", "мята"]);
+  // Тот же вопрос второй раз не всплывает; новый — показывается, и слова под рисунком — её вопрос.
+  assert.equal(logic.applyTick(state, logic.demoLook(13, { minute: 6 }), 3000).asking, "");
+  const quiet = logic.applyLook(logic.blank(13), logic.demoLook(13, { minute: 40 }), 1000), asked = logic.applyTick(quiet, logic.demoLook(13, { minute: 5 }), 2000);
+  assert.deepEqual([quiet.asking, asked.asking, logic.changeOf(quiet, asked).state.said], ["", "tea", tea.offer.text]);
+  // Витрина помнит заботу сама: сверка раз в десять минут отметок не стирает.
+  const kept = logic.demoKept(state, logic.applyTick(state, logic.demoLook(13, { minute: 16 }), 4000));
+  assert.deepEqual([state.done.tea, logic.applyTick(state, logic.demoLook(13, { minute: 16 }), 4000).done.tea, kept.done.tea, kept.tea], [1, 0, 1, true]);
+  // Окно на витрине — теми же словами, что в словаре.
+  const opened = logic.demoWindow(state);
+  assert.ok(anySky("створка:открыть").includes(opened.line), opened.line);
+  state = logic.applyWindow(state, opened);
+  assert.equal(logic.viewOf(state).open, true);
+  assert.ok(pool("створка:закрыть").includes(logic.demoWindow(state).line));
+
+  // Мимика в рисунке: стоя покачивается; садится — опускается, встаёт — поднимается; клюёт носом — моргает медленно;
+  // на кадре с поднятыми глазами — пометка (её показывает нажатие); Байт замечает, что она подошла.
+  const stand = { part: "день", sky: "clear", her: { pose: "desk", key: "дело", beat: true }, cat: null, plant: "wet", things: [] }, seat = { ...stand, her: { pose: "chair", key: "уют", beat: true } };
+  const walked = { ...PAINTED, was: { name: "work", x: 252 } };
+  assert.match(scene.drawRoom(stand, PAINTED), /<g class="lean"><g class="alive">/u);
+  assert.doesNotMatch(scene.drawRoom(seat, PAINTED), /class="lean"/u);
+  assert.match(scene.drawRoom(seat, walked), /<g class="leave"><use href="#r-her-work" [^]*<g class="arrive late lower" style="--t:[\d.]+s">/u);
+  assert.match(scene.drawRoom(stand, { ...PAINTED, was: { name: "tea3", x: 196 } }), /<g class="leave rise"><use href="#r-her-tea3" /u);
+  assert.match(scene.drawRoom({ ...seat, her: { pose: "read", key: "уют", beat: true, face: "drowsy" } }, PAINTED), /<use class="wink slow" href="#r-her-read-blink"/u);
+  assert.match(scene.drawRoom({ ...seat, her: { pose: "garland", key: "уют", beat: true } }, { sprites: { ...SPRITES, ...FRAME_SPRITES } }), /<g class="fr a glance nl">[^]*<g class="fr b glance lk">/u);
+  const near = { ...stand, her: { pose: "shelf", key: "дело", beat: true }, cat: { shape: "sit", place: "bowl", key: "сыт" } };
+  assert.match(scene.drawRoom(near, walked), /<g class="notice" style="--t:[\d.]+s"><g class="hop">[^]*<text class="mark" [^>]+>!<\/text><\/g>/u);
+  assert.doesNotMatch(scene.drawRoom(near, PAINTED), /class="notice"/u, "стоит на месте — замечать нечего");
+  assert.doesNotMatch(scene.drawRoom({ ...near, cat: { shape: "curl", place: "pillow", key: "спит" } }, walked), /class="notice"/u, "спящий её не замечает");
+  // Страница ставит мимику по нажатию и красит кнопки под рисунком только хозяину.
+  const app = read("miniapp/app.js");
+  assert.match(app, /const known = state\.ready && Boolean\(state\.brew\) && state\.owner === true,/u);
+  assert.match(app, /if \(lifeTurn % 2\) \{ if \(!state\.her\?\.steady\) herStep\(\); \} else if \(!state\.cat\?\.steady\) catStep\(\);/u);
+  // Звук: за закрытым окном улица втрое тише и глуше, мелодия — громче; открыто — улица в полный голос.
+  const sound = read("miniapp/sound.js");
+  assert.match(sound, /const SHUT = 0\.3, OPEN = 0\.75, DUCK = 0\.6, GLASS_HZ = 700, AIR_HZ = 16000, SONG = 1\.9;/u);
+  assert.ok(0.8 * 0.3 * 0.6 < 0.1 * 1.9, "дождь за стеклом под музыку тише её самых тихих нот");
+  for (const name of ["purr", "pages", "pen", "birds", "car"]) assert.match(sound, new RegExp(`\\n    ${name}\\(at\\) `, "u"), name);
+  assert.match(sound, /scene\(what = \{\}\) \{/u);
+});
+
+test("0.48.0, словарь: о распорядке, наряде по погоде, окне, чае у чайника и о том, что исправлено, она отвечает сама", () => {
+  for (const [said, topic] of [
+    ["какой у тебя распорядок дня", "твой распорядок"], ["почему ты днем в свитере", "наряд по погоде"], ["открой окно", "открыть окно"],
+    ["дождь громче музыки", "дождь громче музыки"], ["ты ходишь задом наперед", "ходишь задом наперед"], ["экран мерцает черным", "экран мерцает"],
+    ["как налить другой чай", "чай у чайника"],
+  ]) assert.deepEqual(book.match(said), [topic], said);
+  // Устаревшее ушло: позу по нажатию она больше не меняет и «раз в полминуты» не ходит.
+  for (const topic of ["позы вечером", "ты меняешь позы", "почему ты стоишь"]) assert.doesNotMatch(book.pool(topic, { formal: true }).join(" "), /сменю (?:сразу|занятие)|[Пп]одожд\S+ полминуты|[Рр]аз в полминуты сама/u, topic);
+  // У каждого чая — слова и для выбора у чайника; у окна — для любой погоды.
+  for (const sky of room.SKIES) assert.ok(fitting("створка:открыть", { sky }).length >= 1, sky);
+  const told = { vars: { ...VARS, "было": "занятия", "дальше": "чай", "время": "13:00", "дней": "4 дня" } };
+  assert.ok(pool("чай:предложить").length >= 2 && pool("день:план", told).length >= 2 && pool("зайти:давно", told).length >= 2);
 });

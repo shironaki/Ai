@@ -26,9 +26,9 @@ import * as logic from "./logic.js";
 // `scene.js` нового имени — и страница не запускается вовсе. Так имя просто окажется пустым; всё, что добавлено
 // после первой публикации (`drawRain`, `spriteOf`, `drawSprite`, `spritesOf`, `spriteStand`, `applyPat`, `nextTurn`,
 // а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`, с 0.45.0 —
-// `frameOf`, `applyBook`, `demoBook`), перед вызовом проверяется.
+// `frameOf`, `applyBook`, `demoBook`, с 0.48.0 — `applyWindow`, `demoWindow`), перед вызовом проверяется.
 const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall, applyWear, demoWear, applyBrew, demoBrew, wearAt, applyQuiet, demoQuiet } = logic;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall, applyWear, demoWear, applyBrew, demoBrew, wearAt, applyQuiet, demoQuiet, applyWindow, demoWindow, demoKept } = logic;
 /**
  * Каким светом красить небо и страницу (0.47.0): по солнцу города, если его знают и рисунок (`scene.lightIn`), и
  * описание (`view.light`); прежний `scene.js` красит комнату по часам — тогда по часам и небо, и шапка.
@@ -172,8 +172,10 @@ function turn() {
   return true;
 }
 // ── Своя жизнь ───────────────────────────────────────────────────────────────
-// Она и Байт живут сами, не дожидаясь нажатий: по очереди переходят к следующему занятию. У каждой реплики
-// распорядка своя картинка, поэтому слова под рисунком меняются вместе с ним — и говорят о том, что на нём сейчас.
+// Она и Байт живут сами, не дожидаясь нажатий. С 0.48.0 их день ведёт сердце (`steady`): занятие длится минуты, а
+// не полминуты, и страница спрашивает комнату заново, когда шаг сменится (см. «Смена часа» ниже). Ходы по кругу
+// раз в 24–40 секунд остались для прежнего сердца и для проверки в браузере (`#turn=`): у каждой реплики
+// распорядка своя картинка, и слова под рисунком меняются вместе с ним.
 const canBeat = typeof nextBeat === "function";
 /** Её следующее занятие. Картинки ещё нет — она заказывается, а ход случится в следующий раз. */
 function herStep() {
@@ -203,14 +205,15 @@ function scheduleTurn() {
   turnTimer = setTimeout(() => {
     lifeTurn += 1;
     // По очереди: она, Байт. Кому идти некуда, тот ход пропускает — второй не ходит за двоих.
-    if (lifeTurn % 2) herStep(); else catStep();
+    if (lifeTurn % 2) { if (!state.her?.steady) herStep(); } else if (!state.cat?.steady) catStep();
     scheduleTurn();
   }, TURN_MS[0] + Math.random() * (TURN_MS[1] - TURN_MS[0]));
 }
 
 // ── Смена часа при открытой странице ─────────────────────────────────────────
-// Сердце говорит, сколько осталось до следующей части суток (`clock.left`); страница сама спрашивает комнату
-// заново в эту минуту — и ещё раз в десять минут, пока открыта: Байт успевает проголодаться, а дождь — кончиться.
+// Сердце говорит, сколько осталось до ближайшей перемены: до следующей части суток (`clock.left`) или, с 0.48.0, до
+// следующего шага её дня и нового места Байта (`step`); страница сама спрашивает комнату заново в эту минуту — и не
+// реже раза в десять минут, пока открыта: Байт успевает проголодаться, а дождь — кончиться.
 // Прежнее сердце срока не называет и на повторный вопрос считало бы новый заход — его страница не переспрашивает.
 const REFRESH_MS = 10 * 60_000;
 const canTick = typeof applyTick === "function" && typeof changeOf === "function";
@@ -224,7 +227,9 @@ function scheduleTick() {
   tickTimer = setTimeout(tick, Math.max(3_000, Math.min(REFRESH_MS, left + 1500)));
 }
 /** Витрина: тот же вопрос — себе. На своей машине следующий час можно назвать в адресе (`#then=вечер`). */
-const demoTick = () => demoLook(new Date().getHours(), { ...params, ...(params.then ? { part: params.then } : {}), ...(params.thenSky ? { sky: params.thenSky } : {}), ...(params.thenLight ? { light: params.thenLight } : {}), left: "" });
+/** Минута по часам устройства — с долей: по ней идёт её день на витрине. */
+const demoNow = () => ({ ...params, minute: new Date().getMinutes() + new Date().getSeconds() / 60 });
+const demoTick = () => demoLook(new Date().getHours(), { ...demoNow(), open: state.open ? "1" : "0", dark: state.dark ? "1" : "0", brew: state.brew, ...(params.then ? { part: params.then } : {}), ...(params.thenSky ? { sky: params.thenSky } : {}), ...(params.thenLight ? { light: params.thenLight } : {}), left: "" });
 async function tick() {
   if (!canTick || !state.ready) return;
   if (state.busy || acting) { clearTimeout(tickTimer); tickTimer = setTimeout(tick, 3_000); return; }
@@ -234,7 +239,9 @@ async function tick() {
   const result = state.demo ? demoTick() : await call({ do: "look", again: true });
   lookedAt = Date.now();
   if (result?.ok === true && !state.busy && !acting) {
-    await play(changeOf(state, applyTick(state, result, at)));
+    const fresh = applyTick(state, result, at);
+    // Витрина помнит заботу сама: сверка её не стирает (`demoKept`).
+    await play(changeOf(state, state.demo && typeof demoKept === "function" ? demoKept(state, fresh) : fresh));
     // Тихий час сверяется с сердцем: начали на другом устройстве, закончили раньше, страница была свёрнута.
     if (!state.demo) quietFor(state.quiet, state.quietEnd);
   }
@@ -299,6 +306,7 @@ async function startSound() {
   soundBusy = false;
   soundOn = ok;
   paintSound();
+  soundScene();
   return ok;
 }
 function stopSound() {
@@ -554,6 +562,8 @@ function paint() {
   if (tools) tools.hidden = !state.ready;
   paintSound();
   paintChips();
+  paintTeas();
+  soundScene();
   $("foot").textContent = [
     state.next ? `Новая вещь появится через ${state.next} ${plural(state.next, "день", "дня", "дней")}` : "",
     `страница ${PAGE}`, state.build ? `сердце ${state.build}` : "", state.demo ? "витрина" : "",
@@ -596,7 +606,7 @@ async function enter() {
   state = { ...state, retry: false, tone: "", said: "Дверь открывается…" };
   paint();
   if (state.demo) {
-    state = applyLook(state, demoLook(new Date().getHours(), params), Date.now());
+    state = applyLook(state, demoLook(new Date().getHours(), demoNow()), Date.now());
     tuneFor(state.music);
     if (params.say) state = { ...state, said: params.say };
     paint();
@@ -633,6 +643,8 @@ async function pat() {
   buzz(result.again ? "light" : "medium");
   ring("pat");
   if (!result.again) heart("pat");
+  // Погладили — она закрывает глаза и краснеет (0.48.0).
+  react("patted", 1700);
 }
 
 /** Полка с книгами (0.45.0): она берёт книгу и садится читать; её слова и новое место — от сердца. */
@@ -648,11 +660,13 @@ async function book() {
 }
 
 /**
- * Кнопки под рисунком (0.47.0): «надеть свитер / куртку» и «чай: жасмин / улун / мята». Их знает сердце с 0.47.0
- * (оно называет чай в ответе — `state.brew`); прежнее сердце или прежняя копия `logic.js` — и кнопок нет.
+ * Кнопки под рисунком (0.47.0): «посидеть рядом», «надеть свитер / куртку» и «чай: жасмин / улун / мята». Их знает
+ * сердце с 0.47.0 (оно называет чай в ответе — `state.brew`); прежнее сердце или прежняя копия `logic.js` — и кнопок нет.
  */
 function paintChips() {
-  const known = state.ready && Boolean(state.brew), idle = !state.busy && !acting;
+  // С 0.48.0 эти кнопки — хозяину (сообщение 47): гостю те же дела даёт сам рисунок (чайник спросит, какой чай) и
+  // её собственная воля (наряд — по погоде).
+  const known = state.ready && Boolean(state.brew) && state.owner === true, idle = !state.busy && !acting;
   const wear = $("wear"), brew = $("brew"), quiet = $("quiet");
   if (quiet) {
     const can = known && typeof applyQuiet === "function" && typeof demoQuiet === "function", left = quietLeft();
@@ -783,8 +797,76 @@ async function music() {
   if (result?.ok === true) tuneFor(state.music);
 }
 
+/** Мимика по нажатию (0.48.0): слово на рисунке комнаты на короткое время — остальное делают стили страницы. */
+const reacting = {};
+function react(name, ms) {
+  const inside = $("inside");
+  if (!inside) return;
+  clearTimeout(reacting[name]);
+  inside.classList.remove(name);
+  void inside.getBoundingClientRect();
+  inside.classList.add(name);
+  reacting[name] = setTimeout(() => inside.classList.remove(name), ms);
+}
+/**
+ * Что слышно в комнате (0.48.0): окно открыто — улица; закрыто — дом: мурчит Байт, шуршат страницы, скрипит ручка.
+ * Прежний `sound.js` этого не умеет — тогда звучит как раньше.
+ */
+function soundScene() {
+  if (!soundOn || typeof sound?.scene !== "function") return;
+  const view = viewOf(state), her = view.her && !view.her.away ? view.her : null, cat = view.cat;
+  try {
+    sound.scene({
+      open: view.open === true || (Array.isArray(view.fx) && view.fx.includes("window")),
+      purr: Boolean(cat) && (cat.key === "ласка" || cat.key === "сыт" || cat.shape === "curl" || cat.shape === "belly"),
+      pages: her?.pose === "read",
+      pen: her?.key === "дело" && ["desk", "chair", "sill", "shelf"].includes(her.pose),
+      birds: (state.part === "утро" || state.part === "день") && !["rain", "storm", "snow"].includes(skyName(state.sky)),
+    });
+  } catch { /* звук не важнее комнаты */ }
+}
+/** Окно (0.48.0): нажали — она открывает его, и слышна улица; ещё раз — закрывает, и слышен дом. */
+async function air() {
+  scheduleTurn();
+  state = { ...state, busy: "window" };
+  paint();
+  const result = state.demo ? demoWindow(state) : await call({ do: "window" });
+  state = applyWindow(state, result);
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
+  if (result?.ok === true) ring("lamp");
+}
+/** Выбор чая под её словами (0.48.0): виден, пока она спрашивает, какой налить; нынешний чай отмечен. */
+function paintTeas() {
+  const teas = $("teas");
+  if (!teas) return;
+  teas.hidden = !state.ready || state.asking !== "tea";
+  for (const button of teas.querySelectorAll("button")) {
+    button.disabled = Boolean(state.busy) || acting;
+    button.classList.toggle("done", button.dataset.tea === state.brew);
+  }
+}
+const TEA_ASK = "Какой налить? Жасмин, улун или мяту?";
+/** Забота: её слова — от сердца; `extra` — что уточнили (какой чай налить). */
+async function care(name, extra = {}) {
+  state = { ...state, busy: name };
+  paint();
+  const result = state.demo ? demoCare(state, name, extra.kind) : await call({ do: name, ...extra });
+  state = applyCare(state, name, result);
+  paint();
+  if (result?.ok !== true) { buzz("error"); return; }
+  buzz(result.again ? "light" : "medium");
+  ring(name);
+  if (!result.again) heart(name === "tea" ? "her" : name === "water" ? "plant" : "cat");
+  // Налили чай — румянец (0.48.0).
+  if (name === "tea") react("glad", 1800);
+}
+
 async function act(name) {
   if (!state.ready || state.busy || acting) return;
+  // Она спрашивала, какой чай налить, а нажали на другое — вопрос снят.
+  if (state.asking && name !== "tea") { state = { ...state, asking: "" }; paintTeas(); }
+  if (name === "window" && state.airy === true && typeof applyWindow === "function" && typeof demoWindow === "function") { await air(); return; }
   if (name === "pat") { await pat(); return; }
   if (name === "book") { await book(); return; }
   if (name === "lamp") { await lamp(); return; }
@@ -793,23 +875,27 @@ async function act(name) {
   // Любое нажатие отодвигает её и Байта следующий ход: дать прочесть ответ.
   scheduleTurn();
   if (!CARE.includes(name)) {
-    // Нажали на неё — она переходит к следующему занятию и говорит о нём; идти некуда — повторяет нынешнее.
-    if (name === "her" && canBeat && nextBeat(state, "her") && herStep()) { buzz("light"); return; }
+    // Нажали на неё. Её день ведёт сердце (`steady`, 0.48.0): она поднимает глаза и говорит, чем занята, а со второго
+    // нажатия подряд — что было до этого и что дальше. Прежнее сердце: переходит к следующему занятию и говорит о
+    // нём; идти некуда — повторяет нынешнее.
+    if (name === "her" && !state.her?.steady && canBeat && nextBeat(state, "her") && herStep()) { buzz("light"); return; }
     const next = applyTap(state, name);
     if (next) { state = next; paint(); buzz("light"); }
+    if (name === "her" && next) react("poked", 900);
     // Прежнее сердце (без распорядка): она ответила и сменила позу.
-    if (name === "her" && next && !(canBeat && nextBeat(state, "her"))) turn();
+    if (name === "her" && next && !state.her?.steady && !(canBeat && nextBeat(state, "her"))) turn();
     return;
   }
-  state = { ...state, busy: name };
-  paint();
-  const result = state.demo ? demoCare(state, name) : await call({ do: name });
-  state = applyCare(state, name, result);
-  paint();
-  if (result?.ok !== true) { buzz("error"); return; }
-  buzz(result.again ? "light" : "medium");
-  ring(name);
-  if (!result.again) heart(name === "tea" ? "her" : name === "water" ? "plant" : "cat");
+  // Чайник (0.48.0, сообщение 47: «нажав на чайник, можно выбрать какой чай»): она спрашивает, какой налить, — под её
+  // словами три кнопки. Нажали на чайник ещё раз — наливается тот же, что в прошлый раз. Прежнее сердце чаёв не
+  // называет — наливается сразу.
+  if (name === "tea" && Array.isArray(state.kinds) && state.kinds.length > 1 && state.asking !== "tea") {
+    state = { ...state, asking: "tea", tone: "", retry: false, said: TEA_ASK };
+    paint();
+    buzz("light");
+    return;
+  }
+  await care(name);
 }
 
 async function pick(index) {
@@ -840,6 +926,10 @@ $("retry").addEventListener("click", () => enter());
 $("quiet")?.addEventListener("click", () => sit());
 $("wear")?.addEventListener("click", () => dress());
 $("brew")?.addEventListener("click", () => steep());
+$("teas")?.addEventListener("click", (event) => {
+  const kind = event.target instanceof Element ? event.target.closest("[data-tea]")?.dataset.tea : null;
+  if (kind && state.ready && !state.busy && !acting) care("tea", { kind });
+});
 
 // Звук: выключатель под рисунком. Запомненное «включено» ждёт первого касания страницы.
 $("sound")?.addEventListener("click", async () => {

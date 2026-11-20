@@ -231,6 +231,30 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 @keyframes scoot { to { transform: translateX(-5px); } }
 #room .ribbon { transform-origin: 20% 0%; animation: swing 0.8s ease-in-out infinite alternate; }
 @keyframes swing { from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
+/* 0.48.0 — мимика и движение. Стоя она чуть покачивается (.lean); садится — опускается, встаёт — поднимается (.lower,
+   .rise); клюёт носом — моргает медленно (.slow); нажали на неё — подняла глаза и вздрогнула (.poked); погладили —
+   закрыла глаза и покраснела (.patted); налили чай — румянец (.glad); Байт замечает, что она подошла (.notice). */
+#room .lean { transform-box: fill-box; transform-origin: 50% 100%; animation: lean 7.3s ease-in-out infinite; }
+@keyframes lean { 0%, 100% { transform: rotate(-0.3deg); } 50% { transform: rotate(0.3deg); } }
+#room .arrive.lower, #room .arrive.late.lower { animation-name: sitdown; animation-duration: 0.7s; }
+@keyframes sitdown { from { opacity: 0; transform: translateY(-13px); } 60% { opacity: 1; } to { transform: none; } }
+#room .leave.rise { animation-name: rise; }
+@keyframes rise { from { opacity: 1; } 40% { opacity: 1; } to { opacity: 0; transform: translateY(-12px); } }
+#room .wink.slow { animation: drowse 7.5s step-end infinite; }
+@keyframes drowse { 0% { opacity: 0; } 30% { opacity: 1; } 52% { opacity: 0; } 70% { opacity: 1; } 96% { opacity: 0; } }
+#room .poked .alive { animation: poke 0.45s ease-out; }
+@keyframes poke { 35% { transform: translateY(-3px); } }
+#room .poked .wink { animation: pokeWink 0.9s step-end; }
+@keyframes pokeWink { 0% { opacity: 1; } 14% { opacity: 0; } 38% { opacity: 1; } 52% { opacity: 0; } }
+#room .poked .alive .fr.lk { opacity: 1; animation: none; }
+#room .poked .alive .fr.nl { opacity: 0; animation: none; }
+#room .patted .wink { opacity: 1; animation: none; }
+#room .patted .blush, #room .glad .blush { animation: blush 1.8s ease-out; }
+@keyframes blush { 0% { opacity: 0; } 20%, 70% { opacity: 0.55; } 100% { opacity: 0; } }
+#room .notice .hop { animation: hop 0.45s ease-out both; animation-delay: calc(var(--t, 1s) - 0.4s); }
+@keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-3.5px); } }
+#room .notice .mark { animation: mark 1.5s ease-out both; animation-delay: calc(var(--t, 1s) - 0.4s); }
+@keyframes mark { 0% { opacity: 0; transform: translateY(3px); } 18%, 70% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-8px); } }
 @media (prefers-reduced-motion: reduce) {
   #room *, #sky *, .rainbox *, .heart, #say.fresh, .actions button.busy { animation: none !important; }
   .rainbox { transition: none !important; }
@@ -252,6 +276,12 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
     <span class="who" id="who">Аи</span>
     <p id="say">Дверь открывается…</p>
     <button id="retry" class="main" type="button" hidden>Попробовать ещё раз</button>
+    <!-- Какой чай налить (0.48.0): видно, когда она спрашивает — по нажатию на чайник или сама, в свой чайный перерыв. -->
+    <div class="choice" id="teas" hidden>
+      <button type="button" class="main" data-tea="жасмин">Жасмин</button>
+      <button type="button" class="main" data-tea="улун">Улун</button>
+      <button type="button" class="main" data-tea="мята">Мята</button>
+    </div>
   </div>
   <section class="panel">
     <div class="card" id="scene" hidden>
