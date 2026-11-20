@@ -1151,6 +1151,12 @@ function motes(part, sky) {
 
 // ── слои рисунка ─────────────────────────────────────────────────────────────
 const partIn = (view) => (PARTS.includes(view?.part) ? view.part : "день");
+/**
+ * Каким светом красить рисунок (0.47.0, идея 164): `view.light` — свет по солнцу города, когда он разошёлся с
+ * часами; нет его — свет по часам (`view.part`). Небо, стены, лампа, гирлянда и она сама красятся светом; наряд
+ * (`wearOf`) — по часам: в июне в десять вечера за окном день, а она уже в свитере.
+ */
+export const lightIn = (view) => (PARTS.includes(view?.light) ? view.light : partIn(view));
 /** Краски под час. `soft` — насколько слабее приглушать (для неё и Байта). */
 const palette = (part, soft = 0) => Object.fromEntries(Object.entries(DAY).map(([name, colour]) => [name, tint(colour, part, soft)]));
 
@@ -2304,7 +2310,7 @@ export function castOf(view = {}, options = {}) {
 }
 
 export function drawInside(view = {}, options = {}) {
-  const part = partIn(view), sky = skyIn(view?.sky);
+  const part = lightIn(view), sky = skyIn(view?.sky);
   // Приставка имён слоя: когда час сменяется при открытой странице, прежняя комната тает поверх новой — имена у них разные.
   const g = inks(typeof options?.prefix === "string" && /^[a-z]-$/u.test(options.prefix) ? options.prefix : "r-");
   const c = palette(part), f = palette(part, FIGURE_SOFT);
@@ -2449,7 +2455,7 @@ export function drawInside(view = {}, options = {}) {
  * Определение её картинки (`drawSprite`) кладётся сюда же: рисунок целиком должен быть виден сам по себе.
  */
 export function drawRoom(view = {}, options = {}) {
-  const part = partIn(view), name = spriteOf(view), sky = skyIn(view?.sky);
+  const part = lightIn(view), name = spriteOf(view), sky = skyIn(view?.sky);
   // В кладовую — всё, на что рисунок ссылается: нынешняя поза, прежняя (она тает) и, если она идёт, картинка «идёт».
   const moving = options?.was || options?.enter === true;
   const wanted = [name, frameOf(name), options?.was?.name, moving ? walkOf(view) : null, moving ? frameOf(walkOf(view)) : null].filter((item, index, all) => item && options?.sprites?.[item] && all.indexOf(item) === index);

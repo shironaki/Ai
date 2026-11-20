@@ -29,6 +29,11 @@ import * as logic from "./logic.js";
 // `frameOf`, `applyBook`, `demoBook`), перед вызовом проверяется.
 const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
 const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic } = logic;
+/**
+ * Каким светом красить небо и страницу (0.47.0): по солнцу города, если его знают и рисунок (`scene.lightIn`), и
+ * описание (`view.light`); прежний `scene.js` красит комнату по часам — тогда по часам и небо, и шапка.
+ */
+const lightIn = (view) => (typeof scene.lightIn === "function" ? scene.lightIn(view) : view.part);
 /** Второй кадр картинки (движение внутри позы, 0.45.0); прежний `scene.js` кадров не знает. */
 const frameName = (name) => (typeof frameOf === "function" ? frameOf(name) : null);
 // Что бывает за окном: с 0.44.0 — семь видов неба (погода города человека); прежняя логика знает два.
@@ -219,7 +224,7 @@ function scheduleTick() {
   tickTimer = setTimeout(tick, Math.max(3_000, Math.min(REFRESH_MS, left + 1500)));
 }
 /** Витрина: тот же вопрос — себе. На своей машине следующий час можно назвать в адресе (`#then=вечер`). */
-const demoTick = () => demoLook(new Date().getHours(), { ...params, ...(params.then ? { part: params.then } : {}), ...(params.thenSky ? { sky: params.thenSky } : {}), left: "" });
+const demoTick = () => demoLook(new Date().getHours(), { ...params, ...(params.then ? { part: params.then } : {}), ...(params.thenSky ? { sky: params.thenSky } : {}), ...(params.thenLight ? { light: params.thenLight } : {}), left: "" });
 async function tick() {
   if (!canTick || !state.ready) return;
   if (state.busy || acting) { clearTimeout(tickTimer); tickTimer = setTimeout(tick, 3_000); return; }
@@ -344,7 +349,7 @@ const buzz = (kind) => {
 
 /** Шапка и фон Telegram — под стену комнаты в этот час. */
 function theme() {
-  const colour = HEADERS[state.part] ?? HEADERS["день"];
+  const colour = HEADERS[lightIn(viewOf(state))] ?? HEADERS["день"];
   const page = getComputedStyle($("app")).getPropertyValue("--bg").trim() || "#f1e8dc";
   document.documentElement.style.setProperty("--page", page);
   if (!tg || header === colour) return;
@@ -377,16 +382,18 @@ function castNow(view) {
 
 function paint() {
   const app = $("app");
-  app.dataset.light = LIGHTS[state.part] ?? "day";
+  app.dataset.light = LIGHTS[lightIn(viewOf(state))] ?? "day";
   app.dataset.state = state.ready ? "ready" : "loading";
   // Три слоя. Небо с городом и дождь перерисовываются только со сменой часа и погоды, комната — когда в ней
   // что-то изменилось: иначе при каждом нажатии дождь прыгал бы назад, а гирлянда мигала заново. Сам дождь движется
   // без рисования вовсе: страница сдвигает его слой целиком (стили `.rainbox`).
   const view = viewOf(state), key = JSON.stringify(view), sky = skyName(view.sky);
   const moon = Number.isFinite(view.moon) ? view.moon : null;
-  const outside = drawn.part !== view.part || drawn.sky !== sky || drawn.moon !== moon;
+  // Небо красится светом: по солнцу города, а без него по часам (`drawn.part` — каким светом оно нарисовано).
+  const light = lightIn(view);
+  const outside = drawn.part !== light || drawn.sky !== sky || drawn.moon !== moon;
   // Час или погода сменились при открытой странице — прежний рисунок тает поверх нового (`ghostOf`).
-  const fade = outside && Boolean(drawn.part) && (drawn.part !== view.part || drawn.sky !== sky);
+  const fade = outside && Boolean(drawn.part) && (drawn.part !== light || drawn.sky !== sky);
   if (outside) {
     const rain = () => {
       // Слои дождя есть только в новой разметке, а `drawRain` — только в новом рисунке (см. выше про старые копии):
@@ -394,7 +401,7 @@ function paint() {
       // в сухую погоду слои пусты.
       for (const [id, plane] of [["rainFar", "far"], ["rainNear", "near"]]) {
         const layer = $(id);
-        if (layer && drawRain) layer.innerHTML = drawRain(view.part, plane, sky);
+        if (layer && drawRain) layer.innerHTML = drawRain(light, plane, sky);
         if (layer?.parentElement) layer.parentElement.dataset.sky = sky;
       }
     };
@@ -405,11 +412,11 @@ function paint() {
       // Дождь гаснет, сменяется и проступает снова.
       if (box) { box.classList.add("dim"); setTimeout(() => { rain(); box.classList.remove("dim"); }, FADE_MS / 2); } else rain();
     } else rain();
-    $("backdrop").innerHTML = drawBackdrop(view.part, sky, { phase: moon ?? 0.3, prefix: drawn.back });
+    $("backdrop").innerHTML = drawBackdrop(light, sky, { phase: moon ?? 0.3, prefix: drawn.back });
     $("room").setAttribute("aria-label", `Комната Аи: окно во всю стену, за ним город и ${SKY_WORDS[sky] ?? "небо"}`);
     // За окном сменилось — сменился и фон звука: дождь, гроза, тихий ветер или тишина комнаты.
     if (drawn.sky && drawn.sky !== sky && soundOn) startSound();
-    drawn.part = view.part;
+    drawn.part = light;
     drawn.sky = sky;
     drawn.moon = moon;
   }

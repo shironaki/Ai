@@ -26,6 +26,11 @@ const skyOf = (value) => (SKIES.includes(value) ? value : "rain");
 /** Что сценка дня меняет в комнате (те же слова, что `SCENE_FX` в рисунке и в сердце). */
 const FX = Object.freeze(["cactus", "haze", "window", "blink", "sock", "curtains", "noplaid", "puddle", "boat"]);
 /** В чём она в этот час, если наряд не назван: вечером и ночью — домашнее (то же правило — в рисунке). */
+/**
+ * Каким светом нарисована комната (0.47.0, идея 164): по солнцу города — если сердце его назвало (`clock.light`),
+ * иначе по часам. Наряд, сон и её слова идут по часам (`part`) всегда.
+ */
+export const lightOf = (state) => (PARTS.includes(state?.light) ? state.light : state?.part);
 export const wearAt = (part, named = "") => (WEARS.includes(named) ? named : part === "вечер" || part === "ночь" ? "home" : "jacket");
 /** Фаза луны на этот день: доля лунного месяца (0 — новолуние, 0,5 — полнолуние). `day` — «2026-11-19» или момент времени. */
 export function moonOf(day) {
@@ -42,7 +47,7 @@ const count = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? 
 export function blank(hour = 12) {
   return {
     ready: false, demo: false, busy: "", tone: "", said: "Дверь открывается…", retry: false,
-    part: partOf(hour), her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, tea: false,
+    part: partOf(hour), light: "", her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, tea: false,
     lines: { her: "", window: "", cat: "", box: "", things: {} }, done: {}, scene: null, build: "", next: null,
     // Которая по счёту её поза (позы состояния идут по кругу) и гладили ли её сегодня; что за окном (`SKIES`).
     // Пока сердце не ответило, за окном — ровное серое небо: какая там погода, ещё неизвестно.
@@ -79,6 +84,8 @@ export function viewOf(state) {
   const cat = !state.cat ? null : { shape: teased ? "play" : pet?.shape ?? state.cat.shape, place: teased ? "near" : pet?.place ?? state.cat.place, key: state.cat.key };
   return {
     part: state.part, her, cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed, tea: state.tea,
+    // Свет по солнцу назван, только когда он разошёлся с часами: иначе описание рисунка то же, что и было.
+    ...(lightOf(state) !== state.part ? { light: lightOf(state) } : {}),
     // Прежнему рисунку небо называлось только когда шёл снег: слово «rain» в описании ему не нужно и теперь.
     ...(skyOf(state.sky) === "rain" ? {} : { sky: skyOf(state.sky) }),
     ...(Array.isArray(state.fx) && state.fx.length ? { fx: state.fx } : {}),
@@ -163,7 +170,7 @@ export function applyLook(state, result, at = 0) {
   const lines = { her: text(result.her?.line), window: text(result.window), cat: text(result.cat?.line), box: text(result.box?.line), things: thingLines };
   const said = [text(result.greet), lines.her, lines.cat, ...fresh.map(key => `Новое в комнате. ${thingLines[key]}`)].filter(Boolean).join("\n");
   return {
-    ...state, ready: true, busy: "", tone: "", retry: false, part,
+    ...state, ready: true, busy: "", tone: "", retry: false, part, light: PARTS.includes(result.clock?.light) ? result.clock.light : "",
     her: herOf(result.her),
     turn: 0, patted: result.patted === true, sky: skyOf(result.sky),
     // Луна — по дню человека; дня в ответе нет — по часам устройства; нет и их — обычный месяц.
@@ -211,7 +218,8 @@ export function changeOf(before, after) {
   if (!before.ready || !after.ready) return { kind: "same", state: after };
   const herLine = herBeat(after)?.line || after.lines.her, catLine = catBeat(after)?.line || after.lines.cat;
   const lines = { ...after.lines, her: herLine || after.lines.her };
-  if (before.part === after.part) {
+  // Час тот же и свет тот же. Свет по солнцу (0.47.0) меняется и посреди часа: закат в пять вечера — тоже перемена.
+  if (before.part === after.part && lightOf(before) === lightOf(after)) {
     if (JSON.stringify(viewOf(before)) === JSON.stringify(viewOf(after))) return { kind: "same", state: { ...after, lines } };
     // Слова под рисунком идут за ним: изменилась она — её новая реплика; изменился Байт, а слова были о нём — новая о нём.
     const herMoved = before.her?.key !== after.her?.key, catMoved = before.cat?.key !== after.cat?.key || before.cat?.place !== after.cat?.place || before.cat?.shape !== after.cat?.shape;
@@ -392,7 +400,7 @@ export function demoLook(hour = 12, params = {}) {
   // Позу назвали в адресе — она стоит в ней и распорядка нет: снимок должен быть таким, каким его попросили.
   const fixed = HER_POSES.includes(params.her);
   return {
-    ok: true, do: "look", build: "", clock: { hour, part, ...(left > 0 ? { left } : {}) }, greet: DEMO_NOTE, window: sky === "rain" ? DEMO_RAIN[part] : DEMO_WINDOW[sky], sky,
+    ok: true, do: "look", build: "", clock: { hour, part, ...(PARTS.includes(params.light) ? { light: params.light } : {}), ...(left > 0 ? { left } : {}) }, greet: DEMO_NOTE, window: sky === "rain" ? DEMO_RAIN[part] : DEMO_WINDOW[sky], sky,
     wardrobe: DEMO_WARDROBE[wearAt(part)],
     her: { pose: fixed ? params.her : beats[0][0], key: params.key ?? key, line: fixed ? "" : beats[0][1], beats: fixed || params.key ? [] : beats.map(([pose, line]) => ({ pose, line })) },
     // Гроза (0.46.0): Байт под пледом, наружу один хвост, — как у сердца (запас «+комната:байт:гроза»).
@@ -426,9 +434,10 @@ export function demoBook(state) {
   const line = "Читаю в кресле. Глава такая, что не оторваться: Байт зовёт ужинать уже второй раз.";
   return { ok: true, do: "book", build: "", line: "Возьму вот эту — «Маленького принца». Перечитываю каждую осень. Кресло, я иду.", taken: true, again: false, her: { key: "уют", pose: "read", line, beats: [{ pose: "read", line }] } };
 }
-/** Лампа на витрине: вечером и ночью — гаснет и загорается; днём она не горит и так. */
+/** Лампа на витрине: когда за окном темно — гаснет и загорается; пока светло, она не горит и так. */
 export function demoLamp(state) {
-  if (state.part !== "вечер" && state.part !== "ночь") return { ok: true, do: "lamp", build: "", line: "Днём лампа отдыхает: за окном светлее, чем от неё. Вечером — другое дело.", dark: state.dark === true, changed: false };
+  const light = lightOf(state);
+  if (light !== "вечер" && light !== "ночь") return { ok: true, do: "lamp", build: "", line: "Пока за окном светло, лампа отдыхает: окно светит ярче неё. Стемнеет — другое дело.", dark: state.dark === true, changed: false };
   const dark = state.dark !== true;
   return { ok: true, do: "lamp", build: "", line: dark ? "Гашу лампу. Остаётся гирлянда — так даже уютнее." : "Свет вернулся. Гирлянда делает вид, что и одна справлялась.", dark, changed: true };
 }

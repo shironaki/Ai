@@ -73,7 +73,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex,
-  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS } from "./room.js";
+  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -1753,7 +1753,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const roomLines = (turn, name, vars = {}) => (typeof book.all === "function" ? book.all(`+комната:${name}`, voiceCtx(turn, vars)) : []);
   /** Запас слов об окне — по небу: дождь лежит в «окно» (так он назывался, когда дождь был всегда). */
   const WINDOW_POOL = Object.freeze({ clear: "окно:ясно", clouds: "окно:облачно", overcast: "окно:пасмурно", fog: "окно:туман", rain: "окно", storm: "окно:гроза", snow: "окно:снег" });
-  const windowLine = (turn, sky) => roomLine(turn, WINDOW_POOL[sky] ?? "окно") || roomLine(turn, "окно");
+  /**
+   * Слова об окне — о том, что на рисунке: небо по погоде и свет по солнцу (`turn.light`, 0.47.0). Свет разошёлся с
+   * часами — слова берутся под свет (`windowTag`), и в них можно назвать восход и закат: {восход}, {закат}.
+   */
+  const windowLine = (turn, sky) => {
+    const clock = (at) => { const local = localParts(at, zoneOf(turn)); return `${String(local.hh).padStart(2, "0")}:${String(local.mm).padStart(2, "0")}`; };
+    const ctx = voiceCtx(turn, turn.sun ? { "восход": clock(turn.sun.rise), "закат": clock(turn.sun.set) } : {});
+    const air = { ...ctx, part: windowTag(ctx.part, turn.light) };
+    return book.pick(`+комната:${WINDOW_POOL[sky] ?? "окно"}`, air) ?? book.pick("+комната:окно", air) ?? "";
+  };
   const ROOM_POOL = Object.freeze({ pet: "погладить", feed: "покормить", play: "поиграть", tea: "чай", water: "полить" });
   /** Забота из мини-приложения — теми же словами, какими её сказали бы в чате: так она остаётся в переписке. */
   const ROOM_SAID = Object.freeze({ pet: "погладить Байта", feed: "покормить Байта", play: "поиграть с Байтом", tea: "налить тебе чаю", water: "полить Колючку" });
@@ -1859,7 +1868,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (city && sources.available() && typeof sources.skyNow === "function") sky = skyOfCode((await sources.skyNow(city).catch(() => null))?.code);
     turn.skyReal = Boolean(sky);
     turn.sky = sky ?? randomSky({ seed: roomSeed(turn.actorId, "sky"), at: now(), month: localParts(now(), zoneOf(turn)).m });
+    // Свет за окном — по солнцу того же города (идея 164, 0.47.0): рассвет и закат в комнате тогда же, когда у
+    // человека. Солнцу служба погоды не нужна — только место города (оно помнится месяц). Города нет или солнце в
+    // этот день не встаёт и не садится — свет идёт по часам (`turn.light` пуст). Её день — наряд, сон, слова — по
+    // часам всегда: в июне в десять вечера за окном светло, а она уже в свитере.
+    turn.sun = await sunOf(turn, city);
+    turn.light = lightAt(now(), turn.sun)?.light ?? "";
     return turn.sky;
+  }
+  /** Восход и закат в городе человека сегодня (мс эпохи); `null` — узнать не удалось. */
+  async function sunOf(turn, city) {
+    if (!city || !sources.available() || typeof sources.findPlace !== "function") return null;
+    const place = await sources.findPlace(city, { tries: 1 }).catch(() => null);
+    if (!place?.ok) return null;
+    const day = localParts(now(), zoneOf(turn));
+    const times = prayersOn({ y: day.y, m: day.m, d: day.d, latitude: place.latitude, longitude: place.longitude });
+    return times && Number.isFinite(times.sunrise) && Number.isFinite(times.maghrib) ? { rise: times.sunrise, set: times.maghrib } : null;
   }
   /**
    * Чем она занята сейчас: ключ запаса «+комната:она:…» — и куда её поставила сценка дня (`put`: место; `said` —
@@ -2142,8 +2166,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const local = localParts(now(), zone), part = partOfDay(feel.hour);
         const edge = [5, 12, 18, 23].find(hour => hour > local.hh) ?? 29;
         const wear = part === "вечер" || part === "ночь" ? "вечер" : "утро";
+        const byClock = ((edge - local.hh) * 60 - local.mm) * 60_000 - (now() % 60_000);
+        // Свет — по солнцу города (идея 164, 0.47.0): `light` — каким светом красить рисунок; страница спросит
+        // комнату заново и к перемене часа, и к рассвету с закатом. Солнца не знаем — поля нет: свет по часам.
+        const sun = lightAt(now(), turn.sun);
         return {
-          clock: { hour: feel.hour, part, day: today, left: Math.max(30_000, ((edge - local.hh) * 60 - local.mm) * 60_000 - (now() % 60_000)) },
+          clock: { hour: feel.hour, part, day: today, left: Math.max(30_000, Math.min(byClock, sun?.left ?? byClock)), ...(sun ? { light: sun.light } : {}) },
           wardrobe: { leave: roomLine(turn, `шкаф:${wear}`), back: roomLine(turn, `переоделась:${wear}`) },
         };
       };
@@ -2213,11 +2241,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       }
       if (op === "lamp") {
         // Лампа (идея 158, 0.46.0): нажали — свет гаснет (остаётся гирлянда) или загорается; так и остаётся, пока не
-        // нажмут снова. Днём лампа не горит и так: она это и говорит, а выключатель остаётся как был.
-        const part = partOfDay(feel.hour);
+        // нажмут снова. Пока за окном светло, лампа не горит и так: она это и говорит, а выключатель остаётся как
+        // был. Светло или нет — по тому же свету, каким нарисована комната: по солнцу города, а без него по часам.
+        const part = turn.light || partOfDay(feel.hour);
         if (part !== "вечер" && part !== "ночь") {
           const before = await room.read(userId, today);
-          return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "свет:день") || "Днём и так светло."), dark: before.dark === true, changed: false };
+          return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "свет:день") || "Пока светло, лампа отдыхает."), dark: before.dark === true, changed: false };
         }
         const done = await room.lamp(userId, { day: today });
         const asleep = herState(turn, feel, done.state, today).key === "сон";

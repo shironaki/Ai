@@ -337,7 +337,11 @@ test("словарь 0.39.0: о новом рисунке она отвечае�
   assert.ok(window, "запас «+комната:окно» на месте");
   const seen = new Set();
   for (const [tags, line] of window.l) {
-    const part = PARTS.find(name => String(tags).split(",").includes(name));
+    // 0.47.0: свет за окном идёт по солнцу и может разойтись с часами — у таких строк пометка света, а не часа:
+    // «затемно» и «стемнело» — за окном ночь, «светло» — день. Сверяются они с рисунком в этом свете.
+    const LIT = { "затемно": "ночь", "стемнело": "ночь", "светло": "день" };
+    const marked = String(tags).split(",");
+    const part = PARTS.find(name => marked.includes(name)) ?? LIT[Object.keys(LIT).find(name => marked.includes(name))];
     assert.ok(part, `строка об окне без часа: ${line}`);
     for (const [word, drawn, what] of marks) {
       if (!word.test(line)) continue;
@@ -1682,7 +1686,10 @@ test("страница: папка уходит на платформу как �
   assert.match(app, /^import \* as scene from "\.\/scene\.js";$/mu);
   assert.match(app, /^import \* as logic from "\.\/logic\.js";$/mu);
   assert.doesNotMatch(app, /^import \{/mu, "импорт по именам: старая копия модуля остановит страницу");
-  assert.match(app, /const layer = \$\(id\);\s+if \(layer && drawRain\) layer\.innerHTML = drawRain\(view\.part, plane, sky\);/u, "слой дождя и `drawRain` проверяются перед вызовом");
+  assert.match(app, /const layer = \$\(id\);\s+if \(layer && drawRain\) layer\.innerHTML = drawRain\(light, plane, sky\);/u, "слой дождя и `drawRain` проверяются перед вызовом");
+  // Свет по солнцу (0.47.0): `scene.lightIn` — новое имя; прежний `scene.js` его не знает — тогда свет по часам.
+  assert.match(app, /const lightIn = \(view\) => \(typeof scene\.lightIn === "function" \? scene\.lightIn\(view\) : view\.part\);/u, "`lightIn` проверяется перед вызовом");
+  assert.doesNotMatch(app, /logic\.lightOf|\blightOf\b/u, "`lightOf` — новое имя раскладки: странице оно не нужно, свет она берёт из описания рисунка");
   // Снег (0.41.0): те же слои; шаг и время оборота в стилях — те же числа, что `SNOW_SHIFT` в рисунке.
   for (const plane of ["far", "near"]) {
     const { x, y, seconds } = SNOW_SHIFT[plane];

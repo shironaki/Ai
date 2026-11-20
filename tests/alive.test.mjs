@@ -18,7 +18,7 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { heart, message, reset, sdk, last, toChat, chats, KEY, OWNER, BUILD } from "./fixtures/kit.mjs";
+import { heart, message, reset, sdk, last, toChat, chats, source, KEY, OWNER, BUILD } from "./fixtures/kit.mjs";
 import { db as stubDb } from "./fixtures/sdk-stub.mjs";
 
 import * as room from "../tgcloud/lib/room.js";
@@ -26,6 +26,7 @@ import * as logic from "../miniapp/logic.js";
 import * as scene from "../miniapp/scene.js";
 import { createPhrasebook, SECTIONS } from "../tgcloud/lib/phrasebook.js";
 import { ALBUM_KEY } from "../tgcloud/lib/draw.js";
+import { prayersOn } from "../tgcloud/lib/fajr.js";
 
 const ON = { PHRASES: true };
 const HOUR = 3_600_000;
@@ -1619,4 +1620,195 @@ test("0.46.0, вечерняя тень на идущей: пока она ид�
   // Второй кадр шага не загрузился — в маске одна картинка.
   const single = scene.drawInside(view("вечер"), { ...PAINTED, was: { name: "home-work", x: 100 } });
   assert.match(single, /<mask id="r-herAirWalk"[^>]*><g class="stride" style="[^"]+"><g class="step"><use href="#r-her-home-walk" [^>]+\/><\/g><\/g><\/mask>/u);
+});
+
+// ── 0.47.0: свет по солнцу (идея 164) ────────────────────────────────────────
+
+test("0.47.0, свет по солнцу: рассвет — за сорок минут до восхода, закат — пятьдесят до захода и сорок после; короткий день делится пополам; солнца не знаем — по часам", () => {
+  const M = 60_000, rise = Date.parse("2026-11-20T04:55:00Z"), set = Date.parse("2026-11-20T13:50:00Z");
+  const at = (ms) => room.lightAt(ms, { rise, set });
+  assert.deepEqual(at(rise - 41 * M), { light: "ночь", left: M });
+  assert.deepEqual(at(rise - 40 * M), { light: "утро", left: 190 * M });
+  assert.equal(at(rise + 150 * M - 1).light, "утро");
+  assert.deepEqual(at(rise + 150 * M), { light: "день", left: set - 50 * M - (rise + 150 * M) });
+  assert.equal(at(set - 50 * M - 1).light, "день");
+  assert.deepEqual(at(set - 50 * M), { light: "вечер", left: 90 * M });
+  assert.equal(at(set + 40 * M - 1).light, "вечер");
+  // Стемнело: следующая перемена — завтрашний рассвет (сегодняшний плюс сутки).
+  assert.deepEqual(at(set + 40 * M), { light: "ночь", left: rise - 40 * M + 24 * HOUR - (set + 40 * M) });
+  assert.deepEqual(at(rise - 5 * HOUR), { light: "ночь", left: 5 * HOUR - 40 * M });
+  // Зимний день в четыре часа: утро кончается в его середине, а не через два с половиной часа после восхода.
+  const short = { rise: 0, set: 4 * HOUR };
+  assert.deepEqual([room.lightAt(2 * HOUR - 1, short).light, room.lightAt(2 * HOUR, short).light, room.lightAt(4 * HOUR - 50 * M, short).light], ["утро", "день", "вечер"]);
+  // День в два часа: закатный свет начинается с середины дня, дня между утром и вечером нет вовсе.
+  const tiny = { rise: 0, set: 2 * HOUR };
+  assert.deepEqual([room.lightAt(HOUR - 1, tiny).light, room.lightAt(HOUR, tiny).light, room.lightAt(70 * M, tiny).light], ["утро", "день", "вечер"]);
+  assert.deepEqual(room.lightAt(HOUR, tiny), { light: "день", left: 10 * M });
+  // Солнца не знаем (города нет, полярная ночь, мусор вместо чисел) — `null`: свет идёт по часам.
+  for (const sun of [null, undefined, {}, { rise: 5 }, { set: 5 }, { rise: Number.NaN, set: 1 }, { rise: 10 * HOUR, set: 5 * HOUR }, { rise: 0, set: 59 * M }]) assert.equal(room.lightAt(0, sun), null, JSON.stringify(sun));
+  assert.equal(room.lightAt(Number.NaN, { rise, set }), null);
+
+  // Слова об окне: свет сошёлся с часами — пометка части суток; разошёлся — «затемно», «стемнело», «светло».
+  const table = {
+    "утро": { "утро": "утро", "день": "утро", "вечер": "вечер", "ночь": "затемно" },
+    "день": { "утро": "день", "день": "день", "вечер": "вечер", "ночь": "стемнело" },
+    "вечер": { "утро": "светло", "день": "светло", "вечер": "вечер", "ночь": "стемнело" },
+    "ночь": { "утро": "утро", "день": "светло", "вечер": "вечер", "ночь": "ночь" },
+  };
+  for (const [part, row] of Object.entries(table)) for (const [light, tag] of Object.entries(row)) assert.equal(room.windowTag(part, light), tag, `${part} по часам, ${light} за окном`);
+  for (const light of ["", undefined, null, "сумерки"]) assert.equal(room.windowTag("вечер", light), "вечер", "света не знаем — по часам");
+
+  // На каждое небо и на каждый такой случай слова есть — и хозяину, и гостю; с временем восхода и заката и без него.
+  const sun = { "восход": "08:48", "закат": "16:27" };
+  for (const sky of room.SKIES) for (const tag of ["затемно", "стемнело", "светло"]) for (const owner of [true, false]) {
+    const air = { owner, level: owner ? "close" : "known", part: tag, sky };
+    const lines = fitting(WINDOW[sky], { ...air, vars: { ...VARS, ...sun } });
+    assert.ok(lines.length >= 2, `${sky}, ${tag}: строк ${lines.length}`);
+    assert.ok(fitting(WINDOW[sky], air).length >= 1, `${sky}, ${tag}: без времени восхода и заката сказать нечего`);
+    for (const line of lines) {
+      // Они не называют часть суток, которой на часах нет, и не оставляют скобок.
+      assert.doesNotMatch(line, /^(?:Ночь|День|Вечер)[.,]|[{}]/u, line);
+      if (sky !== "rain" && sky !== "storm") assert.doesNotMatch(line, /(?<![а-яё])дожд|капл/iu, `${sky}: ${line}`);
+      if (sky !== "snow") assert.doesNotMatch(line, /снег|снежин|хлопь/iu, `${sky}: ${line}`);
+      // Темно — значит, о солнце на небе ни слова; светло — ни слова о звёздах и луне.
+      if (tag !== "светло") assert.doesNotMatch(line, /солнце и облака|на солнце|небо дневное/u, line);
+      if (tag === "светло") assert.doesNotMatch(line, /звёзд|луна|фонар/u, line);
+    }
+    // В обычный час эти строки молчат: пометка — только под свой случай.
+    for (const part of ["утро", "день", "вечер", "ночь"]) for (const line of fitting(WINDOW[sky], { ...air, part, vars: { ...VARS, ...sun } })) assert.ok(!lines.includes(line), `${part}: ${line}`);
+  }
+});
+
+test("0.47.0, свет по солнцу в комнате: зимой в четыре дня — закат и лампа уже работает, в семь вечера — темно; летом в восемь вечера — светло; наряд и сон — по часам; города нет — как раньше", async () => {
+  const moscow = () => source("geocoding-api.open-meteo.com", { results: [{ name: "Москва", country: "Россия", admin1: "Москва", latitude: 55.7558, longitude: 37.6173, timezone: "Europe/Moscow", feature_code: "PPLC" }] });
+  const forecast = (code) => ({ current: { temperature_2m: -3, apparent_temperature: -7, weather_code: code, wind_speed_10m: 3 }, daily: { temperature_2m_max: [-1, 0, 1], temperature_2m_min: [-6, -5, -3], weather_code: [code, 3, 3], precipitation_probability_max: [80, 10, 5] } });
+  const hhmm = (ms) => new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", hour: "2-digit", minute: "2-digit" }).format(ms);
+  const sunOn = (y, m, d) => { const times = prayersOn({ y, m, d, latitude: 55.7558, longitude: 37.6173 }); return { rise: times.sunrise, set: times.maghrib }; };
+  const enter = async (iso, code = 0) => {
+    reset();
+    moscow();
+    source("api.open-meteo.com/v1/forecast", forecast(code));
+    const time = clock(Date.parse(iso));
+    const h = heart({ ...ON, SOURCES: true }, { now: time.now, random: () => 0 });
+    await h.onMessage(message("мой город — Москва", { id: OWNER }), KEY);
+    return { h, time, out: await h.onRoom({ do: "look" }, from(OWNER)) };
+  };
+  const winter = sunOn(2027, 1, 15), M = 60_000;
+  // Москва, 15 января: солнце встаёт около девяти и садится в половине пятого. Числа — из расчёта, а не на память.
+  assert.match(hhmm(winter.rise), /^08:[3-5]\d$/u);
+  assert.match(hhmm(winter.set), /^16:[1-4]\d$/u);
+  const vars = { ...VARS, "восход": hhmm(winter.rise), "закат": hhmm(winter.set) };
+  const air = (part) => ({ owner: true, part, sky: "clear", vars });
+
+  // Четыре часа дня: по часам день, а за окном закат — небо вечернее, и слова о нём вечерние.
+  const four = await enter("2027-01-15T13:00:00Z");
+  assert.deepEqual([four.out.clock.part, four.out.clock.light, four.out.sky, four.out.city], ["день", "вечер", "clear", true]);
+  assert.ok(fitting(WINDOW.clear, air("вечер")).includes(four.out.window), four.out.window);
+  // Страница спросит комнату заново, когда стемнеет (через сорок минут после захода), а не в шесть по часам.
+  assert.equal(four.out.clock.left, winter.set + 40 * M - four.time.now());
+  assert.ok(four.out.clock.left < 2 * HOUR);
+  // Она в куртке: наряд — по часам. А рисунок красится вечерним светом.
+  const seen = logic.viewOf(logic.applyLook(logic.blank(13), four.out, four.time.now()));
+  assert.deepEqual([seen.part, seen.light, scene.walkOf(seen)], ["день", "вечер", "walk"]);
+  // И лампа уже работает: до 0.47.0 в четыре дня она отвечала «днём я не горю», хотя за окном темнело.
+  const off = await four.h.onRoom({ do: "lamp" }, from(OWNER));
+  assert.deepEqual([off.changed, off.dark], [true, true]);
+
+  // Семь вечера: по часам вечер, за окном ночь. Слова — «стемнело», а не «небо над крышами розовое».
+  const seven = await enter("2027-01-15T16:00:00Z");
+  assert.deepEqual([seven.out.clock.part, seven.out.clock.light], ["вечер", "ночь"]);
+  assert.ok(fitting(WINDOW.clear, air("стемнело")).includes(seven.out.window), seven.out.window);
+  assert.ok(!fitting(WINDOW.clear, air("вечер")).includes(seven.out.window) && !fitting(WINDOW.clear, air("ночь")).includes(seven.out.window));
+  // До рассвета далеко — раньше сменится час (в одиннадцать она ляжет спать).
+  assert.equal(seven.out.clock.left, 4 * HOUR);
+  const dusk = logic.viewOf(logic.applyLook(logic.blank(19), seven.out, seven.time.now()));
+  assert.deepEqual([dusk.part, dusk.light, scene.walkOf(dusk)], ["вечер", "ночь", "home-walk"]);
+  // Зашёл словами — за окном то же самое.
+  await seven.h.onMessage(message("зайду к тебе", { id: OWNER }), KEY);
+  assert.ok(fitting(WINDOW.clear, air("стемнело")).some(line => last(OWNER).includes(line)), last(OWNER));
+
+  // Восемь утра: по часам утро, а солнце ещё не встало — «затемно», и до рассвета считаные минуты.
+  const eight = await enter("2027-01-15T05:00:00Z");
+  assert.deepEqual([eight.out.clock.part, eight.out.clock.light], ["утро", "ночь"]);
+  assert.ok(fitting(WINDOW.clear, air("затемно")).includes(eight.out.window), eight.out.window);
+  assert.equal(eight.out.clock.left, winter.rise - 40 * M - eight.time.now());
+  // Через час рассвело: утро и по часам, и за окном — поля те же, слова обычные утренние.
+  const nine = await enter("2027-01-15T06:00:00Z");
+  assert.deepEqual([nine.out.clock.part, nine.out.clock.light], ["утро", "утро"]);
+  assert.ok(fitting(WINDOW.clear, air("утро")).includes(nine.out.window), nine.out.window);
+  assert.equal(Object.hasOwn(logic.viewOf(logic.applyLook(logic.blank(9), nine.out, nine.time.now())), "light"), false, "свет сошёлся с часами — описание рисунка прежнее");
+
+  // Лето, восемь вечера: по часам вечер (она в свитере), а за окном день — и лампа отдыхает.
+  const summer = sunOn(2027, 6, 20), june = await enter("2027-06-20T17:00:00Z");
+  assert.match(hhmm(summer.set), /^21:[0-3]\d$/u);
+  assert.deepEqual([june.out.clock.part, june.out.clock.light], ["вечер", "день"]);
+  const bright = { owner: true, part: "светло", sky: "clear", vars: { ...VARS, "восход": hhmm(summer.rise), "закат": hhmm(summer.set) } };
+  assert.ok(fitting(WINDOW.clear, bright).includes(june.out.window), june.out.window);
+  const lamp = await june.h.onRoom({ do: "lamp" }, from(OWNER));
+  assert.deepEqual([lamp.changed, lamp.dark], [false, false]);
+  assert.ok(pool("свет:день").map(plain).includes(lamp.line), lamp.line);
+  assert.doesNotMatch(pool("свет:день").join(" "), /[Дд]н[её]м|[Вв]ечером/u, "слова лампы — о свете, а не о часах: летом в восемь вечера светло");
+  const late = logic.viewOf(logic.applyLook(logic.blank(20), june.out, june.time.now()));
+  assert.deepEqual([late.part, late.light, scene.walkOf(late)], ["вечер", "день", "home-walk"]);
+
+  // Города нет — солнца она не знает: поля `light` нет, свет идёт по часам, как до 0.47.0.
+  reset();
+  const alone = heart({ ...ON, SOURCES: true }, { now: () => Date.parse("2027-01-15T13:00:00Z"), random: () => 0 });
+  const plainLook = await alone.onRoom({ do: "look" }, from(5));
+  assert.deepEqual(Object.keys(plainLook.clock).sort(), ["day", "hour", "left", "part"]);
+  assert.equal((await alone.onRoom({ do: "lamp" }, from(5))).changed, false, "день по часам — лампа не горит");
+  // За полярным кругом в декабре солнце не встаёт: посчитать нечего — тоже по часам, и комната открывается.
+  reset();
+  source("geocoding-api.open-meteo.com", { results: [{ name: "Мурманск", country: "Россия", admin1: "Мурманская область", latitude: 68.9707, longitude: 33.0749, timezone: "Europe/Moscow", feature_code: "PPLA" }] });
+  source("api.open-meteo.com/v1/forecast", forecast(0));
+  const north = heart({ ...ON, SOURCES: true }, { now: () => Date.parse("2026-12-21T10:00:00Z"), random: () => 0 });
+  await north.onMessage(message("мой город — Мурманск", { id: OWNER }), KEY);
+  const polar = await north.onRoom({ do: "look" }, from(OWNER));
+  assert.deepEqual([polar.ok, polar.city, Object.hasOwn(polar.clock, "light")], [true, true, false]);
+});
+
+test("0.47.0, свет по солнцу на рисунке: небо, стены и лампа красятся светом, наряд — по часам; свет сменился посреди часа — комната перетекает; прежнее сердце — как было", () => {
+  const her = { pose: "desk", key: "дело", beat: true }, cat = { shape: "curl", place: "pillow", key: "спит" };
+  const view = (extra) => ({ sky: "clear", her, cat, things: [], plant: "wet", ...extra });
+  // Вечер по часам, день за окном: рисунок — дневной, только она в свитере.
+  const summer = view({ part: "вечер", light: "день" });
+  assert.equal(scene.lightIn(summer), "день");
+  assert.equal(scene.walkOf(summer), "home-walk");
+  assert.equal(scene.castOf(summer, PAINTED).her.name, "home-work");
+  // Тот же наряд назван явно — рисунок тот же самый, что днём: свет взят из `light`, а не из часа.
+  const worn = { ...her, wear: "home" };
+  assert.equal(scene.drawRoom(view({ part: "вечер", light: "день", her: worn }), PAINTED), scene.drawRoom(view({ part: "день", her: worn }), PAINTED));
+  assert.equal(scene.drawInside(view({ part: "день", light: "ночь", her: { ...her, wear: "jacket" } }), PAINTED), scene.drawInside(view({ part: "ночь", her: { ...her, wear: "jacket" } }), PAINTED));
+  assert.notEqual(scene.drawInside(view({ part: "день", light: "ночь" }), PAINTED), scene.drawInside(view({ part: "день" }), PAINTED));
+  // Свет не назван или назван мусором — по часам.
+  for (const light of [undefined, "", "сумерки", 5]) assert.equal(scene.lightIn({ part: "вечер", light }), "вечер");
+  assert.equal(scene.lightIn({}), "день");
+
+  // Раскладка страницы: свет из ответа сердца; сошёлся с часами — в описании рисунка его нет.
+  const look = (clock) => ({ ok: true, do: "look", build: BUILD, clock, her: { pose: "desk", key: "дело", line: "Я у стола с блокнотом." }, cat: { shape: "sit", place: "bowl", key: "сыт", line: "Байт сыт." }, plant: { state: "wet" }, things: [], window: "За окном.", sky: "clear" });
+  const state = (clock) => logic.applyLook(logic.blank(12), look(clock), NOON);
+  assert.deepEqual([logic.lightOf(state({ hour: 16, part: "день", light: "вечер" })), logic.viewOf(state({ hour: 16, part: "день", light: "вечер" })).light], ["вечер", "вечер"]);
+  assert.equal(Object.hasOwn(logic.viewOf(state({ hour: 14, part: "день", light: "день" })), "light"), false);
+  // Прежнее сердце света не называет, мусор не считается: свет по часам.
+  for (const light of [undefined, "", "сумерки"]) {
+    assert.equal(logic.lightOf(state({ hour: 14, part: "день", light })), "день");
+    assert.equal(Object.hasOwn(logic.viewOf(state({ hour: 14, part: "день", light })), "light"), false);
+  }
+  // Свет не залипает: сердце перестало его называть (город убрали) — страница возвращается к часам.
+  assert.equal(logic.lightOf(logic.applyLook(state({ hour: 16, part: "день", light: "вечер" }), look({ hour: 16, part: "день" }), NOON)), "день");
+  // Закат посреди дня — перемена света: комната перетекает («light»), к шкафу она не идёт — наряд тот же.
+  const before = state({ hour: 16, part: "день", light: "день" }), after = state({ hour: 16, part: "день", light: "вечер" });
+  assert.equal(logic.changeOf(before, after).kind, "light");
+  assert.equal(logic.changeOf(before, state({ hour: 16, part: "день", light: "день" })).kind, "same");
+  // Час сменился, а свет остался (летом в шесть вечера светло): она переодевается, как и раньше.
+  assert.equal(logic.changeOf(state({ hour: 17, part: "день", light: "день" }), state({ hour: 18, part: "вечер", light: "день" })).kind, "wardrobe");
+  // Лампа на витрине — по тому же свету.
+  assert.equal(logic.demoLamp({ part: "вечер", light: "день", dark: false }).changed, false);
+  assert.equal(logic.demoLamp({ part: "день", light: "ночь", dark: false }).changed, true);
+  assert.equal(logic.demoLamp({ part: "день", dark: false }).changed, false);
+  assert.ok(pool("свет:день").map(plain).includes(logic.demoLamp({ part: "день" }).line), "витрина говорит словами словаря");
+  // Витрина: свет можно назвать в адресе (для снимков), сам он там по часам телефона.
+  assert.equal(logic.demoLook(14, { light: "ночь" }).clock.light, "ночь");
+  assert.equal(Object.hasOwn(logic.demoLook(14, {}).clock, "light"), false);
+  assert.equal(Object.hasOwn(logic.demoLook(14, { light: "сумерки" }).clock, "light"), false);
 });
