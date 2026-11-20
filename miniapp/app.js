@@ -59,7 +59,7 @@ let header = "";
 // её картинка и место, где она стоит, место и фигура Байта — по ним прежняя поза тает, а до нового места они
 // доходят шагом. `back` и `inside` — приставки имён слоёв: когда час сменяется при открытой странице, прежний слой
 // тает поверх нового, и имена у них должны быть разными.
-const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-", until: 0 };
+const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-", until: 0, still: null, shown: null, inks: null, zones: "" };
 // Сколько прежний слой тает поверх нового (то же число — в стилях: `.fading`).
 const FADE_MS = 1600;
 // Сколько её нет, пока она переодевается.
@@ -376,6 +376,61 @@ function ghostOf(layer) {
   layer.after(copy);
   setTimeout(() => copy.remove(), FADE_MS);
 }
+/**
+ * Комната изнутри — по частям (0.48.0, сообщение 47: «перед сменой анимации мерцает чёрным экран — это перезагрузка
+ * страницы?»). Нет, не перезагрузка: до 0.48.0 любая перемена — она сменила позу, Байт перешёл — заменяла всю
+ * разметку комнаты разом: восемьсот с лишним частей, и каждое движение начиналось заново. Телефон не успевал
+ * нарисовать новый слой к следующему кадру и на миг показывал пустой — тёмный фон страницы. Теперь меняются только
+ * те части, что стали другими (`scene.drawParts`): стены, мебель, гирлянда и вещи остаются на месте и движутся как
+ * двигались. `whole` — заменить всё (первый рисунок и смена света: там меняется каждый цвет).
+ * Возвращает то, что на рисунке заменено: по этому видно, идёт ли на нём сейчас переход.
+ */
+function putInside(view, options, whole = false) {
+  const inside = $("inside");
+  if (typeof scene.drawParts !== "function") {
+    inside.innerHTML = drawInside(view, options);
+    drawn.still = null;
+    return [inside];
+  }
+  // «Как есть» — рисунок, на котором все уже дошли и никто не тает: по нему видно, какая часть на самом деле стала
+  // другой. «В движении» — тот же рисунок с переходами от прежнего (она идёт, прежняя поза тает, Байт перебегает).
+  const calm = options ? { sprites: options.sprites, ...(options.prefix ? { prefix: options.prefix } : {}) } : undefined;
+  const still = scene.drawParts(view, calm), moving = options ? scene.drawParts(view, options) : still;
+  const art = inside.firstElementChild, zones = inside.lastElementChild, store = art?.firstElementChild ?? null;
+  const fits = !whole && drawn.still && drawn.shown && drawn.inks && art && zones && art !== zones && store?.localName === "defs"
+    && art.childElementCount === still.parts.length + 1 && drawn.still.length === still.parts.length;
+  if (!fits) {
+    inside.innerHTML = `<g class="art" pointer-events="none"><defs>${moving.inks.join("")}</defs>${moving.parts.map(piece => `<g>${piece}</g>`).join("")}</g><g class="zones">${moving.zones}</g>`;
+    drawn.still = still.parts;
+    drawn.shown = [...moving.parts];
+    drawn.inks = new Map([...inside.firstElementChild.firstElementChild.children].map((node, index) => [moving.inks[index], node]));
+    drawn.zones = moving.zones;
+    return [inside];
+  }
+  // Переходы цвета: лишние убрать, новые добавить (сначала убрать — у нового может быть то же имя).
+  const wanted = new Set(moving.inks);
+  for (const [text, node] of drawn.inks) if (!wanted.has(text)) { node.remove(); drawn.inks.delete(text); }
+  for (let index = 0; index < moving.inks.length; index += 1) {
+    if (drawn.inks.has(moving.inks[index])) continue;
+    const holder = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    holder.innerHTML = moving.inks[index];
+    const node = holder.firstElementChild;
+    if (node) { store.append(node); drawn.inks.set(moving.inks[index], node); }
+  }
+  const replaced = [];
+  for (let index = 0; index < still.parts.length; index += 1) {
+    // Часть та же и нового перехода в ней нет — не трогаем: то, что в ней идёт или уже дошло, так и остаётся.
+    if (still.parts[index] === drawn.still[index] && moving.parts[index] === still.parts[index]) continue;
+    if (moving.parts[index] === drawn.shown[index]) continue;
+    const node = art.children[index + 1];
+    node.innerHTML = moving.parts[index];
+    drawn.shown[index] = moving.parts[index];
+    replaced.push(node);
+  }
+  if (moving.zones !== drawn.zones) { zones.innerHTML = moving.zones; drawn.zones = moving.zones; }
+  drawn.still = still.parts;
+  return replaced;
+}
 /** Кто где на рисунке сейчас: её картинка и место, место и фигура Байта. В прежнем рисунке — только она. */
 function castNow(view) {
   if (!canPaint) return null;
@@ -455,12 +510,14 @@ function paint() {
       ghostOf($("inside"));
     }
     if (options && drawn.inside !== "r-") options.prefix = drawn.inside;
-    $("inside").innerHTML = drawInside(view, options);
+    // Свет сменился — комната рисуется заново целиком (прежняя тает поверх); иначе — только то, что стало другим.
+    const fresh = putInside(view, options, fade);
     drawn.view = key;
     drawn.cast = castNow(view);
     // До какого времени на рисунке идёт переход (она идёт, тает, проявляется): запоздавший второй кадр его не обрывает.
     // Идут и она, и Байт — ждём того, кто идёт дольше (с 0.46.0 Байт идёт шагом, до четырёх с половиной секунд).
-    const strides = [...$("inside").querySelectorAll(".stride")], moving = strides.length > 0 || $("inside").querySelector(".leave, .arrive");
+    // Смотрим только в том, что сейчас заменено: в нетронутых частях переходы уже идут своим чередом.
+    const strides = fresh.flatMap(node => [...node.querySelectorAll(".stride")]), moving = strides.length > 0 || fresh.some(node => node.querySelector(".leave, .arrive"));
     if (moving) drawn.until = Date.now() + Math.max(0, ...strides.map(stride => Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5)) * 1000 + FADE_MS + 200;
   }
   const say = $("say");

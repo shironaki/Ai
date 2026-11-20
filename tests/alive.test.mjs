@@ -2156,3 +2156,56 @@ test("0.47.0, тихий час: двадцать пять минут она ч�
   assert.ok(pool("тихий час:стоп").includes(stop.line), stop.line);
   assert.equal(Object.hasOwn(logic.demoQuiet({ quiet: 0, her: { key: "сон" } }), "her"), false, "спящую витрина не будит");
 });
+
+// ── 0.48.0: рисунок по частям (сообщение 47: «перед сменой анимации мерцает чёрным экран») ────────────────────
+
+test("0.48.0, рисунок по частям: части складываются ровно в прежний рисунок; их число не меняется; сменила позу или перешёл Байт — другими стали только их части, а стены, мебель и гирлянда — те же", () => {
+  const base = (her, cat = { shape: "sit", place: "sill", key: "сыт" }, extra = {}) => ({ part: "день", sky: "clear", her, cat, plant: "wet", things: ["кружка", "плед", "тапочки"], ...extra });
+  const views = [];
+  for (const part of ["утро", "день", "вечер", "ночь"]) {
+    for (const [key, pose] of [["дело", "desk"], ["дело", "chair"], ["уют", "chair"], ["уют", "read"], ["игра", "dance"], ["сон", "nap"], ["устала", "chair"], ["обида", "back"]]) {
+      views.push({ ...base({ key, pose, beat: true }), part });
+    }
+  }
+  views.push(base({ key: "дело", pose: "desk", beat: true }, { shape: "curl", place: "pillow", key: "спит" }, { sky: "rain", dark: true, music: true, tea: true, fed: true }));
+  views.push(base(null, null));
+  let count = 0;
+  for (const view of views) {
+    for (const options of [PAINTED, { ...PAINTED, was: { name: "work", x: 100 }, catWas: { x: 300, y: 456, shape: "sit" } }, { ...PAINTED, enter: true }, {}, { ...PAINTED, prefix: "q-" }]) {
+      const made = scene.drawParts(view, options), whole = scene.drawInside(view, options);
+      // Сложенные части — тот же рисунок, знак в знак: листы и проверки смотрят на то же, что видит страница.
+      assert.equal(`<g class="art" pointer-events="none"><defs>${made.inks.join("")}</defs>${made.parts.join("")}</g><g class="zones">${made.zones}</g>`, whole);
+      assert.ok(made.parts.every(piece => typeof piece === "string"), "каждая часть — строка: пустая, если такого на рисунке нет");
+      count ||= made.parts.length;
+      assert.equal(made.parts.length, count, "частей всегда одно и то же число: страница находит часть по её месту в списке");
+      assert.equal(new Set(made.inks).size, made.inks.length, "описания цвета не повторяются");
+    }
+  }
+  assert.ok(count >= 50, `частей — ${count}`);
+
+  // Она пересела из-за стола в кресло: другими стали её части — и ничего из стен, мебели и света.
+  const changed = (a, b) => a.parts.map((piece, index) => (piece === b.parts[index] ? -1 : index)).filter(index => index >= 0);
+  // (Вечером: гирлянда горит — её огоньки мигают, и раньше при каждой перемене они начинали мигать заново.)
+  const evening = (her, cat) => ({ ...base(her, cat), part: "вечер" });
+  const atDesk = scene.drawParts(evening({ key: "дело", pose: "desk", beat: true }), PAINTED), inChair = scene.drawParts(evening({ key: "дело", pose: "chair", beat: true }), PAINTED);
+  const herMoved = changed(atDesk, inChair);
+  assert.ok(herMoved.length >= 1 && herMoved.length <= 8, `сменила место — частей изменилось ${herMoved.length} из ${count}`);
+  const garland = atDesk.parts.findIndex(piece => piece.includes('class="bulb'));
+  for (const [name, index] of [["гирлянда", garland], ["стены", atDesk.parts.findIndex(piece => piece.includes("url(#r-wall)"))], ["шкаф", atDesk.parts.findIndex(piece => piece.includes("url(#r-caseShade)"))], ["шторы", atDesk.parts.findIndex(piece => piece.includes("url(#r-curtain)"))]]) {
+    assert.ok(index >= 0, `${name} — отдельная часть`);
+    assert.ok(!herMoved.includes(index), `${name}: от смены её позы не меняется — значит, на странице не перерисовывается и не мигает`);
+  }
+  // Байт перешёл с подоконника на подушку: другими стали его части, а она — та же.
+  const catMoved = changed(atDesk, scene.drawParts(evening({ key: "дело", pose: "desk", beat: true }, { shape: "curl", place: "pillow", key: "спит" }), PAINTED));
+  assert.ok(catMoved.length >= 1 && catMoved.length <= 4, `Байт перешёл — частей изменилось ${catMoved.length}`);
+  const hers = atDesk.parts.findIndex(piece => piece.includes('href="#r-her-home-work"'));
+  assert.ok(hers >= 0 && !catMoved.includes(hers), "она от перехода Байта не перерисовывается");
+  assert.ok(!catMoved.includes(garland));
+  // Переход (она идёт, прежняя тает) живёт только в её части: «в движении» и «как есть» отличаются ею одной —
+  // и вечерней тенью, которая идёт вместе с ней.
+  const walking = changed(atDesk, scene.drawParts(evening({ key: "дело", pose: "desk", beat: true }), { ...PAINTED, was: { name: "home-work", x: 100 } }));
+  assert.ok(walking.length >= 1 && walking.length <= 4, `идёт — частей в движении ${walking.length}`);
+  assert.ok(walking.includes(hers) && !walking.includes(garland));
+  // Ничего не изменилось — ни одна часть не другая: страница рисунка не трогает вовсе.
+  assert.deepEqual(changed(atDesk, scene.drawParts(evening({ key: "дело", pose: "desk", beat: true }), PAINTED)), []);
+});

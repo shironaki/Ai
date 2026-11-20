@@ -292,6 +292,37 @@ try {
       }
     }
   }
+  // Рисунок меняется по частям (0.48.0, «перед сменой анимации мерцает чёрным экран»): от одной перемены на странице
+  // заменяются только её части — стены, шторы и шкаф остаются теми же узлами, их движения не начинаются заново.
+  {
+    const mark = () => page.evaluate(() => {
+      const parts = [...document.querySelectorAll("#inside > .art > g")].filter(node => node.firstElementChild);
+      for (const node of parts) node.firstElementChild.dataset.was = "1";
+      const wall = parts.find(node => node.innerHTML.includes("url(#r-wall)") || node.innerHTML.includes("url(#q-wall)"));
+      if (wall) wall.firstElementChild.dataset.was = "wall";
+      return { all: document.querySelectorAll("#inside > .art > g").length, marked: parts.length, wall: Boolean(wall) };
+    });
+    const count = () => page.evaluate(() => ({
+      kept: [...document.querySelectorAll("#inside > .art > g")].filter(node => node.firstElementChild?.dataset.was).length,
+      wall: Boolean(document.querySelector('#inside > .art > g > [data-was="wall"]')),
+    }));
+    const before = await mark();
+    if (before.all < 50 || !before.wall) fail(`рисунок по частям: частей на странице ${before.all}, стены ${before.wall ? "есть" : "не найдены"} — комната нарисована одним куском`);
+    else {
+      let lost = 0, after = null;
+      for (const act of ["feed", "play", "pet"]) {
+        if (lost > 0 || !seen.zones.includes(act)) continue;
+        await tapZone(act);
+        await pause(1200);
+        after = await count();
+        lost = before.marked - after.kept;
+      }
+      if (!after) fail("рисунок по частям: нажать было не на что");
+      else if (lost < 1) fail("рисунок по частям: Байта покормили, с ним поиграли, его погладили — а на рисунке ничего не заменено");
+      else if (lost > 12) fail(`рисунок по частям: от одной перемены заменено ${lost} частей из ${before.marked} — комната перерисована целиком`);
+      else if (!after.wall) fail("рисунок по частям: от перемены у Байта перерисованы стены");
+    }
+  }
   // Лампа (0.46.0): вечером и ночью нажатие гасит её (тёплого света лампы на рисунке нет) и зажигает; днём — только слова.
   {
     const before = await said();

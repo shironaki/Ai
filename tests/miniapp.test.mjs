@@ -1363,7 +1363,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "10");
+  assert.equal(logic.PAGE, "11");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1720,8 +1720,13 @@ test("страница: папка уходит на платформу как �
   assert.match(app, /const params = local \? /u);
   assert.match(app, /localhost\|127/u);
   // Текст на страницу попадает текстом, а не разметкой: рисунок — единственное, что вставляется как разметка.
+  // С 0.48.0 комната рисуется по частям: разметкой вставляются части рисунка (`scene.drawParts`) — и только они.
   const markupWrites = [...app.matchAll(/\.innerHTML = ([^;]+);/gu)].map(found => found[1].trim());
-  assert.deepEqual(markupWrites.filter(value => !/^draw(?:Backdrop|Rain|Inside|Sprite)\(/u.test(value) && !value.startsWith("'<svg ")), []);
+  const drawnParts = (value) => /^moving\.(?:parts|inks)\[index\]$/u.test(value) || value === "moving.zones"
+    || value === '`<g class="art" pointer-events="none"><defs>${moving.inks.join("")}</defs>${moving.parts.map(piece => `<g>${piece}</g>`).join("")}</g><g class="zones">${moving.zones}</g>`';
+  assert.deepEqual(markupWrites.filter(value => !/^draw(?:Backdrop|Rain|Inside|Sprite)\(/u.test(value) && !value.startsWith("'<svg ") && !drawnParts(value)), []);
+  assert.ok(markupWrites.some(drawnParts), "рисунок по частям на странице есть");
+  assert.match(app, /const still = scene\.drawParts\(view, calm\), moving = options \? scene\.drawParts\(view, options\) : still;/u, "части рисунка — только из рисунка");
   // Её картинки (0.40.0): модуль грузится по имени из рисунка и только когда нужен; новые имена рисунка перед
   // вызовом проверяются (рядом может лежать прежний `scene.js`); не загрузилась — она нарисована кодом.
   assert.match(app, /const canPaint = typeof spriteOf === "function" && typeof drawSprite === "function";/u);
@@ -1738,7 +1743,9 @@ test("страница: папка уходит на платформу как �
   // Рисунку отдаётся, что уже загружено и кто где был на прежнем рисунке (0.44.0: до нового места она и Байт доходят
   // шагом); страница без картинок (рядом прежний `scene.js`) рисует её кодом.
   assert.match(app, /const options = canPaint \? \{\s+sprites, \.\.\.\(before\?\.her \? \{ was: before\.her \} : \{\}\), \.\.\.\(before\?\.cat \? \{ catWas: before\.cat \} : \{\}\), \.\.\.\(state\.entering \? \{ enter: true \} : \{\}\),\s+\} : undefined;/u);
-  assert.match(app, /\$\("inside"\)\.innerHTML = drawInside\(view, options\);/u);
+  // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
+  assert.match(app, /const fresh = putInside\(view, options, fade\);/u);
+  assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
   assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js`"], "страница грузит по ходу дела только её картинки и звук");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).

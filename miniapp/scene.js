@@ -141,6 +141,8 @@ function inks(prefix) {
     rad: (id, stops, extra = "") => add(id, name => `<radialGradient id="${name}"${extra}>${stopsOf(stops)}</radialGradient>`),
     raw: (id, body) => add(id, body),
     defs: () => `<defs>${[...made.values()].join("")}</defs>`,
+    /** Описания по одному — для рисунка по частям (`drawParts`): страница добавляет новые и убирает лишние. */
+    list: () => [...made.values()],
   };
 }
 /** Мягкая тень на полу или стене: пятно, тающее к краям. */
@@ -2317,7 +2319,7 @@ export function castOf(view = {}, options = {}) {
   };
 }
 
-export function drawInside(view = {}, options = {}) {
+function insideOf(view = {}, options = {}) {
   const part = lightIn(view), sky = skyIn(view?.sky);
   // Приставка имён слоя: когда час сменяется при открытой странице, прежняя комната тает поверх новой — имена у них разные.
   const g = inks(typeof options?.prefix === "string" && /^[a-z]-$/u.test(options.prefix) ? options.prefix : "r-");
@@ -2355,8 +2357,9 @@ export function drawInside(view = {}, options = {}) {
   const on = (layer) => (pet?.layer === layer ? pet.svg : "");
   // На полу — по глубине: кто ниже на рисунке, тот ближе к зрителю и закрывает дальнего.
   const herDepth = she.y ?? 400;
-  const stage = [she.front ? { depth: herDepth, svg: she.front } : null, pet?.layer === "front" ? { depth: pet.depth, svg: pet.svg } : null]
-    .filter(Boolean).sort((a, b) => a.depth - b.depth).map(item => item.svg).join("");
+  // Три места в списке частей: Байт позади неё, она, Байт перед ней. Её место — всегда среднее: перешёл он — её
+  // часть та же, и страница её не трогает (`drawParts`).
+  const petOnFloor = pet?.layer === "front" ? pet.svg : "", petBehind = Boolean(petOnFloor) && Boolean(she.front) && pet.depth < herDepth;
   // Коробка стоит ближе к зрителю, чем её ступни за столом: тогда коробка рисуется после неё.
   const boxNear = pose === "desk";
   // Она стоит на полу ближе Байта и закрывает его собой — тогда и палец встречает её первой: он на кресле, под
@@ -2376,7 +2379,7 @@ export function drawInside(view = {}, options = {}) {
   const sockAt = spot && pet?.layer === "front" ? [spot.x + (spot.mirror ? 34 : -34) * (spot.k ?? 1), spot.y - 1] : [214, 470];
   const box = boxBack(c) + on("box") + boxFront(g, c);
 
-  const art = [
+  const parts = [
     glass(g, part, sky, ajar), walls(g, c), windowFrame(g, c),
     curtains(g, c), fxShown("curtains", () => curtainsShut(c)), garland(g, c, part, { rogue: fx.has("blink") }),
     thing("фонарь", () => lantern(g, c, part)),
@@ -2414,7 +2417,7 @@ export function drawInside(view = {}, options = {}) {
     fxShown("sock", () => sock(c, ...sockAt)),
     ahead ? at(PILLOW_ASIDE, 0, catPillow(g, c)) : catPillow(g, c),
     thing("тапочки", () => slippers(g, c)),
-    stage,
+    petBehind ? petOnFloor : "", she.front ?? "", petBehind ? "" : petOnFloor,
     boxNear ? box : "",
     // Байт идёт на новое место: по полу, перед мебелью.
     pet?.walk ?? "",
@@ -2423,7 +2426,7 @@ export function drawInside(view = {}, options = {}) {
     airLight(g, part, dark), airOnHerMoving(g, part, dark, she), airOnWalker(g, part, dark, she.walkShape),
     she.note ?? "",
     `<rect class="frame" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" fill="none"/>`,
-  ].join("");
+  ].map(piece => (typeof piece === "string" ? piece : ""));
 
   // Слой нажатий: кто ниже в списке, тот ближе к пальцу.
   const thingZone = ([key, [label, box]]) => tap(`thing:${key}`, label, box);
@@ -2458,7 +2461,21 @@ export function drawInside(view = {}, options = {}) {
     ...Object.entries(CARE_ZONES).map(([act, [label, id, box]]) => tap(act, label, act === "water" && fx.has("cactus") ? FALLEN.zone : box, id)),
   ].join("");
 
-  return `<g class="art" pointer-events="none">${g.defs()}${art}</g><g class="zones">${zones}</g>`;
+  return { inks: g.list(), parts, zones };
+}
+/** Комната изнутри одной строкой: рисунок (`.art`) и слой нажатий (`.zones`). Так её берут листы, тесты и прежняя страница. */
+export function drawInside(view = {}, options = {}) {
+  const made = insideOf(view, options);
+  return `<g class="art" pointer-events="none"><defs>${made.inks.join("")}</defs>${made.parts.join("")}</g><g class="zones">${made.zones}</g>`;
+}
+/**
+ * Комната изнутри по частям (0.48.0): `inks` — описания переходов цвета, `parts` — части рисунка в порядке слоёв
+ * (их всегда одно и то же число: чего на рисунке нет, то пустая строка), `zones` — слой нажатий. Сложенные вместе —
+ * ровно `drawInside`. Страница меняет на рисунке только те части, что стали другими: до этого любая перемена
+ * заменяла всю комнату разом — и на телефоне перед сменой позы мигал пустой экран (сообщение 47).
+ */
+export function drawParts(view = {}, options = {}) {
+  return insideOf(view, options);
 }
 
 /**
