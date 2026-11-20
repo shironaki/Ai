@@ -619,11 +619,15 @@ export const wearNow = (state, at) => (WEARS.includes(state?.wear?.name) && at <
 /** Чай на выбор (идея 166, 0.47.0): что ей наливают. Первый — её любимый: с него всё начинается. */
 export const BREWS = Object.freeze(["жасмин", "улун", "мята"]);
 export const brewOf = (state) => (BREWS.includes(state?.brew) ? state.brew : BREWS[0]);
+/** Тихий час (идея 161, 0.47.0): сколько она сидит рядом с книгой — двадцать пять минут. */
+export const QUIET_MS = 25 * 60_000;
+/** Сколько ещё идёт тихий час по этой записи, мс; 0 — не идёт. */
+export const quietLeft = (state, at) => { const from = Number(state?.quiet?.at), ms = Number(state?.quiet?.ms); return from > 0 && ms > 0 && at >= from && at - from < ms ? ms - (at - from) : 0; };
 /** Сколько Байт «тут» после зова (0.47.0): позвали ещё раз за эти полминуты — он убегает. */
 export const CALL_MS = 30_000;
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, wear: null, brew: "", seen: [], scene: null, near: 0, loot: [] });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, wear: null, brew: "", quiet: null, seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -734,6 +738,17 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     return { ok: true, again, state: next, saved: await write(userId, next) };
   }
   /**
+   * Посидеть рядом (идея 161, 0.47.0): тихий час — двадцать пять минут она читает рядом, Байт спит. Нажали, пока он
+   * идёт, — закончили раньше. `on` — идёт ли после нажатия. В отношения не идёт: это не забота.
+   */
+  async function quiet(userId, { day } = {}) {
+    const state = await read(userId, day);
+    const at = now();
+    const running = quietLeft(state, at) > 0;
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, quiet: running ? null : { at, ms: QUIET_MS } };
+    return { ok: true, on: !running, state: next, saved: await write(userId, next) };
+  }
+  /**
    * Наряд по просьбе (идея 157, 0.47.0): `name` — какой надеть; `worn` — в чём она была бы сейчас по часам; `until` —
    * когда она переоденется сама (тогда выбор кончается). `same` — она уже в нём. Просят то, что она надела бы и
    * сама, — выбор просто снимается. В отношения не идёт: это не забота.
@@ -786,5 +801,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId, state) { return write(userId, { ...state, at: state.at || now(), near: now() }); }
 
-  return { read, visit, care, book, lamp, music, call, wear, brew, choose, scare, near, look };
+  return { read, visit, care, book, lamp, music, call, wear, brew, quiet, choose, scare, near, look };
 }

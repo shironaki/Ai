@@ -28,7 +28,7 @@ import * as logic from "./logic.js";
 // а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`, с 0.45.0 —
 // `frameOf`, `applyBook`, `demoBook`), перед вызовом проверяется.
 const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall, applyWear, demoWear, applyBrew, demoBrew, wearAt } = logic;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall, applyWear, demoWear, applyBrew, demoBrew, wearAt, applyQuiet, demoQuiet } = logic;
 /**
  * Каким светом красить небо и страницу (0.47.0): по солнцу города, если его знают и рисунок (`scene.lightIn`), и
  * описание (`view.light`); прежний `scene.js` красит комнату по часам — тогда по часам и небо, и шапка.
@@ -233,7 +233,11 @@ async function tick() {
   const at = Date.now();
   const result = state.demo ? demoTick() : await call({ do: "look", again: true });
   lookedAt = Date.now();
-  if (result?.ok === true && !state.busy && !acting) await play(changeOf(state, applyTick(state, result, at)));
+  if (result?.ok === true && !state.busy && !acting) {
+    await play(changeOf(state, applyTick(state, result, at)));
+    // Тихий час сверяется с сердцем: начали на другом устройстве, закончили раньше, страница была свёрнута.
+    if (!state.demo) quietFor(state.quiet, state.quietEnd);
+  }
   scheduleTick();
 }
 /** Сыграть перемену: тихо, сменой света — или сценой у шкафа. */
@@ -550,6 +554,7 @@ async function enter() {
   const at = Date.now();
   state = applyLook(state, await call({ do: "look" }), at);
   tuneFor(state.music);
+  quietFor(state.quiet, state.quietEnd);
   lookedAt = Date.now();
   paint();
   buzz(state.ready ? "light" : "error");
@@ -591,7 +596,14 @@ async function book() {
  */
 function paintChips() {
   const known = state.ready && Boolean(state.brew), idle = !state.busy && !acting;
-  const wear = $("wear"), brew = $("brew");
+  const wear = $("wear"), brew = $("brew"), quiet = $("quiet");
+  if (quiet) {
+    const can = known && typeof applyQuiet === "function" && typeof demoQuiet === "function", left = quietLeft();
+    quiet.hidden = !can;
+    quiet.disabled = !idle;
+    quiet.setAttribute("aria-pressed", left > 0 ? "true" : "false");
+    if (can) quiet.querySelector("span").textContent = left > 0 ? `Тихий час · ${Math.floor(Math.ceil(left / 1000) / 60)}:${String(Math.ceil(left / 1000) % 60).padStart(2, "0")}` : "Посидеть рядом";
+  }
   if (wear) {
     const can = known && Boolean(state.her) && typeof applyWear === "function" && typeof demoWear === "function" && typeof wearAt === "function";
     wear.hidden = !can;
@@ -604,6 +616,40 @@ function paintChips() {
     brew.disabled = !idle;
     if (can) brew.querySelector("span").textContent = `Чай: ${state.brew}`;
   }
+}
+// Тихий час (0.47.0, идея 161): двадцать пять минут рядом — она читает, Байт спит; на кнопке под рисунком идёт
+// отсчёт. Время вышло — её слова (их прислало сердце заранее: связь для этого не нужна), и комната спрашивается заново.
+let quietUntil = 0, quietTimer = 0, quietWords = "";
+const quietLeft = () => Math.max(0, quietUntil - Date.now());
+function quietDone() {
+  clearInterval(quietTimer);
+  quietUntil = 0;
+  state = { ...state, quiet: 0, quietEnd: "", tone: "", retry: false, said: quietWords || "Время вышло." };
+  paint();
+  buzz("medium");
+}
+function quietFor(left, words = "") {
+  clearInterval(quietTimer);
+  if (left > 0) {
+    quietUntil = Date.now() + left;
+    if (words) quietWords = words;
+    quietTimer = setInterval(() => { if (quietLeft() > 0) paintChips(); else { quietDone(); tick(); } }, 1000);
+    return;
+  }
+  // Отсчёт шёл и вышел, пока страница была свёрнута: сердце уже говорит «не идёт» — её слова всё равно звучат.
+  if (quietUntil > 0 && quietUntil <= Date.now()) quietDone(); else quietUntil = 0;
+}
+/** Посидеть рядом (0.47.0): начать тихий час — или закончить раньше, если он идёт. */
+async function sit() {
+  if (!state.ready || state.busy || acting || typeof applyQuiet !== "function" || typeof demoQuiet !== "function") return;
+  scheduleTurn();
+  state = { ...state, busy: "quiet" };
+  paint();
+  const result = state.demo ? demoQuiet({ ...state, quiet: quietLeft() }) : await call({ do: "quiet" });
+  state = applyQuiet(state, result);
+  quietFor(state.quiet, state.quietEnd);
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
 }
 /** Переодеться (0.47.0): она идёт к шкафу и возвращается в другом — та же сцена, что при смене часа. */
 async function dress() {
@@ -734,6 +780,7 @@ $("sceneChoice").addEventListener("click", (event) => {
   if (button) pick(Number(button.dataset.pick));
 });
 $("retry").addEventListener("click", () => enter());
+$("quiet")?.addEventListener("click", () => sit());
 $("wear")?.addEventListener("click", () => dress());
 $("brew")?.addEventListener("click", () => steep());
 

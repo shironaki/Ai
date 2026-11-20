@@ -73,7 +73,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex,
-  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf } from "./room.js";
+  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -1919,6 +1919,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // ей не налили чай. Это свежее сценки дня: читает она то, что взяла сейчас.
     // Играет колонка (нажали на неё, 0.46.0): три минуты она танцует — если спокойна; других занятий на это время
     // нет (`only`). Что свежее — музыка или книга, — то и делает.
+    // Тихий час (сел рядом поработать, 0.47.0): она читает в кресле и никуда не ходит — если спокойна. Это сильнее
+    // музыки и книги с полки: он попросил тишины.
+    if (HER_CALM.includes(mood) && quietLeft(state, now()) > 0) return { key: "уют", put: "read", said: roomLine(turn, "она:тихий час"), only: true };
     if (HER_CALM.includes(mood) && musicNow(state, now()) && Number(state.music) >= (Number(state?.book) || 0)) return { key: "игра", put: "dance", said: roomLine(turn, "она:музыка"), only: true };
     if (HER_CALM.includes(mood) && readingNow(state, now())) return { key: "уют", put: "read", said: "" };
     const look = HER_CALM.includes(mood) ? sceneLook(state?.scene, { today, at: now() }) : null;
@@ -2137,14 +2140,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // позаботились (погладили, покормили, поиграли) — он при людях, а не под пледом. Обиженный уже спрятался —
         // под кресло; сценка дня держит его там, где сказано в ней (`held` проверяется раньше, чем гроза).
         const comforted = Boolean(state.last) && state.last !== "hurt" && now() - Number(state.lastAt) >= 0 && now() - Number(state.lastAt) < ROOM_FRESH_MS;
-        return { key, held, storm: sky === "storm" && !comforted && key !== "обижен" };
+        // Тихий час (0.47.0): Байт спит на своей подушке — если не обижен (тогда он под креслом).
+        return { key, held, storm: sky === "storm" && !comforted && key !== "обижен", quiet: quietLeft(state, now()) > 0 && key !== "обижен" };
       };
       const picture = (state, { after = null, again = false, line = "" } = {}) => {
-        const { key, held, storm } = catMood(state);
+        const { key, held, storm, quiet } = catMood(state);
         const hides = storm && !after;
-        const raw = after || held ? "" : roomLine(turn, hides ? "байт:гроза" : `байт:${key}`);
+        // Спит в тихий час — пока о нём не позаботились и пока его не держит сценка или гроза.
+        const naps = quiet && !after && !held && !hides;
+        const raw = after || held ? "" : roomLine(turn, hides ? "байт:гроза" : naps ? "байт:тихий час" : `байт:${key}`);
         const moved = after ? catAfter(after, { again }) : null;
-        const beats = held || hides ? [] : catBeats(key);
+        const beats = held || hides || naps ? [] : catBeats(key);
         // Распорядок начинается с той реплики, что сказана: остальные — за ней по кругу.
         const from = raw ? beats.findIndex(beat => beat.line === raw) : -1;
         const order = from > 0 ? [...beats.slice(from), ...beats.slice(0, from)] : beats;
@@ -2152,6 +2158,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ? (moved ? { key, ...catPose(line, key, moved), beats: order, still: order.length < 2 } : null)
           : held ? { key, ...held, line: "", beats: [], still: true }
             : hides ? { key, shape: "tail", place: "plaid", line: raw, beats: [], still: true }
+              : naps ? { key: "спит", shape: "curl", place: "pillow", line: raw, beats: [], still: true }
               : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2 };
         return {
           ...(cat ? { cat } : {}),
@@ -2236,6 +2243,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           // 0.47.0. Какой чай ей наливают (жасмин, улун, мята). По этому полю страница узнаёт и сердце, которое умеет
           // «переодеться» и «выбрать чай»: прежнее его не шлёт — и кнопок под рисунком нет.
           brew: brewOf(visit.state),
+          // Тихий час (0.47.0): сколько ещё идёт, мс (0 — не идёт), и её слова, когда время выйдет.
+          quiet: quietLeft(visit.state, now()), ...(quietLeft(visit.state, now()) > 0 ? { quietEnd: spoken(roomLine(turn, "тихий час:конец")) } : {}),
           things: ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => ({ key: item.key, title: item.title, line: roomLine(turn, `вещь:${item.key}`, things.vars) })),
           lamp: things.keys.includes("абажур") ? colourHex(things.vars["цвет"]) : "",
           drawing: things.keys.includes("рисунок") ? things.drawing : "",
@@ -2282,6 +2291,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (!done.again) await keepThread(turn, "[в комнате] предложил тебе почитать", raw);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), taken: true, again: Boolean(done.again), her: herNow(done.state), ...stageNote() };
       }
+      if (op === "quiet") {
+        // Посидеть рядом (идея 161, 0.47.0): тихий час — двадцать пять минут она читает в кресле, Байт спит на
+        // подушке, под рисунком идёт отсчёт; нажали ещё раз — закончили раньше. Когда ей не до книг (сон, обида,
+        // усталость), она остаётся как была, а время идёт. `end` — её слова, когда время выйдет: страница скажет
+        // их сама, без связи. В отношения не идёт.
+        const done = await room.quiet(userId, { day: today });
+        const raw = roomLine(turn, done.on ? "тихий час" : "тихий час:стоп") || (done.on ? "Сажусь рядом." : "Хорошо, хватит.");
+        if (done.on) await keepThread(turn, "[в комнате] сел рядом поработать в тишине", raw);
+        const shown = picture(done.state);
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), on: done.on, left: done.on ? QUIET_MS : 0, end: done.on ? spoken(roomLine(turn, "тихий час:конец")) : "", her: herNow(done.state), ...(shown.cat ? { cat: shown.cat } : {}) };
+      }
       if (op === "wear") {
         // Наряд по просьбе (идея 157, 0.47.0): из нарисованных — куртка и свитер. Без названия — другой, не тот,
         // что на ней. Держится, пока она не переоденется сама (в пять, в шесть вечера, перед сном). Страница играет
@@ -2305,7 +2325,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // сценке дня — не идёт, и она говорит почему. В отношения не идёт: это не забота.
         const before = await room.read(userId, today);
         const mood = catMood(before);
-        const why = mood.key === "спит" ? "спит" : mood.key === "обижен" || mood.held || mood.storm ? "нет" : "";
+        const why = mood.key === "спит" ? "спит" : mood.key === "обижен" || mood.held || mood.storm ? "нет" : mood.quiet ? "спит" : "";
         if (why) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `байт:позвать:${why}`) || "Байт не идёт."), came: false, fled: false };
         const done = await room.call(userId, { day: today });
         const raw = roomLine(turn, done.again ? "байт:позвать:ещё" : "байт:позвать") || (done.again ? "Байт удрал под кресло." : "Байт подошёл.");

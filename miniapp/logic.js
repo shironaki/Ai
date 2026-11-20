@@ -61,6 +61,8 @@ export function blank(hour = 12) {
     dark: false, music: 0,
     // 0.47.0. Какой чай ей наливают; пусто — сердце прежнее: выбирать чай и наряд оно не умеет, кнопок нет.
     brew: "",
+    // Тихий час: сколько осталось (мс от ответа сердца; 0 — не идёт) и её слова, когда время выйдет.
+    quiet: 0, quietEnd: "",
   };
 }
 
@@ -187,7 +189,7 @@ export function applyLook(state, result, at = 0) {
     clock: clockOf(result.clock, at), wardrobe: wardrobeOf(result.wardrobe),
     // Прежнее сердце о лампе и колонке не знает (полей нет) — тогда они остаются какими были.
     dark: result.dark === undefined ? state.dark === true : result.dark === true, music: result.music === undefined ? count(state.music) : count(result.music),
-    brew: BREWS.includes(result.brew) ? result.brew : "",
+    brew: BREWS.includes(result.brew) ? result.brew : "", quiet: count(result.quiet), quietEnd: text(result.quietEnd),
     cat: catOf(result.cat, null, { first: true }), plant: result.plant?.state === "dry" ? "dry" : "wet",
     things: things.map(item => item.key), lamp: /^#[0-9a-f]{6}$/iu.test(String(result.lamp ?? "")) ? result.lamp : "",
     fed: done.feed > 0, tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
@@ -291,6 +293,22 @@ export function applyWear(state, result) {
   const her = { ...(fresh && herOf(result.her).key !== state.her.key ? herOf(result.her) : state.her), wear: result.wear };
   const target = { ...state, busy: "", tone: "", retry: false, her, said };
   return { kind: "wardrobe", state: target, leave: said, back: [text(result.back) || "Вот.", herBeat(target)?.line || target.lines.her].filter(Boolean).join("\n") };
+}
+
+/**
+ * Ответ на «посидеть рядом» (`do: "quiet"`, 0.47.0): идёт ли тихий час (`on`) и сколько осталось (`left`, мс);
+ * сердце шлёт её и Байта заново — она читает в кресле, он спит; `end` — её слова, когда время выйдет.
+ */
+export function applyQuiet(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  const her = result.her && typeof result.her === "object" && state.her ? herOf(result.her) : null;
+  const moved = result.cat && typeof result.cat === "object";
+  return {
+    ...state, busy: "", tone: "", retry: false, quiet: result.on === true ? count(result.left) : 0, quietEnd: result.on === true ? text(result.end) : "",
+    ...(her ? { her, turn: 0 } : {}), cat: moved ? catOf(result.cat, state.cat) : state.cat,
+    lines: { ...state.lines, ...(her && text(result.her.line) ? { her: text(result.her.line) } : {}), ...(moved && text(result.cat.line) ? { cat: text(result.cat.line) } : {}) },
+    said: text(result.line) || "…",
+  };
 }
 
 /** Ответ на «выбрать чай» (`do: "brew"`, 0.47.0): какой ей теперь наливают — и её слова о нём. */
@@ -478,6 +496,17 @@ export function demoBook(state) {
   // Те же слова, что прислало бы сердце: запасы «+комната:полка» и «+комната:она:уют».
   const line = "Читаю в кресле. Глава такая, что не оторваться: Байт зовёт ужинать уже второй раз.";
   return { ok: true, do: "book", build: "", line: "Возьму вот эту — «Маленького принца». Перечитываю каждую осень. Кресло, я иду.", taken: true, again: false, her: { key: "уют", pose: "read", line, beats: [{ pose: "read", line }] } };
+}
+/** «Посидеть рядом» на витрине: двадцать пять минут она читает, Байт спит; нажали ещё раз — закончили. Слова — из словаря. */
+export function demoQuiet(state) {
+  if (count(state.quiet) > 0) return { ok: true, do: "quiet", build: "", line: "Уже всё? Хорошо. Сколько успелось — столько успелось.", on: false, left: 0, end: "" };
+  const line = "Читаю рядом и не мешаю. Время идёт — я за ним слежу.", nap = "Байт свернулся на подушке и спит: тихий час — его любимый жанр.";
+  return {
+    ok: true, do: "quiet", build: "", line: "Сажусь рядом с книгой. Двадцать пять минут тишины: я слежу за временем, Байт — за порядком.", on: true, left: 25 * 60_000,
+    end: "Всё, время вышло. Сидели тихо, как в библиотеке. Теперь можно и потянуться.",
+    ...(state.her?.key === "сон" ? {} : { her: { key: "уют", pose: "read", line, beats: [{ pose: "read", line }] } }),
+    cat: { key: "спит", shape: "curl", place: "pillow", line: nap, beats: [], still: true },
+  };
 }
 /** «Переодеться» на витрине: в другой наряд — не тот, что на ней; спит — не переодевается. Слова — из словаря. */
 export function demoWear(state) {

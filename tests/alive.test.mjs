@@ -2072,3 +2072,81 @@ test("0.47.0, чай на выбор: жасмин, улун, мята — по 
     demo = logic.applyBrew(demo, next);
   }
 });
+
+// ── 0.47.0: посидеть рядом — тихий час (идея 161) ────────────────────────────
+
+test("0.47.0, тихий час: двадцать пять минут она читает рядом, Байт спит, распорядок стоит; время вышло — её слова и всё как было; нажали раньше — закончили", async () => {
+  reset();
+  const time = clock(NOON), M = 60_000;
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const first = await h.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([first.quiet, Object.hasOwn(first, "quietEnd")], [0, false]);
+  assert.ok(first.her.beats.length > 1, "до тихого часа у неё распорядок");
+  const on = await h.onRoom({ do: "quiet" }, from(5));
+  assert.deepEqual([on.ok, on.do, on.on, on.left], [true, "quiet", true, room.QUIET_MS]);
+  assert.equal(room.QUIET_MS, 25 * M);
+  assert.ok(pool("тихий час").map(plain).includes(on.line), on.line);
+  assert.ok(pool("тихий час:конец").map(plain).includes(on.end), on.end);
+  // Она — в кресле с книгой, и только: распорядка на это время нет. Байт спит на подушке и с места не ходит.
+  assert.deepEqual([on.her.key, on.her.pose, on.her.beats.length], ["уют", "read", 1]);
+  assert.ok(pool("она:тихий час").includes(on.her.line), on.her.line);
+  assert.deepEqual([on.cat.key, on.cat.shape, on.cat.place, on.cat.still, on.cat.beats.length], ["спит", "curl", "pillow", true, 0]);
+  assert.ok(pool("байт:тихий час").includes(on.cat.line), on.cat.line);
+  assert.equal(roomOf(5).cared, "", "тихий час — не забота: в отношения не идёт");
+  // Слова на рисунке — о том, что на нём: она с книгой в кресле, он на подушке.
+  for (const line of pool("она:тихий час")) assert.equal(room.herPose(line, "уют"), "read", line);
+  for (const line of pool("байт:тихий час")) assert.deepEqual(room.catPose(line, "спит"), { shape: "curl", place: "pillow" }, line);
+  // Через десять минут заглянули заново: осталось пятнадцать, всё по-прежнему; слова конца — при ней.
+  time.add(10 * M);
+  const mid = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([mid.quiet, mid.her.pose, mid.her.beats.length, mid.cat.place, mid.cat.still], [15 * M, "read", 1, "pillow", true]);
+  assert.ok(pool("тихий час:конец").map(plain).includes(mid.quietEnd), mid.quietEnd);
+  // Байта зовут — он спит; покормили — проснулся и ест (забота сильнее тишины).
+  assert.ok(pool("байт:позвать:спит").includes((await h.onRoom({ do: "call" }, from(5))).line));
+  assert.deepEqual([(await h.onRoom({ do: "feed" }, from(5))).cat.place], ["bowl"]);
+  // Время вышло: тихого часа нет, она вернулась к распорядку.
+  time.add(15 * M);
+  const after = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([after.quiet, Object.hasOwn(after, "quietEnd")], [0, false]);
+  assert.ok(after.her.beats.length > 1, "распорядок вернулся");
+  // Нажали, пока идёт, — закончили раньше.
+  await h.onRoom({ do: "quiet" }, from(5));
+  time.add(M);
+  const off = await h.onRoom({ do: "quiet" }, from(5));
+  assert.deepEqual([off.on, off.left, off.end], [false, 0, ""]);
+  assert.ok(pool("тихий час:стоп").map(plain).includes(off.line), off.line);
+  assert.equal(roomOf(5).quiet, null);
+  assert.ok(off.her.beats.length > 1);
+  // Ночью она спит: тихий час идёт, а она остаётся под пледом — будить её книгой не станут.
+  time.set(Date.parse("2026-11-18T22:30:00Z"));
+  const night = await h.onRoom({ do: "quiet" }, from(5));
+  assert.deepEqual([night.on, night.her.key], [true, "сон"]);
+  // Счёт времени.
+  const record = { quiet: { at: 1000, ms: 500 } };
+  assert.deepEqual([room.quietLeft(record, 999), room.quietLeft(record, 1000), room.quietLeft(record, 1499), room.quietLeft(record, 1500)], [0, 500, 1, 0]);
+  for (const junk of [null, {}, { quiet: null }, { quiet: { at: 0, ms: 5 } }, { quiet: { at: 5 } }, { quiet: "да" }]) assert.equal(room.quietLeft(junk, 10), 0, JSON.stringify(junk));
+
+  // Страница: ответ ставит её в кресло с книгой, Байта — на подушку; отсчёт и слова конца — при странице.
+  const state = logic.applyLook(logic.blank(14), first, NOON);
+  const sat = logic.applyQuiet(state, on);
+  assert.deepEqual([sat.quiet, sat.quietEnd, sat.said, logic.viewOf(sat).her.pose, logic.viewOf(sat).cat.shape, logic.viewOf(sat).cat.place], [room.QUIET_MS, on.end, on.line, "read", "curl", "pillow"]);
+  assert.deepEqual([sat.her.beats.length, sat.lines.her, sat.lines.cat], [1, on.her.line, on.cat.line]);
+  assert.equal(scene.castOf(logic.viewOf(sat), PAINTED).her.name, "read");
+  const done = logic.applyQuiet(sat, off);
+  assert.deepEqual([done.quiet, done.quietEnd, done.said], [0, "", off.line]);
+  const seen = logic.applyLook(logic.blank(14), mid, NOON);
+  assert.deepEqual([seen.quiet, seen.quietEnd], [15 * M, mid.quietEnd]);
+  assert.deepEqual([logic.blank(14).quiet, logic.blank(14).quietEnd], [0, ""]);
+  assert.equal(logic.applyQuiet(state, { ok: false, text: "нет связи" }).tone, "warn");
+  // Прежнее сердце о тихом часе не знает — отсчёта нет.
+  const { quiet: _, ...old } = first;
+  assert.equal(logic.applyLook(logic.blank(14), old, NOON).quiet, 0);
+  // Витрина: те же слова, что в словаре; нажали ещё раз — закончили.
+  const demo = logic.demoQuiet({ quiet: 0, her: { key: "дело" }, cat: { key: "сыт" } });
+  assert.deepEqual([demo.on, demo.left, demo.her.pose, demo.cat.shape, demo.cat.place], [true, room.QUIET_MS, "read", "curl", "pillow"]);
+  assert.ok(pool("тихий час").includes(demo.line) && pool("тихий час:конец").includes(demo.end) && pool("она:тихий час").includes(demo.her.line) && pool("байт:тихий час").includes(demo.cat.line));
+  const stop = logic.demoQuiet({ quiet: 60_000 });
+  assert.deepEqual([stop.on, stop.left], [false, 0]);
+  assert.ok(pool("тихий час:стоп").includes(stop.line), stop.line);
+  assert.equal(Object.hasOwn(logic.demoQuiet({ quiet: 0, her: { key: "сон" } }), "her"), false, "спящую витрина не будит");
+});
