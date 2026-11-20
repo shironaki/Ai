@@ -123,6 +123,8 @@ const TOY = "(?:мячик|мяч|бантик|ленточку|игрушку|�
 const GIFT = "(?:вкусняшка|вкусняшки|рыбка|корм|угощение|гостинец)";
 const rx = (source) => new RegExp(source, "u");
 
+/** «Налью тебе…», «держи…» — начало слов о чае на выбор. */
+const POUR = "(?:я\\s+)?(?:налью|наливаю|налить|принес|принесла|несу|принесу|завариваю|заварю|заварил|заварила|сделаю|сделал|сделала|налил|налила|держи|вот|возьми)\\s+(?:тебе\\s+)?";
 const RULES = Object.freeze([
   // Что нового: вещи, которые появились для этого человека.
   ["news", rx(`^(?:а\\s+)?что\\s+(?:у\\s+тебя\\s+)?(?:нового|новенького|появилось|изменилось|прибавилось)\\s+(?:у\\s+тебя\\s+)?в\\s+${ROOM}$`)],
@@ -206,6 +208,19 @@ const RULES = Object.freeze([
   ["feed", rx(`^(?:вкусняшка|вкусняшку|вкусняшки|корм|рыбку|рыбка)\\s+(?:для\\s+)?(?:${CAT_DAT}|${CAT_ACC})$`)],
   ["play", rx(`^(?:можно\\s+)?(?:я\\s+)?(?:поиграть|поиграю|играю|поиграй|играть|поиграем)\\s+с\\s+${CAT_INS}(?:\\s+можно)?$`)],
   ["play", rx(`^(?:я\\s+)?(?:кидаю|кину|бросаю|брошу|даю|дам|кинь|брось|дай)\\s+${CAT_DAT}\\s+${TOY}$`)],
+
+  // Наряд по просьбе (идея 157, 0.47.0): из нарисованных — куртка и свитер; «переоденься» — в другой.
+  ["wearhome", /^(?:надень|одень|накинь|надевай)\s+(?:свой\s+)?(?:свитер|свитшот|домашнее)$/u],
+  ["wearhome", /^(?:переоденься|переоденешься|оденься)\s+в\s+(?:свитер|домашнее)$/u],
+  ["wearjacket", /^(?:надень|одень|накинь|надевай)\s+(?:свою\s+)?(?:куртку|косуху)$/u],
+  ["wearjacket", /^(?:переоденься|переоденешься|оденься)\s+в\s+куртку$/u],
+  ["wearswap", /^(?:переоденься|смени\s+наряд|надень\s+(?:что\s+нибудь\s+)?другое|оденься\s+по\s+другому)$/u],
+
+  // Чай на выбор (идея 166, 0.47.0): «налью тебе улун», «заварю чай с мятой», «держи жасминовый» — выбрать и налить.
+  // Стоят раньше обычного чая: «налью тебе чай с жасмином» — это выбор жасмина, а не «тот же, что в прошлый раз».
+  ["brewoolong", rx(`^${POUR}(?:улун|улунчик|чай\\s+улун)$`)],
+  ["brewmint", rx(`^${POUR}(?:(?:чай|чаю|чая|чаек|чайку)\\s+с\\s+мятой|мятный(?:\\s+чай)?|мятного(?:\\s+чая)?)$`)],
+  ["brewjasmine", rx(`^${POUR}(?:(?:чай|чаю|чая|чаек|чайку)\\s+с\\s+жасмином|жасминовый(?:\\s+чай)?|жасминового(?:\\s+чая)?)$`)],
 
   // Чай — ей. «Будешь чай?», «хочешь чаю» — предложение: на него отвечает словарь (тема «угощаю»).
   ["tea", /^(?:я\s+)?(?:налью|наливаю|налить|принес|принесла|несу|принесу|завариваю|заварю|заварил|заварила|сделаю|сделал|сделала|ставлю|налил|налила)\s+тебе\s+(?:чай|чаю|чая|чаек|чайку|чайник)(?:\s+с\s+жасмином)?$/u],
@@ -597,11 +612,18 @@ export const MUSIC_MS = 3 * 60_000;
 /** Играет ли колонка сейчас: её включили меньше трёх минут назад (и не выключили — тогда отметка стёрта). */
 export const musicNow = (state, at) => Number(state?.music) > 0 && at - Number(state.music) >= 0 && at - Number(state.music) < MUSIC_MS;
 
+/** Наряды, в которых она нарисована: выбирать можно из них (идея 157, 0.47.0). Те же слова, что `HER_WEARS` в рисунке. */
+export const WEARS = Object.freeze(["jacket", "home"]);
+/** Наряд, надетый по просьбе, — пока не пришло время переодеваться самой (`until`, мс эпохи); иначе `null`. */
+export const wearNow = (state, at) => (WEARS.includes(state?.wear?.name) && at < Number(state.wear.until) ? state.wear.name : null);
+/** Чай на выбор (идея 166, 0.47.0): что ей наливают. Первый — её любимый: с него всё начинается. */
+export const BREWS = Object.freeze(["жасмин", "улун", "мята"]);
+export const brewOf = (state) => (BREWS.includes(state?.brew) ? state.brew : BREWS[0]);
 /** Сколько Байт «тут» после зова (0.47.0): позвали ещё раз за эти полминуты — он убегает. */
 export const CALL_MS = 30_000;
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, seen: [], scene: null, near: 0, loot: [] });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, wear: null, brew: "", seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -711,6 +733,31 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const next = { ...state, at: state.at || at, near: at, day, done: state.done, call: again ? 0 : at };
     return { ok: true, again, state: next, saved: await write(userId, next) };
   }
+  /**
+   * Наряд по просьбе (идея 157, 0.47.0): `name` — какой надеть; `worn` — в чём она была бы сейчас по часам; `until` —
+   * когда она переоденется сама (тогда выбор кончается). `same` — она уже в нём. Просят то, что она надела бы и
+   * сама, — выбор просто снимается. В отношения не идёт: это не забота.
+   */
+  async function wear(userId, { day, name, worn, until } = {}) {
+    if (!WEARS.includes(name)) return { ok: false, code: "unknown" };
+    const state = await read(userId, day);
+    const at = now();
+    if ((wearNow(state, at) ?? worn) === name) return { ok: true, same: true, name, state };
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, wear: name === worn ? null : { name, until: Number(until) || 0 } };
+    return { ok: true, same: false, name, state: next, saved: await write(userId, next) };
+  }
+  /**
+   * Чай на выбор (идея 166, 0.47.0): какой ей наливать — жасмин, улун или мяту; запоминается. `kind` не назван —
+   * следующий по кругу. Сам чай наливает забота «tea»; это только выбор заварки.
+   */
+  async function brew(userId, { day, kind = "" } = {}) {
+    const state = await read(userId, day);
+    const at = now();
+    const before = brewOf(state);
+    const chosen = BREWS.includes(kind) ? kind : BREWS[(BREWS.indexOf(before) + 1) % BREWS.length];
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, brew: chosen };
+    return { ok: true, kind: chosen, same: chosen === before, state: next, saved: await write(userId, next) };
+  }
   /** Байта хотели обидеть: он прячется (до трёх часов — или пока не приласкают). В отношения это не идёт: игра. */
   async function scare(userId, { day } = {}) {
     const state = await read(userId, day);
@@ -739,5 +786,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId, state) { return write(userId, { ...state, at: state.at || now(), near: now() }); }
 
-  return { read, visit, care, book, lamp, music, call, choose, scare, near, look };
+  return { read, visit, care, book, lamp, music, call, wear, brew, choose, scare, near, look };
 }

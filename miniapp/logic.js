@@ -22,6 +22,8 @@ const WEARS = Object.freeze(["jacket", "home"]);
  * знает два слова, «rain» и «snow»; незнакомое слово — дождь, как было всегда.
  */
 export const SKIES = Object.freeze(["clear", "clouds", "overcast", "fog", "rain", "storm", "snow"]);
+/** Чай на выбор (0.47.0): те же слова, что `BREWS` в сердце. */
+export const BREWS = Object.freeze(["жасмин", "улун", "мята"]);
 const skyOf = (value) => (SKIES.includes(value) ? value : "rain");
 /** Что сценка дня меняет в комнате (те же слова, что `SCENE_FX` в рисунке и в сердце). */
 const FX = Object.freeze(["cactus", "haze", "window", "blink", "sock", "curtains", "noplaid", "puddle", "boat"]);
@@ -57,6 +59,8 @@ export function blank(hour = 12) {
     moon: 0.3, fx: [], away: false, entering: false, clock: null, wardrobe: null,
     // 0.46.0. Лампа погашена — горит одна гирлянда; сколько ещё играет колонка (мс от ответа сердца; 0 — молчит).
     dark: false, music: 0,
+    // 0.47.0. Какой чай ей наливают; пусто — сердце прежнее: выбирать чай и наряд оно не умеет, кнопок нет.
+    brew: "",
   };
 }
 
@@ -183,6 +187,7 @@ export function applyLook(state, result, at = 0) {
     clock: clockOf(result.clock, at), wardrobe: wardrobeOf(result.wardrobe),
     // Прежнее сердце о лампе и колонке не знает (полей нет) — тогда они остаются какими были.
     dark: result.dark === undefined ? state.dark === true : result.dark === true, music: result.music === undefined ? count(state.music) : count(result.music),
+    brew: BREWS.includes(result.brew) ? result.brew : "",
     cat: catOf(result.cat, null, { first: true }), plant: result.plant?.state === "dry" ? "dry" : "wet",
     things: things.map(item => item.key), lamp: /^#[0-9a-f]{6}$/iu.test(String(result.lamp ?? "")) ? result.lamp : "",
     fed: done.feed > 0, tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
@@ -270,6 +275,28 @@ export function applyBook(state, result) {
     ...(her ? { her, turn: 0, lines: { ...state.lines, ...(text(result.her.line) ? { her: text(result.her.line) } : {}) } } : {}),
     said: text(result.line) || "…",
   };
+}
+
+/**
+ * Ответ на «переодеться» (`do: "wear"`, 0.47.0): перемена для страницы — та же сцена у шкафа, что при смене часа
+ * (`changeOf`). `kind: "wardrobe"` — она уходит, «*переодевается*», возвращается в другом (`leave`, `back` — её
+ * слова); `same` — наряд тот же (она уже в нём или спит): одни слова.
+ */
+export function applyWear(state, result) {
+  if (!result || result.ok !== true) return { kind: "same", state: refused(state, result) };
+  const said = text(result.line) || "…";
+  if (result.changed !== true || !WEARS.includes(result.wear) || !state.her) return { kind: "same", state: { ...state, busy: "", tone: "", retry: false, said } };
+  const fresh = result.her && typeof result.her === "object";
+  // Наряд назван ответом — он на ней поверх часов; занята она тем же — остаётся на своей реплике.
+  const her = { ...(fresh && herOf(result.her).key !== state.her.key ? herOf(result.her) : state.her), wear: result.wear };
+  const target = { ...state, busy: "", tone: "", retry: false, her, said };
+  return { kind: "wardrobe", state: target, leave: said, back: [text(result.back) || "Вот.", herBeat(target)?.line || target.lines.her].filter(Boolean).join("\n") };
+}
+
+/** Ответ на «выбрать чай» (`do: "brew"`, 0.47.0): какой ей теперь наливают — и её слова о нём. */
+export function applyBrew(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  return { ...state, busy: "", tone: "", retry: false, brew: BREWS.includes(result.brew) ? result.brew : state.brew, said: text(result.line) || "…" };
 }
 
 /**
@@ -426,7 +453,7 @@ export function demoLook(hour = 12, params = {}) {
       : { shape, place, key: catKey, line: params.cat ? "" : DEMO_CAT[0][2], beats: params.cat ? [] : DEMO_CAT.map(([one, where, line]) => ({ shape: one, place: where, line })), still: Boolean(params.cat) },
     plant: { state: params.plant === "wet" ? "wet" : "dry" }, done: {}, cared: false,
     things: listed.map(name => ({ key: name, title: name, line: DEMO_THINGS[name] ?? "" })), lamp: params.lamp ?? "", drawing: "", fresh: [], next: null,
-    dark: params.dark === "1", music: params.music === "1" ? 180_000 : 0,
+    dark: params.dark === "1", music: params.music === "1" ? 180_000 : 0, brew: BREWS.includes(params.brew) ? params.brew : BREWS[0],
     box: { count: 2, line: "В коробке Байта — его трофеи: носок неизвестного происхождения и лампочка от гирлянды. Растёт с каждой сценкой." }, patted: false,
     scene: params.scene === "0" ? null : { key: DEMO_SCENE.key, text: DEMO_SCENE.text, options: DEMO_SCENE.options, pick: null, outcome: null, fx: String(params.fx ?? "sock").split(",").filter(Boolean) }, first: true,
   };
@@ -451,6 +478,24 @@ export function demoBook(state) {
   // Те же слова, что прислало бы сердце: запасы «+комната:полка» и «+комната:она:уют».
   const line = "Читаю в кресле. Глава такая, что не оторваться: Байт зовёт ужинать уже второй раз.";
   return { ok: true, do: "book", build: "", line: "Возьму вот эту — «Маленького принца». Перечитываю каждую осень. Кресло, я иду.", taken: true, again: false, her: { key: "уют", pose: "read", line, beats: [{ pose: "read", line }] } };
+}
+/** «Переодеться» на витрине: в другой наряд — не тот, что на ней; спит — не переодевается. Слова — из словаря. */
+export function demoWear(state) {
+  const worn = wearAt(state.part, state.her?.wear);
+  if (state.her?.key === "сон") return { ok: true, do: "wear", build: "", line: "…Сплю. Переоденусь утром.", wear: worn, changed: false };
+  return worn === "home"
+    ? { ok: true, do: "wear", build: "", line: "Куртка так куртка: вид деловой, характер прежний. Минуту.", back: "Вот. Куртка, чокер — и вид, будто у меня планы.", wear: "jacket", changed: true }
+    : { ok: true, do: "wear", build: "", line: "Свитер так свитер: куртку — на вешалку. Минуту.", back: "Вот. Свитер, тёплые рукава — и никуда не тороплюсь.", wear: "home", changed: true };
+}
+const DEMO_BREW = Object.freeze({
+  "жасмин": "Возвращаемся к жасмину. Он пахнет так, будто всё уже хорошо.",
+  "улун": "Улун. Его заваривают не торопясь — значит, и мы никуда не торопимся.",
+  "мята": "Мятный. От него в комнате пахнет летом, какой бы ни был месяц.",
+});
+/** «Выбрать чай» на витрине: следующий по кругу. Слова — из словаря. */
+export function demoBrew(state) {
+  const kind = BREWS[(Math.max(0, BREWS.indexOf(state.brew)) + 1) % BREWS.length];
+  return { ok: true, do: "brew", build: "", brew: kind, line: DEMO_BREW[kind] };
 }
 /** «Позвать Байта» на витрине: подходит; позвали ещё раз, пока он рядом, — удирает под кресло. Слова — из словаря. */
 export function demoCall(state) {

@@ -28,7 +28,7 @@ import * as logic from "./logic.js";
 // а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`, с 0.45.0 —
 // `frameOf`, `applyBook`, `demoBook`), перед вызовом проверяется.
 const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall } = logic;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall, applyWear, demoWear, applyBrew, demoBrew, wearAt } = logic;
 /**
  * Каким светом красить небо и страницу (0.47.0): по солнцу города, если его знают и рисунок (`scene.lightIn`), и
  * описание (`view.light`); прежний `scene.js` красит комнату по часам — тогда по часам и небо, и шапка.
@@ -492,6 +492,7 @@ function paint() {
   const tools = $("tools");
   if (tools) tools.hidden = !state.ready;
   paintSound();
+  paintChips();
   $("foot").textContent = [
     state.next ? `Новая вещь появится через ${state.next} ${plural(state.next, "день", "дня", "дней")}` : "",
     `страница ${PAGE}`, state.build ? `сердце ${state.build}` : "", state.demo ? "витрина" : "",
@@ -580,6 +581,52 @@ async function book() {
   paint();
   const result = state.demo ? demoBook(state) : await call({ do: "book" });
   state = applyBook(state, result);
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
+}
+
+/**
+ * Кнопки под рисунком (0.47.0): «надеть свитер / куртку» и «чай: жасмин / улун / мята». Их знает сердце с 0.47.0
+ * (оно называет чай в ответе — `state.brew`); прежнее сердце или прежняя копия `logic.js` — и кнопок нет.
+ */
+function paintChips() {
+  const known = state.ready && Boolean(state.brew), idle = !state.busy && !acting;
+  const wear = $("wear"), brew = $("brew");
+  if (wear) {
+    const can = known && Boolean(state.her) && typeof applyWear === "function" && typeof demoWear === "function" && typeof wearAt === "function";
+    wear.hidden = !can;
+    wear.disabled = !idle;
+    if (can) wear.querySelector("span").textContent = wearAt(state.part, state.her.wear) === "home" ? "Надеть куртку" : "Надеть свитер";
+  }
+  if (brew) {
+    const can = known && typeof applyBrew === "function" && typeof demoBrew === "function";
+    brew.hidden = !can;
+    brew.disabled = !idle;
+    if (can) brew.querySelector("span").textContent = `Чай: ${state.brew}`;
+  }
+}
+/** Переодеться (0.47.0): она идёт к шкафу и возвращается в другом — та же сцена, что при смене часа. */
+async function dress() {
+  if (!state.ready || state.busy || acting || typeof applyWear !== "function" || typeof demoWear !== "function") return;
+  scheduleTurn();
+  const before = state;
+  state = { ...state, busy: "wear" };
+  paint();
+  const result = state.demo ? demoWear(before) : await call({ do: "wear" });
+  const change = applyWear(before, result);
+  if (change.kind !== "wardrobe") { state = change.state; paint(); buzz(result?.ok === true ? "light" : "error"); return; }
+  state = before;
+  await play(change);
+  paint();
+}
+/** Выбрать чай (0.47.0): следующий по кругу — жасмин, улун, мята; сердце запоминает, какой наливать. */
+async function steep() {
+  if (!state.ready || state.busy || acting || typeof applyBrew !== "function" || typeof demoBrew !== "function") return;
+  scheduleTurn();
+  state = { ...state, busy: "brew" };
+  paint();
+  const result = state.demo ? demoBrew(state) : await call({ do: "brew" });
+  state = applyBrew(state, result);
   paint();
   buzz(result?.ok === true ? "light" : "error");
 }
@@ -687,6 +734,8 @@ $("sceneChoice").addEventListener("click", (event) => {
   if (button) pick(Number(button.dataset.pick));
 });
 $("retry").addEventListener("click", () => enter());
+$("wear")?.addEventListener("click", () => dress());
+$("brew")?.addEventListener("click", () => steep());
 
 // Звук: выключатель под рисунком. Запомненное «включено» ждёт первого касания страницы.
 $("sound")?.addEventListener("click", async () => {

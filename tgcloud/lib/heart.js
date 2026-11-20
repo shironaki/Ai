@@ -73,7 +73,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex,
-  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag } from "./room.js";
+  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -1764,6 +1764,27 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return book.pick(`+комната:${WINDOW_POOL[sky] ?? "окно"}`, air) ?? book.pick("+комната:окно", air) ?? "";
   };
   const ROOM_POOL = Object.freeze({ pet: "погладить", feed: "покормить", play: "поиграть", tea: "чай", water: "полить" });
+  /**
+   * Запас слов заботы. Чай на выбор (0.47.0): первая кружка улуна или мяты — свои слова («+комната:чай:улун»);
+   * жасмин — её любимый: его слова лежат в «+комната:чай», как лежали всегда.
+   */
+  const carePool = (op, done) => (done.peace ? "мириться"
+    : `${op === "tea" && !done.again && !done.early && brewOf(done.state) !== BREWS[0] ? `чай:${brewOf(done.state)}` : ROOM_POOL[op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`);
+  /** Наряд по просьбе (0.47.0): слово запаса — «+комната:наряд:свитер», «+комната:наряд:куртка». */
+  const WEAR_WORD = Object.freeze({ home: "свитер", jacket: "куртка" });
+  /** В чём она была бы сейчас по часам: вечером и ночью — в домашнем. */
+  const wearByClock = (feel) => { const part = partOfDay(feel.hour); return part === "вечер" || part === "ночь" ? "home" : "jacket"; };
+  /** Когда она переоденется сама: в пять утра — в куртку, в шесть вечера и перед сном, в одиннадцать, — в домашнее. */
+  const wearUntil = (zone) => { const local = localParts(now(), zone), edge = [5, 18, 23].find(hour => hour > local.hh) ?? 29; return now() + ((edge - local.hh) * 60 - local.mm) * 60_000 - (now() % 60_000); };
+  /** Надеть наряд по просьбе — и что из этого вышло: `asleep` — спит и не переодевается; `same` — уже в нём. */
+  async function dressHer(turn, feel, today, name = "") {
+    const before = await room.read(turn.actorId, today);
+    const worn = wearByClock(feel), current = wearNow(before, now()) ?? worn;
+    const wanted = ROOM_WEARS.includes(name) ? name : current === "home" ? "jacket" : "home";
+    if (herState(turn, feel, before, today).key === "сон") return { asleep: true, name: current, state: before };
+    const done = await room.wear(turn.actorId, { day: today, name: wanted, worn, until: wearUntil(zoneOf(turn)) });
+    return { asleep: false, same: Boolean(done.same), name: done.same ? current : wanted, state: done.state };
+  }
   /** Забота из мини-приложения — теми же словами, какими её сказали бы в чате: так она остаётся в переписке. */
   const ROOM_SAID = Object.freeze({ pet: "погладить Байта", feed: "покормить Байта", play: "поиграть с Байтом", tea: "налить тебе чаю", water: "полить Колючку" });
 
@@ -1957,9 +1978,21 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     await roomSky(turn);
     if (ROOM_POOL[asked.op]) {
       const done = await room.care(userId, asked.op, { day: today });
-      const text = roomLine(turn, done.peace ? "мириться" : `${ROOM_POOL[asked.op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`);
+      const text = roomLine(turn, carePool(asked.op, done));
       if (done.first) await roomCared(userId, turn);
       return tell(text || "Спасибо.");
+    }
+    // Чай на выбор (0.47.0): «налью тебе улун» — выбрать заварку (она запомнится) и налить.
+    if (asked.op.startsWith("brew")) {
+      await room.brew(userId, { day: today, kind: { brewoolong: "улун", brewmint: "мята", brewjasmine: "жасмин" }[asked.op] });
+      const done = await room.care(userId, "tea", { day: today });
+      if (done.first) await roomCared(userId, turn);
+      return tell(roomLine(turn, carePool("tea", done)) || "Спасибо.");
+    }
+    // Наряд по просьбе (0.47.0): «надень свитер», «надень куртку», «переоденься».
+    if (asked.op.startsWith("wear")) {
+      const done = await dressHer(turn, feel, today, { wearhome: "home", wearjacket: "jacket" }[asked.op] ?? "");
+      return tell(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${WEAR_WORD[done.name]}:${done.same ? "уже" : "готово"}`) || "Вот.");
     }
     if (asked.op === "hurt") {
       await room.scare(userId, { day: today });
@@ -2145,7 +2178,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
        * Она сейчас: чем занята (`key`), первая реплика и распорядок — все реплики её состояния, каждая со своим местом
        * (`herPose`); страница ведёт её от одной к другой и показывает слова той, что сейчас на рисунке.
        */
-      const herNow = (state = null) => {
+      const herNow = (state = null) => { const her = herBase(state), wear = wearNow(state, now()); return wear ? { ...her, wear } : her; };
+      /** То же без наряда: наряд по просьбе (0.47.0) добавляет `herNow` — он назван, пока она не переоденется сама. */
+      const herBase = (state = null) => {
         const { key, put, said, only } = herState(turn, feel, state, today);
         const lines = roomLines(turn, `она:${key}`);
         // Сценка дня поставила её саму («значит, манга» — она в кресле): первая реплика — сами слова исхода, на том
@@ -2198,6 +2233,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ...picture(visit.state),
           // 0.46.0. Лампа погашена (горит гирлянда); сколько ещё играет колонка, мс (0 — молчит).
           dark: visit.state.dark === true, music: musicNow(visit.state, now()) ? Math.max(1000, MUSIC_MS - (now() - Number(visit.state.music))) : 0,
+          // 0.47.0. Какой чай ей наливают (жасмин, улун, мята). По этому полю страница узнаёт и сердце, которое умеет
+          // «переодеться» и «выбрать чай»: прежнее его не шлёт — и кнопок под рисунком нет.
+          brew: brewOf(visit.state),
           things: ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => ({ key: item.key, title: item.title, line: roomLine(turn, `вещь:${item.key}`, things.vars) })),
           lamp: things.keys.includes("абажур") ? colourHex(things.vars["цвет"]) : "",
           drawing: things.keys.includes("рисунок") ? things.drawing : "",
@@ -2209,7 +2247,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       }
       if (ROOM_POOL[op]) {
         const done = await room.care(userId, op, { day: today });
-        const raw = roomLine(turn, done.peace ? "мириться" : `${ROOM_POOL[op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`) || "Спасибо.";
+        const raw = roomLine(turn, carePool(op, done)) || "Спасибо.";
         if (done.first) await roomCared(userId, turn);
         // Первая такая забота за день остаётся в переписке: на «он наелся?» модель ответит, зная, что его кормили.
         if (!done.again && !done.early) await keepThread(turn, ROOM_SAID[op], raw);
@@ -2243,6 +2281,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const raw = roomLine(turn, done.again ? "полка:ещё" : "полка") || "Возьму книгу.";
         if (!done.again) await keepThread(turn, "[в комнате] предложил тебе почитать", raw);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), taken: true, again: Boolean(done.again), her: herNow(done.state), ...stageNote() };
+      }
+      if (op === "wear") {
+        // Наряд по просьбе (идея 157, 0.47.0): из нарисованных — куртка и свитер. Без названия — другой, не тот,
+        // что на ней. Держится, пока она не переоденется сама (в пять, в шесть вечера, перед сном). Страница играет
+        // ту же сцену у шкафа, что при смене часа: `line` — слова на пути к шкафу, `back` — по возвращении.
+        const done = await dressHer(turn, feel, today, String(input?.wear ?? ""));
+        const word = WEAR_WORD[done.name];
+        if (done.asleep || done.same) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${word}:уже`) || "Не сейчас."), wear: done.name, changed: false };
+        const back = roomLine(turn, `наряд:${word}:готово`) || "Вот.";
+        await keepThread(turn, `[в комнате] попросил тебя надеть ${word === "свитер" ? "свитер" : "куртку"}`, back);
+        return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `наряд:${word}`) || "Сейчас переоденусь."), back: spoken(back), wear: done.name, changed: true, her: herNow(done.state) };
+      }
+      if (op === "brew") {
+        // Чай на выбор (идея 166, 0.47.0): жасмин, улун или мята — что ей наливать; запоминается. Без названия —
+        // следующий по кругу. Сам чай наливает кнопка «Чай»: её слова тогда — о том чае, что выбран.
+        const done = await room.brew(userId, { day: today, kind: String(input?.kind ?? "") });
+        return { ok: true, do: op, build: BUILD, brew: done.kind, line: spoken(roomLine(turn, `заварка:${done.kind}`) || `Теперь — ${done.kind}.`) };
       }
       if (op === "call") {
         // Позвать Байта (идея 162, 0.47.0): нажали на ковёр — он подходит и садится рядом; позвали ещё раз, пока он
