@@ -21,6 +21,13 @@ const DAY = 24 * HOUR;
 const hashOf = (text) => { let hash = 2166136261; for (const char of String(text)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0; return hash; };
 
 export const ROOM_KEY = (userId) => `heart:room:${userId}`;
+/** Журнал ошибок страницы комнаты (0.49.0): последние тридцать записей от всех, без имён — место, код, короткий текст. */
+export const ROOM_OOPS_KEY = "heart:roomlog";
+export const OOPS_KEEP = 30;
+/** Отчёт страницы принимается не чаще раза в десять минут от человека. */
+export const OOPS_EVERY_MS = 10 * 60_000;
+/** Текст отчёта: без адресов, длинных чисел и строк, похожих на ключи, — то же, что вычищает сама страница (`logic.scrub`). */
+export const tidyNote = (value, limit = 140) => String(value ?? "").replace(/https?:\/\/\S+/gu, "…").replace(/[A-Za-z0-9_%+\/=-]{24,}/gu, "…").replace(/\d{6,}/gu, "…").replace(/\s+/gu, " ").trim().slice(0, limit);
 /** Кактус поливают не чаще раза в пять дней: раньше — «ей пока хватит». */
 export const WATER_EVERY_MS = 5 * DAY;
 /** Сколько Байт помнит, что его гладили, кормили или с ним играли: потом он снова сам по себе. */
@@ -236,6 +243,8 @@ const RULES = Object.freeze([
   ["water", /^(?:можно\s+)?(?:я\s+)?(?:полить|полью|поливаю|полей|полил|полила)\s+(?:твой\s+|твою\s+|свой\s+|свою\s+)?(?:кактус|колючку|кактусик)(?:\s+можно)?$/u],
   // «Что делаешь?» (0.48.0): отвечает её день — то же занятие, что на рисунке комнаты в эту минуту.
   ["busy", /^(?:а\s+)?(?:ты\s+)?(?:что|чо|че|шо|чем)\s+(?:ты\s+)?(?:сейчас\s+)?(?:делаешь|делаеш|поделываешь|занята|занимаешься)(?:\s+сейчас)?$/u],
+  // Журнал ошибок страницы (0.49.0): что прислала страница комнаты — хозяину.
+  ["oops", /^(?:покажи\s+|какие\s+)?(?:ошибки|сбои|журнал(?:\s+ошибок)?)\s+(?:в\s+)?(?:комнат[ыеу]|страницы(?:\s+комнаты)?|мини\s?приложения)$/u],
 ]);
 
 /**
@@ -715,24 +724,90 @@ export const QUIET_MS = 25 * 60_000;
 export const quietLeft = (state, at) => { const from = Number(state?.quiet?.at), ms = Number(state?.quiet?.ms); return from > 0 && ms > 0 && at >= from && at - from < ms ? ms - (at - from) : 0; };
 /** Сколько Байт «тут» после зова (0.47.0): позвали ещё раз за эти полминуты — он убегает. */
 export const CALL_MS = 30_000;
+/** Сколько помнится номер действия страницы (0.49.0) и сколько их хранится в записи. */
+export const OPS_KEEP_MS = 3 * 60_000;
+export const OPS_MAX = 16;
+/** Предел частоты для мини-приложения: столько действий за двадцать секунд пальцем не сделать. */
+export const RUSH_MS = 20_000;
+export const RUSH_MAX = 12;
+
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
   const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, wear: null, brew: "", quiet: null, open: 0, dress: null, seen: [], scene: null, near: 0, loot: [] });
-
-  /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
-  async function read(userId, day = "") {
-    let saved = null;
-    if (usable()) { try { saved = await store.get(ROOM_KEY(userId)); } catch { saved = null; } }
-    const state = { ...blank(), ...(saved && typeof saved === "object" ? saved : {}) };
+  /** Запись как она лежит → состояние: чего нет — из пустой записи, списки — списками, счётчики дня — только за `day`. */
+  const shaped = (saved, day = "") => {
+    const state = { ...blank(), ...(saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {}) };
+    delete state.lost;
     state.seen = Array.isArray(state.seen) ? state.seen : [];
     state.loot = Array.isArray(state.loot) ? state.loot.filter(key => typeof key === "string").slice(-SCENES.length) : [];
     state.done = state.done && typeof state.done === "object" && (!day || state.day === day) ? state.done : {};
     return state;
+  };
+
+  /**
+   * Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). `lost: true` (0.49.0) — память
+   * не ответила: это не «новая комната», и писать поверх нельзя. До 0.49.0 сбой чтения выглядел пустой записью, и
+   * следующая же запись ложилась поверх настоящей — дни, забота, вещи и трофеи стирались.
+   */
+  async function read(userId, day = "") {
+    let saved = null, lost = false;
+    if (usable()) {
+      try {
+        if (typeof store.getChecked === "function") { const got = await store.getChecked(ROOM_KEY(userId)); if (got?.ok) saved = got.value; else lost = true; }
+        else saved = await store.get(ROOM_KEY(userId));
+      } catch { lost = true; }
+    }
+    const state = shaped(saved, day);
+    return lost ? { ...state, lost: true } : state;
   }
-  async function write(userId, state) {
-    if (!usable()) return false;
-    try { return await store.set(ROOM_KEY(userId), state) !== false; } catch { return false; }
+  /**
+   * Правка записи (0.49.0). `change(state)` получает самую свежую запись и возвращает новую — или `null`: «менять
+   * нечего». Пишется поверх того, что лежит сейчас (`store.update`): две правки в одну секунду — страница и чат, два
+   * телефона — не затирают друг друга. Память не ответила на чтение — не пишется ничего (`lost`). Хранилища нет
+   * вовсе — правка считается, но не пишется (`saved: false`): комната отвечает и без памяти.
+   * `change` может быть вызвана несколько раз и не должна делать ничего, кроме расчёта.
+   */
+  async function amend(userId, day, change) {
+    let before = null, next = null, called = false;
+    const apply = (saved) => { called = true; before = shaped(saved, day); next = change(before) ?? null; return next; };
+    if (!usable()) { apply(null); return { state: next ?? before, saved: false, lost: false }; }
+    if (typeof store.update === "function") {
+      let saved = false;
+      try { saved = await store.update(ROOM_KEY(userId), apply) === true; } catch { saved = false; }
+      if (!called) return { state: shaped(null, day), saved: false, lost: true };
+      return next == null ? { state: before, saved: true, lost: false } : { state: next, saved, lost: false };
+    }
+    const seen = await read(userId, day);
+    if (seen.lost) return { state: seen, saved: false, lost: true };
+    apply(seen);
+    if (next == null) return { state: before, saved: true, lost: false };
+    let saved = false;
+    try { saved = await store.set(ROOM_KEY(userId), next) !== false; } catch { saved = false; }
+    return { state: next, saved, lost: false };
   }
+  /** Номера действий, которые ещё помнятся: `[номер, когда]`. */
+  const opsOf = (state, at) => (Array.isArray(state.ops) ? state.ops : []).filter(op => Array.isArray(op) && at - Number(op[1]) >= 0 && at - Number(op[1]) < OPS_KEEP_MS).slice(-OPS_MAX);
+  /**
+   * Действие из мини-приложения (0.49.0). `id` — номер действия, его придумывает страница: ответ не дошёл, и она
+   * повторила запрос — тот же номер второй раз ничего не меняет (`repeat`). Без номера повтор после тайм-аута
+   * переключал лампу, музыку, окно и тихий час обратно, а Байт «удирал» от второго зова. `limit` — предел частоты
+   * (`slow`): страница ждёт ответа на каждое нажатие, так что упереться в него может только скрипт.
+   */
+  async function act(userId, day, { id = "", limit = false } = {}, change) {
+    const at = now();
+    let repeat = false, slow = false;
+    const done = await amend(userId, day, (state) => {
+      repeat = false; slow = false;
+      const ops = id || limit ? opsOf(state, at) : [];
+      if (id && ops.some(op => op[0] === id)) { repeat = true; return null; }
+      if (limit && ops.filter(op => at - Number(op[1]) < RUSH_MS).length >= RUSH_MAX) { slow = true; return null; }
+      const next = change(state, at);
+      return next && (id || limit) ? { ...next, ops: [...ops, [id, at]].slice(-OPS_MAX) } : next;
+    });
+    return { ...done, repeat, slow };
+  }
+  /** Чем кончилась запись — для того, кто звал: легло ли, ответила ли память, повтор ли это, не слишком ли часто. */
+  const flags = (done) => ({ saved: done.saved, ...(done.lost ? { lost: true } : {}), ...(done.repeat ? { repeat: true } : {}), ...(done.slow ? { slow: true } : {}) });
 
   /**
    * Человек зашёл. `keys` — вещи, которые у него сейчас есть (`itemsFor`); `null` — о вещах в этот раз не
@@ -741,22 +816,24 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
    * это заход вообще, `scene` — сценка, если сегодня её ещё не было.
    */
   async function visit(userId, { day, keys = null, scenes = false, sky = "" } = {}) {
-    const state = await read(userId, day);
-    const first = !state.n;
-    // Сезонная вещь уходит и возвращается: о ёлке она скажет и через год.
-    const kept = keys ? state.seen.filter(key => keys.includes(key)) : state.seen;
-    // О новом — не больше двух вещей за раз; праздничные — первыми: их день короткий, завтра о них говорить поздно.
-    const festive = (key) => (ITEMS.find(item => item.key === key)?.feast ? 0 : 1);
-    const fresh = keys ? keys.filter(key => !kept.includes(key)).sort((one, two) => festive(one) - festive(two)).slice(0, NEWS_AT_ONCE) : [];
-    const offered = scenes && state.scene?.day !== day ? sceneFor(userId, day, sky) : null;
-    const next = {
-      ...state, at: state.at || now(), near: now(), n: state.n + 1, day, done: state.done, seen: [...kept, ...fresh],
-      ...(offered ? { scene: { day, key: offered.key, pick: null } } : {}),
-      // Что надеть днём, она решает один раз — при первом заходе к ней в этот день, по небу в эту минуту (0.48.0).
-      ...(sky && state.dress?.day !== day ? { dress: { day, name: dressFor(sky) } } : {}),
-    };
-    const saved = await write(userId, next);
-    return { state: next, first, fresh, scene: saved ? offered : null, saved };
+    let info = { first: false, fresh: [], offered: null };
+    const done = await amend(userId, day, (state) => {
+      const first = !state.n;
+      // Сезонная вещь уходит и возвращается: о ёлке она скажет и через год.
+      const kept = keys ? state.seen.filter(key => keys.includes(key)) : state.seen;
+      // О новом — не больше двух вещей за раз; праздничные — первыми: их день короткий, завтра о них говорить поздно.
+      const festive = (key) => (ITEMS.find(item => item.key === key)?.feast ? 0 : 1);
+      const fresh = keys ? keys.filter(key => !kept.includes(key)).sort((one, two) => festive(one) - festive(two)).slice(0, NEWS_AT_ONCE) : [];
+      const offered = scenes && state.scene?.day !== day ? sceneFor(userId, day, sky) : null;
+      info = { first, fresh, offered };
+      return {
+        ...state, at: state.at || now(), near: now(), n: state.n + 1, day, done: state.done, seen: [...kept, ...fresh],
+        ...(offered ? { scene: { day, key: offered.key, pick: null } } : {}),
+        // Что надеть днём, она решает один раз — при первом заходе к ней в этот день, по небу в эту минуту (0.48.0).
+        ...(sky && state.dress?.day !== day ? { dress: { day, name: dressFor(sky) } } : {}),
+      };
+    });
+    return { state: done.state, first: info.first, fresh: info.fresh, scene: done.saved ? info.offered : null, ...flags(done) };
   }
 
   /**
@@ -764,144 +841,147 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
    * меньше пяти дней назад (вода не засчитана); `peace` — Байта перед этим пугали, и это примирение;
    * `first` — первая забота за этот день: её и считают в отношения.
    */
-  async function care(userId, op, { day } = {}) {
+  async function care(userId, op, { day, id = "", limit = false } = {}) {
     if (!CARE.includes(op)) return { ok: false, code: "unknown" };
-    const state = await read(userId, day);
-    const at = now();
-    if (op === "water" && state.water && at - state.water < WATER_EVERY_MS) { await write(userId, { ...state, near: at }); return { ok: true, early: true, again: true, first: false, state }; }
-    const again = (Number(state.done[op]) || 0) > 0;
-    // Байта пугали, а теперь пришли с лаской: это примирение, а не «ещё раз».
-    const peace = state.last === "hurt" && at - Number(state.lastAt) < FRESH_MS && (op === "pet" || op === "feed" || op === "play");
-    const first = state.cared !== day;
-    const next = {
-      ...state, at: state.at || at, near: at, day, done: { ...state.done, [op]: (Number(state.done[op]) || 0) + 1 },
-      // Когда ей налили чай: час после этого она с кружкой, чем бы ни была занята (`herKey`, `TEA_WARM_MS`).
-      ...(op === "water" ? { water: at } : {}), ...(op === "tea" ? { tea: at } : {}), ...(op === "tea" || op === "water" || op === "pat" ? {} : { last: op, lastAt: at }),
-      ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}),
-    };
-    const saved = await write(userId, next);
-    return { ok: true, early: false, again, peace, first: first && saved, state: next, saved };
+    let info = { early: false, again: false, peace: false, first: false };
+    const done = await act(userId, day, { id, limit }, (state, at) => {
+      if (op === "water" && state.water && at - state.water < WATER_EVERY_MS) { info = { early: true, again: true, peace: false, first: false }; return { ...state, near: at }; }
+      const again = (Number(state.done[op]) || 0) > 0;
+      // Байта пугали, а теперь пришли с лаской: это примирение, а не «ещё раз».
+      const peace = state.last === "hurt" && at - Number(state.lastAt) < FRESH_MS && (op === "pet" || op === "feed" || op === "play");
+      const first = state.cared !== day;
+      info = { early: false, again, peace, first };
+      return {
+        ...state, at: state.at || at, near: at, day, done: { ...state.done, [op]: (Number(state.done[op]) || 0) + 1 },
+        // Когда ей налили чай: час после этого она с кружкой, чем бы ни была занята (`herKey`, `TEA_WARM_MS`).
+        ...(op === "water" ? { water: at } : {}), ...(op === "tea" ? { tea: at } : {}), ...(op === "tea" || op === "water" || op === "pat" ? {} : { last: op, lastAt: at }),
+        ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}),
+      };
+    });
+    if (info.early) return { ok: true, early: true, again: true, first: false, state: done.state, ...flags(done) };
+    return { ok: true, early: false, again: info.again, peace: info.peace, first: info.first && done.saved, state: done.state, ...flags(done) };
   }
 
   /**
    * Ей предложили почитать (нажали на полку с книгами, 0.45.0): отметка времени — полчаса после этого она в кресле
    * с книгой (`READ_MS`; чай, налитый позже, сильнее). `again` — она уже читает. В отношения не идёт: это не забота.
    */
-  async function book(userId, { day } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const again = Number(state.book) > 0 && at - Number(state.book) < READ_MS;
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, book: again ? state.book : at };
-    return { ok: true, again, state: next, saved: await write(userId, next) };
+  async function book(userId, { day, id = "", limit = false } = {}) {
+    let again = false;
+    const done = await act(userId, day, { id, limit }, (state, at) => {
+      again = Number(state.book) > 0 && at - Number(state.book) < READ_MS;
+      return { ...state, at: state.at || at, near: at, day, done: state.done, book: again ? state.book : at };
+    });
+    return { ok: true, again, state: done.state, ...flags(done) };
   }
 
   /**
    * Лампа (нажали на неё, 0.46.0): свет гаснет — остаётся гирлянда — или загорается снова. Запоминается, пока не
    * нажмут ещё раз: `dark`. В отношения не идёт: это не забота.
    */
-  async function lamp(userId, { day } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, dark: state.dark !== true };
-    return { ok: true, dark: next.dark, state: next, saved: await write(userId, next) };
+  async function lamp(userId, { day, id = "", limit = false } = {}) {
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, dark: state.dark !== true }));
+    return { ok: true, dark: done.state.dark === true, state: done.state, ...flags(done) };
   }
 
   /**
    * Колонка (нажали на неё, 0.46.0): три минуты играет музыка (`MUSIC_MS`), и она танцует; нажали, пока играет, —
    * выключили. `on` — играет ли после нажатия. В отношения не идёт: это не забота.
    */
-  async function music(userId, { day } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const playing = musicNow(state, at);
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, music: playing ? 0 : at };
-    return { ok: true, on: !playing, state: next, saved: await write(userId, next) };
+  async function music(userId, { day, id = "", limit = false } = {}) {
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, music: musicNow(state, at) ? 0 : at }));
+    return { ok: true, on: musicNow(done.state, now()), state: done.state, ...flags(done) };
   }
 
   /**
    * Позвали Байта (нажали на ковёр, идея 162, 0.47.0): он подходит. `again` — зовут второй раз за полминуты
    * (`CALL_MS`): он убегает, и отметка стирается — в третий раз подойдёт снова. В отношения не идёт: это не забота.
    */
-  async function call(userId, { day } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const again = Number(state.call) > 0 && at - Number(state.call) >= 0 && at - Number(state.call) < CALL_MS;
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, call: again ? 0 : at };
-    return { ok: true, again, state: next, saved: await write(userId, next) };
+  async function call(userId, { day, id = "", limit = false } = {}) {
+    let again = false;
+    const done = await act(userId, day, { id, limit }, (state, at) => {
+      again = Number(state.call) > 0 && at - Number(state.call) >= 0 && at - Number(state.call) < CALL_MS;
+      return { ...state, at: state.at || at, near: at, day, done: state.done, call: again ? 0 : at };
+    });
+    return { ok: true, again, state: done.state, ...flags(done) };
   }
   /**
    * Посидеть рядом (идея 161, 0.47.0): тихий час — двадцать пять минут она читает рядом, Байт спит. Нажали, пока он
    * идёт, — закончили раньше. `on` — идёт ли после нажатия. В отношения не идёт: это не забота.
    */
-  async function quiet(userId, { day } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const running = quietLeft(state, at) > 0;
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, quiet: running ? null : { at, ms: QUIET_MS } };
-    return { ok: true, on: !running, state: next, saved: await write(userId, next) };
+  async function quiet(userId, { day, id = "", limit = false } = {}) {
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, quiet: quietLeft(state, at) > 0 ? null : { at, ms: QUIET_MS } }));
+    return { ok: true, on: quietLeft(done.state, now()) > 0, state: done.state, ...flags(done) };
   }
   /**
    * Наряд по просьбе (идея 157, 0.47.0): `name` — какой надеть; `worn` — в чём она была бы сейчас по часам; `until` —
    * когда она переоденется сама (тогда выбор кончается). `same` — она уже в нём. Просят то, что она надела бы и
    * сама, — выбор просто снимается. В отношения не идёт: это не забота.
    */
-  async function wear(userId, { day, name, worn, until } = {}) {
+  async function wear(userId, { day, name, worn, until, id = "", limit = false } = {}) {
     if (!WEARS.includes(name)) return { ok: false, code: "unknown" };
-    const state = await read(userId, day);
-    const at = now();
-    if ((wearNow(state, at) ?? worn) === name) return { ok: true, same: true, name, state };
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, wear: name === worn ? null : { name, until: Number(until) || 0 } };
-    return { ok: true, same: false, name, state: next, saved: await write(userId, next) };
+    let same = false;
+    const done = await act(userId, day, { id, limit }, (state, at) => {
+      same = (wearNow(state, at) ?? worn) === name;
+      return same ? null : { ...state, at: state.at || at, near: at, day, done: state.done, wear: name === worn ? null : { name, until: Number(until) || 0 } };
+    });
+    if (same && !done.repeat && !done.slow) return { ok: true, same: true, name, state: done.state, ...(done.lost ? { lost: true } : {}) };
+    return { ok: true, same: false, name, state: done.state, ...flags(done) };
   }
   /**
    * Чай на выбор (идея 166, 0.47.0): какой ей наливать — жасмин, улун или мяту; запоминается. `kind` не назван —
    * следующий по кругу. Сам чай наливает забота «tea»; это только выбор заварки.
    */
-  async function brew(userId, { day, kind = "" } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const before = brewOf(state);
-    const chosen = BREWS.includes(kind) ? kind : BREWS[(BREWS.indexOf(before) + 1) % BREWS.length];
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, brew: chosen };
-    return { ok: true, kind: chosen, same: chosen === before, state: next, saved: await write(userId, next) };
+  async function brew(userId, { day, kind = "", id = "", limit = false } = {}) {
+    let before = BREWS[0], chosen = BREWS[0];
+    const done = await act(userId, day, { id, limit }, (state, at) => {
+      before = brewOf(state);
+      chosen = BREWS.includes(kind) ? kind : BREWS[(BREWS.indexOf(before) + 1) % BREWS.length];
+      return { ...state, at: state.at || at, near: at, day, done: state.done, brew: chosen };
+    });
+    return { ok: true, kind: done.repeat || done.slow ? brewOf(done.state) : chosen, same: chosen === before, state: done.state, ...flags(done) };
   }
   /**
    * Окно (нажали на него, 0.48.0): открыто — слышна улица, закрыто — звуки дома. Открытым стоит час (`AIR_MS`);
    * нажали, пока открыто, — закрыли. `open` — открыто ли после нажатия. В отношения не идёт: это не забота.
    */
-  async function air(userId, { day } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, open: airNow(state, at) ? 0 : at };
-    return { ok: true, open: next.open > 0, state: next, saved: await write(userId, next) };
+  async function air(userId, { day, id = "", limit = false } = {}) {
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, open: airNow(state, at) ? 0 : at }));
+    return { ok: true, open: airNow(done.state, now()), state: done.state, ...flags(done) };
   }
   /** Байта хотели обидеть: он прячется (до трёх часов — или пока не приласкают). В отношения это не идёт: игра. */
   async function scare(userId, { day } = {}) {
-    const state = await read(userId, day);
-    const at = now();
-    const next = { ...state, at: state.at || at, near: at, day, done: state.done, last: "hurt", lastAt: at };
-    return { ok: true, state: next, saved: await write(userId, next) };
+    const done = await act(userId, day, {}, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, last: "hurt", lastAt: at }));
+    return { ok: true, state: done.state, ...flags(done) };
   }
 
   /** Выбор в сценке дня: `pick` — 0 или 1. Сыграть можно один раз; чужую или вчерашнюю кнопку — нельзя. */
-  async function choose(userId, key, pick, { day } = {}) {
+  async function choose(userId, key, pick, { day, id = "", limit = false } = {}) {
     const scene = sceneByKey(key);
     if (!scene || (pick !== 0 && pick !== 1)) return { ok: false, code: "unknown" };
-    const state = await read(userId, day);
-    if (state.scene?.key !== key) return { ok: false, code: "gone" };
-    if (state.scene.pick != null) return { ok: false, code: "played", scene };
-    const first = state.cared !== day;
-    // Сыграл сценку — Байт унёс в коробку трофей: память о ней. Один на сценку, сколько бы раз она ни выпадала.
-    const loot = state.loot.includes(key) ? state.loot : [...state.loot, key];
-    const next = { ...state, day, done: state.done, loot, scene: { ...state.scene, pick, at: now() }, ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}) };
-    if (!await write(userId, next)) return { ok: false, code: "storage" };
-    return { ok: true, scene, label: scene.options[pick][0], outcome: scene.options[pick][1], first, state: next };
+    let fail = "", first = false;
+    const done = await act(userId, day, { id, limit }, (state) => {
+      fail = "";
+      if (state.scene?.key !== key) { fail = "gone"; return null; }
+      if (state.scene.pick != null) { fail = "played"; return null; }
+      first = state.cared !== day;
+      // Сыграл сценку — Байт унёс в коробку трофей: память о ней. Один на сценку, сколько бы раз она ни выпадала.
+      const loot = state.loot.includes(key) ? state.loot : [...state.loot, key];
+      return { ...state, day, done: state.done, loot, scene: { ...state.scene, pick, at: now() }, ...(first ? { cared: day, care: (Number(state.care) || 0) + 1 } : {}) };
+    });
+    if (done.repeat) return { ok: true, repeat: true, scene, state: done.state };
+    if (done.slow) return { ok: false, code: "slow" };
+    if (done.lost) return { ok: false, code: "storage" };
+    if (fail === "played") return { ok: false, code: "played", scene };
+    if (fail) return { ok: false, code: fail };
+    if (!done.saved) return { ok: false, code: "storage" };
+    return { ok: true, scene, label: scene.options[pick][0], outcome: scene.options[pick][1], first, state: done.state };
   }
 
   /** Был ли человек в комнате только что: тогда короткие слова — о ней. */
   const near = (state) => Number(state?.near) > 0 && now() - Number(state.near) >= 0 && now() - Number(state.near) < CONTEXT_MS;
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
-  async function look(userId, state) { return write(userId, { ...state, at: state.at || now(), near: now() }); }
+  async function look(userId) { return (await amend(userId, "", (state) => ({ ...state, at: state.at || now(), near: now() }))).saved; }
 
-  return { read, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look };
+  return { read, amend, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look };
 }

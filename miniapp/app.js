@@ -1,12 +1,15 @@
 /**
- * Комната Аи — страница (мини-приложение, сборка 0.44.0): нажатия, связь с сердцем, раскладка по разметке.
+ * Комната Аи — страница (мини-приложение): нажатия, связь с сердцем, раскладка по разметке.
  *
  * Что нарисовать — `scene.js`; что показать по ответу сердца — `logic.js` (оба проверяются тестами без браузера).
  * Здесь — только то, чему нужен браузер и Telegram:
  *   • связь: `Telegram.WebApp.Serverless.call("room", { do }, (err, result) => …)` — платформа сама прикладывает
  *     подпись Telegram, а функция `endpoints/room` получает проверенного человека;
  *   • открыта не из Telegram (нет подписи) — витрина: комната по часам устройства, забота понарошку;
- *   • ошибка связи — словами в её реплике и кнопкой «Попробовать ещё раз», а не пустым экраном;
+ *   • ошибка связи — словами в её реплике и кнопкой «Попробовать ещё раз», а не пустым экраном; с 0.49.0 кнопка
+ *     повторяет то же действие, не дошедший запрос страница повторяет сама (с тем же номером действия), а все
+ *     отказы ложатся в журнал ошибок — он открывается нажатием на строку «страница N» внизу;
+ *   • страница свёрнута (с 0.49.0) — все её часы стоят: своя жизнь, сверка, кадры, отсчёты, движение на рисунке;
  *   • её картинки (папка `her/`, с 0.40.0): грузится только та, что нужна сейчас; не загрузилась — она нарисована
  *     кодом, как раньше, а комната открывается в любом случае;
  *   • позы (с 0.41.0): картинок у состояния несколько — она меняет позу сама и от нажатия; следующая картинка
@@ -135,8 +138,11 @@ function settle(name, sprite) {
  * поза ещё тает, или она ещё идёт. Поэтому перерисовка ждёт конца перехода (`drawn.until`).
  */
 let frameTimer = 0;
+// Страница свёрнута (0.49.0): её часы стоят — никто никуда не идёт, ничего не перерисовывается, отсчёты ждут.
+let resting = false;
 function frameLater() {
   clearTimeout(frameTimer);
+  if (resting) return;
   frameTimer = setTimeout(() => {
     if (Date.now() < drawn.until) { frameLater(); return; }
     const frame = frameName(spriteOf(viewOf(state)));
@@ -201,7 +207,7 @@ function catStep() {
 let turnTimer = 0, lifeTurn = 0;
 function scheduleTurn() {
   clearTimeout(turnTimer);
-  if (!canTurn) return;
+  if (!canTurn || resting) return;
   turnTimer = setTimeout(() => {
     lifeTurn += 1;
     // По очереди: она, Байт. Кому идти некуда, тот ход пропускает — второй не ходит за двоих.
@@ -221,7 +227,7 @@ let tickTimer = 0, lookedAt = 0;
 const tickLeft = () => (state.clock ? state.clock.at + state.clock.left - Date.now() : state.demo && typeof leftOf === "function" ? leftOf() : null);
 function scheduleTick() {
   clearTimeout(tickTimer);
-  const left = canTick && state.ready ? tickLeft() : null;
+  const left = canTick && state.ready && !resting ? tickLeft() : null;
   if (left == null) return;
   // Через полторы секунды после границы: часы телефона и сердца могут расходиться.
   tickTimer = setTimeout(tick, Math.max(3_000, Math.min(REFRESH_MS, left + 1500)));
@@ -244,6 +250,11 @@ async function tick() {
     await play(changeOf(state, state.demo && typeof demoKept === "function" ? demoKept(state, fresh) : fresh));
     // Тихий час сверяется с сердцем: начали на другом устройстве, закончили раньше, страница была свёрнута.
     if (!state.demo) quietFor(state.quiet, state.quietEnd);
+    flush();
+  } else if (result?.ok !== true && !state.demo) {
+    // 0.49.0. Сверка не прошла: комната остаётся как была, внизу — «нет связи», запись — в журнал.
+    note("сверка", result?.code, result?.text);
+    if (typeof logic.transient === "function" && logic.transient(result) && !state.busy && !acting) { state = { ...state, down: true }; paint(); }
   }
   scheduleTick();
 }
@@ -566,9 +577,75 @@ function paint() {
   soundScene();
   $("foot").textContent = [
     state.next ? `Новая вещь появится через ${state.next} ${plural(state.next, "день", "дня", "дней")}` : "",
-    `страница ${PAGE}`, state.build ? `сердце ${state.build}` : "", state.demo ? "витрина" : "",
+    `страница ${PAGE}`, state.build ? `сердце ${state.build}` : "", state.demo ? "витрина" : "", state.down ? "нет связи: комната как была" : "",
   ].filter(Boolean).join(" · ");
+  app.dataset.down = state.down ? "1" : "";
+  paintOops();
   theme();
+}
+
+// ── Журнал ошибок страницы (0.49.0) ──────────────────────────────────────────
+// Последние двадцать отказов — только на этом телефоне (`localStorage`): место, код и короткий текст, без подписи
+// Telegram, адресов и длинных чисел (`logic.scrub`). Открывается нажатием на строку «страница N» внизу: владелец
+// проверяет с телефона, и снимок этого журнала — то, что он может прислать. Три последние записи один раз за заход
+// уходят сердцу (`do: "oops"`) — хозяин видит их по словам «ошибки комнаты».
+const OOPS_KEY = "ai-room-oops";
+const canNote = typeof logic.oopsAdd === "function";
+let oops = (() => { try { const kept = JSON.parse(localStorage.getItem(OOPS_KEY) ?? "[]"); return Array.isArray(kept) ? kept.slice(-20) : []; } catch { return []; } })();
+let unsent = [], reported = false;
+const stamp = (at) => { const date = new Date(at), two = (value) => String(value).padStart(2, "0"); return `${two(date.getDate())}.${two(date.getMonth() + 1)} ${two(date.getHours())}:${two(date.getMinutes())}`; };
+function paintOops() {
+  const box = $("oops");
+  if (!box || box.hidden) return;
+  box.textContent = [
+    `Журнал ошибок: страница ${PAGE}${state.build ? `, сердце ${state.build}` : ""}. Хранится только на этом телефоне.`,
+    ...(oops.length ? oops.map(item => `${stamp(item.at)} · ${item.where} · ${item.code}${item.n > 1 ? ` ×${item.n}` : ""} · ${item.text}`) : ["Ошибок не было."]),
+  ].join("\n");
+}
+function note(where, code, words) {
+  if (!canNote) return;
+  oops = logic.oopsAdd(oops, where, code ?? "error", words ?? "", Date.now());
+  unsent = [...unsent, oops[oops.length - 1]].slice(-3);
+  try { localStorage.setItem(OOPS_KEY, JSON.stringify(oops)); } catch { /* память телефона закрыта: журнал живёт, пока открыта страница */ }
+  paintOops();
+}
+/** Отчёт хозяину: один раз за заход, когда связь есть. Без того, кто зашёл: сердце записывает только «хозяин или гость». */
+function flush() {
+  if (reported || !unsent.length || state.demo || !canCall || !state.once) return;
+  reported = true;
+  const items = unsent.map(({ where, code, text }) => ({ where, code, text }));
+  unsent = [];
+  call({ do: "oops", page: PAGE, items });
+}
+window.addEventListener("error", (event) => note("страница", "script", `${event.message ?? ""} ${String(event.filename ?? "").split("/").pop()}:${event.lineno ?? ""}`));
+window.addEventListener("unhandledrejection", (event) => note("страница", "promise", String(event.reason?.message ?? event.reason ?? "")));
+
+// ── Действие — сердцу (0.49.0) ───────────────────────────────────────────────
+// У каждого действия свой номер (`id`), его придумывает страница. Ответ не дошёл за срок или связь оборвалась —
+// запрос уходит ещё раз, сам, с тем же номером: сердце, которое номера помнит (`state.once`), дважды его не
+// выполнит, а ответит комнатой как она есть (`repeat`). Прежнему сердцу повтор не шлётся: оно выполнило бы дважды.
+// `redo` — как повторить это действие кнопкой «Попробовать ещё раз».
+const newId = () => Array.from({ length: 10 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
+let again = null;
+async function send(input, redo = null) {
+  const id = newId(), name = String(input.do);
+  let result = await call({ ...input, id });
+  if (result?.ok !== true && state.once && typeof logic.resend === "function" && logic.resend(result) && !document.hidden) {
+    note(name, result.code, `${result.text ?? ""} Повторяю сама.`);
+    await sleep(local && Number(params.resend) >= 50 ? Number(params.resend) : 1200);
+    result = await call({ ...input, id });
+  }
+  if (result?.ok === true) { again = null; state = { ...state, down: false }; flush(); } else { note(name, result?.code, result?.text); again = redo; }
+  return result;
+}
+/** Ответ на повтор уже сделанного действия: комната как она есть — она и показывается. Возвращает, был ли это повтор. */
+function repeated(result) {
+  if (result?.ok !== true || result.repeat !== true || typeof logic.applyRepeat !== "function") return false;
+  state = logic.applyRepeat(state, result, Date.now());
+  tuneFor(state.music);
+  quietFor(state.quiet, state.quietEnd);
+  paint();
+  return true;
 }
 
 /** Вызов функции сердца. Отвечает всегда: ошибка и молчание — тоже ответ, словами. */
@@ -602,6 +679,8 @@ function heart(id) {
   setTimeout(() => mark.remove(), 1200);
 }
 
+const RETRY_MS = Object.freeze(local && Number(params.retry) >= 50 ? [Number(params.retry)] : [5_000, 15_000, 40_000]);
+let retryTimer = 0, retries = 0;
 async function enter() {
   state = { ...state, retry: false, tone: "", said: "Дверь открывается…" };
   paint();
@@ -619,7 +698,8 @@ async function enter() {
     return;
   }
   const at = Date.now();
-  state = applyLook(state, await call({ do: "look" }), at);
+  const result = await call({ do: "look" });
+  state = applyLook(state, result, at);
   tuneFor(state.music);
   quietFor(state.quiet, state.quietEnd);
   lookedAt = Date.now();
@@ -627,6 +707,14 @@ async function enter() {
   buzz(state.ready ? "light" : "error");
   scheduleTick();
   scheduleTurn();
+  // 0.49.0. Не открылась из-за связи — страница пробует сама: через пять, пятнадцать и сорок секунд.
+  clearTimeout(retryTimer);
+  if (result?.ok === true) { retries = 0; flush(); return; }
+  note("вход", result?.code, result?.text);
+  if (typeof logic.transient === "function" && logic.transient(result) && retries < RETRY_MS.length && !resting) {
+    retryTimer = setTimeout(() => { if (!state.ready && !document.hidden) enter(); }, RETRY_MS[retries]);
+    retries += 1;
+  }
 }
 
 /** Погладить её по голове: её слова — от сердца (по тому, насколько вы близки); раз в день это ещё и шаг в отношениях. */
@@ -636,7 +724,8 @@ async function pat() {
   scheduleTurn();
   state = { ...state, busy: "pat" };
   paint();
-  const result = state.demo ? demoPat(state) : await call({ do: "pat" });
+  const result = state.demo ? demoPat(state) : await send({ do: "pat" }, () => pat());
+  if (repeated(result)) return;
   state = applyPat(state, result);
   paint();
   if (result?.ok !== true) { buzz("error"); return; }
@@ -653,7 +742,8 @@ async function book() {
   scheduleTurn();
   state = { ...state, busy: "book" };
   paint();
-  const result = state.demo ? demoBook(state) : await call({ do: "book" });
+  const result = state.demo ? demoBook(state) : await send({ do: "book" }, () => book());
+  if (repeated(result)) return;
   state = applyBook(state, result);
   paint();
   buzz(result?.ok === true ? "light" : "error");
@@ -704,7 +794,7 @@ function quietFor(left, words = "") {
   if (left > 0) {
     quietUntil = Date.now() + left;
     if (words) quietWords = words;
-    quietTimer = setInterval(() => { if (quietLeft() > 0) paintChips(); else { quietDone(); tick(); } }, 1000);
+    if (!resting) quietTimer = setInterval(() => { if (quietLeft() > 0) paintChips(); else { quietDone(); tick(); } }, 1000);
     return;
   }
   // Отсчёт шёл и вышел, пока страница была свёрнута: сердце уже говорит «не идёт» — её слова всё равно звучат.
@@ -716,7 +806,8 @@ async function sit() {
   scheduleTurn();
   state = { ...state, busy: "quiet" };
   paint();
-  const result = state.demo ? demoQuiet({ ...state, quiet: quietLeft() }) : await call({ do: "quiet" });
+  const result = state.demo ? demoQuiet({ ...state, quiet: quietLeft() }) : await send({ do: "quiet" }, () => sit());
+  if (repeated(result)) return;
   state = applyQuiet(state, result);
   quietFor(state.quiet, state.quietEnd);
   paint();
@@ -729,7 +820,8 @@ async function dress() {
   const before = state;
   state = { ...state, busy: "wear" };
   paint();
-  const result = state.demo ? demoWear(before) : await call({ do: "wear" });
+  const result = state.demo ? demoWear(before) : await send({ do: "wear" }, () => dress());
+  if (repeated(result)) return;
   const change = applyWear(before, result);
   if (change.kind !== "wardrobe") { state = change.state; paint(); buzz(result?.ok === true ? "light" : "error"); return; }
   state = before;
@@ -742,7 +834,8 @@ async function steep() {
   scheduleTurn();
   state = { ...state, busy: "brew" };
   paint();
-  const result = state.demo ? demoBrew(state) : await call({ do: "brew" });
+  const result = state.demo ? demoBrew(state) : await send({ do: "brew" }, () => steep());
+  if (repeated(result)) return;
   state = applyBrew(state, result);
   paint();
   buzz(result?.ok === true ? "light" : "error");
@@ -757,7 +850,8 @@ async function beckon() {
   scheduleTurn();
   state = { ...state, busy: "call" };
   paint();
-  const result = state.demo ? demoCall(state) : await call({ do: "call" });
+  const result = state.demo ? demoCall(state) : await send({ do: "call" }, () => beckon());
+  if (repeated(result)) return;
   state = applyCall(state, result);
   // Витрина помнит, что он подошёл на зов, — чтобы второй зов его спугнул.
   if (state.demo && result?.cat?.called === true && state.cat) state = { ...state, cat: { ...state.cat, called: true } };
@@ -772,7 +866,8 @@ async function lamp() {
   scheduleTurn();
   state = { ...state, busy: "lamp" };
   paint();
-  const result = state.demo ? demoLamp(state) : await call({ do: "lamp" });
+  const result = state.demo ? demoLamp(state) : await send({ do: "lamp" }, () => lamp());
+  if (repeated(result)) return;
   state = applyLamp(state, result);
   paint();
   buzz(result?.ok === true ? "light" : "error");
@@ -790,7 +885,8 @@ async function music() {
   if (!soundOn && canSound && !(state.music > 0)) await startSound();
   state = { ...state, busy: "music" };
   paint();
-  const result = state.demo ? demoMusic(state) : await call({ do: "music" });
+  const result = state.demo ? demoMusic(state) : await send({ do: "music" }, () => music());
+  if (repeated(result)) return;
   state = applyMusic(state, result);
   paint();
   buzz(result?.ok === true ? "light" : "error");
@@ -830,7 +926,8 @@ async function air() {
   scheduleTurn();
   state = { ...state, busy: "window" };
   paint();
-  const result = state.demo ? demoWindow(state) : await call({ do: "window" });
+  const result = state.demo ? demoWindow(state) : await send({ do: "window" }, () => air());
+  if (repeated(result)) return;
   state = applyWindow(state, result);
   paint();
   buzz(result?.ok === true ? "light" : "error");
@@ -851,7 +948,8 @@ const TEA_ASK = "Какой налить? Жасмин, улун или мяту
 async function care(name, extra = {}) {
   state = { ...state, busy: name };
   paint();
-  const result = state.demo ? demoCare(state, name, extra.kind) : await call({ do: name, ...extra });
+  const result = state.demo ? demoCare(state, name, extra.kind) : await send({ do: name, ...extra }, () => care(name, extra));
+  if (repeated(result)) return;
   state = applyCare(state, name, result);
   paint();
   if (result?.ok !== true) { buzz("error"); return; }
@@ -904,7 +1002,8 @@ async function pick(index) {
   scheduleTurn();
   state = { ...state, busy: "pick" };
   paint();
-  const result = state.demo ? demoPick(state, index) : await call({ do: "pick", key: scene.key, pick: index });
+  const result = state.demo ? demoPick(state, index) : await send({ do: "pick", key: scene.key, pick: index }, () => pick(index));
+  if (repeated(result)) return;
   state = applyPick(state, result);
   paint();
   buzz(result?.ok === true ? "medium" : "error");
@@ -922,7 +1021,12 @@ $("sceneChoice").addEventListener("click", (event) => {
   const button = event.target instanceof Element ? event.target.closest("[data-pick]") : null;
   if (button) pick(Number(button.dataset.pick));
 });
-$("retry").addEventListener("click", () => enter());
+// «Попробовать ещё раз» (0.49.0): то действие, что не прошло; при входе — сам вход.
+$("retry").addEventListener("click", () => { const redo = again; again = null; if (redo && state.ready) redo(); else enter(); });
+// Журнал ошибок — по нажатию на строку «страница N».
+const showOops = () => { const box = $("oops"); if (!box) return; box.hidden = !box.hidden; $("foot").setAttribute("aria-expanded", String(!box.hidden)); paintOops(); };
+$("foot").addEventListener("click", showOops);
+$("foot").addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showOops(); } });
 $("quiet")?.addEventListener("click", () => sit());
 $("wear")?.addEventListener("click", () => dress());
 $("brew")?.addEventListener("click", () => steep());
@@ -943,15 +1047,40 @@ $("sound")?.addEventListener("click", async () => {
   if (!ok) { state = { ...state, tone: "warn", said: "Звук не включился: этот телефон не дал комнате звучать." }; paint(); }
 });
 if (canSound && soundKept()) document.addEventListener("pointerdown", () => { if (!soundOn) startSound().then(retune); }, { once: true });
-// Комнату свернули — звук и своя жизнь ждут; вернулись — продолжаются, а комната спрашивается заново, если
-// за это время сменился час или прошло больше минуты.
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { try { sound?.off(); } catch { /* звук не важнее комнаты */ } return; }
+// Комнату свернули — всё ждёт (0.49.0): звук, своя жизнь, сверка, кадры, отсчёт тихого часа, повтор входа и само
+// движение на рисунке (стили: `.resting`). До 0.49.0 свёрнутая страница молчала и не спрашивала сердце, но
+// продолжала водить её и Байта, менять кадры и раз в секунду перерисовывать отсчёт. Вернулись — всё продолжается с
+// того, что есть на самом деле: сроки шли и без страницы, а комната спрашивается заново, если сменился час или
+// прошло больше минуты.
+function rest() {
+  resting = true;
+  for (const timer of [turnTimer, tickTimer, frameTimer, tuneTimer, retryTimer]) clearTimeout(timer);
+  clearInterval(quietTimer);
+  document.documentElement.classList.add("resting");
+  try { sound?.off(); } catch { /* звук не важнее комнаты */ }
+}
+function wake() {
+  if (!resting) return;
+  resting = false;
+  document.documentElement.classList.remove("resting");
   if (soundOn) startSound().then(retune);
   scheduleTurn();
-  const left = canTick && state.ready ? tickLeft() : null;
-  if (left != null && (left <= 0 || Date.now() - lookedAt > 60_000)) tick(); else scheduleTick();
-});
+  frameLater();
+  // Тихий час и музыка: срок шёл и без страницы — вышел, так вышел.
+  if (quietUntil > 0) quietFor(quietLeft(), quietWords);
+  if (tuneUntil > 0) { const left = tuneUntil - Date.now(); if (left > 0) tuneFor(left); else { tuneUntil = 0; state = { ...state, music: 0 }; paint(); } }
+  if (!state.ready) { if (!state.busy) enter(); return; }
+  const left = canTick ? tickLeft() : null;
+  if (left != null && (left <= 0 || Date.now() - lookedAt > 60_000 || state.down)) tick(); else scheduleTick();
+}
+document.addEventListener("visibilitychange", () => (document.hidden ? rest() : wake()));
+window.addEventListener("pagehide", rest);
+window.addEventListener("pageshow", () => { if (!document.hidden) wake(); });
+// Связь вернулась — страница не ждёт нажатия: открывает комнату или сверяется.
+window.addEventListener("online", () => { if (resting) return; if (!state.ready) enter(); else if (state.down) tick(); });
+window.addEventListener("offline", () => { if (state.ready && !state.down) { state = { ...state, down: true }; paint(); } });
+// Проверке в браузере (своя машина): идут ли часы страницы.
+if (local) window.roomClock = () => ({ resting, oops: oops.length, down: state.down === true });
 
 // «На главный экран»: кнопка видна там, где Telegram это умеет и где комнату туда ещё не добавили.
 (function homeScreen() {

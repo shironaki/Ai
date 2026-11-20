@@ -898,7 +898,8 @@ test("страница: ответ сердца раскладывается п�
   const closed = logic.applyLook(start, { ok: false, code: "off", text: "Комната сейчас закрыта." });
   assert.deepEqual([closed.ready, closed.said, closed.tone, closed.retry], [false, "Комната сейчас закрыта.", "warn", true]);
   const failed = logic.applyCare({ ...seen, busy: "pet" }, "pet", { ok: false, code: "storage", text: "" });
-  assert.deepEqual([failed.said, failed.tone, failed.busy, failed.retry], ["Что-то пошло не так. Попробуйте ещё раз.", "warn", "", false]);
+  // 0.49.0: «память не ответила» — отказ на время: под словами кнопка «ещё раз» (она повторит то же действие).
+  assert.deepEqual([failed.said, failed.tone, failed.busy, failed.retry, failed.down], ["Что-то пошло не так. Попробуйте ещё раз.", "warn", "", true, true]);
   assert.deepEqual(logic.viewOf(failed), logic.viewOf(seen));
   for (const broken of [null, undefined, "строка", 5, {}, { ok: "да" }]) assert.equal(logic.applyLook(start, broken).ready, false);
 
@@ -1403,7 +1404,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "11");
+  assert.equal(logic.PAGE, "12");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1600,7 +1601,9 @@ test("страница: папка уходит на платформу как �
   // С 0.47.0 — свет по солнцу, зов Байта, наряд по просьбе, чай на выбор, тихий час: с 360 до 380 КБ.
   // С 0.48.0 — рисунок по частям, её день на витрине, мимика (покачивание, румянец, взгляд на нажатие, «села —
   // встала»), выбор чая у чайника, окно: с 380 до 420 КБ. Звук — улица и дом, фон за стеклом: с 16 до 20 КБ.
-  assert.ok(total < 420_000, `страница весит ${total} байт — открываться должна сразу`);
+  // С 0.49.0 — номер действия и повтор запроса, журнал ошибок, часы страницы стоят, пока она свёрнута; слой головы,
+  // метки-эмоции, новые фигуры Байта, её вещи и подарки: с 420 до 470 КБ. Альбом — отдельным модулем, по нажатию.
+  assert.ok(total < 470_000, `страница весит ${total} байт — открываться должна сразу`);
   assert.ok(statSync(new URL("sound.js", folder)).size < 20_000, "звук — маленький модуль: шум и тон делает сам телефон");
   // Её картинки (0.40.0) — по модулю на спрайт, и ничего больше. Грузится только та, что нужна сейчас (и следующая
   // поза — заранее), поэтому мера у каждой своя; все вместе — чтобы папка не разбухала незаметно: предел растёт
@@ -1704,7 +1707,11 @@ test("страница: папка уходит на платформу как �
   const skied = new Set(classes);
   for (const part of PARTS) for (const sky of scene.SKIES) gather({ part, sky, her: null, things: [] });
   assert.deepEqual([...classes].filter(name => !skied.has(name)).sort(), SKY_CLASSES);
-  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "snow", "far", "near", "b0", "s0", "fx", ...scene.SCENE_FX.map(name => `fx-${name}`), ...SKY_STILL, ...CAT_SHAPES]);
+  // 0.49.0. Её картинка ещё в пути — на её месте силуэт с тремя точками (первая точка — без своей задержки).
+  const waited = new Set(classes);
+  gather({ part: "день", her: { pose: "desk", key: "дело" }, things: [] }, { sprites: {} });
+  assert.deepEqual([...classes].filter(name => !waited.has(name)).sort(), ["coming", "d0", "d1", "d2", "dot"]);
+  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "snow", "far", "near", "b0", "s0", "d0", "fx", ...scene.SCENE_FX.map(name => `fx-${name}`), ...SKY_STILL, ...CAT_SHAPES]);
   assert.deepEqual([...classes].filter(name => !styled.has(name) && !still.has(name)).sort(), [], "класс в рисунке есть, а правила в стилях нет");
   // «fading» ставит не рисунок, а сама страница — на копию прежнего слоя: она тает поверх нового, когда час или
   // погода сменились при открытой комнате (0.44.0).

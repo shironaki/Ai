@@ -2033,6 +2033,14 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   };
 }
 /**
+ * Её картинка ещё в пути (0.49.0): на её месте — мягкий силуэт и три точки, чтобы было видно, что она появляется, а
+ * не пропала. До шести секунд (потом её рисует код); картинка пришла — силуэт сменяется ею.
+ */
+function herComing(x) {
+  const dots = [-10, 0, 10].map((dx, index) => `<circle class="dot d${index}" cx="${n(x + dx)}" cy="330" r="3.2" fill="#ffffff"/>`).join("");
+  return { y: FEET, front: `<g class="coming" role="img" aria-label="Аи появляется"><ellipse cx="${n(x)}" cy="${FEET - 3}" rx="34" ry="6" fill="#1a0f1e" opacity="0.2"/><path d="M${n(x - 24)} ${FEET - 4} q-6 -170 4 -262 a20 23 0 1 1 40 0 q10 92 4 262 z" fill="#ffffff" opacity="0.14"/>${dots}</g>` };
+}
+/**
  * Её нет в комнате: ушла к шкафу переодеться. На её месте — надпись «*переодевается*» (так просил владелец);
  * `delay` — через сколько секунд надпись проявится: пока она идёт к двери, надписи ещё нет.
  */
@@ -2367,7 +2375,7 @@ function insideOf(view = {}, options = {}) {
   const ajar = fx.has("window") || fx.has("puddle") || view.open === true;
   // Каждая перемена от сценки — своей группой с именем: по нему её находят проверки страницы.
   const fxShown = (name, body, when = fx.has(name)) => (when ? `<g class="fx fx-${name}">${body()}</g>` : "");
-  const { loaded, name, sprite, ahead, pose, stand, spot, shape: petShape } = cast(view, options);
+  const { loaded, name, sprite, waits, ahead, pose, stand, spot, shape: petShape } = cast(view, options);
   // Байт: `options.catWas` — где он был на прежнем рисунке: перешёл — дойдёт шагом.
   const catWas = options?.catWas && typeof options.catWas === "object" ? options.catWas : null;
   const pet = view.cat ? cat(g, f, view.cat, pose, spot, catWas) : null;
@@ -2387,7 +2395,8 @@ function insideOf(view = {}, options = {}) {
   const she = sprite ? herPainted(g, c, f, part, name, sprite, stand.x, door ?? was, walker, frame, view.her?.face)
     // Её на рисунке нет, а только что была: уходит к шкафу, за левый край.
     : view.her?.away === true ? (before ? herLeaving(g, part, before, walker) : { note: changingNote() })
-      : pose ? her(g, c, f, pose, view.her.key, view) : {};
+      // Картинка заказана и ещё не пришла — силуэт с точками (0.49.0); иначе она нарисована кодом.
+      : pose ? her(g, c, f, pose, view.her.key, view) : waits && stand ? herComing(stand.x) : {};
   // Плед на ней — значит, на кресле его нет: это картинки «устала» и «спит».
   const plaidOnHer = sprite ? plaidWorn(name) : pose === "lie" || pose === "nap" || pose === "chair" || pose === "read";
   // Байт замечает, что она подошла (0.48.0, «реакция Байта на приближение Аи»): она дошла шагом и встала рядом — он

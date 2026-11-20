@@ -72,7 +72,7 @@ import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS 
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
-import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex,
+import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, sceneByKey, herPose, catPose, catAfter, colourHex,
   skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
   READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
@@ -1787,13 +1787,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   /** Долго не был (0.48.0): три дня без захода — и встречает она другими словами. */
   const AWAY_MS = 3 * 86_400_000;
   /** Надеть наряд по просьбе — и что из этого вышло: `asleep` — спит и не переодевается; `same` — уже в нём. */
-  async function dressHer(turn, feel, today, name = "") {
+  async function dressHer(turn, feel, today, name = "", once = {}) {
     const before = await room.read(turn.actorId, today);
     const worn = wornNow(turn, before, today), current = wearNow(before, now()) ?? worn;
+    if (before.lost) return { asleep: false, same: false, name: current, state: before, lost: true };
     const wanted = ROOM_WEARS.includes(name) ? name : current === "home" ? "jacket" : "home";
     if (herState(turn, feel, before, today).key === "сон") return { asleep: true, name: current, state: before };
-    const done = await room.wear(turn.actorId, { day: today, name: wanted, worn, until: wearUntil(turn, today) });
-    return { asleep: false, same: Boolean(done.same), name: done.same ? current : wanted, state: done.state };
+    const done = await room.wear(turn.actorId, { day: today, name: wanted, worn, until: wearUntil(turn, today), id: once.id ?? "", limit: once.limit === true });
+    // Что вышло с записью (0.49.0): не легла, память не ответила, повтор — решает тот, кто звал.
+    return { asleep: false, same: Boolean(done.same), name: done.same ? current : wanted, state: done.state, saved: done.saved, lost: done.lost === true, repeat: done.repeat === true, slow: done.slow === true };
   }
   /** Забота из мини-приложения — теми же словами, какими её сказали бы в чате: так она остаётся в переписке. */
   const ROOM_SAID = Object.freeze({ pet: "погладить Байта", feed: "покормить Байта", play: "поиграть с Байтом", tea: "налить тебе чаю", water: "полить Колючку" });
@@ -2049,6 +2051,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как слова о моей комнате — репетиция, ничего не пишу.");
+    // 0.49.0. Память комнаты не ответила на чтение: не «спасибо», а как есть — и поверх ничего не пишется.
+    const ROOM_DOWN = "Память комнаты сейчас не отвечает — ничего не запомнится. Загляните чуть позже.";
     // Сказанное о комнате остаётся в переписке: на «а почему он на шкафу?» модель ответит, зная, о чём речь.
     const tell = async (text, kept = text, extra = null) => {
       const sent = await say(turn, voiced(turn, text), extra ? { extra, quiet: true } : {});
@@ -2071,12 +2075,24 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Что за её окном: строки запасов с пометками погоды говорятся только под своё небо.
     await roomSky(turn);
     // «Что делаешь?» (0.48.0): шаг её дня — тот же, что на рисунке, — и что по плану дальше. Заходом не считается.
+    // «Ошибки комнаты» (0.49.0): что прислала страница мини-приложения — хозяину, в личке. Заходом не считается.
+    if (asked.op === "oops") {
+      if (!owner(userId)) return turn.isPrivate ? say(turn, "Журнал страницы — для хозяина.") : null;
+      if (!turn.isPrivate) return say(turn, "Журнал страницы покажу в личке.");
+      const got = await store.getChecked(ROOM_OOPS_KEY).catch(() => ({ ok: false }));
+      if (!got?.ok) return say(turn, "Журнал сейчас не прочесть: память не отвечает.");
+      const list = (Array.isArray(got.value) ? got.value : []).slice(-8);
+      if (!list.length) return say(turn, "Страница комнаты ошибок не присылала.");
+      const zone = zoneOf(turn);
+      return say(turn, [`Последние ошибки страницы комнаты (${list.length}):`, ...list.map(item => `• ${[`${calendarDate(item.at, zone).slice(5).split("-").reverse().join(".")} ${localClock(item.at, zone)}`, `страница ${item.page || "?"}, сердце ${item.build || "?"}`, item.owner ? "у вас" : "у гостя", item.where, item.code, item.text].filter(Boolean).join(" · ")}`)].join("\n"));
+    }
     if (asked.op === "busy") {
       const mine = known ?? await room.read(userId, today);
       return tell([herLine(turn, feel, mine, today), herStep(turn, feel, mine, today).plan].filter(Boolean).join(" ") || "Занята своим: у меня тут целый распорядок.");
     }
     if (ROOM_POOL[asked.op]) {
       const done = await room.care(userId, asked.op, { day: today });
+      if (done.lost) return tell(ROOM_DOWN);
       const text = roomLine(turn, carePool(asked.op, done));
       if (done.first) await roomCared(userId, turn);
       return tell(text || "Спасибо.");
@@ -2085,12 +2101,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (asked.op.startsWith("brew")) {
       await room.brew(userId, { day: today, kind: { brewoolong: "улун", brewmint: "мята", brewjasmine: "жасмин" }[asked.op] });
       const done = await room.care(userId, "tea", { day: today });
+      if (done.lost) return tell(ROOM_DOWN);
       if (done.first) await roomCared(userId, turn);
       return tell(roomLine(turn, carePool("tea", done)) || "Спасибо.");
     }
     // Наряд по просьбе (0.47.0): «надень свитер», «надень куртку», «переоденься».
     if (asked.op.startsWith("wear")) {
       const done = await dressHer(turn, feel, today, { wearhome: "home", wearjacket: "jacket" }[asked.op] ?? "");
+      if (done.lost) return tell(ROOM_DOWN);
       return tell(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${WEAR_WORD[done.name]}:${done.same ? "уже" : "готово"}`) || "Вот.");
     }
     if (asked.op === "hurt") {
@@ -2099,20 +2117,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     const state = known ?? await room.read(userId, today);
     if (asked.op === "call") {
-      await room.look(userId, state);
+      await room.look(userId);
       return tell(roomLine(turn, "байт:зов") || "Байт дёрнул ухом. Идти не собирается.");
     }
     if (asked.op === "plant") {
-      await room.look(userId, state);
+      await room.look(userId);
       return tell(roomLine(turn, `колючка:${plantState({ water: state.water, at: now() })}`) || "Колючка на подоконнике. Колется.");
     }
     if (asked.op === "loot") {
-      await room.look(userId, state);
+      await room.look(userId);
       return tell(roomBox(turn, state).line);
     }
     const cat = catLineAt(turn, catKey(turn, state, feel, today), today);
     if (asked.op === "cat") {
-      await room.look(userId, state);
+      await room.look(userId);
       return tell(cat || "Байт где-то здесь. Он всегда где-то здесь.");
     }
     const things = await roomThings(turn, state);
@@ -2125,6 +2143,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     const sky = turn.sky;
     const visit = await room.visit(userId, { day: today, keys: turn.isPrivate ? things.keys : null, scenes: turn.isPrivate === true, sky });
+    if (visit.lost) return tell(ROOM_DOWN);
     // Мини-приложение: кнопка под ответом — только в личке (в группах Telegram таких кнопок не даёт).
     const page = turn.isPrivate === true ? await roomPage() : "";
     let door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
@@ -2215,6 +2234,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const spoken = (raw) => (raw ? voiced(turn, raw) : "");
       // Небо — первым: от него зависят слова об окне и все строки с пометками погоды.
       const sky = await roomSky(turn);
+      // 0.49.0. Номер действия от страницы: тот же номер второй раз ничего не меняет (ответ не дошёл — страница
+      // повторила запрос). И предел частоты: действия идут через `room.act`.
+      const once = { day: today, id: typeof input?.id === "string" && /^[a-z0-9]{6,20}$/u.test(input.id) ? input.id : "", limit: true };
+      const MEMORY_DOWN = "Память комнаты сейчас не отвечает. Загляните чуть позже — здесь всё останется как было.";
+      const NOT_KEPT = "Это не запомнилось: память комнаты сейчас не отвечает. Попробуйте ещё раз чуть позже.";
       /** Что сценка дня меняет на рисунке сейчас (`sceneLook`): Байт, она, сама комната. */
       const staged = (state) => sceneLook(state?.scene, { today, at: now() });
       /** Распорядок Байта: реплики его состояния — каждая со своей картинкой. Спит или прячется — с места не ходит. */
@@ -2327,13 +2351,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         };
       };
 
-      if (op === "look") {
-        // `again` — страница уже открыта и спрашивает заново (сменился час, прошло время): это не новый заход —
-        // счёт заходов, новости о вещах и приветствие не трогаются.
-        const again = input?.again === true;
+      // `again` — страница уже открыта и спрашивает заново (сменился час, прошло время): это не новый заход — счёт
+      // заходов, новости о вещах и приветствие не трогаются. `repeat` (0.49.0) — это ответ на повтор уже сделанного
+      // действия: вместо второго раза страница получает комнату как она есть.
+      const looking = async ({ again = false, repeat = false } = {}) => {
         const before = await room.read(userId, today);
+        if (before.lost) return refuse("storage", MEMORY_DOWN);
         const things = await roomThings(turn, before);
         const visit = again ? { state: before, fresh: [], first: false, saved: true } : await room.visit(userId, { day: today, keys: things.keys, scenes: true, sky });
+        if (visit.lost) return refuse("storage", MEMORY_DOWN);
         const next = ROOM_ITEMS.find(item => item.days && item.days > things.days);
         const she = herNow(visit.state);
         // Долго не был (0.48.0): три дня без захода — она встречает другими словами, с числом дней.
@@ -2344,7 +2370,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const stage = stageNow(turn, today), sinceStage = (minutesNow(turn) - stage.from) * 60_000;
         const asks = stage.name === "чай" && she.stage === "чай" && she.key === "уют" && herStep(turn, feel, visit.state, today).onPlan && sinceStage < 25 * 60_000 && !(Number(visit.state.tea) >= now() - sinceStage);
         return {
-          ok: true, do: op, build: BUILD, formal, ...(again ? { again: true } : {}),
+          // `once` (0.49.0): это сердце помнит номера действий — страница может сама повторить запрос, не дошедший за срок.
+          ok: true, do: "look", build: BUILD, formal, once: true, ...(again ? { again: true } : {}), ...(repeat ? { repeat: true } : {}),
           ...clockNow(visit.state, [she.left]),
           greet: spoken(greet), window: windowLine(turn, sky), sky, city: turn.skyReal === true,
           box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
@@ -2370,11 +2397,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           scene: visit.saved === false ? null : sceneOf(visit.state),
           first: visit.first,
         };
-      }
+      };
+      /**
+       * Что ответить вместо обычного ответа (0.49.0): повтор уже сделанного — комната как она есть; запись не легла
+       * или память не ответила — отказ словами (до 0.49.0 забота отвечала «сделано», даже когда не запомнилась);
+       * слишком часто — тоже отказ. `null` — всё в порядке.
+       */
+      const instead = async (done) => (done?.repeat ? looking({ again: true, repeat: true })
+        : done?.lost || done?.saved === false ? refuse("storage", NOT_KEPT)
+          : done?.slow ? refuse("slow", "Не так быстро: я не успеваю. Подождите несколько секунд.") : null);
+      // `await` — чтобы поломка внутри попала в общий `catch` ниже, а не ушла наружу отказом обещания.
+      if (op === "look") return await looking({ again: input?.again === true });
       if (ROOM_POOL[op]) {
         // Чай на выбор — у чайника (0.48.0): страница спрашивает, какой налить, и шлёт его вместе с заботой.
         if (op === "tea" && BREWS.includes(String(input?.kind ?? ""))) await room.brew(userId, { day: today, kind: String(input.kind) });
-        const done = await room.care(userId, op, { day: today });
+        const done = await room.care(userId, op, once);
+        { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, carePool(op, done)) || "Спасибо.";
         if (done.first) await roomCared(userId, turn);
         // Первая такая забота за день остаётся в переписке: на «он наелся?» модель ответит, зная, что его кормили.
@@ -2393,7 +2431,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (!who.owner && (who.level === "first" || who.level === "cold")) {
           return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "она:погладить:рано") || "Не так быстро. Сначала — чай и пара хороших разговоров."), again: false, shy: true, counted: false };
         }
-        const done = await room.care(userId, "pat", { day: today });
+        const done = await room.care(userId, "pat", once);
+        { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, `она:погладить${done.again ? ":ещё" : ""}`) || "…Ладно. Мне нравится.";
         if (done.first) await roomCared(userId, turn);
         if (!done.again) await keepThread(turn, "погладить тебя по голове", raw);
@@ -2403,9 +2442,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // Полка с книгами (идея 167, 0.45.0): она берёт книгу и садится читать — на полчаса или пока не нальют чай.
         // Когда ей не до книг (обида, ревность, усталость, сон), она так и говорит, и книга остаётся на полке.
         const before = await room.read(userId, today);
+        if (before.lost) return refuse("storage", MEMORY_DOWN);
         const mood = herState(turn, feel, before, today).key;
         if (!HER_CALM.includes(mood)) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `полка:${mood}`) || "Не сейчас. Книга подождёт."), taken: false };
-        const done = await room.book(userId, { day: today });
+        const done = await room.book(userId, once);
+        { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.again ? "полка:ещё" : "полка") || "Возьму книгу.";
         if (!done.again) await keepThread(turn, "[в комнате] предложил тебе почитать", raw);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), taken: true, again: Boolean(done.again), her: herNow(done.state), ...stageNote() };
@@ -2415,7 +2456,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // подушке, под рисунком идёт отсчёт; нажали ещё раз — закончили раньше. Когда ей не до книг (сон, обида,
         // усталость), она остаётся как была, а время идёт. `end` — её слова, когда время выйдет: страница скажет
         // их сама, без связи. В отношения не идёт.
-        const done = await room.quiet(userId, { day: today });
+        const done = await room.quiet(userId, once);
+        { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.on ? "тихий час" : "тихий час:стоп") || (done.on ? "Сажусь рядом." : "Хорошо, хватит.");
         if (done.on) await keepThread(turn, "[в комнате] сел рядом поработать в тишине", raw);
         const shown = picture(done.state);
@@ -2425,7 +2467,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // Наряд по просьбе (идея 157, 0.47.0): из нарисованных — куртка и свитер. Без названия — другой, не тот,
         // что на ней. Держится, пока она не переоденется сама (в пять, в шесть вечера, перед сном). Страница играет
         // ту же сцену у шкафа, что при смене часа: `line` — слова на пути к шкафу, `back` — по возвращении.
-        const done = await dressHer(turn, feel, today, String(input?.wear ?? ""));
+        const done = await dressHer(turn, feel, today, String(input?.wear ?? ""), once);
+        { const other = await instead(done); if (other) return other; }
         const word = WEAR_WORD[done.name];
         if (done.asleep || done.same) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${word}:уже`) || "Не сейчас."), wear: done.name, changed: false };
         const back = roomLine(turn, `наряд:${word}:готово`) || "Вот.";
@@ -2435,7 +2478,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (op === "brew") {
         // Чай на выбор (идея 166, 0.47.0): жасмин, улун или мята — что ей наливать; запоминается. Без названия —
         // следующий по кругу. Сам чай наливает кнопка «Чай»: её слова тогда — о том чае, что выбран.
-        const done = await room.brew(userId, { day: today, kind: String(input?.kind ?? "") });
+        const done = await room.brew(userId, { ...once, kind: String(input?.kind ?? "") });
+        { const other = await instead(done); if (other) return other; }
         return { ok: true, do: op, build: BUILD, brew: done.kind, line: spoken(roomLine(turn, `заварка:${done.kind}`) || `Теперь — ${done.kind}.`) };
       }
       if (op === "call") {
@@ -2443,10 +2487,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // тут (полминуты), — удирает под кресло бегом (`run`): кот. Спит, обижен, прячется от грозы или занят в
         // сценке дня — не идёт, и она говорит почему. В отношения не идёт: это не забота.
         const before = await room.read(userId, today);
+        if (before.lost) return refuse("storage", MEMORY_DOWN);
         const mood = catMood(before);
         const why = mood.key === "спит" ? "спит" : mood.key === "обижен" || mood.held || mood.storm ? "нет" : mood.quiet ? "спит" : "";
         if (why) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `байт:позвать:${why}`) || "Байт не идёт."), came: false, fled: false };
-        const done = await room.call(userId, { day: today });
+        const done = await room.call(userId, once);
+        { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.again ? "байт:позвать:ещё" : "байт:позвать") || (done.again ? "Байт удрал под кресло." : "Байт подошёл.");
         const shown = picture(done.state, { after: "call", again: done.again, line: raw });
         return { ok: true, do: op, build: BUILD, line: spoken(raw), came: !done.again, fled: Boolean(done.again), ...(shown.cat ? { cat: { ...shown.cat, ...(done.again ? { run: true } : {}) } } : {}), ...stageNote() };
@@ -2455,7 +2501,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // Окно (0.48.0, сообщение 47: «чтоб окно открывалось и тогда уже слышны звуки улицы, а так звуки дома»):
         // нажали — открыла, слышна улица; ещё раз — закрыла; сама закрывает через час. Спит — окно открывают и
         // закрывают без неё, и слова её сонные. В отношения не идёт: это не забота.
-        const done = await room.air(userId, { day: today });
+        const done = await room.air(userId, once);
+        { const other = await instead(done); if (other) return other; }
         const asleep = herState(turn, feel, done.state, today).key === "сон";
         const raw = roomLine(turn, `створка:${done.open ? "открыть" : "закрыть"}${asleep ? ":сон" : ""}`) || (done.open ? "Открыла окно." : "Закрыла окно.");
         return { ok: true, do: op, build: BUILD, line: spoken(raw), open: done.open, window: windowLine(turn, sky) };
@@ -2467,9 +2514,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const part = turn.light || partOfDay(feel.hour);
         if (part !== "вечер" && part !== "ночь") {
           const before = await room.read(userId, today);
+          if (before.lost) return refuse("storage", MEMORY_DOWN);
           return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "свет:день") || "Пока светло, лампа отдыхает."), dark: before.dark === true, changed: false };
         }
-        const done = await room.lamp(userId, { day: today });
+        const done = await room.lamp(userId, once);
+        { const other = await instead(done); if (other) return other; }
         const asleep = herState(turn, feel, done.state, today).key === "сон";
         const raw = roomLine(turn, `свет:${done.dark ? "выкл" : "вкл"}${asleep ? ":сон" : ""}`) || (done.dark ? "Погасила." : "Включила.");
         return { ok: true, do: op, build: BUILD, line: spoken(raw), dark: done.dark, changed: true };
@@ -2478,16 +2527,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // Колонка (идея 159, 0.46.0): три минуты играет тихая мелодия (её играет сам телефон), и она танцует;
         // нажали, пока играет, — выключили. Когда ей не до танцев (сон, обида, ревность, усталость), колонка молчит.
         const before = await room.read(userId, today);
+        if (before.lost) return refuse("storage", MEMORY_DOWN);
         const mood = herState(turn, feel, before, today).key;
         if (!musicNow(before, now()) && !HER_CALM.includes(mood)) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, mood === "сон" ? "колонка:сон" : "колонка:нет") || "Не сейчас."), on: false, left: 0 };
-        const done = await room.music(userId, { day: today });
+        const done = await room.music(userId, once);
+        { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.on ? "колонка" : "колонка:стоп") || (done.on ? "Включаю." : "Выключила.");
         if (done.on) await keepThread(turn, "[в комнате] включил тебе музыку", raw);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), on: done.on, left: done.on ? MUSIC_MS : 0, her: herNow(done.state), ...stageNote() };
       }
       if (op === "pick") {
-        const picked = await room.choose(userId, String(input?.key ?? "").slice(0, 24), Number(input?.pick), { day: today });
-        if (!picked.ok) return refuse(picked.code, picked.code === "played" ? "Эта сценка уже сыграна." : picked.code === "storage" ? "Память сейчас недоступна — выбор не записался." : "Этой сценки уже нет: её день прошёл.");
+        const picked = await room.choose(userId, String(input?.key ?? "").slice(0, 24), Number(input?.pick), once);
+        if (picked.repeat) return await looking({ again: true, repeat: true });
+        if (!picked.ok) return refuse(picked.code, picked.code === "played" ? "Эта сценка уже сыграна." : picked.code === "storage" ? "Память сейчас недоступна — выбор не записался." : picked.code === "slow" ? "Не так быстро: я не успеваю. Подождите несколько секунд." : "Этой сценки уже нет: её день прошёл.");
         if (picked.first) await roomCared(userId, turn);
         const outcome = fill(picked.outcome, { formal });
         await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
@@ -2499,6 +2551,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ...(herPut(picked.state) ? { her: herNow(picked.state) } : {}),
           cared: picked.state.cared === today, box: roomBox(turn, picked.state), ...stageNote(),
         };
+      }
+      if (op === "oops") {
+        // Журнал ошибок страницы (0.49.0): три последние записи за заход — место, код и короткий текст. Кто зашёл, не
+        // пишется: только «хозяин или гость». Не чаще раза в десять минут от человека; хранится тридцать записей.
+        const items = (Array.isArray(input?.items) ? input.items : []).slice(0, 3)
+          .map(item => ({ where: tidyNote(item?.where, 24), code: tidyNote(item?.code, 32), text: tidyNote(item?.text, 140) })).filter(item => item.code || item.text);
+        if (!items.length) return { ok: true, do: op, build: BUILD, kept: 0 };
+        let fresh = false;
+        const mark = await room.amend(userId, today, (state) => { fresh = !(now() - Number(state.oops) < OOPS_EVERY_MS); return fresh ? { ...state, oops: now() } : null; });
+        if (!fresh || mark.lost || !mark.saved) return { ok: true, do: op, build: BUILD, kept: 0 };
+        const page = tidyNote(input?.page, 6), mine = owner(userId);
+        const kept = await store.update(ROOM_OOPS_KEY, (before) => [...(Array.isArray(before) ? before : []), ...items.map(item => ({ ...item, at: now(), build: BUILD, page, owner: mine }))].slice(-OOPS_KEEP)).catch(() => false);
+        return { ok: true, do: op, build: BUILD, kept: kept ? items.length : 0 };
       }
       return refuse("unknown", "Такого в комнате не делают.");
     } catch (error) {

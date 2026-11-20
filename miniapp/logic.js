@@ -1,5 +1,5 @@
 /**
- * Комната Аи — что показать (мини-приложение, сборка 0.44.0).
+ * Комната Аи — что показать (мини-приложение; номер страницы — `PAGE`, номер сборки сердца приходит в ответе).
  *
  * Чистые функции между ответом сердца (`endpoints/room`) и рисунком (`scene.js`): здесь нет ни страницы, ни
  * Telegram, поэтому всё проверяется тестами. Страница (`app.js`) только зовёт их и раскладывает итог по разметке.
@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "11";
+export const PAGE = "12";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -177,7 +177,34 @@ function doneOf(raw) {
 
 /** Отказ сердца или платформы: слова — в разговор, рисунок остаётся каким был. */
 export function refused(state, result, { retry = false } = {}) {
-  return { ...state, busy: "", tone: "warn", retry, said: text(result?.text) || "Что-то пошло не так. Попробуйте ещё раз." };
+  // 0.49.0. Отказ «на время» (связь, срок, память, сбой сердца): комната остаётся на экране, под словами — кнопка
+  // «Попробовать ещё раз» (она повторяет то же действие), внизу — пометка «нет связи» (`down`).
+  const down = transient(result);
+  return { ...state, busy: "", tone: "warn", retry: retry || down, down, said: text(result?.text) || "Что-то пошло не так. Попробуйте ещё раз." };
+}
+/**
+ * Отказы «навсегда» — сердце сказало «нет» по делу (не тот человек, комната закрыта, сценка сыграна) или Telegram не
+ * подтвердил вход: повторять то же самое бессмысленно. Всё остальное — «на время» (0.49.0): не дошло, не успело, не
+ * запомнилось.
+ */
+const FINAL = /^(?:auth|off|closed|unknown|played|gone)$|UNAUTHORIZED|INIT_DATA|401|NOT_FOUND|404/iu;
+export const transient = (result) => Boolean(result) && typeof result === "object" && result.ok !== true && !FINAL.test(String(result.code ?? "error"));
+/** Запрос не дошёл или ответ не вернулся (срок, обрыв, пустой ответ): его можно послать ещё раз с тем же номером действия. */
+export const resend = (result) => transient(result) && !/^(?:storage|runtime_error|slow)$|ENDPOINT|RATE|429/iu.test(String(result.code ?? "error"));
+/**
+ * Журнал ошибок страницы (0.49.0): место, код и короткий текст — без подписи Telegram, адресов, длинных чисел и
+ * строк, похожих на ключи. `scrub` вычищает их из любого текста; `oopsAdd` кладёт запись в список (не больше
+ * двадцати; та же ошибка подряд — одна строка со счётчиком).
+ */
+const SECRETS = Object.freeze([/tgWebApp[A-Za-z]*=[^\s&#]*/gu, /(?:query_id|auth_date|hash|signature|user|init_?data|token|key|secret)=[^\s&#]*/giu, /https?:\/\/\S+/gu, /[A-Za-z0-9_%+\/=-]{24,}/gu, /\d{6,}/gu]);
+export const scrub = (value, limit = 140) => SECRETS.reduce((line, rule) => line.replace(rule, "…"), String(value ?? "")).replace(/\s+/gu, " ").trim().slice(0, limit);
+export const OOPS_MAX = 20;
+export function oopsAdd(list, where, code, words, at = 0) {
+  const item = { at: Number(at) || 0, where: scrub(where, 24), code: scrub(code, 32), text: scrub(words) };
+  const kept = (Array.isArray(list) ? list : []).filter(entry => entry && typeof entry === "object" && typeof entry.text === "string");
+  const last = kept[kept.length - 1];
+  if (last && last.where === item.where && last.code === item.code && last.text === item.text) return [...kept.slice(0, -1), { ...last, at: item.at, n: (Number(last.n) || 1) + 1 }];
+  return [...kept, item].slice(-OOPS_MAX);
 }
 
 /** Ответ на «зайти» (`do: "look"`): всё, что видно в комнате. */
@@ -206,6 +233,9 @@ export function applyLook(state, result, at = 0) {
     // показывала кнопки под рисунком). Кнопки — хозяину: сердце 0.47.0 этого слова не знает — тогда как раньше.
     brew: BREWS.includes(result.brew) ? result.brew : BREWS.includes(result.kind) ? result.kind : "", quiet: count(result.quiet), quietEnd: text(result.quietEnd),
     owner: result.owner === undefined ? BREWS.includes(result.brew) : result.owner === true,
+    // 0.49.0. `once` — это сердце помнит номера действий: не дошедший запрос страница может повторить сама.
+    // Ответ пришёл — пометка «нет связи» снята.
+    once: result.once === true, down: false,
     open: result.open === undefined ? state.open === true : result.open === true, airy: result.open !== undefined,
     kinds, offer, asking: offer && kinds.length > 1 ? "tea" : "", plan: text(result.her?.plan), told: "",
     cat: catOf(result.cat, null, { first: true }), plant: result.plant?.state === "dry" ? "dry" : "wet",
@@ -232,6 +262,17 @@ export function applyTick(state, result, at = 0) {
   // Она предложила чай, пока страница открыта, — выбор показывается один раз: те же слова второй раз не спрашивают.
   const asking = seen.offer && seen.offer !== state.offer && seen.kinds.length > 1 ? "tea" : state.asking;
   return { ...seen, her, cat, asking, told: state.told, said: state.said, tone: state.tone, retry: state.retry, busy: state.busy, demo: state.demo, patted: state.patted || seen.patted };
+}
+
+/**
+ * Ответ на повтор уже сделанного действия (0.49.0, `repeat`): запрос тогда дошёл, а ответ — нет, и страница послала
+ * его снова с тем же номером. Сердце второй раз ничего не делает и отвечает комнатой как она есть — она и
+ * показывается; слова под рисунком — её нынешняя реплика.
+ */
+export function applyRepeat(state, result, at = 0) {
+  if (!result || result.ok !== true) return refused(state, result);
+  const next = applyTick({ ...state, busy: "" }, result, at);
+  return { ...next, busy: "", tone: "", retry: false, down: false, said: herBeat(next)?.line || next.lines?.her || state.said };
 }
 
 /**
