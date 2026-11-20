@@ -760,12 +760,20 @@ test("рисунок 0.44.0: она сидит в кресле комнаты; �
   const view = (pose, key, extra = {}) => ({ part: "день", sky: "clear", her: { pose, key, beat: true }, cat: { shape: "curl", place: "pillow", key: "спит" }, things: [], ...extra });
   // Пуфа, который появлялся вместе с ней, больше нет: сидит она там же, где стоит кресло, — в обоих нарядах, и
   // сонная, и ревнивая. Кресло при этом одно и то же — что с ней, что без неё.
-  const seats = [["chair", "уют", "tea3"], ["chair", "устала", "tired2"], ["chair", "ревность", "jealous"]];
+  // 0.47.0 (идея 168): «в кресле» — сидящая картинка у каждого состояния, где есть такое место. До этого сонная и
+  // ревнивая у кресла стояли, а запасная фигура кодом в том же месте сидела.
+  const seats = [["chair", "уют", "tea3"], ["read", "уют", "read"], ["chair", "устала", "tired3"], ["chair", "ревность", "jealous3"], ["chair", "дело", "work3"]];
   const xs = new Set();
   for (const [pose, key, name] of seats) for (const part of ["день", "вечер"]) {
     const cast = scene.castOf(view(pose, key, { part }), PAINTED);
     assert.equal(cast.her.name, part === "вечер" ? `home-${name}` : name, `${key} ${part}`);
+    assert.equal(scene.HER_SPRITES[cast.her.name].kind, "seat", `${cast.her.name}: в кресле сидят`);
     xs.add(cast.her.x);
+  }
+  // И наоборот: сидящая картинка есть только у места «в кресле» — у стола и у полки она не сядет в воздух.
+  for (const key of Object.keys(scene.MOODS)) for (const pose of scene.HER_POSES) {
+    const name = scene.lookOf(key, pose);
+    if (name && scene.HER_SPRITES[name].kind === "seat") assert.ok(pose === "chair" || pose === "read", `${key}, ${pose}: ${name} сидит не в кресле`);
   }
   assert.equal(xs.size, 1, `сидит в одном и том же кресле: ${[...xs].join(", ")}`);
   const chairOf = (markup) => markup.slice(markup.indexOf("<g class=\"zones\">")).match(/data-act="thing:[^"]*кресло[^"]*"/u);
@@ -978,8 +986,8 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
   const frames = Object.entries(scene.HER_FRAMES);
   assert.deepEqual(frames.map(([base, [name, how]]) => `${base}>${name}:${how}`), [
     "tea3>tea3b:sip", "home-tea3>home-tea3b:sip", "work>workb:glance", "home-work>home-workb:glance", "play2>play2b:dance", "home-play2>home-play2b:dance",
-    // 0.46.0: чай у подоконника, книга, шаг — в обоих нарядах; чай под гирляндой — пока только в куртке.
-    "tea>teab:sip", "home-tea>home-teab:sip", "tea2>tea2b:glance", "read>readb:sip", "home-read>home-readb:sip", "walk>walkb:pace", "home-walk>home-walkb:pace",
+    // 0.46.0: чай у подоконника, книга, шаг — в обоих нарядах; чай под гирляндой в свитере — с 0.47.0.
+    "tea>teab:sip", "home-tea>home-teab:sip", "tea2>tea2b:glance", "home-tea2>home-tea2b:glance", "read>readb:sip", "home-read>home-readb:sip", "walk>walkb:pace", "home-walk>home-walkb:pace",
   ]);
   for (const [base, [name, how]] of frames) {
     assert.ok(Object.hasOwn(scene.HER_SPRITES, base), base);

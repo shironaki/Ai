@@ -1619,15 +1619,20 @@ export const HER_SPRITES = Object.freeze({
   read: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   work: { tall: 390 },
   work2: { tall: 390 },
+  // Сидит в кресле и в других состояниях (0.47.0, идея 168): с блокнотом, под пледом с закрытыми глазами, скрестив
+  // руки. Правки той же сидящей картинки, что с кружкой: рост, сиденье и голова — как у `tea3` (сверено наложением).
+  work3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   play: { tall: 390, legs: [-30, 72], head: [0.66, 0.075] },
   play2: { tall: 380, half: 62, legs: [-36, 54], head: [0.51, 0.17] },
   play3: { tall: 215, kind: "crouch", half: 66, head: [0.6, 0.17] },
   tired: { tall: 390, half: 70 },
   tired2: { tall: 390, half: 70 },
+  tired3: { tall: 320, kind: "seat", half: 86, seat: 0.568, head: [0.48, 0.09] },
   pout: { tall: 390, head: [0.55, 0.07] },
   pout2: { tall: 390, head: [0.55, 0.07] },
   jealous: { tall: 390, half: 64 },
   jealous2: { tall: 390, half: 64 },
+  jealous3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   sleep: { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
   // Идёт (0.44.0): не поза состояния, а то, как она переходит от места к месту; смотрит вправо, влево — отражением.
   walk: { tall: 374, kind: "walk" },
@@ -1638,15 +1643,18 @@ export const HER_SPRITES = Object.freeze({
   "home-read": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   "home-work": { tall: 390 },
   "home-work2": { tall: 390 },
+  "home-work3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   "home-play": { tall: 390, legs: [-30, 72], head: [0.66, 0.075] },
   "home-play2": { tall: 380, half: 62, legs: [-36, 54], head: [0.51, 0.17] },
   "home-play3": { tall: 215, kind: "crouch", half: 66, head: [0.6, 0.17] },
   "home-tired": { tall: 390, half: 70 },
   "home-tired2": { tall: 390, half: 70 },
+  "home-tired3": { tall: 320, kind: "seat", half: 86, seat: 0.568, head: [0.48, 0.09] },
   "home-pout": { tall: 390, head: [0.55, 0.07] },
   "home-pout2": { tall: 390, head: [0.55, 0.07] },
   "home-jealous": { tall: 390, half: 64 },
   "home-jealous2": { tall: 390, half: 64 },
+  "home-jealous3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   "home-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
   "home-walk": { tall: 374, kind: "walk" },
 });
@@ -1666,7 +1674,8 @@ export const HER_FRAMES = Object.freeze({
   // (`pace`: ноги вместе, ступня поднята) попеременно с первым (ноги в шаге). У «под гирляндой в свитере» кадра
   // пока нет: на нарисованном юбка вышла серой, а не тёмно-красной, — при смене кадров она бы мигала.
   tea: ["teab", "sip"], "home-tea": ["home-teab", "sip"],
-  tea2: ["tea2b", "glance"],
+  // 0.47.0: кадр «под гирляндой в свитере» нарисован заново — юбка осталась тёмно-красной.
+  tea2: ["tea2b", "glance"], "home-tea2": ["home-tea2b", "glance"],
   read: ["readb", "sip"], "home-read": ["home-readb", "sip"],
   walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"],
 });
@@ -1678,8 +1687,8 @@ export const frameOf = (name) => (typeof name === "string" && Object.hasOwn(HER_
  * состояния в руках одно и то же (кружка, блокнот, ленточка, плед): её слова в комнате верны для каждой.
  */
 const SPRITE_OF = Object.freeze({
-  "дело": ["work", "work2"], "уют": ["tea", "tea2", "tea3"], "игра": ["play", "play2", "play3"], "сон": ["sleep"],
-  "устала": ["tired", "tired2"], "обида": ["pout", "pout2"], "ревность": ["jealous", "jealous2"],
+  "дело": ["work", "work2", "work3"], "уют": ["tea", "tea2", "tea3"], "игра": ["play", "play2", "play3"], "сон": ["sleep"],
+  "устала": ["tired", "tired2", "tired3"], "обида": ["pout", "pout2"], "ревность": ["jealous", "jealous2", "jealous3"],
 });
 /**
  * С какой позы начать: с той, что ближе к её словам. Сердце шлёт позу по её реплике: «танцую» — она танцует,
@@ -1688,6 +1697,7 @@ const SPRITE_OF = Object.freeze({
 const SPRITE_FIRST = Object.freeze({
   "игра": { dance: "play2", ribbon: "play3" },
   "уют": { chair: "tea3", garland: "tea2" },
+  "дело": { chair: "work3" }, "устала": { chair: "tired3" }, "ревность": { chair: "jealous3" },
 });
 /**
  * Картинка её реплики (0.44.0): по состоянию и месту, которое сердце читает из самих слов (`herPose`). Раньше слова
@@ -1695,15 +1705,17 @@ const SPRITE_FIRST = Object.freeze({
  * каждой реплики запаса «+комната:она:<состояние>» — своя строка здесь; тест сверяет словарь с этой таблицей.
  */
 const SPRITE_FOR = Object.freeze({
-  "дело": { desk: "work", shelf: "work", sill: "work2" },
+  // `chair` — «в кресле» — у каждого состояния теперь сидящая картинка (0.47.0): до этого «у кресла, скрестив руки» и
+  // «молчу, завернувшись в плед» показывались стоящей фигурой, а запасная фигура кодом в этих же местах сидела.
+  "дело": { desk: "work", shelf: "work", sill: "work2", chair: "work3" },
   // `read` — в кресле с книгой (0.45.0): сама, по распорядку, или когда её усадили читать (полка с книгами, сценка
   // «что читать»). Это единственная картинка «уюта» без кружки — и её реплика говорит о книге, а не о чае.
   "уют": { chair: "tea3", sill: "tea", garland: "tea2", map: "tea", read: "read" },
   "игра": { dance: "play2", ribbon: "play3", shelf: "play" },
   "сон": { nap: "sleep", lie: "sleep" },
-  "устала": { sill: "tired", chair: "tired2", desk: "tired" },
+  "устала": { sill: "tired", chair: "tired3", desk: "tired", garland: "tired2" },
   "обида": { back: "pout", shelf: "pout2" },
-  "ревность": { desk: "jealous2", chair: "jealous", garland: "jealous" },
+  "ревность": { desk: "jealous2", chair: "jealous3", garland: "jealous" },
 });
 /** Имя картинки (в куртке) для реплики с этим местом; `null` — такой пары в таблице нет. */
 export const lookOf = (key, pose) => (Object.hasOwn(SPRITE_FOR, key) && Object.hasOwn(SPRITE_FOR[key], pose) ? SPRITE_FOR[key][pose] : null);
