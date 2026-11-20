@@ -761,8 +761,8 @@ export const QUIET_MS = 25 * 60_000;
 export const quietLeft = (state, at) => { const from = Number(state?.quiet?.at), ms = Number(state?.quiet?.ms); return from > 0 && ms > 0 && at >= from && at - from < ms ? ms - (at - from) : 0; };
 /** Сколько Байт «тут» после зова (0.47.0): позвали ещё раз за эти полминуты — он убегает. */
 export const CALL_MS = 30_000;
-/** Сколько помнится номер действия страницы (0.49.0) и сколько их хранится в записи. */
-export const OPS_KEEP_MS = 3 * 60_000;
+/** Сколько помнится номер действия страницы (0.49.0: десять минут — хватает и на кнопку «ещё раз») и сколько их хранится в записи. */
+export const OPS_KEEP_MS = 10 * 60_000;
 export const OPS_MAX = 16;
 /** Предел частоты для мини-приложения: столько действий за двадцать секунд пальцем не сделать. */
 export const RUSH_MS = 20_000;

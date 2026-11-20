@@ -525,14 +525,15 @@ function curtain(g, c) {
     `<path d="M99.6 176.6 Q115 183.4 130.6 176.6 L130.8 183.6 Q115 190.4 99.6 183.6Z" fill="${c.tie}"/><path d="M100 178 Q115 184.6 130.4 178" fill="none" stroke="${lt(c.tie, 0.45)}" stroke-width="1" opacity="0.7"/><path d="M100 183 Q115 189.6 130.4 183" fill="none" stroke="${dk(c.tie, 0.3)}" stroke-width="1" opacity="0.6"/>`,
   ].join("");
 }
-function curtains(g, c) {
-  const one = curtain(g, c);
+function curtains(g, c, airy = false) {
+  // Окно открыто (0.49.0, «более живая погода») — шторы чуть ходят от сквозняка: каждая в своём ритме (стили: `.breeze`).
+  const cloth = curtain(g, c), one = airy ? `<g class="breeze">${cloth}</g>` : cloth, two = airy ? `<g class="breeze b1">${cloth}</g>` : cloth;
   const rings = Array.from({ length: 6 }, (_, index) => `<ellipse cx="${104 + index * 9}" cy="27.5" rx="1.5" ry="2.7" fill="none" stroke="${c.rod}" stroke-width="0.9"/>`).join("");
   return [
     `<rect x="93" y="28" width="314" height="5" rx="2" fill="#1a0f1e" opacity="0.14"/>`,
     `<rect x="92" y="25.6" width="316" height="3.6" rx="1.8" fill="${c.rod}"/><rect x="92" y="25.6" width="316" height="1.1" rx="0.5" fill="${lt(c.rod, 0.4)}"/><circle cx="91" cy="27.4" r="3.8" fill="${c.rod}"/><circle cx="90" cy="26.2" r="1.2" fill="${lt(c.rod, 0.5)}"/>`,
     one, rings,
-    `<g transform="translate(512 0) scale(-1 1)">${one}${rings}</g>`,
+    `<g transform="translate(512 0) scale(-1 1)">${two}${rings}</g>`,
   ].join("");
 }
 
@@ -2512,7 +2513,7 @@ function insideOf(view = {}, options = {}) {
 
   const parts = [
     glass(g, part, sky, ajar), walls(g, c), windowFrame(g, c),
-    curtains(g, c), fxShown("curtains", () => curtainsShut(c)), garland(g, c, part, { rogue: fx.has("blink") }),
+    curtains(g, c, ajar && !fx.has("curtains")), fxShown("curtains", () => curtainsShut(c)), garland(g, c, part, { rogue: fx.has("blink") }),
     thing("фонарь", () => lantern(g, c, part)),
     starMap(g, c),
     thing("рисунок", () => drawing(c)),

@@ -51,9 +51,12 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join, extname, normalize } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const [, , folder, shotArg = "", previous = ""] = process.argv;
 const shot = shotArg === "-" ? "" : shotArg;
+// Корень репозитория — на папку выше страницы: шаг 9 берёт оттуда настоящее сердце на стабе базы (`tests/fixtures/kit.mjs`).
+const root = join(folder, "..");
 if (!folder) { console.error("Нужна папка страницы: node room-check.mjs <папка miniapp> [снимок.png|-] [папка прежней страницы]"); process.exit(2); }
 
 let chromium, puppeteer;
@@ -936,6 +939,152 @@ try {
     if (broken.length) fail(`своя жизнь и смена часа — ошибка на странице: ${broken[0].slice(0, 200)}`);
     if (failures.length === failed) console.log(`  она и Байт сами переходят к следующему занятию и доходят шагом, слова — о нынешней картинке; погода: ${skies.length} видов неба; сценка видна на рисунке; день → вечер: ${sequence}`);
     await tab.close();
+  }
+
+  // ── 9. с настоящим сердцем (0.49.0): повтор запроса, «нет связи», журнал, свёрнутая страница, альбом, встреча ──
+  // Страница открыта «из Telegram»: вместо платформы — подставка, которая зовёт настоящее сердце на стабе базы
+  // (`tests/fixtures/kit.mjs`). Ответ можно «потерять» по дороге: сердце действие выполнило, страница ответа не
+  // получила — так и бывает на плохой связи.
+  console.log("9. С сердцем: встреча, альбом, подарок, снимок, повтор запроса, журнал, свёрнутая страница, жесты");
+  {
+    const failed = failures.length;
+    const kit = await import(pathToFileURL(join(root, "tests/fixtures/kit.mjs")).href);
+    kit.reset();
+    let clockAt = Date.parse("2026-11-13T09:00:00Z");
+    const heart = kit.heart({ PHRASES: true }, { now: () => clockAt, random: () => 0 });
+    const ctx = { ...kit.KEY, initData: { user: { id: 5, first_name: "Тест" } } };
+    await heart.onRoom({ do: "look" }, ctx);
+    // Четыре дня спустя: 14-го у неё был перерыв, 15-го она нашла книгу — об этом сценка встречи.
+    clockAt = Date.parse("2026-11-17T09:00:00Z");
+    const tab = await browser.newPage();
+    const broken = [], calls = [];
+    let drop = 0;
+    tab.on("pageerror", (error) => broken.push(String(error)));
+    tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
+    await tab.exposeFunction("heartCall", async (input) => { calls.push(input); const reply = await heart.onRoom(input, ctx); clockAt += 400; if (drop > 0) { drop -= 1; return { lost: true }; } return { reply }; });
+    await tab.evaluateOnNewDocument(() => {
+      globalThis.Telegram = { WebApp: { initData: "query_id=AAH&user=%7B%22id%22%3A5%7D&hash=0123456789abcdef0123456789abcdef", ready() {}, expand() {},
+        Serverless: { call(name, input, done) { globalThis.heartCall(input).then(({ reply, lost }) => (lost ? done({ type: "NETWORK_ERROR", message: "связь оборвалась" }) : done(null, reply))); } } } };
+    });
+    await tab.goto(`${origin}/index.html#resend=80&retry=400&turn=600000`, { waitUntil: "load", timeout: 30_000 });
+    const page9 = () => tab.evaluate(() => ({
+      state: document.getElementById("app").dataset.state, down: document.getElementById("app").dataset.down, say: document.getElementById("say").textContent, tone: document.getElementById("talk").dataset.tone,
+      foot: document.getElementById("foot").textContent, retry: !document.getElementById("retry").hidden, story: !document.getElementById("story").hidden, storyButton: document.getElementById("storyNext").textContent,
+      album: !document.getElementById("album").hidden, box: !document.getElementById("albumBox").hidden, rows: [...document.querySelectorAll("#albumBox .album li .what")].map(node => node.textContent),
+      gifts: [...document.querySelectorAll("#albumBox [data-gift]")].length, notes: [...document.querySelectorAll("#albumBox .albumNote")].map(node => node.textContent),
+      thumbs: [...document.querySelectorAll("#albumBox img")].map(node => [String(node.src).slice(0, 26), node.naturalWidth]),
+      hers: [...new Set([...document.querySelectorAll("#inside > .art use")].map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !href.endsWith("-blink")))],
+      flower: document.getElementById("inside").innerHTML.includes('cx="23" cy="143.4"'), art: document.querySelectorAll("#room .art *").length,
+      resting: document.documentElement.classList.contains("resting"), running: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.closest?.("#room")).length,
+      oops: document.getElementById("oops").hidden ? null : document.getElementById("oops").textContent, head: document.querySelectorAll("#inside .hd").length, words: document.getElementById("inside").getAttribute("class") ?? "",
+    }));
+    const wait9 = async (test, ms = 8000, step = 120) => { for (let spent = 0; spent <= ms; spent += step) { const seen = await page9(); if (test(seen)) return seen; await pause(step); } return null; };
+    const opened = await wait9(seen => seen.state === "ready" && seen.hers.length > 0, 12_000);
+    if (!opened) fail(`с сердцем: комната не открылась: ${JSON.stringify(await page9()).slice(0, 300)}`);
+    else {
+      if (/витрина/u.test(opened.foot) || !/сердце \d/u.test(opened.foot)) fail(`с сердцем: внизу должно стоять «сердце N», без «витрины»: «${opened.foot}»`);
+      if (!opened.head) fail("слоя головы на рисунке нет");
+      // Встреча после четырёх дней: под словами — кнопка сценки; шаги ведёт человек.
+      if (!opened.story || !/без меня/u.test(opened.storyButton)) fail(`встреча: кнопки сценки нет («${opened.storyButton}»), её слова: «${opened.say.slice(0, 80)}»`);
+      else {
+        await tab.click("#storyNext");
+        const one = await wait9(seen => /Пока вас не было/u.test(seen.say) && seen.hers.some(href => /tea3$/u.test(href)), 9000);
+        if (!one) fail(`встреча, шаг 1: ждали рассказ и её в кресле с кружкой; слова «${(await page9()).say.slice(0, 70)}», картинки ${JSON.stringify((await page9()).hers)}`);
+        await tab.click("#storyNext");
+        const two = await wait9(seen => /позавчера/u.test(seen.say) && seen.hers.some(href => /read$/u.test(href)), 9000);
+        if (!two) fail(`встреча, шаг 2: ждали рассказ о книге и её с книгой; слова «${(await page9()).say.slice(0, 70)}», картинки ${JSON.stringify((await page9()).hers)}`);
+        await tab.click("#storyNext");
+        await pause(300);
+        await tab.click("#storyNext");
+        const done = await wait9(seen => !seen.story, 6000);
+        if (!done) fail("встреча: после последнего шага кнопка сценки не ушла");
+      }
+      // Альбом: записи от сердца; подарок — цветок встаёт на шкаф; снимок — картинкой.
+      if (!opened.album) fail("кнопки «Альбом» нет");
+      else {
+        await tab.click("#album");
+        const shown = await wait9(seen => seen.box && seen.rows.length >= 3, 8000);
+        if (!shown) fail(`альбом не открылся или пуст: ${JSON.stringify((await page9()).rows)}`);
+        else if (!shown.rows.some(text => /Нашла интересную книгу/u.test(text)) || !shown.rows.some(text => /Первый раз у меня в комнате/u.test(text))) fail(`альбом: нет рассказанного события или первого захода: ${JSON.stringify(shown.rows)}`);
+        if (shown && shown.gifts !== 3) fail(`альбом: кнопок подарка ${shown?.gifts}, а не три`);
+        await tab.click('#albumBox [data-gift="flower"]');
+        const given = await wait9(seen => seen.flower && seen.notes.some(text => /через 7 дней/u.test(text)), 8000);
+        if (!given) fail(`подарок: цветка на шкафу нет или срок не назван; её слова «${(await page9()).say.slice(0, 70)}», заметки ${JSON.stringify((await page9()).notes)}`);
+        await tab.click("#albumBox [data-snap]");
+        const kept = await wait9(seen => seen.thumbs.some(([src, width]) => src.startsWith("data:image/svg+xml") && width > 0), 10_000);
+        if (!kept) fail(`снимок: картинка снимка в альбоме не нарисовалась: ${JSON.stringify((await page9()).thumbs)}`);
+        await tab.click("#albumBox [data-close]");
+        if ((await page9()).box) fail("альбом не закрылся");
+      }
+      // Ответ потерялся по дороге: страница сама повторяет запрос с тем же номером — окно открыто один раз.
+      const before = calls.length;
+      drop = 1;
+      await tab.evaluate(() => document.querySelector('#room .zones [data-act="window"]').dispatchEvent(new Event("click", { bubbles: true })));
+      const aired = await wait9(seen => seen.tone !== "warn" && !seen.retry && seen.say.length > 0 && calls.slice(before).filter(call => call.do === "window").length >= 2, 8000);
+      const sent = calls.slice(before).filter(call => call.do === "window");
+      const record = JSON.parse(kit.sdk().kv.get("heart:room:5"));
+      if (!aired || sent.length !== 2 || sent[0].id !== sent[1].id || !/^[a-z0-9]{10}$/u.test(String(sent[0].id))) fail(`повтор: ждали два запроса «окно» с одним номером, пришло ${JSON.stringify(sent)}`);
+      if (!(record.open > 0)) fail("повтор: окно закрылось обратно — действие выполнено дважды");
+      // Связи нет совсем: комната остаётся на экране, внизу «нет связи», кнопка «ещё раз» повторяет то же действие.
+      drop = 9;
+      await tab.click('#actions [data-act="feed"]');
+      const lostLink = await wait9(seen => seen.tone === "warn" && seen.retry && seen.down === "1", 8000);
+      if (!lostLink) fail(`нет связи: ждали слова комнаты, кнопку «ещё раз» и пометку внизу: ${JSON.stringify(await page9()).slice(0, 260)}`);
+      else if (lostLink.state !== "ready" || lostLink.art < 200 || !/нет связи/u.test(lostLink.foot)) fail(`нет связи: комната должна остаться на экране: состояние ${lostLink.state}, частей ${lostLink.art}, внизу «${lostLink.foot}»`);
+      drop = 0;
+      const fedBefore = JSON.parse(kit.sdk().kv.get("heart:room:5")).done.feed;
+      await tab.click("#retry");
+      const mended = await wait9(seen => seen.tone !== "warn" && !seen.retry && seen.down !== "1", 8000);
+      if (!mended) fail("нет связи: «ещё раз» не помогло, хотя связь вернулась");
+      if (JSON.parse(kit.sdk().kv.get("heart:room:5")).done.feed !== fedBefore) fail("«ещё раз» покормило Байта второй раз: тот же номер действия должен был это остановить");
+      // Журнал ошибок: по нажатию на строку «страница N»; без подписи Telegram.
+      await tab.click("#foot");
+      const journal = (await page9()).oops;
+      if (!journal || !/window · NETWORK_ERROR/u.test(journal) || !/feed · NETWORK_ERROR/u.test(journal)) fail(`журнал ошибок: нет записей о потерянных ответах: ${String(journal).slice(0, 240)}`);
+      if (journal && /query_id|hash=|0123456789abcdef|%7B/u.test(journal)) fail("журнал ошибок: в нём подпись Telegram");
+      await tab.click("#foot");
+      // Отчёт ушёл сердцу один раз — и без того, кто зашёл.
+      await pause(400);
+      const reports = calls.filter(call => call.do === "oops");
+      if (reports.length !== 1 || JSON.stringify(reports[0]).includes("query_id")) fail(`отчёт об ошибках: ждали один, без подписи; пришло ${reports.length}`);
+      // Страница свёрнута: движение на рисунке стоит; вернулись — идёт.
+      await tab.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => true }); document.dispatchEvent(new Event("visibilitychange")); });
+      await pause(300);
+      const asleep = await page9();
+      if (!asleep.resting || asleep.running) fail(`свёрнутая страница: движение не остановлено (слово «resting»: ${asleep.resting}, идёт анимаций: ${asleep.running})`);
+      const quietCalls = calls.length;
+      await pause(1500);
+      if (calls.length !== quietCalls) fail("свёрнутая страница спрашивает сердце");
+      await tab.evaluate(() => { Object.defineProperty(document, "hidden", { configurable: true, get: () => false }); document.dispatchEvent(new Event("visibilitychange")); });
+      const awake = await wait9(seen => !seen.resting && seen.running > 0, 4000);
+      if (!awake) fail("страница вернулась, а движение не пошло");
+      // Доступность: у каждой зоны — роль, подпись и место в обходе с клавиатуры; Enter на зоне — то же, что нажатие.
+      const zones = await tab.evaluate(() => [...document.querySelectorAll("#room .zones [data-act]")].map(node => [node.dataset.act, node.getAttribute("role"), node.getAttribute("tabindex"), (node.getAttribute("aria-label") ?? "").length]));
+      const dumb = zones.filter(([, role, index, label]) => role !== "button" || index !== "0" || label < 2);
+      if (!zones.length || dumb.length) fail(`доступность: у зон нет роли, подписи или обхода: ${JSON.stringify(dumb.slice(0, 4))}`);
+      await tab.evaluate(() => document.querySelector('#room .zones [data-act="box"]').focus());
+      await tab.keyboard.press("Enter");
+      const typed = await wait9(seen => /коробк|Байт/iu.test(seen.say), 4000);
+      if (!typed) fail(`доступность: Enter на зоне «коробка» ничего не сказал: «${(await page9()).say.slice(0, 60)}»`);
+    }
+    await tab.close();
+    // Жесты: раз в ход своей жизни — слово жеста на рисунке (сердце ведёт её день, ход уходит на жест).
+    const live = await browser.newPage();
+    live.on("pageerror", (error) => broken.push(String(error)));
+    await live.exposeFunction("heartCall", async (input) => ({ reply: await heart.onRoom(input, ctx) }));
+    await live.evaluateOnNewDocument(() => {
+      globalThis.Telegram = { WebApp: { initData: "user=test", ready() {}, expand() {}, Serverless: { call(name, input, done) { globalThis.heartCall(input).then(({ reply }) => done(null, reply)); } } } };
+    });
+    await live.goto(`${origin}/index.html#turn=700`, { waitUntil: "load", timeout: 30_000 });
+    const gestures = new Set();
+    for (let spent = 0; spent < 9000 && gestures.size < 2; spent += 100) {
+      for (const word of String(await live.evaluate(() => document.getElementById("inside")?.getAttribute("class") ?? "")).split(" ")) if (/^(?:g-[a-z]+|look-[lr]|peek)$/u.test(word)) gestures.add(word);
+      await pause(100);
+    }
+    if (gestures.size < 2) fail(`жесты: за девять секунд при ходе в 0,7 с ждали хотя бы два разных жеста, были: ${JSON.stringify([...gestures])}`);
+    await live.close();
+    if (broken.length) fail(`с сердцем — ошибка на странице: ${broken[0].slice(0, 220)}`);
+    if (failures.length === failed) console.log(`  встреча по шагам, альбом с подарком и снимком, повтор с тем же номером, «нет связи» и «ещё раз», журнал без подписи, свёрнутая страница стоит, жесты: ${[...gestures].join(", ")}`);
   }
 
   if (errors.length) for (const text of errors) fail(`ошибка на странице: ${text}`);

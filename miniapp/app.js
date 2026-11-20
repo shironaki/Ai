@@ -629,16 +629,19 @@ window.addEventListener("unhandledrejection", (event) => note("страница"
 // выполнит, а ответит комнатой как она есть (`repeat`). Прежнему сердцу повтор не шлётся: оно выполнило бы дважды.
 // `redo` — как повторить это действие кнопкой «Попробовать ещё раз».
 const newId = () => Array.from({ length: 10 }, () => "abcdefghijklmnopqrstuvwxyz0123456789"[Math.floor(Math.random() * 36)]).join("");
-let again = null;
+// Кнопка «Попробовать ещё раз» шлёт то же действие с тем же номером (`sameId`): если прошлый запрос на самом деле
+// дошёл, сердце не выполнит его второй раз (окно не закроется обратно), а покажет комнату как она есть.
+let again = null, sameId = null;
 async function send(input, redo = null) {
-  const id = newId(), name = String(input.do);
+  const name = String(input.do), id = sameId && sameId.op === name ? sameId.id : newId();
+  sameId = null;
   let result = await call({ ...input, id });
   if (result?.ok !== true && state.once && typeof logic.resend === "function" && logic.resend(result) && !document.hidden) {
     note(name, result.code, `${result.text ?? ""} Повторяю сама.`);
     await sleep(local && Number(params.resend) >= 50 ? Number(params.resend) : 1200);
     result = await call({ ...input, id });
   }
-  if (result?.ok === true) { again = null; state = { ...state, down: false }; flush(); } else { note(name, result?.code, result?.text); again = redo; }
+  if (result?.ok === true) { again = null; state = { ...state, down: false }; flush(); } else { note(name, result?.code, result?.text); again = redo ? { run: redo, id, op: name } : null; }
   return result;
 }
 /** Ответ на повтор уже сделанного действия: комната как она есть — она и показывается. Возвращает, был ли это повтор. */
@@ -1150,7 +1153,7 @@ $("sceneChoice").addEventListener("click", (event) => {
   if (button) pick(Number(button.dataset.pick));
 });
 // «Попробовать ещё раз» (0.49.0): то действие, что не прошло; при входе — сам вход.
-$("retry").addEventListener("click", () => { const redo = again; again = null; if (redo && state.ready) redo(); else enter(); });
+$("retry").addEventListener("click", () => { const redo = again; again = null; if (redo && state.ready) { sameId = { id: redo.id, op: redo.op }; redo.run(); } else enter(); });
 // Журнал ошибок — по нажатию на строку «страница N».
 const showOops = () => { const box = $("oops"); if (!box) return; box.hidden = !box.hidden; $("foot").setAttribute("aria-expanded", String(!box.hidden)); paintOops(); };
 $("foot").addEventListener("click", showOops);

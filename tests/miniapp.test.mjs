@@ -1711,7 +1711,8 @@ test("страница: папка уходит на платформу как �
   const shown = [...classes].filter(name => !staged.has(name)).sort();
   // Лампочка, что «решила жить своей жизнью», — класс на самой лампочке; плед, который Байт утащил, просто исчезает с
   // кресла; остальные перемены — своей группой. Что в них движется: кораблик покачивается, пар от чайника плывёт.
-  assert.deepEqual(shown, ["fx", ...scene.SCENE_FX.filter(name => name !== "blink" && name !== "noplaid").map(name => `fx-${name}`), "rogue", "float", "mist", "m0", "m1", "m2"].sort());
+  // 0.49.0: окно открыто (сценкой или нажатием) — шторы ходят от сквозняка («breeze»).
+  assert.deepEqual(shown, ["breeze", "fx", ...scene.SCENE_FX.filter(name => name !== "blink" && name !== "noplaid").map(name => `fx-${name}`), "rogue", "float", "mist", "m0", "m1", "m2"].sort());
   const plaid = (fx) => zonesOf(drawInside({ part: "день", her: { pose: "desk", key: "дело" }, things: [...THINGS], fx }, PAINTED)).some(zone => zone.act === "thing:плед");
   assert.deepEqual([plaid([]), plaid(["noplaid"])], [true, false], "плед унесён — на кресле его нет, и нажать на него нельзя");
   const skied = new Set(classes);

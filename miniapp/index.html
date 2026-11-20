@@ -299,6 +299,10 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 .album img { grid-column: 2; width: 132px; max-width: 100%; border-radius: 8px; margin-top: 4px; display: block; background: rgba(127, 127, 127, 0.18); aspect-ratio: 10 / 13; }
 .album .new .what::after { content: " •"; color: var(--accent); }
 .albumNote { margin: 6px 0 0; font-size: 12px; opacity: 0.7; }
+/* 0.49.0 — окно открыто: шторы чуть ходят от сквозняка, каждая в своём ритме. */
+#room .breeze { transform-box: fill-box; transform-origin: 50% 0; animation: breeze 4.6s ease-in-out infinite alternate; }
+#room .breeze.b1 { animation-delay: -1.9s; }
+@keyframes breeze { from { transform: skewX(-1.1deg); } to { transform: skewX(1.5deg) scaleX(1.012); } }
 /* 0.49.0 — Байт просится на руки: лапы тянутся к ней. */
 #room .reach { animation: scratch 1.5s ease-in-out infinite alternate; }
 /* 0.49.0 — страница свёрнута: движение на рисунке стоит (.resting); её картинка ещё в пути — мягкий силуэт и три

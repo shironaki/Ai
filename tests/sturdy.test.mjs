@@ -119,9 +119,9 @@ test("повтор действия: тот же номер второй раз 
   // Новое нажатие (другой номер) окно закрывает: защита — от повтора, а не от человека.
   const shut = await h.onRoom({ do: "window", id: "zzz999yyy8" }, from(5));
   assert.deepEqual([shut.ok, shut.open], [true, false]);
-  // Номер помнится три минуты и не длиннее; негодный номер — как без номера.
+  // Номер помнится десять минут и не длиннее; негодный номер — как без номера.
   time.add(room.OPS_KEEP_MS + 1000);
-  assert.equal((await h.onRoom({ do: "window", id: "abc123defg" }, from(5))).repeat, undefined, "через три минуты номер забыт");
+  assert.equal((await h.onRoom({ do: "window", id: "abc123defg" }, from(5))).repeat, undefined, "через десять минут номер забыт");
   assert.equal((await h.onRoom({ do: "window", id: "!!" }, from(5))).ok, true);
   assert.ok(JSON.parse(stored(5)).ops.length <= room.OPS_MAX);
 });
@@ -237,6 +237,9 @@ test("страница: действия идут с номером и чере�
   assert.deepEqual(sends.sort(), ['"album"', '"book"', '"brew"', '"call"', '"gift"', '"lamp"', '"music"', '"pat"', '"pick"', '"quiet"', '"snap"', '"wear"', '"window"', "name"].sort(), "каждое действие — через `send`");
   // Разбор ответа на повтор — у каждого действия, которое что-то меняет (альбом только читается).
   assert.equal((app.match(/if \(repeated\(result\)\) return;/gu) ?? []).length, sends.length - 1, "и у каждого — разбор ответа на повтор");
+  // Кнопка «ещё раз» шлёт то же действие с тем же номером: дошедшее в прошлый раз второй раз не выполнится.
+  assert.match(app, /if \(redo && state\.ready\) \{ sameId = \{ id: redo\.id, op: redo\.op \}; redo\.run\(\); \} else enter\(\);/u);
+  assert.match(app, /id = sameId && sameId\.op === name \? sameId\.id : newId\(\);/u);
   // Повтор шлётся только сердцу, которое помнит номера.
   assert.match(app, /state\.once && typeof logic\.resend === "function" && logic\.resend\(result\)/u);
   // Все часы страницы названы в `rest` — и ни один не заводится, пока она свёрнута.
