@@ -177,6 +177,8 @@ export function createSound() {
     let index = 0, next = ctx.currentTime + 0.1;
     const step = () => {
       if (song !== made || ctx.state !== "running") return;
+      // Таймер опоздал (страницу сворачивали): пропущенные такты не доигрываются разом — дальше с ближайшего такта.
+      if (next < ctx.currentTime) { const missed = Math.ceil((ctx.currentTime + 0.05 - next) / bar); index += missed; next += missed * bar; }
       while (next < ctx.currentTime + bar && next < end) {
         const [bass, notes] = CHORDS[index % CHORDS.length];
         key(out, next, pitchOf(bass), bar * 0.9, 0.22, "sine");

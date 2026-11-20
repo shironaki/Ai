@@ -2076,9 +2076,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const held = scene?.cat && (scene.since === 0 || !caredAfter) ? scene.cat : null;
         // Гроза (идея 160, 0.46.0): гром — и Байт под пледом, наружу один хвост; с места не ходит. О нём только что
         // позаботились (погладили, покормили, поиграли) — он при людях, а не под пледом. Обиженный уже спрятался —
-        // под кресло; сценка дня держит его там, где сказано в ней.
+        // под кресло; сценка дня держит его там, где сказано в ней (`held` ниже проверяется раньше, чем `hides`).
         const comforted = Boolean(state.last) && state.last !== "hurt" && now() - Number(state.lastAt) >= 0 && now() - Number(state.lastAt) < ROOM_FRESH_MS;
-        const hides = sky === "storm" && !after && !held && !comforted && key !== "обижен";
+        const hides = sky === "storm" && !after && !comforted && key !== "обижен";
         const raw = after || held ? "" : roomLine(turn, hides ? "байт:гроза" : `байт:${key}`);
         const moved = after ? catAfter(after, { again }) : null;
         const beats = held || hides ? [] : catBeats(key);

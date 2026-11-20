@@ -15,10 +15,11 @@
  * словом («room.randomSky is not a function»), а не весь файл разом на первой строке.
  * Что видно только в браузере (она идёт, дышит, комната перетекает из дня в вечер) — в `verify.sh page`, шаг 8.
  */
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { heart, message, reset, sdk, last, toChat, chats, KEY, OWNER, BUILD } from "./fixtures/kit.mjs";
+import { db as stubDb } from "./fixtures/sdk-stub.mjs";
 
 import * as room from "../tgcloud/lib/room.js";
 import * as logic from "../miniapp/logic.js";
@@ -1189,6 +1190,27 @@ test("0.46.0, Байт идёт лапами: четыре лапы из дву�
   assert.doesNotMatch(html, /\.trot\b/u);
 });
 
+test("0.46.0, скорость Байта: шагом — 55 точек в секунду, от секунды до четырёх с половиной; бегом — сто; круг шага — такой, чтобы лапа не скользила", () => {
+  const at = (x) => ({ x, y: 470 });
+  // Шагом.
+  assert.equal(scene.catSeconds(at(100), at(210)), 2);
+  assert.equal(scene.catSeconds(at(100), at(265)), 3);
+  assert.equal(scene.catSeconds(at(100), at(110)), 1, "не короче секунды");
+  assert.equal(scene.catSeconds(at(20), at(380)), 4.5, "не дольше четырёх с половиной");
+  // По диагонали — по длине пути; влево — так же, как вправо.
+  assert.equal(scene.catSeconds({ x: 100, y: 430 }, { x: 188, y: 496 }), 2);
+  assert.equal(scene.catSeconds(at(210), at(100)), 2);
+  // Бегом — за игрушкой.
+  assert.equal(scene.catSeconds(at(100), at(250), true), 1.5);
+  assert.equal(scene.catSeconds(at(100), at(120), true), 0.7);
+  assert.equal(scene.catSeconds(at(20), at(380), true), 2.5);
+  // Круг шага: за полкруга лапа проходит назад 13,5 точки — столько же проходит он сам.
+  assert.equal(scene.gaitSeconds(110, 2), 0.49);
+  assert.equal(scene.gaitSeconds(360, 4.5), 0.34);
+  assert.equal(scene.gaitSeconds(150, 1.5), 0.32, "быстрее трети секунды лапы не мелькают");
+  assert.equal(scene.gaitSeconds(20, 1), 0.64, "медленнее двух третей — не волочатся");
+});
+
 test("0.46.0, её шаг в два кадра: «ноги в шаге» и «ноги вместе» — попеременно, в обоих нарядах, в обе стороны; кадр не загрузился — идёт одной картинкой", () => {
   const all = { sprites: { ...SPRITES, ...FRAME_SPRITES } };
   const view = (part, pose) => ({ part, sky: "clear", her: { pose, key: "дело", beat: true }, cat: null, plant: "wet", things: [] });
@@ -1329,6 +1351,9 @@ test("0.46.0, колонка: нажали — три минуты музыки,
   assert.deepEqual(played.her.beats, [{ pose: "dance", line: played.her.line }], "пока играет, других занятий нет");
   assert.ok(roomOf(5).music > 0);
   assert.equal(roomOf(5).cared, "", "музыка — не забота");
+  // В переписке остаётся след: модель потом знает, что ей включали музыку.
+  const keptThread = await stubDb.get("SELECT messages FROM ai_memory WHERE chat_id = :chat AND user_id = :user", { ":chat": "5", ":user": "5" });
+  assert.match(String(keptThread?.messages), /\[в комнате\] включил тебе музыку/u);
   // Через минуту заглянул заново: играет ещё две минуты, она танцует.
   time.add(60_000);
   const mid = await h.onRoom({ do: "look", again: true }, from(5));
@@ -1380,6 +1405,22 @@ test("0.46.0, колонка: нажали — три минуты музыки,
   assert.ok(pool("колонка:сон").includes(no.line), no.line);
   assert.equal(roomOf(5).music ?? 0, 0);
 
+  // Музыка ещё играет, а ей уже не до танцев — наступила ночь, уснула: спит, а не танцует.
+  reset();
+  const late = clock(Date.parse("2026-11-18T19:58:30Z"));
+  const dusk = heart(ON, { now: late.now, random: () => 0 });
+  await dusk.onRoom({ do: "look" }, from(5));
+  assert.equal((await dusk.onRoom({ do: "music" }, from(5))).on, true);
+  late.add(120_000);
+  const dozed = await dusk.onRoom({ do: "look", again: true }, from(5));
+  assert.ok(dozed.music > 0, "колонка ещё играет");
+  assert.deepEqual([dozed.her.key, dozed.her.pose === "dance"], ["сон", false]);
+
+  // Место нажатия — сама колонка на нижней полке; гирлянда — полоса над окном.
+  const bare = scene.drawRoom({ part: "день", sky: "clear", her: null, cat: null, plant: "wet", things: [] }, PAINTED);
+  assert.match(bare, /<g class="tap" data-act="music"[^>]*><rect x="12" y="322" width="45" height="46"/u);
+  assert.match(bare, /<g class="tap" data-act="lamp"[^>]*><rect x="118" y="30" width="276" height="28"/u);
+
   // Витрина: те же правила без сердца.
   const demo = logic.applyLook(logic.blank(14), logic.demoLook(14, { part: "день", scene: "0" }), NOON);
   const on = logic.demoMusic(demo), dancing = logic.applyMusic(demo, on);
@@ -1401,7 +1442,8 @@ test("0.46.0, мелодия колонки: играет сам телефон 
   class FakeAudio {
     constructor() {
       this.currentTime = 10; this.state = "suspended"; this.sampleRate = 8000; this.destination = node("out");
-      return new Proxy(this, { get: (target, name) => (name in target ? target[name] : String(name).startsWith("create") ? () => node(String(name)) : undefined) });
+      FakeAudio.made = new Proxy(this, { get: (target, name) => (name in target ? target[name] : String(name).startsWith("create") ? () => node(String(name)) : undefined) });
+      return FakeAudio.made;
     }
     resume() { this.state = "running"; return Promise.resolve(); }
     suspend() { this.state = "suspended"; return Promise.resolve(); }
@@ -1415,6 +1457,8 @@ test("0.46.0, мелодия колонки: играет сам телефон 
     assert.equal(sound.tune(30), false, "звук не включён — мелодии нет");
     assert.equal(await sound.on("clear"), true);
     const quietBefore = log.filter(([kind]) => kind === "createOscillator").length;
+    // Следующие такты ставит таймер — в тесте время идёт по слову теста.
+    mock.timers.enable({ apis: ["setTimeout"] });
     assert.equal(sound.tune(30), true);
     const tones = log.filter(([kind]) => kind === "createOscillator").slice(quietBefore);
     // Первый такт: бас и восемь нот перебором; все — не раньше «сейчас» и в пределах такта (72 удара в минуту).
@@ -1422,6 +1466,43 @@ test("0.46.0, мелодия колонки: играет сам телефон 
     const bar = 4 * 60 / 72;
     for (const [, at] of tones) assert.ok(at >= 10 && at < 10.1 + bar, String(at));
     assert.equal(new Set(tones.map(([, at]) => at.toFixed(3))).size, 8, "восемь долей такта: бас звучит вместе с первой нотой");
+    // Темп: восемь нот по полудоле — последняя через три с половиной доли после первой.
+    const starts = tones.map(([, at]) => at).sort((a, b) => a - b);
+    assert.ok(Math.abs(starts.at(-1) - starts[0] - 3.5 * 60 / 72) < 1e-6, String(starts.at(-1) - starts[0]));
+    const count = () => log.filter(([kind]) => kind === "createOscillator").length;
+    // Через секунду таймер ставит следующий такт — встык с первым.
+    let had = count();
+    FakeAudio.made.currentTime = 11;
+    mock.timers.tick(900);
+    assert.equal(count() - had, 9, "следующий такт");
+    assert.ok(Math.abs(Math.min(...log.slice(-9).map(([, at]) => at)) - (10.1 + bar)) < 1e-6, "встык с первым");
+    // Таймер опоздал (страницу сворачивали): пропущенные такты не доигрываются разом — один такт, и не в прошлом.
+    had = count();
+    FakeAudio.made.currentTime = 24;
+    mock.timers.tick(900);
+    assert.equal(count() - had, 9, "один такт, а не все пропущенные");
+    for (const [, at] of log.slice(-9)) assert.ok(at >= 24, `нота в прошлом: ${at}`);
+    assert.ok(Math.abs((Math.min(...log.slice(-9).map(([, at]) => at)) - 10.1) / bar - Math.round((Math.min(...log.slice(-9).map(([, at]) => at)) - 10.1) / bar)) < 1e-6, "такт — на той же сетке");
+    // «Тише» обрывает: таймер больше ничего не ставит.
+    sound.hush();
+    had = count();
+    FakeAudio.made.currentTime = 30;
+    mock.timers.tick(5000);
+    assert.equal(count() - had, 0, "после «тише» нот нет");
+    // Тридцать секунд — это тридцать секунд: на сороковой нот уже нет; а дольше десяти минут не играет, сколько ни проси.
+    assert.equal(sound.tune(30), true);
+    had = count();
+    FakeAudio.made.currentTime = 55;
+    mock.timers.tick(900);
+    assert.equal(count() - had, 9, "на двадцать пятой секунде ещё играет");
+    FakeAudio.made.currentTime = 61;
+    mock.timers.tick(900);
+    assert.equal(count() - had, 9, "тридцать секунд прошли");
+    assert.equal(sound.tune(9000), true);
+    had = count();
+    FakeAudio.made.currentTime = 61 + 601;
+    mock.timers.tick(900);
+    assert.equal(count() - had, 0, "десять минут прошли — нот больше нет");
     assert.equal(sound.tune(0), false);
     // Щелчок выключателя — отдельный отклик.
     assert.equal(sound.play("click"), true);
@@ -1430,6 +1511,7 @@ test("0.46.0, мелодия колонки: играет сам телефон 
     sound.off();
     assert.equal(sound.tune(30), false, "звук выключили — мелодии нет");
   } finally {
+    mock.timers.reset();
     if (kept === undefined) delete globalThis.AudioContext; else globalThis.AudioContext = kept;
   }
   // И в самой странице: колонка включает звук касанием, а мелодия продолжается, если звук включили позже.
@@ -1452,7 +1534,7 @@ test("0.46.0, гроза: Байт под пледом — наружу один
     const seen = await h.onRoom({ do: "look" }, from(id));
     assert.equal(seen.sky, "storm", String(id));
     // Сценка дня держит Байта там, где сказано в ней: её слова — на странице.
-    if (room.sceneLook(roomOf(id)?.scene, { today: TODAY, at: time.now() })?.cat) continue;
+    if (room.sceneLook(roomOf(id)?.scene, { today: TODAY, at: time.now() })?.cat) { assert.notEqual(seen.cat.place, "plaid", `${id}: сценка дня сильнее грозы`); continue; }
     hidden += 1;
     assert.deepEqual([seen.cat.shape, seen.cat.place, seen.cat.still, seen.cat.beats], ["tail", "plaid", true, []], String(id));
     assert.ok(pool("байт:гроза").includes(seen.cat.line), seen.cat.line);
@@ -1469,6 +1551,10 @@ test("0.46.0, гроза: Байт под пледом — наружу один
     assert.notEqual(pet.cat?.place, "plaid", "погладили — он рядом, а не под пледом");
     time.add(60_000);
     assert.notEqual((await h.onRoom({ do: "look", again: true }, from(id))).cat.place, "plaid", "о нём только что позаботились");
+    // Обиженный уже спрятался — под кресло: гроза его под плед не переводит.
+    sdk().kv.set(room.ROOM_KEY(id), JSON.stringify({ ...roomOf(id), last: "hurt", lastAt: time.now() }));
+    const hurt = await h.onRoom({ do: "look", again: true }, from(id));
+    assert.deepEqual([hurt.cat.key, hurt.cat.place === "plaid"], ["обижен", false], String(id));
   }
   assert.ok(hidden >= 1, "хотя бы у одного гостя с грозой сценка дня Байта не держит");
   // Все фразы запаса — про плед: иначе слова разошлись бы с рисунком.
