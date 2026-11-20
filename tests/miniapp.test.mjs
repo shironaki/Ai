@@ -196,7 +196,12 @@ test("рисунок: нажатия — отдельным слоем пове�
   assert.deepEqual(zones[0], { act: "window", label: "Окно", id: "", x: 124, y: 44, w: 264, h: 218 });
   assert.deepEqual(zones.slice(-4).map(zone => [zone.act, zone.id, zone.label]), [["water", "plant", "Колючка"], ["tea", "kettle", "Чайник"], ["feed", "bowl", "Миска Байта"], ["play", "toy", "Клубок"]], "забота — поверх всех");
   // Слова нажатий — те же, что знает страница и сердце: «pet» — погладить.
-  assert.deepEqual([...new Set(zones.map(zone => zone.act.replace(/:.*/u, ":")))].sort(), ["book", "box", "feed", "her", "lamp", "music", "pet", "play", "tea", "thing:", "water", "window"]);
+  assert.deepEqual([...new Set(zones.map(zone => zone.act.replace(/:.*/u, ":")))].sort(), ["book", "box", "call", "feed", "her", "lamp", "music", "pet", "play", "tea", "thing:", "water", "window"]);
+  // Ковёр (0.47.0) — позвать Байта: место целиком на ковре и выше полосы с её словами; она, Байт и клубок — поверх.
+  const rug = zones.find(zone => zone.act === "call");
+  assert.deepEqual([rug.id, rug.label, zones.indexOf(rug)], ["rug", "Ковёр: позвать Байта", 1]);
+  assert.ok(rug.x >= 47 && rug.x + rug.w <= 353 && rug.y >= 408 && rug.y + rug.h <= 480 && rug.w >= 120 && rug.h >= 40, JSON.stringify(rug));
+  for (const [x, y] of [[rug.x, rug.y], [rug.x + rug.w, rug.y], [rug.x, rug.y + rug.h], [rug.x + rug.w, rug.y + rug.h]]) assert.ok(((x - 200) / 153) ** 2 + ((y - 451) / 44) ** 2 <= 1, `угол ${x},${y} — за краем ковра`);
   assert.deepEqual(zones.find(zone => zone.act === "pet").id, "cat");
   assert.deepEqual(zones.find(zone => zone.act === "her").id, "her");
   for (const act of ["pet", "feed", "play", "tea", "water"]) assert.ok(logic.CARE.includes(act));
@@ -254,7 +259,7 @@ test("рисунок: незнакомое и чужое не ломает ка�
   for (const view of [undefined, {}, { her: null, cat: null }, { part: 5, things: "все", plant: 1 }]) {
     const markup = drawRoom(view);
     assert.equal(wellFormed(markup), "");
-    assert.deepEqual(zonesOf(markup).map(zone => zone.act), ["window", "lamp", "book", "music", "lamp", "box", "water", "tea", "feed", "play"]);
+    assert.deepEqual(zonesOf(markup).map(zone => zone.act), ["window", "call", "lamp", "book", "music", "lamp", "box", "water", "tea", "feed", "play"]);
   }
   // Незнакомые поза, место, фигура и час — заменяются известными.
   const odd = drawRoom({ part: "полдень", her: { pose: "на потолке", key: "восторг" }, cat: { shape: "шар", place: "луна", key: "?" }, things: ["рояль"] });

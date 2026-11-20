@@ -2093,7 +2093,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
        * значит, лежит на спине), и только у слов без примет — таблица `catAfter`. Чай и вода его не касаются.
        * Сценка дня держит Байта там, где сказано в ней, — пока после неё о нём не позаботились.
        */
-      const picture = (state, { after = null, again = false, line = "" } = {}) => {
+      /** Что с Байтом сейчас: его состояние; держит ли его сценка дня (`held`); прячется ли он от грозы (`storm`). */
+      const catMood = (state) => {
         const key = catState({ hour: feel.hour, last: state.last, lastAt: state.lastAt, at: now(), fed: (Number(state.done?.feed) || 0) > 0, seed: roomSeed(userId, today) });
         const scene = staged(state);
         // Несыгранная сценка держит его весь день (её слова — на странице); исход — пока после него о Байте не позаботились.
@@ -2101,9 +2102,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const held = scene?.cat && (scene.since === 0 || !caredAfter) ? scene.cat : null;
         // Гроза (идея 160, 0.46.0): гром — и Байт под пледом, наружу один хвост; с места не ходит. О нём только что
         // позаботились (погладили, покормили, поиграли) — он при людях, а не под пледом. Обиженный уже спрятался —
-        // под кресло; сценка дня держит его там, где сказано в ней (`held` ниже проверяется раньше, чем `hides`).
+        // под кресло; сценка дня держит его там, где сказано в ней (`held` проверяется раньше, чем гроза).
         const comforted = Boolean(state.last) && state.last !== "hurt" && now() - Number(state.lastAt) >= 0 && now() - Number(state.lastAt) < ROOM_FRESH_MS;
-        const hides = sky === "storm" && !after && !comforted && key !== "обижен";
+        return { key, held, storm: sky === "storm" && !comforted && key !== "обижен" };
+      };
+      const picture = (state, { after = null, again = false, line = "" } = {}) => {
+        const { key, held, storm } = catMood(state);
+        const hides = storm && !after;
         const raw = after || held ? "" : roomLine(turn, hides ? "байт:гроза" : `байт:${key}`);
         const moved = after ? catAfter(after, { again }) : null;
         const beats = held || hides ? [] : catBeats(key);
@@ -2238,6 +2243,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const raw = roomLine(turn, done.again ? "полка:ещё" : "полка") || "Возьму книгу.";
         if (!done.again) await keepThread(turn, "[в комнате] предложил тебе почитать", raw);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), taken: true, again: Boolean(done.again), her: herNow(done.state), ...stageNote() };
+      }
+      if (op === "call") {
+        // Позвать Байта (идея 162, 0.47.0): нажали на ковёр — он подходит и садится рядом; позвали ещё раз, пока он
+        // тут (полминуты), — удирает под кресло бегом (`run`): кот. Спит, обижен, прячется от грозы или занят в
+        // сценке дня — не идёт, и она говорит почему. В отношения не идёт: это не забота.
+        const before = await room.read(userId, today);
+        const mood = catMood(before);
+        const why = mood.key === "спит" ? "спит" : mood.key === "обижен" || mood.held || mood.storm ? "нет" : "";
+        if (why) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `байт:позвать:${why}`) || "Байт не идёт."), came: false, fled: false };
+        const done = await room.call(userId, { day: today });
+        const raw = roomLine(turn, done.again ? "байт:позвать:ещё" : "байт:позвать") || (done.again ? "Байт удрал под кресло." : "Байт подошёл.");
+        const shown = picture(done.state, { after: "call", again: done.again, line: raw });
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), came: !done.again, fled: Boolean(done.again), ...(shown.cat ? { cat: { ...shown.cat, ...(done.again ? { run: true } : {}) } } : {}), ...stageNote() };
       }
       if (op === "lamp") {
         // Лампа (идея 158, 0.46.0): нажали — свет гаснет (остаётся гирлянда) или загорается; так и остаётся, пока не

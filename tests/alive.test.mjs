@@ -1812,3 +1812,104 @@ test("0.47.0, свет по солнцу на рисунке: небо, стен
   assert.equal(Object.hasOwn(logic.demoLook(14, {}).clock, "light"), false);
   assert.equal(Object.hasOwn(logic.demoLook(14, { light: "сумерки" }).clock, "light"), false);
 });
+
+// ── 0.47.0: позвать Байта (идея 162), что она советует (идея 167) ─────────────
+
+test("0.47.0, позвать Байта: нажали на ковёр — подошёл и сел рядом; второй раз за полминуты — удрал под кресло бегом; третий — снова подошёл; спит или прячется — не идёт", async () => {
+  reset();
+  const time = clock(NOON);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  await h.onRoom({ do: "look" }, from(5));
+  const came = await h.onRoom({ do: "call" }, from(5));
+  assert.deepEqual([came.ok, came.do, came.came, came.fled], [true, "call", true, false]);
+  assert.ok(pool("байт:позвать").map(plain).includes(came.line), came.line);
+  assert.deepEqual([came.cat.shape, came.cat.place, Object.hasOwn(came.cat, "run")], ["sit", "near", false]);
+  assert.equal(roomOf(5).call, NOON);
+  assert.equal(roomOf(5).cared, "", "зов — не забота: в отношения не идёт");
+  // Через двадцать секунд зовут снова — кот решает, что дело нечисто: под кресло, бегом.
+  time.add(20_000);
+  const fled = await h.onRoom({ do: "call" }, from(5));
+  assert.deepEqual([fled.came, fled.fled, fled.cat.shape, fled.cat.place, fled.cat.run], [false, true, "eyes", "under", true]);
+  assert.ok(pool("байт:позвать:ещё").map(plain).includes(fled.line), fled.line);
+  assert.equal(roomOf(5).call, 0, "удрал — отметка стёрта");
+  // Третий зов — снова первый: подходит.
+  time.add(5_000);
+  const back = await h.onRoom({ do: "call" }, from(5));
+  assert.deepEqual([back.came, back.cat.shape, back.cat.place], [true, "sit", "near"]);
+  // Позвали через минуту — это не «второй раз подряд»: он просто подходит.
+  time.add(room.CALL_MS + 1);
+  assert.equal((await h.onRoom({ do: "call" }, from(5))).came, true);
+  time.add(room.CALL_MS - 1);
+  assert.equal((await h.onRoom({ do: "call" }, from(5))).fled, true, "за секунду до конца полуминуты — ещё «подряд»");
+  // Комната после зова живёт дальше: заглянули заново — Байт там, где ему положено по его состоянию, не «под креслом навсегда».
+  const after = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.ok(after.cat && room.CAT_PLACES.includes(after.cat.place));
+
+  // Ночью он спит — на зов поворачивается одно ухо: слова есть, Байт остаётся где был.
+  reset();
+  const night = heart(ON, { now: () => Date.parse("2026-11-18T22:30:00Z"), random: () => 0 });
+  await night.onRoom({ do: "look" }, from(5));
+  const asleep = await night.onRoom({ do: "call" }, from(5));
+  assert.deepEqual([asleep.ok, asleep.came, asleep.fled, Object.hasOwn(asleep, "cat")], [true, false, false, false]);
+  assert.ok(pool("байт:позвать:спит").includes(asleep.line), asleep.line);
+  assert.equal(roomOf(5).call, 0, "не подошёл — отметки нет");
+  // Гроза: он под пледом — не выходит.
+  for (const line of [...pool("байт:позвать:спит"), ...pool("байт:позвать:нет")]) assert.deepEqual(room.catPose(line, "спит"), { shape: "curl", place: "pillow" }, `«${line}» — он не двигается: в словах нет места`);
+  // Слова зова не уводят его в другое место: «подошёл» — сидит рядом, «удрал» — глаза под креслом.
+  for (const line of pool("байт:позвать").map(plain)) assert.deepEqual(room.catPose(line, "сыт", room.catAfter("call")), { shape: "sit", place: "near" }, line);
+  for (const line of pool("байт:позвать:ещё").map(plain)) {
+    assert.deepEqual(room.catPose(line, "сыт", room.catAfter("call", { again: true })), { shape: "eyes", place: "under" }, line);
+    assert.match(line, /под кресло/u, line);
+  }
+  assert.equal(room.catAfter("call", { again: false }).place, "near");
+
+  // Страница: ответ ставит Байта на новое место; `run` доходит до рисунка — и только на этот переход.
+  const start = logic.applyLook(logic.blank(14), await (async () => { reset(); const hh = heart(ON, { now: () => NOON, random: () => 0 }); return hh.onRoom({ do: "look" }, from(5)); })(), NOON);
+  const near = logic.applyCall(start, came);
+  assert.deepEqual([logic.viewOf(near).cat.shape, logic.viewOf(near).cat.place, Object.hasOwn(logic.viewOf(near).cat, "run"), near.said], ["sit", "near", false, came.line]);
+  const away = logic.applyCall(near, fled);
+  assert.deepEqual([logic.viewOf(away).cat.shape, logic.viewOf(away).cat.place, logic.viewOf(away).cat.run], ["eyes", "under", true]);
+  assert.equal(away.lines.cat, fled.line);
+  // Не идёт — Байт на рисунке остаётся где был, меняются только слова.
+  const stays = logic.applyCall(near, asleep);
+  assert.deepEqual([logic.viewOf(stays).cat, stays.said], [logic.viewOf(near).cat, asleep.line]);
+  assert.equal(logic.applyCall(near, { ok: false, text: "нет связи" }).tone, "warn");
+  // На рисунке: бежит — быстрее, чем идёт; ковёр — место нажатия, и оно первое в списке (дальше всех от пальца).
+  const view = (cat) => ({ part: "день", sky: "clear", her: { pose: "desk", key: "дело", beat: true }, cat, things: [] });
+  const at = scene.castOf(view({ shape: "sit", place: "near", key: "сыт" }), PAINTED);
+  const stride = (cat) => Number(scene.drawInside(view(cat), { ...PAINTED, was: at.her, catWas: at.cat }).match(/<g class="stride" style="--dx:-?[\d.]+px;--dy:-?[\d.]+px;--t:([\d.]+)s/u)?.[1]);
+  const walked = stride({ shape: "eyes", place: "under", key: "сыт" }), ran = stride({ shape: "eyes", place: "under", key: "сыт", run: true });
+  assert.ok(walked > 0 && ran > 0 && ran < walked, `шагом ${walked} с, бегом ${ran} с`);
+  const zones = scene.drawInside(view({ shape: "sit", place: "bowl", key: "сыт" }), PAINTED).split('<g class="zones">')[1];
+  const acts = [...zones.matchAll(/data-act="([^"]+)"/gu)].map(found => found[1]);
+  assert.deepEqual(acts.slice(0, 2), ["window", "call"], "ковёр — сразу за окном: всё остальное лежит поверх него");
+  assert.equal(acts.filter(name => name === "call").length, 1);
+  // Витрина: подошёл; позвали ещё раз — удрал. Слова — из словаря.
+  const demo = logic.demoCall({ cat: { shape: "sit", place: "bowl", key: "голоден" } });
+  assert.deepEqual([demo.came, demo.cat.place], [true, "near"]);
+  assert.ok(pool("байт:позвать").map(plain).includes(demo.line), demo.line);
+  const twice = logic.demoCall({ cat: { shape: "sit", place: "near", key: "голоден", called: true } });
+  assert.deepEqual([twice.fled, twice.cat.place, twice.cat.run], [true, "under", true]);
+  assert.ok(pool("байт:позвать:ещё").map(plain).includes(twice.line), twice.line);
+});
+
+test("0.47.0, что она советует (идея 167): пока читает, второе нажатие на полку — совет, что взять; книги — те же, что она называет в чате", async () => {
+  reset();
+  const h = heart(ON, { now: () => NOON, random: () => 0 });
+  await h.onRoom({ do: "look" }, from(5));
+  const first = await h.onRoom({ do: "book" }, from(5));
+  assert.deepEqual([first.taken, first.again], [true, false]);
+  const again = await h.onRoom({ do: "book" }, from(5));
+  assert.deepEqual([again.taken, again.again], [true, true]);
+  assert.ok(pool("полка:ещё").map(plain).includes(again.line), again.line);
+  // Каждая строка «ещё» называет книгу — и только ту, что есть в её списке «что почитать» или любимая.
+  const known = `${book.pool("что почитать", { formal: true }).join(" ")} ${book.pool("любимая книга", { formal: true }).join(" ")}`;
+  for (const line of pool("полка:ещё")) {
+    const titles = [...line.matchAll(/«([^»]+)»/gu)].map(found => found[1]);
+    assert.ok(titles.length >= 1 || /Чехов/u.test(line), `«${line}» — совета нет`);
+    for (const title of titles) assert.ok(known.includes(title.replace(/ого принца$/u, "ий принц").replace(/^Маленьк/u, "Маленьк")) || known.includes(title), `«${title}» — такой книги в её списках нет`);
+  }
+  assert.match(known, /Чехов/u);
+  // О том, что так можно, она говорит сама.
+  assert.match(book.pool("возьми книгу", { formal: true }).join(" "), /ещё раз, пока я читаю/u);
+});

@@ -178,6 +178,8 @@ const CARE_ZONES = Object.freeze({
 /** Две верхние полки шкафа — книги и папки: место нажатия «возьми книгу» (0.45.0). */
 const BOOKS = Object.freeze([16, 174, 86, 84]);
 /** Вещи, которые появляются у человека со временем (`ITEMS` в `tgcloud/lib/room.js`): подпись и область. */
+/** Середина ковра: нажатие на неё зовёт Байта (0.47.0). Целиком внутри ковра и выше полосы с её словами. */
+const RUG_ZONE = [110, 420, 180, 50];
 const THING_ZONES = Object.freeze({
   "рисунок": ["Её рисунок", [14, 116, 44, 48]],
   "календарь": ["Календарь", [60, 116, 40, 48]],
@@ -2246,7 +2248,8 @@ function cat(g, f, view, pose, given = null, was = null) {
   let svg = settled, walk = "", seconds = 0;
   if (moved) {
     const from = floorUnder(was), to = floorUnder(spot);
-    seconds = catSeconds(from, to, key === "игра");
+    // Бегом — за игрушкой и когда удирает (`run`, 0.47.0: позвали второй раз подряд).
+    seconds = catSeconds(from, to, key === "игра" || view?.run === true);
     // Идёт мордой вперёд: фигура «идёт» нарисована мордой влево. Лапы шагают (`gait`), круг шага — по скорости (`--g`).
     walk = `<g class="stride" style="--dx:${n(from.x - to.x)}px;--dy:${n(from.y - to.y)}px;--t:${seconds}s;--g:${gaitSeconds(Math.hypot(to.x - from.x, to.y - from.y), seconds)}s"><g class="pad">${figure(to, "walk", catShape(g, f, "walk", { eyes: "open", angry, gait: true }), to.x > from.x, 1)}</g></g>`;
     const ghost = figure(was, was.shape, catShape(g, f, was.shape, { eyes, angry }), was.mirror === true, Number(was.k) > 0 ? Number(was.k) : 1);
@@ -2431,6 +2434,9 @@ export function drawInside(view = {}, options = {}) {
   const seatZone = owned.filter(([key]) => key === "место").map(thingZone);
   const zones = [
     tap("window", "Окно", [WIN.x, WIN.y, WIN.w, WIN.h]),
+    // Ковёр (0.47.0, идея 162): нажал на свободное место — позвал Байта. Первым в списке — дальше всех от пальца:
+    // она, Байт, клубок и вещи, стоящие на ковре, лежат поверх.
+    tap("call", "Ковёр: позвать Байта", RUG_ZONE, "rug"),
     // Выключатель света (0.46.0): гирлянда над окном и сама лампа — нажал, и лампа гаснет или загорается.
     tap("lamp", "Гирлянда", GARLAND_ZONE, "garland"),
     // Полка с книгами (0.45.0): нажал — она берёт книгу и садится читать. Вещи на полках — поверх: они ниже в списке.

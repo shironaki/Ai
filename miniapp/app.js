@@ -28,7 +28,7 @@ import * as logic from "./logic.js";
 // а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`, с 0.45.0 —
 // `frameOf`, `applyBook`, `demoBook`), перед вызовом проверяется.
 const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic } = logic;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall } = logic;
 /**
  * Каким светом красить небо и страницу (0.47.0): по солнцу города, если его знают и рисунок (`scene.lightIn`), и
  * описание (`view.light`); прежний `scene.js` красит комнату по часам — тогда по часам и небо, и шапка.
@@ -584,6 +584,24 @@ async function book() {
   buzz(result?.ok === true ? "light" : "error");
 }
 
+/**
+ * Позвать Байта (0.47.0): нажали на ковёр — он подходит; позвали ещё раз, пока он рядом, — удирает под кресло.
+ * Прежняя логика (старая копия `logic.js`) звать не умеет — тогда нажатие на ковёр ничего не делает.
+ */
+async function beckon() {
+  if (typeof applyCall !== "function" || typeof demoCall !== "function") return;
+  scheduleTurn();
+  state = { ...state, busy: "call" };
+  paint();
+  const result = state.demo ? demoCall(state) : await call({ do: "call" });
+  state = applyCall(state, result);
+  // Витрина помнит, что он подошёл на зов, — чтобы второй зов его спугнул.
+  if (state.demo && result?.cat?.called === true && state.cat) state = { ...state, cat: { ...state.cat, called: true } };
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
+  if (result?.came === true) ring("pet");
+}
+
 /** Лампа (0.46.0): свет гаснет — остаётся гирлянда — или загорается; как оставили, так и запомнится. */
 async function lamp() {
   if (typeof applyLamp !== "function" || typeof demoLamp !== "function") return;
@@ -621,6 +639,7 @@ async function act(name) {
   if (name === "book") { await book(); return; }
   if (name === "lamp") { await lamp(); return; }
   if (name === "music") { await music(); return; }
+  if (name === "call") { await beckon(); return; }
   // Любое нажатие отодвигает её и Байта следующий ход: дать прочесть ответ.
   scheduleTurn();
   if (!CARE.includes(name)) {

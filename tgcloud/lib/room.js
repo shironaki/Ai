@@ -522,6 +522,8 @@ export function catAfter(op, { again = false } = {}) {
   if (op === "feed") return again ? { shape: "sit", place: "bowl" } : { shape: "eat", place: "bowl" };
   if (op === "play") return again ? { shape: "lie", place: "rug" } : { shape: "play", place: "rug" };
   if (op === "pet") return { shape: "sit", place: "near" };
+  // Позвали (0.47.0): подошёл и сел рядом; позвали второй раз подряд — удрал под кресло, видны одни глаза.
+  if (op === "call") return again ? { shape: "eyes", place: "under" } : { shape: "sit", place: "near" };
   return null;
 }
 
@@ -595,9 +597,11 @@ export const MUSIC_MS = 3 * 60_000;
 /** Играет ли колонка сейчас: её включили меньше трёх минут назад (и не выключили — тогда отметка стёрта). */
 export const musicNow = (state, at) => Number(state?.music) > 0 && at - Number(state.music) >= 0 && at - Number(state.music) < MUSIC_MS;
 
+/** Сколько Байт «тут» после зова (0.47.0): позвали ещё раз за эти полминуты — он убегает. */
+export const CALL_MS = 30_000;
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, dark: false, seen: [], scene: null, near: 0, loot: [] });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, call: 0, dark: false, seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -696,6 +700,17 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     return { ok: true, on: !playing, state: next, saved: await write(userId, next) };
   }
 
+  /**
+   * Позвали Байта (нажали на ковёр, идея 162, 0.47.0): он подходит. `again` — зовут второй раз за полминуты
+   * (`CALL_MS`): он убегает, и отметка стирается — в третий раз подойдёт снова. В отношения не идёт: это не забота.
+   */
+  async function call(userId, { day } = {}) {
+    const state = await read(userId, day);
+    const at = now();
+    const again = Number(state.call) > 0 && at - Number(state.call) >= 0 && at - Number(state.call) < CALL_MS;
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, call: again ? 0 : at };
+    return { ok: true, again, state: next, saved: await write(userId, next) };
+  }
   /** Байта хотели обидеть: он прячется (до трёх часов — или пока не приласкают). В отношения это не идёт: игра. */
   async function scare(userId, { day } = {}) {
     const state = await read(userId, day);
@@ -724,5 +739,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId, state) { return write(userId, { ...state, at: state.at || now(), near: now() }); }
 
-  return { read, visit, care, book, lamp, music, choose, scare, near, look };
+  return { read, visit, care, book, lamp, music, call, choose, scare, near, look };
 }

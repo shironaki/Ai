@@ -81,7 +81,11 @@ export function viewOf(state) {
   const pet = catBeat(state);
   // Она дразнит Байта ленточкой — он рядом и ловит её, чем бы ни был занят до того (если не спит и не прячется).
   const teased = her && !state.away && her.pose === "ribbon" && state.cat && state.cat.still !== true;
-  const cat = !state.cat ? null : { shape: teased ? "play" : pet?.shape ?? state.cat.shape, place: teased ? "near" : pet?.place ?? state.cat.place, key: state.cat.key };
+  const cat = !state.cat ? null : {
+    shape: teased ? "play" : pet?.shape ?? state.cat.shape, place: teased ? "near" : pet?.place ?? state.cat.place, key: state.cat.key,
+    // Бежит он только туда, куда его послал сам ответ; следующий шаг распорядка — уже шагом.
+    ...(state.cat.run === true && !teased && !pet ? { run: true } : {}),
+  };
   return {
     part: state.part, her, cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed, tea: state.tea,
     // Свет по солнцу назван, только когда он разошёлся с часами: иначе описание рисунка то же, что и было.
@@ -136,7 +140,8 @@ const placeOf = (value) => (CAT_PLACES.includes(value) ? value : "rug");
 function catOf(raw, before = null, { first = false } = {}) {
   if (!raw || typeof raw !== "object") return before;
   const beats = (Array.isArray(raw.beats) ? raw.beats : []).filter(beat => beat && typeof beat === "object").slice(0, 8).map(beat => ({ shape: shapeOf(beat.shape), place: placeOf(beat.place), line: text(beat.line) }));
-  return { shape: shapeOf(raw.shape), place: placeOf(raw.place), key: text(raw.key, 16), beats, beat: first && beats.length ? 0 : -1, still: raw.still === true || !beats.length };
+  // `run` — на это место он бежит, а не идёт (0.47.0: удрал под кресло, когда позвали второй раз подряд).
+  return { shape: shapeOf(raw.shape), place: placeOf(raw.place), key: text(raw.key, 16), beats, beat: first && beats.length ? 0 : -1, still: raw.still === true || !beats.length, ...(raw.run === true ? { run: true } : {}) };
 }
 /** Она из ответа сердца: чем занята, где — и её распорядок (`beats`: реплики состояния, каждая со своим местом). */
 function herOf(raw) {
@@ -264,6 +269,19 @@ export function applyBook(state, result) {
     ...state, busy: "", tone: "", retry: false,
     ...(her ? { her, turn: 0, lines: { ...state.lines, ...(text(result.her.line) ? { her: text(result.her.line) } : {}) } } : {}),
     said: text(result.line) || "…",
+  };
+}
+
+/**
+ * Ответ на «позвать Байта» (`do: "call"`, 0.47.0): нажали на ковёр — он подошёл или, позванный второй раз подряд,
+ * удрал под кресло; не идёт (спит, прячется) — приходят одни слова, и он остаётся где был.
+ */
+export function applyCall(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  const moved = result.cat && typeof result.cat === "object";
+  return {
+    ...state, busy: "", tone: "", retry: false, cat: moved ? catOf(result.cat, state.cat) : state.cat,
+    lines: { ...state.lines, ...(moved ? { cat: text(result.line) } : {}) }, said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || "…",
   };
 }
 
@@ -433,6 +451,12 @@ export function demoBook(state) {
   // Те же слова, что прислало бы сердце: запасы «+комната:полка» и «+комната:она:уют».
   const line = "Читаю в кресле. Глава такая, что не оторваться: Байт зовёт ужинать уже второй раз.";
   return { ok: true, do: "book", build: "", line: "Возьму вот эту — «Маленького принца». Перечитываю каждую осень. Кресло, я иду.", taken: true, again: false, her: { key: "уют", pose: "read", line, beats: [{ pose: "read", line }] } };
+}
+/** «Позвать Байта» на витрине: подходит; позвали ещё раз, пока он рядом, — удирает под кресло. Слова — из словаря. */
+export function demoCall(state) {
+  const near = state.cat?.place === "near" && state.cat?.shape === "sit" && state.cat?.called === true;
+  if (near) return { ok: true, do: "call", build: "", line: "«Кс-кс» дважды — это уже подозрительно. Байт метнулся под кресло: из темноты смотрят два глаза.", came: false, fled: true, cat: { key: state.cat.key, shape: "eyes", place: "under", beats: [], still: true, run: true } };
+  return { ok: true, do: "call", build: "", line: "Услышал. Потянулся, зевнул и пришёл — будто сам собирался. Сидит рядом, хвост вокруг лап.", came: true, fled: false, cat: { key: state.cat?.key ?? "сыт", shape: "sit", place: "near", beats: [], still: true, called: true } };
 }
 /** Лампа на витрине: когда за окном темно — гаснет и загорается; пока светло, она не горит и так. */
 export function demoLamp(state) {
