@@ -142,7 +142,52 @@ export function createSound() {
     toy(at) { for (const [delay, pitch] of [[0, 520], [0.1, 640], [0.2, 780], [0.32, 620]]) blip(at + delay, pitch, pitch * 1.35, 0.07, 0.14); },
     // Погладили её: два мягких касания.
     pat(at) { for (const delay of [0, 0.16]) blip(at + delay, 210, 130, 0.1, 0.3); },
+    // Выключатель лампы (0.46.0): сухой щелчок.
+    click(at) { burst(at, "highpass", 2600, 0.8, 0.02, 0.3); blip(at + 0.004, 880, 520, 0.03, 0.14); },
   };
+
+  // Мелодия из колонки (0.46.0): тихий lo-fi — четыре аккорда по кругу (ре минор, соль, до мажор, ля минор), ноты
+  // перебором и бас. Играет сам телефон: файлов нет. Ноты ставятся на такт вперёд; следующий такт ставит таймер.
+  // Высота — в полутонах от ля малой октавы (220 Гц): [бас, четыре ноты аккорда].
+  const CHORDS = [[-7, [5, 8, 12, 15]], [-14, [-2, 2, 5, 8]], [-9, [3, 7, 10, 14]], [-12, [0, 3, 7, 10]]];
+  const ORDER = [0, 1, 2, 3, 2, 1, 3, 2];
+  const pitchOf = (steps) => 220 * 2 ** (steps / 12);
+  let song = null;
+  function stopSong() {
+    if (!song) return;
+    const old = song;
+    song = null;
+    clearTimeout(old.timer);
+    try { old.out.gain.setTargetAtTime(0, ctx.currentTime, 0.2); } catch { /* уже отключён */ }
+    setTimeout(() => { try { old.out.disconnect(); } catch { /* уже отключён */ } }, 1500);
+  }
+  function key(out, at, pitch, length, peak, type) {
+    const tone = ctx.createOscillator(), level = gain(0);
+    tone.type = type; tone.frequency.value = pitch;
+    chain(tone, level, out);
+    shape(level, at, 0.02, 0.04, length, peak);
+    tone.start(at); tone.stop(at + length + 0.2);
+  }
+  function startSong(seconds) {
+    stopSong();
+    const beat = 60 / 72, bar = beat * 4, out = gain(0), end = ctx.currentTime + seconds;
+    chain(out, filter("lowpass", 1500, 0.5), master);
+    out.gain.setTargetAtTime(1, ctx.currentTime, 0.4);
+    const made = { out, timer: 0 };
+    let index = 0, next = ctx.currentTime + 0.1;
+    const step = () => {
+      if (song !== made || ctx.state !== "running") return;
+      while (next < ctx.currentTime + bar && next < end) {
+        const [bass, notes] = CHORDS[index % CHORDS.length];
+        key(out, next, pitchOf(bass), bar * 0.9, 0.22, "sine");
+        for (const [slot, which] of ORDER.entries()) key(out, next + slot * beat / 2, pitchOf(notes[which]), beat * 1.4, slot % 2 ? 0.07 : 0.1, "triangle");
+        index += 1; next += bar;
+      }
+      made.timer = next < end ? setTimeout(step, 900) : 0;
+    };
+    song = made;
+    step();
+  }
 
   return Object.freeze({
     /** Включить. Зовётся из обработчика нажатия: иначе телефон звука не даст. */
@@ -157,6 +202,7 @@ export function createSound() {
     },
     off() {
       if (!ctx) return;
+      stopSong();
       master.gain.setTargetAtTime(0, ctx.currentTime, 0.15);
       dropBed();
       setTimeout(() => { if (!bed) ctx.suspend().catch(() => {}); }, 900);
@@ -166,6 +212,13 @@ export function createSound() {
       SHOTS[name](ctx.currentTime + 0.02);
       return true;
     },
+    /** Мелодия из колонки: играть `seconds` секунд (звук должен быть включён). `hush` — оборвать. */
+    tune(seconds = 180) {
+      if (!ctx || ctx.state !== "running" || !bed || !(seconds > 0)) return false;
+      startSong(Math.min(600, seconds));
+      return true;
+    },
+    hush() { stopSong(); },
     state: () => (!ctx || !bed ? "off" : ctx.state),
     sky: () => bed?.sky ?? "",
   });

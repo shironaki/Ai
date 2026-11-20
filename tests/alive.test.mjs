@@ -1226,3 +1226,251 @@ test("0.46.0, её шаг в два кадра: «ноги в шаге» и «н
   // И второй кадр шага страница грузит сама: следом за любой загруженной картинкой — её кадр (`fetchSprite`).
   assert.match(read("miniapp/app.js"), /settle\(name, store\(name, sprite\) \? sprite : false\);\n[^\n]*\n\s+fetchSprite\(frameName\(name\)\);/u);
 });
+
+test("0.46.0, лампа: вечером и ночью нажатие гасит её и зажигает — и это запоминается; днём она не горит и так; без лампы светит гирлянда", async () => {
+  reset();
+  const evening = clock(Date.parse("2026-11-18T16:30:00Z"));
+  const h = heart(ON, { now: evening.now, random: () => 0 });
+  const before = await h.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([before.clock.part, before.dark], ["вечер", false]);
+  const off = await h.onRoom({ do: "lamp" }, from(5));
+  assert.deepEqual([off.ok, off.do, off.dark, off.changed], [true, "lamp", true, true]);
+  assert.ok(pool("свет:выкл").includes(off.line), off.line);
+  assert.equal(roomOf(5).dark, true);
+  assert.equal(roomOf(5).cared, "", "выключатель — не забота: в отношения не идёт");
+  // Запомнилось: заглянул заново — в комнате по-прежнему полумрак.
+  assert.equal((await h.onRoom({ do: "look" }, from(5))).dark, true);
+  assert.equal((await h.onRoom({ do: "look", again: true }, from(5))).dark, true);
+  const on = await h.onRoom({ do: "lamp" }, from(5));
+  assert.deepEqual([on.dark, on.changed], [false, true]);
+  assert.ok(pool("свет:вкл").includes(on.line), on.line);
+  assert.equal(roomOf(5).dark, false);
+
+  // Страница: свет погашен — рисунок это знает; отказ ничего не меняет; прежнее сердце (поля нет) — как было.
+  const state = logic.applyLamp(logic.applyLook(logic.blank(19), before, evening.now()), off);
+  assert.deepEqual([state.dark, logic.viewOf(state).dark, state.said, state.busy], [true, true, off.line, ""]);
+  assert.equal(logic.viewOf(logic.applyLamp(state, on)).dark, undefined);
+  assert.equal(logic.applyLamp(state, { ok: false, code: "storage" }).dark, true);
+  assert.equal(logic.applyTick(state, { ...before, dark: undefined }, evening.now()).dark, true);
+  assert.equal(logic.applyTick(state, { ...before, dark: false }, evening.now()).dark, false);
+
+  // Рисунок: лампа тёмная, тёплого круга нет ни над столом, ни на полу; гирлянда светит; тень комнаты — от окна.
+  const view = { part: "вечер", sky: "clear", her: { pose: "chair", key: "уют", beat: true }, cat: null, plant: "wet", things: [] };
+  const lit = scene.drawRoom(view, PAINTED), dim = scene.drawRoom({ ...view, dark: true }, PAINTED);
+  assert.match(lit, /lampGlow/u);
+  assert.match(lit, /lampFloor/u);
+  assert.match(lit, /<ellipse cx="385" cy="291\.4" rx="14" ry="3\.4" fill="#fff4d2"\/>/u, "горящая лампа: свет под колпаком");
+  assert.doesNotMatch(dim, /lampGlow|lampFloor|fill="#fff4d2"/u);
+  assert.match(dim, /garlandGlow/u);
+  assert.match(lit, /<radialGradient id="r-dusk"[^>]*cx="385" cy="300" r="420"/u);
+  assert.match(dim, /<radialGradient id="r-dusk"[^>]*cx="256" cy="50" r="480"/u);
+  // Ночью — то же; днём лампа не горит и так, и выключатель рисунка не меняет.
+  assert.doesNotMatch(scene.drawRoom({ ...view, part: "ночь", her: { pose: "nap", key: "сон", beat: true }, dark: true }, PAINTED), /lampGlow|lampFloor/u);
+  assert.equal(scene.drawRoom({ ...view, part: "день", dark: true }, PAINTED), scene.drawRoom({ ...view, part: "день" }, PAINTED));
+  // Место нажатия — сама лампа; абажур любимого цвета (если он есть) — поверх колпака, ножка остаётся выключателем.
+  const zonesOf = (markup) => [...markup.matchAll(/class="tap" data-act="([^"]+)"/gu)].map(found => found[1]);
+  assert.ok(zonesOf(dim).includes("lamp"));
+  const owned = zonesOf(scene.drawRoom({ ...view, things: ["абажур"] }, PAINTED));
+  assert.ok(owned.indexOf("lamp") >= 0 && owned.indexOf("lamp") < owned.indexOf("thing:абажур"), owned.join());
+
+  // Днём: только слова, выключатель — как был.
+  reset();
+  const noon = clock();
+  const day = heart(ON, { now: noon.now, random: () => 0 });
+  await day.onRoom({ do: "look" }, from(5));
+  const idle = await day.onRoom({ do: "lamp" }, from(5));
+  assert.deepEqual([idle.ok, idle.dark, idle.changed], [true, false, false]);
+  assert.ok(pool("свет:день").includes(idle.line), idle.line);
+  assert.equal(roomOf(5).dark ?? false, false);
+  // Ночью она спит — и отвечает сквозь сон.
+  reset();
+  const night = clock(Date.parse("2026-11-18T23:30:00Z"));
+  const asleep = heart(ON, { now: night.now, random: () => 0 });
+  assert.equal((await asleep.onRoom({ do: "look" }, from(5))).her.key, "сон");
+  const sleepy = await asleep.onRoom({ do: "lamp" }, from(5));
+  assert.equal(sleepy.dark, true);
+  assert.ok(pool("свет:выкл:сон").includes(sleepy.line), sleepy.line);
+  assert.ok(pool("свет:вкл:сон").includes((await asleep.onRoom({ do: "lamp" }, from(5))).line));
+
+  // Витрина: те же правила без сердца.
+  const demo = logic.applyLook(logic.blank(20), logic.demoLook(20, { part: "вечер" }), NOON);
+  const demoOff = logic.demoLamp(demo);
+  assert.deepEqual([demoOff.ok, demoOff.dark, demoOff.changed], [true, true, true]);
+  assert.equal(logic.demoLamp(logic.applyLamp(demo, demoOff)).dark, false);
+  const demoDay = logic.demoLamp(logic.applyLook(logic.blank(14), logic.demoLook(14, { part: "день" }), NOON));
+  assert.deepEqual([demoDay.dark, demoDay.changed], [false, false]);
+  assert.equal(logic.applyLook(logic.blank(20), logic.demoLook(20, { part: "вечер", dark: "1" }), NOON).dark, true);
+  // Страница знает это действие и не падает на прежней логике.
+  const app = read("miniapp/app.js");
+  assert.match(app, /if \(name === "lamp"\) \{ await lamp\(\); return; \}/u);
+  assert.match(app, /if \(typeof applyLamp !== "function" \|\| typeof demoLamp !== "function"\) return;/u);
+});
+
+test("0.46.0, колонка: нажали — три минуты музыки, и она танцует; нажали ещё раз — выключила; доиграла — возвращается к делам; спящую музыка не будит", async () => {
+  reset();
+  const time = clock();
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const before = await h.onRoom({ do: "look" }, from(5));
+  assert.equal(before.music, 0);
+  assert.equal(room.MUSIC_MS, 180_000);
+  const played = await h.onRoom({ do: "music" }, from(5));
+  assert.deepEqual([played.ok, played.do, played.on, played.left], [true, "music", true, room.MUSIC_MS]);
+  assert.ok(pool("колонка").includes(played.line), played.line);
+  assert.deepEqual([played.her.key, played.her.pose], ["игра", "dance"]);
+  assert.ok(pool("она:музыка").includes(played.her.line), played.her.line);
+  assert.deepEqual(played.her.beats, [{ pose: "dance", line: played.her.line }], "пока играет, других занятий нет");
+  assert.ok(roomOf(5).music > 0);
+  assert.equal(roomOf(5).cared, "", "музыка — не забота");
+  // Через минуту заглянул заново: играет ещё две минуты, она танцует.
+  time.add(60_000);
+  const mid = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.equal(mid.music, room.MUSIC_MS - 60_000);
+  assert.deepEqual([mid.her.key, mid.her.pose, mid.her.beats.length], ["игра", "dance", 1]);
+
+  // Страница: колонка играет — рисунок это знает; она танцует (в куртке — картинка «play2», с 0.46.0 в два кадра).
+  const state = logic.applyMusic(logic.applyLook(logic.blank(14), before, NOON), played);
+  const view = logic.viewOf(state);
+  assert.deepEqual([state.music, view.music, view.her.pose, view.her.key, state.said, state.busy], [room.MUSIC_MS, true, "dance", "игра", played.line, ""]);
+  assert.equal(scene.spriteOf(view), "play2");
+  assert.equal(scene.frameOf(scene.spriteOf(view)), "play2b");
+  // Рисунок: над колонкой три ноты и огонёк — в любое время суток; без музыки днём нот нет, вечером — одна, как раньше.
+  const notes = (markup) => markup.split('<g class="note"').length - 1;
+  assert.equal(notes(scene.drawRoom(view, PAINTED)), 3);
+  assert.equal(notes(scene.drawRoom({ ...view, music: undefined }, PAINTED)), 0);
+  assert.equal(notes(scene.drawRoom({ ...view, part: "вечер", music: undefined }, PAINTED)), 1);
+  assert.equal(notes(scene.drawRoom({ ...view, part: "ночь" }, PAINTED)), 3);
+  const zones = [...scene.drawRoom(view, PAINTED).matchAll(/class="tap" data-act="([^"]+)"/gu)].map(found => found[1]);
+  assert.ok(zones.indexOf("book") < zones.indexOf("music"), "колонка — поверх полки с книгами");
+
+  // Нажали, пока играет, — выключила: она возвращается к своим делам, нот нет.
+  const stopped = await h.onRoom({ do: "music" }, from(5));
+  assert.deepEqual([stopped.ok, stopped.on, stopped.left], [true, false, 0]);
+  assert.ok(pool("колонка:стоп").includes(stopped.line), stopped.line);
+  assert.ok(stopped.her.beats.length > 1, "снова её обычный распорядок");
+  assert.equal(roomOf(5).music, 0);
+  const quiet = logic.applyMusic(state, stopped);
+  assert.deepEqual([quiet.music, logic.viewOf(quiet).music], [0, undefined]);
+  // Доиграла сама: через три минуты — как не включали.
+  await h.onRoom({ do: "music" }, from(5));
+  time.add(room.MUSIC_MS + 1000);
+  const later = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.equal(later.music, 0);
+  assert.ok(later.her.beats.length > 1);
+  assert.equal(logic.applyTick(state, later, time.now()).music, 0);
+  // Музыка играет, а ей предложили книгу — книга свежее: садится читать.
+  await h.onRoom({ do: "music" }, from(5));
+  time.add(5_000);
+  assert.equal((await h.onRoom({ do: "book" }, from(5))).her.pose, "read");
+
+  // Ночью она спит: колонка молчит, она — где была.
+  reset();
+  const night = clock(Date.parse("2026-11-18T23:30:00Z"));
+  const asleep = heart(ON, { now: night.now, random: () => 0 });
+  await asleep.onRoom({ do: "look" }, from(5));
+  const no = await asleep.onRoom({ do: "music" }, from(5));
+  assert.deepEqual([no.ok, no.on, no.left, no.her], [true, false, 0, undefined]);
+  assert.ok(pool("колонка:сон").includes(no.line), no.line);
+  assert.equal(roomOf(5).music ?? 0, 0);
+
+  // Витрина: те же правила без сердца.
+  const demo = logic.applyLook(logic.blank(14), logic.demoLook(14, { part: "день", scene: "0" }), NOON);
+  const on = logic.demoMusic(demo), dancing = logic.applyMusic(demo, on);
+  assert.deepEqual([on.on, dancing.music, logic.viewOf(dancing).her.pose, logic.viewOf(dancing).music], [true, 180_000, "dance", true]);
+  const off = logic.demoMusic(dancing);
+  assert.equal(off.on, false);
+  assert.deepEqual([logic.applyMusic(dancing, off).music, logic.viewOf(logic.applyMusic(dancing, off)).her.pose === "dance" && logic.applyMusic(dancing, off).her.beats.length === 1], [0, false]);
+  assert.equal(logic.demoMusic({ ...demo, her: { ...demo.her, key: "сон" } }).on, false);
+  assert.equal(logic.applyLook(logic.blank(14), logic.demoLook(14, { music: "1" }), NOON).music, 180_000);
+  const app = read("miniapp/app.js");
+  assert.match(app, /if \(name === "music"\) \{ await music\(\); return; \}/u);
+  assert.match(app, /if \(typeof applyMusic !== "function" \|\| typeof demoMusic !== "function"\) return;/u);
+});
+
+test("0.46.0, мелодия колонки: играет сам телефон — ноты ставятся на такт вперёд; без включённого звука молчит; «тише» обрывает", async () => {
+  const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} });
+  const log = [];
+  const node = (kind) => ({ kind, type: "", gain: param(), frequency: param(), Q: param(), detune: param(), playbackRate: param(), buffer: null, loop: false, connect(to) { return to; }, disconnect() {}, start(at) { log.push([kind, at]); }, stop() {} });
+  class FakeAudio {
+    constructor() {
+      this.currentTime = 10; this.state = "suspended"; this.sampleRate = 8000; this.destination = node("out");
+      return new Proxy(this, { get: (target, name) => (name in target ? target[name] : String(name).startsWith("create") ? () => node(String(name)) : undefined) });
+    }
+    resume() { this.state = "running"; return Promise.resolve(); }
+    suspend() { this.state = "suspended"; return Promise.resolve(); }
+    createBuffer(channels, length) { const data = new Float32Array(length); return { length, getChannelData: () => data }; }
+  }
+  const kept = globalThis.AudioContext;
+  globalThis.AudioContext = FakeAudio;
+  try {
+    const { createSound } = await import("../miniapp/sound.js");
+    const sound = createSound();
+    assert.equal(sound.tune(30), false, "звук не включён — мелодии нет");
+    assert.equal(await sound.on("clear"), true);
+    const quietBefore = log.filter(([kind]) => kind === "createOscillator").length;
+    assert.equal(sound.tune(30), true);
+    const tones = log.filter(([kind]) => kind === "createOscillator").slice(quietBefore);
+    // Первый такт: бас и восемь нот перебором; все — не раньше «сейчас» и в пределах такта (72 удара в минуту).
+    assert.equal(tones.length, 9, JSON.stringify(tones));
+    const bar = 4 * 60 / 72;
+    for (const [, at] of tones) assert.ok(at >= 10 && at < 10.1 + bar, String(at));
+    assert.equal(new Set(tones.map(([, at]) => at.toFixed(3))).size, 8, "восемь долей такта: бас звучит вместе с первой нотой");
+    assert.equal(sound.tune(0), false);
+    // Щелчок выключателя — отдельный отклик.
+    assert.equal(sound.play("click"), true);
+    assert.equal(sound.play("нет такого"), false);
+    sound.hush();
+    sound.off();
+    assert.equal(sound.tune(30), false, "звук выключили — мелодии нет");
+  } finally {
+    if (kept === undefined) delete globalThis.AudioContext; else globalThis.AudioContext = kept;
+  }
+  // И в самой странице: колонка включает звук касанием, а мелодия продолжается, если звук включили позже.
+  const app = read("miniapp/app.js");
+  assert.match(app, /if \(!soundOn && canSound && !\(state\.music > 0\)\) keepSound\(await startSound\(\)\);/u);
+  assert.match(app, /function retune\(\) \{\n  const left = tuneUntil - Date\.now\(\);/u);
+});
+
+test("0.46.0, гроза: Байт под пледом — наружу один хвост, с места не ходит; приласкали — вышел; сценка дня сильнее", async () => {
+  const storms = [];
+  for (let id = 100; id < 3000 && storms.length < 8; id += 1) if (madeUpSky(id) === "storm") storms.push(id);
+  assert.ok(storms.length >= 3, `гостей с грозой: ${storms.length}`);
+  let hidden = 0;
+  for (const id of storms) {
+    reset();
+    const time = clock();
+    const h = heart(ON, { now: time.now, random: () => 0 });
+    const seen = await h.onRoom({ do: "look" }, from(id));
+    assert.equal(seen.sky, "storm", String(id));
+    // Сценка дня держит Байта там, где сказано в ней: её слова — на странице.
+    if (room.sceneLook(roomOf(id)?.scene, { today: TODAY, at: time.now() })?.cat) continue;
+    hidden += 1;
+    assert.deepEqual([seen.cat.shape, seen.cat.place, seen.cat.still, seen.cat.beats], ["tail", "plaid", true, []], String(id));
+    assert.ok(pool("байт:гроза").includes(seen.cat.line), seen.cat.line);
+    // Слова и рисунок — одно: по самой фразе он там же.
+    const byWords = room.catPose(seen.cat.line, seen.cat.key);
+    assert.deepEqual([byWords.shape, byWords.place], ["tail", "plaid"]);
+    // Страница: хвост из-под пледа; своя жизнь его с места не ведёт.
+    const state = logic.applyLook(logic.blank(14), seen, NOON);
+    assert.deepEqual([logic.viewOf(state).cat.shape, logic.viewOf(state).cat.place], ["tail", "plaid"]);
+    assert.ok(!logic.nextBeat(state, "cat"), "под пледом — не ходит");
+    assert.match(scene.drawRoom(logic.viewOf(state), PAINTED), /class="cat tail"/u);
+    // Погладили — вышел; и пока о нём помнят, под плед не возвращается.
+    const pet = await h.onRoom({ do: "pet" }, from(id));
+    assert.notEqual(pet.cat?.place, "plaid", "погладили — он рядом, а не под пледом");
+    time.add(60_000);
+    assert.notEqual((await h.onRoom({ do: "look", again: true }, from(id))).cat.place, "plaid", "о нём только что позаботились");
+  }
+  assert.ok(hidden >= 1, "хотя бы у одного гостя с грозой сценка дня Байта не держит");
+  // Все фразы запаса — про плед: иначе слова разошлись бы с рисунком.
+  for (const line of pool("байт:гроза")) assert.match(line, /из-под пледа/u, line);
+  // Без грозы он под плед не лезет (запас «гроза» не используется).
+  reset();
+  const calm = (() => { for (let id = 100; id < 3000; id += 1) if (madeUpSky(id) === "clear") return id; return 0; })();
+  const fair = await heart(ON, { now: clock().now, random: () => 0 }).onRoom({ do: "look" }, from(calm));
+  assert.ok(!pool("байт:гроза").includes(fair.cat.line));
+  // Витрина: в грозу — так же; попросили Байта в адресе — стоит где попросили.
+  const demo = logic.demoLook(14, { sky: "storm" });
+  assert.deepEqual([demo.cat.shape, demo.cat.place, demo.cat.still], ["tail", "plaid", true]);
+  assert.match(demo.cat.line, /из-под пледа/u);
+  assert.deepEqual([logic.demoLook(14, { sky: "storm", cat: "sit.bowl.сыт" }).cat.place, logic.demoLook(14, { sky: "rain" }).cat.place === "plaid"], ["bowl", false]);
+});

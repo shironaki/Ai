@@ -73,7 +73,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, sceneByKey, herPose, catPose, catAfter, colourHex,
-  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow } from "./room.js";
+  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
@@ -1871,6 +1871,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const mood = herKey(feel.mood, feel.hour, { tea: state?.tea, at: now() });
     // Ей предложили книгу (нажали на полку, 0.45.0): полчаса она в кресле с книгой — если спокойна и после этого
     // ей не налили чай. Это свежее сценки дня: читает она то, что взяла сейчас.
+    // Играет колонка (нажали на неё, 0.46.0): три минуты она танцует — если спокойна; других занятий на это время
+    // нет (`only`). Что свежее — музыка или книга, — то и делает.
+    if (HER_CALM.includes(mood) && musicNow(state, now()) && Number(state.music) >= (Number(state?.book) || 0)) return { key: "игра", put: "dance", said: roomLine(turn, "она:музыка"), only: true };
     if (HER_CALM.includes(mood) && readingNow(state, now())) return { key: "уют", put: "read", said: "" };
     const look = HER_CALM.includes(mood) ? sceneLook(state?.scene, { today, at: now() }) : null;
     if (!look?.her) return { key: mood, put: "", said: "" };
@@ -2071,16 +2074,22 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // Несыгранная сценка держит его весь день (её слова — на странице); исход — пока после него о Байте не позаботились.
         const caredAfter = Boolean(state.last) && Number(state.lastAt) > (scene?.since ?? 0) && now() - Number(state.lastAt) < ROOM_FRESH_MS;
         const held = scene?.cat && (scene.since === 0 || !caredAfter) ? scene.cat : null;
-        const raw = after || held ? "" : roomLine(turn, `байт:${key}`);
+        // Гроза (идея 160, 0.46.0): гром — и Байт под пледом, наружу один хвост; с места не ходит. О нём только что
+        // позаботились (погладили, покормили, поиграли) — он при людях, а не под пледом. Обиженный уже спрятался —
+        // под кресло; сценка дня держит его там, где сказано в ней.
+        const comforted = Boolean(state.last) && state.last !== "hurt" && now() - Number(state.lastAt) >= 0 && now() - Number(state.lastAt) < ROOM_FRESH_MS;
+        const hides = sky === "storm" && !after && !held && !comforted && key !== "обижен";
+        const raw = after || held ? "" : roomLine(turn, hides ? "байт:гроза" : `байт:${key}`);
         const moved = after ? catAfter(after, { again }) : null;
-        const beats = held ? [] : catBeats(key);
+        const beats = held || hides ? [] : catBeats(key);
         // Распорядок начинается с той реплики, что сказана: остальные — за ней по кругу.
         const from = raw ? beats.findIndex(beat => beat.line === raw) : -1;
         const order = from > 0 ? [...beats.slice(from), ...beats.slice(0, from)] : beats;
         const cat = after
           ? (moved ? { key, ...catPose(line, key, moved), beats: order, still: order.length < 2 } : null)
           : held ? { key, ...held, line: "", beats: [], still: true }
-            : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2 };
+            : hides ? { key, shape: "tail", place: "plaid", line: raw, beats: [], still: true }
+              : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2 };
         return {
           ...(cat ? { cat } : {}),
           plant: { state: plantState({ water: state.water, at: now() }) === "полита" ? "wet" : "dry" },
@@ -2107,14 +2116,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
        * (`herPose`); страница ведёт её от одной к другой и показывает слова той, что сейчас на рисунке.
        */
       const herNow = (state = null) => {
-        const { key, put, said } = herState(turn, feel, state, today);
+        const { key, put, said, only } = herState(turn, feel, state, today);
         const lines = roomLines(turn, `она:${key}`);
         // Сценка дня поставила её саму («значит, манга» — она в кресле): первая реплика — сами слова исхода, на том
         // месте, где сказано; дальше — её обычные реплики этого состояния, кроме той, что о том же месте.
         if (put) {
           const rest = lines.map(line => ({ pose: herPose(line, key), line }));
           const first = said ? { pose: put, line: said } : rest.find(beat => beat.pose === put) ?? { pose: put, line: "" };
-          return { key, pose: put, line: first.line, beats: [first, ...rest.filter(beat => beat.pose !== put)] };
+          return { key, pose: put, line: first.line, beats: only ? [first] : [first, ...rest.filter(beat => beat.pose !== put)] };
         }
         const raw = roomLine(turn, `она:${key}`);
         const from = lines.indexOf(raw);
@@ -2153,6 +2162,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
           her: herNow(visit.state),
           ...picture(visit.state),
+          // 0.46.0. Лампа погашена (горит гирлянда); сколько ещё играет колонка, мс (0 — молчит).
+          dark: visit.state.dark === true, music: musicNow(visit.state, now()) ? Math.max(1000, MUSIC_MS - (now() - Number(visit.state.music))) : 0,
           things: ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => ({ key: item.key, title: item.title, line: roomLine(turn, `вещь:${item.key}`, things.vars) })),
           lamp: things.keys.includes("абажур") ? colourHex(things.vars["цвет"]) : "",
           drawing: things.keys.includes("рисунок") ? things.drawing : "",
@@ -2198,6 +2209,30 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const raw = roomLine(turn, done.again ? "полка:ещё" : "полка") || "Возьму книгу.";
         if (!done.again) await keepThread(turn, "[в комнате] предложил тебе почитать", raw);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), taken: true, again: Boolean(done.again), her: herNow(done.state), ...stageNote() };
+      }
+      if (op === "lamp") {
+        // Лампа (идея 158, 0.46.0): нажали — свет гаснет (остаётся гирлянда) или загорается; так и остаётся, пока не
+        // нажмут снова. Днём лампа не горит и так: она это и говорит, а выключатель остаётся как был.
+        const part = partOfDay(feel.hour);
+        if (part !== "вечер" && part !== "ночь") {
+          const before = await room.read(userId, today);
+          return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "свет:день") || "Днём и так светло."), dark: before.dark === true, changed: false };
+        }
+        const done = await room.lamp(userId, { day: today });
+        const asleep = herState(turn, feel, done.state, today).key === "сон";
+        const raw = roomLine(turn, `свет:${done.dark ? "выкл" : "вкл"}${asleep ? ":сон" : ""}`) || (done.dark ? "Погасила." : "Включила.");
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), dark: done.dark, changed: true };
+      }
+      if (op === "music") {
+        // Колонка (идея 159, 0.46.0): три минуты играет тихая мелодия (её играет сам телефон), и она танцует;
+        // нажали, пока играет, — выключили. Когда ей не до танцев (сон, обида, ревность, усталость), колонка молчит.
+        const before = await room.read(userId, today);
+        const mood = herState(turn, feel, before, today).key;
+        if (!musicNow(before, now()) && !HER_CALM.includes(mood)) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, mood === "сон" ? "колонка:сон" : "колонка:нет") || "Не сейчас."), on: false, left: 0 };
+        const done = await room.music(userId, { day: today });
+        const raw = roomLine(turn, done.on ? "колонка" : "колонка:стоп") || (done.on ? "Включаю." : "Выключила.");
+        if (done.on) await keepThread(turn, "[в комнате] включил тебе музыку", raw);
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), on: done.on, left: done.on ? MUSIC_MS : 0, her: herNow(done.state), ...stageNote() };
       }
       if (op === "pick") {
         const picked = await room.choose(userId, String(input?.key ?? "").slice(0, 24), Number(input?.pick), { day: today });

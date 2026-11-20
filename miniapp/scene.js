@@ -160,6 +160,9 @@ const within = ([x, y, w, h]) => {
 const tap = (act, label, box, id = "") => `<g class="tap" data-act="${esc(act)}" role="button" tabindex="0" aria-label="${esc(label)}"${id ? ` id="${id}"` : ""}>${hit(...within(box))}</g>`;
 
 /** Что можно тронуть ради заботы: подпись, имя на странице и область. Эти области — поверх всех остальных. */
+/** Места нажатий 0.46.0: колонка на нижней полке и лампа на столе (колпак и ножка, до края рисунка). */
+const SPEAKER_ZONE = Object.freeze([12, 322, 45, 46]);
+const LAMP_ZONE = Object.freeze([364, 258, 36, 62]);
 const CARE_ZONES = Object.freeze({
   water: ["Колючка", "plant", [320, 210, 38, 54]],
   tea: ["Чайник", "kettle", [308, 280, 46, 40]],
@@ -612,7 +615,12 @@ function mug(x, base, colour, { steam = false } = {}) {
     steam ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity="0.6"><path d="M${x - 2.4} ${base - 16} q-3 -4 0 -8 q3 -4 0 -7"/><path d="M${x + 2.6} ${base - 17} q3 -4 0 -8"/></g>` : "",
   ].join("");
 }
-function bookcase(g, c, has, part) {
+/** Ноты над колонкой, когда она играет (0.46.0): три, каждая в свой черёд (стиль страницы `.note`). */
+function speakerNotes(c) {
+  const one = ([dx, dy, delay]) => `<g transform="translate(${dx} ${dy})"><g class="note" style="animation-delay:${delay}s" fill="${c.paper}" opacity="0.9"><path d="M58 326 v-9 l5 -1.6 v8.6" fill="none" stroke="${c.paper}" stroke-width="1"/><ellipse cx="56.6" cy="326" rx="1.9" ry="1.4"/><ellipse cx="61.6" cy="324" rx="1.9" ry="1.4"/></g></g>`;
+  return `<circle cx="48.6" cy="330.6" r="1.5" fill="#7de0c8"/><circle cx="48.6" cy="330.6" r="3" fill="#7de0c8" opacity="0.3"/>${[[0, 2, 0], [15, 6, -1.2], [29, 3, -2.3]].map(one).join("")}`;
+}
+function bookcase(g, c, has, part, music = false) {
   const x = 8, y = 170, w = 98, h = 202;
   const shelves = [218, 266, 314];
   const book = (bx, base, bw, bh, colour, { tilt = 0, band = "" } = {}) => `<g${tilt ? ` transform="rotate(${tilt} ${bx} ${base})"` : ""}><rect x="${bx}" y="${base - bh}" width="${bw}" height="${bh}" rx="0.9" fill="${colour}"/><rect x="${bx}" y="${base - bh}" width="1.2" height="${bh}" fill="${lt(colour, 0.35)}" opacity="0.7"/><rect x="${bx + bw - 1.3}" y="${base - bh}" width="1.3" height="${bh}" fill="${dk(colour, 0.3)}" opacity="0.6"/>${band ? `<rect x="${bx + 0.8}" y="${base - bh + 4}" width="${bw - 1.6}" height="2.4" fill="${band}"/><rect x="${bx + 0.8}" y="${base - 7}" width="${bw - 1.6}" height="1.4" fill="${band}" opacity="0.8"/>` : ""}</g>`;
@@ -650,7 +658,7 @@ function bookcase(g, c, has, part) {
     // Колонка: вечером из неё тихо играет lo-fi.
     `<rect x="16" y="326" width="37" height="40" rx="3" fill="${c.jacket}"/><rect x="16" y="326" width="37" height="2" rx="1" fill="${c.jacketLight}"/>`,
     `<circle cx="34.5" cy="339" r="8" fill="${dk(c.jacket, 0.35)}"/><circle cx="34.5" cy="339" r="5.4" fill="${c.jacketLight}"/><circle cx="34.5" cy="339" r="2.2" fill="${dk(c.jacket, 0.3)}"/><circle cx="34.5" cy="356" r="5.2" fill="${dk(c.jacket, 0.35)}"/><circle cx="34.5" cy="356" r="3.2" fill="${c.jacketLight}"/><circle cx="34.5" cy="356" r="1.3" fill="${dk(c.jacket, 0.3)}"/>`,
-    part === "вечер" ? `<circle cx="48.6" cy="330.6" r="1.2" fill="#7de0c8"/><g class="note" fill="${c.paper}" opacity="0.8"><path d="M58 326 v-9 l5 -1.6 v8.6" fill="none" stroke="${c.paper}" stroke-width="1"/><ellipse cx="56.6" cy="326" rx="1.9" ry="1.4"/><ellipse cx="61.6" cy="324" rx="1.9" ry="1.4"/></g>` : `<circle cx="48.6" cy="330.6" r="1.2" fill="${dk(c.jacket, 0.3)}"/>`,
+    music ? speakerNotes(c) : part === "вечер" ? `<circle cx="48.6" cy="330.6" r="1.2" fill="#7de0c8"/><g class="note" fill="${c.paper}" opacity="0.8"><path d="M58 326 v-9 l5 -1.6 v8.6" fill="none" stroke="${c.paper}" stroke-width="1"/><ellipse cx="56.6" cy="326" rx="1.9" ry="1.4"/><ellipse cx="61.6" cy="324" rx="1.9" ry="1.4"/></g>` : `<circle cx="48.6" cy="330.6" r="1.2" fill="${dk(c.jacket, 0.3)}"/>`,
     // Плетёная корзина.
     `<rect x="59" y="338" width="40" height="28" rx="3" fill="${c.box}"/><path d="M59 345 h40 M59 352 h40 M59 359 h40" stroke="${c.boxDark}" stroke-width="1" opacity="0.6"/><path d="M66 338 v28 M74 338 v28 M82 338 v28 M90 338 v28" stroke="${c.boxDark}" stroke-width="0.7" opacity="0.35"/><rect x="72" y="342.6" width="14" height="5" rx="2.5" fill="${dk(c.boxDark, 0.25)}"/><rect x="59" y="338" width="40" height="2" rx="1" fill="${lt(c.box, 0.35)}"/>`,
   ].join("");
@@ -790,8 +798,9 @@ function notebook(c) {
 }
 /** Лампа на столе: абажур — янтарный или любимого цвета человека (`shade`). Вечером и ночью горит. */
 const LAMP = Object.freeze({ x: 385, y: 290 });
-function lamp(g, c, part, shade) {
-  const on = lit(part);
+function lamp(g, c, part, shade, off = false) {
+  // `off` — лампу погасили нажатием (0.46.0): вечером и ночью она стоит тёмной, как днём.
+  const on = lit(part) && !off;
   const colour = on ? shade : tint(shade, part);
   const cloth = on
     ? g.lin("shade", [[0, dk(shade, 0.12)], [0.55, shade], [1, lt(shade, 0.55)]])
@@ -987,8 +996,10 @@ function lantern(g, c, part) {
 
 // ── свет поверх комнаты ──────────────────────────────────────────────────────
 /** Пятно лампы и гирлянды на стене и столе — под фигурами: это свет на вещах, а не дымка перед ними. */
-function lampLight(g, part, shade) {
+function lampLight(g, part, shade, off = false) {
   if (!lit(part)) return "";
+  // Лампа погашена (0.46.0): светит одна гирлянда — её зарево над окном чуть ярче, тёплого круга у стола нет.
+  if (off) return `<ellipse cx="256" cy="46" rx="176" ry="34" fill="${g.rad("garlandGlow", [[0, "#ffd58a", 0.3], [1, "#ffd58a", 0]])}"/>`;
   const warm = mix(shade, "#ffd9a0", 0.4);
   return [
     `<circle class="glow" cx="${LAMP.x}" cy="${LAMP.y + 2}" r="${part === "ночь" ? 128 : 112}" fill="${g.rad("lampGlow", [[0, warm, 0.62], [0.32, warm, 0.26], [1, warm, 0]])}"/>`,
@@ -998,28 +1009,30 @@ function lampLight(g, part, shade) {
 }
 const AIR_HOLE = `M${WIN.x} ${WIN.y}V${WIN.y + WIN.h}H${WIN.x + WIN.w}V${WIN.y}Z`;
 /** Вечерняя и ночная тень комнаты: темнее к углам, светлее у лампы. Одна заливка — и для комнаты, и для неё у окна. */
-function duskFill(g, part) {
+function duskFill(g, part, off = false) {
   const depth = part === "ночь" ? 0.46 : 0.38;
+  // Лампа погашена (0.46.0): светлее всего под гирляндой, у окна; к полу и углам — темнее обычного.
+  if (off) return g.rad("dusk", [[0, "#0e0a2c", depth * 0.55], [0.45, "#0e0a2c", depth * 0.95], [1, "#0e0a2c", depth + 0.14]], ' gradientUnits="userSpaceOnUse" cx="256" cy="50" r="480"');
   return g.rad("dusk", [[0, "#0e0a2c", 0], [0.24, "#0e0a2c", depth * 0.2], [0.6, "#0e0a2c", depth * 0.7], [1, "#0e0a2c", depth]], ` gradientUnits="userSpaceOnUse" cx="${LAMP.x}" cy="${LAMP.y + 10}" r="420"`);
 }
 /** Последний слой картинки: мягкая тень по углам; окно она не трогает. */
-function airLight(g, part) {
+function airLight(g, part, off = false) {
   if (!lit(part)) {
     return `<path fill="${g.rad("dayShade", [[0, "#1a0f1e", 0], [0.6, "#1a0f1e", 0], [1, "#1a0f1e", 0.2]], ' gradientUnits="userSpaceOnUse" cx="256" cy="210" r="400"')}" fill-rule="evenodd" d="M0 0H400V520H0Z ${AIR_HOLE}"/>`;
   }
-  return `<path fill="${duskFill(g, part)}" fill-rule="evenodd" d="M0 0H400V520H0Z ${AIR_HOLE}"/>`;
+  return `<path fill="${duskFill(g, part, off)}" fill-rule="evenodd" d="M0 0H400V520H0Z ${AIR_HOLE}"/>`;
 }
 /**
  * Она стоит перед окном, а не за стеклом: вечерняя тень комнаты ложится и на ту её часть, что видна на фоне окна.
  * Без этого по светлому свитеру шла бы ровная полоса по линии подоконника — выше неё тени нет (окно «дырой»).
  * Маской служит её же картинка (`r-herMask`): тень ложится только на неё, город за стеклом остаётся ярким.
  */
-const airOnHer = (g, part) => (lit(part) ? `<path fill="${duskFill(g, part)}" d="${AIR_HOLE}" mask="url(#${g.id("herMask")})"/>` : "");
+const airOnHer = (g, part, off = false) => (lit(part) ? `<path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="url(#${g.id("herMask")})"/>` : "");
 /**
  * Свет на полу: днём — от окна, вечером и ночью — тёплое пятно под лампой и синева от окна. Ложится на пол до
  * мебели и фигур: поверх них у света был бы край, и ноги ниже плинтуса выглядели бы выцветшими.
  */
-function floorLight(g, part, shade, sky = "rain") {
+function floorLight(g, part, shade, sky = "rain", off = false) {
   if (!lit(part)) {
     // В ясный день на полу лежит солнце — три полосы по створкам окна; под тучами — ровный серый свет.
     const sunny = open(sky), sun = part === "утро" ? (sunny ? "#ffe6c0" : "#fff0dc") : sunny ? "#fff6dc" : "#ffffff";
@@ -1030,7 +1043,7 @@ function floorLight(g, part, shade, sky = "rain") {
   // Ясной ночью от окна на пол ложится лунный свет: чуть ярче обычной синевы.
   const blue = part === "ночь" ? (open(sky) ? 0.17 : 0.1) : 0.07;
   return [
-    `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.2], [1, warm, 0]])}"/>`,
+    off ? "" : `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.2], [1, warm, 0]])}"/>`,
     `<path d="M132 372 H400 L352 520 H30 Z" fill="${g.lin("nightFloor", [[0, "#9fb4ff", blue], [1, "#9fb4ff", 0]])}"/>`,
   ].join("");
 }
@@ -2204,6 +2217,7 @@ function cat(g, f, view, pose, given = null, was = null) {
  *   her — { pose, key } или null (её пока не видно: страница ещё не получила ответ);
  *   cat — { shape, place, key } или null;
  *   plant — "wet" | "dry"; things — ключи вещей; lamp — цвет абажура («#rrggbb»);
+ *   dark — лампа погашена, горит одна гирлянда (0.46.0); music — колонка играет: над ней ноты (0.46.0);
  *   fed — миска полна; tea — у неё в руках чай (чайник парит).
  * `options.sprites` — её картинки, какие страница уже загрузила: `{ имя: { w, h, cx, src } }`. Есть нужная — она
  * стоит картинкой. Ключа ещё нет — картинка грузится, и её самой пока не видно. Значение `false` (не загрузилась),
@@ -2293,6 +2307,8 @@ export function drawInside(view = {}, options = {}) {
   // перед ней или в коробке у её ног.
   const herCloser = Boolean(she.front && pet && (pet.layer === "front" ? herDepth > pet.depth : !(pet.layer === "box" && boxNear)));
   const shade = /^#[0-9a-f]{6}$/iu.test(String(view.lamp ?? "")) && has("абажур") ? view.lamp : DAY.lamp;
+  // 0.46.0. Лампу погасили нажатием: вечером и ночью светит одна гирлянда (днём лампа не горит и так). Колонка играет.
+  const dark = lit(part) && view.dark === true, music = view.music === true;
   // Вещь рисуется, только если она у человека есть. Плед, которым она укрыта, с кресла снят — нажать на него там нельзя.
   const thing = (key, body) => (has(key) ? body() : "");
   const stoolFree = !(she.stoolUsed || pose === "garland");
@@ -2312,7 +2328,7 @@ export function drawInside(view = {}, options = {}) {
     thing("календарь", () => calendar(c)),
     sill(g, c), fxShown("window", () => sashOpen(c), ajar && !fx.has("curtains")),
     fxShown("puddle", () => puddle()), fxShown("boat", () => boat(c)),
-    bookcase(g, c, has, part), on("top"),
+    bookcase(g, c, has, part, music), on("top"),
     thing("свеча", () => candle(c)),
     thing("подушка", () => sillPillow(g, c)),
     thing("место", () => sillSeat(g, c)),
@@ -2320,7 +2336,7 @@ export function drawInside(view = {}, options = {}) {
     fx.has("cactus") ? "" : cactus(g, c, PLANT.x, 262, view.plant !== "dry"),
     thing("кактус", () => cactus(g, c, 368, 262, true, true)),
     // Свет лампы на стене — под мебелью и фигурами.
-    lampLight(g, part, shade), floorLight(g, part, shade, sky),
+    lampLight(g, part, shade, dark), floorLight(g, part, shade, sky, dark),
     // Ковёр — до кресла: большое кресло (0.44.0) стоит на его дальнем краю ножками, а не тонет за ним.
     rug(g, c),
     // Кресла, плед, стол.
@@ -2329,7 +2345,7 @@ export function drawInside(view = {}, options = {}) {
     she.seat ?? "", on("lap"),
     stoolFree ? stool(g, c, STOOL.rest, STOOL.y) : "",
     desk(g, c),
-    notebook(c), teapot(g, c, { steam: Boolean(view.tea) }), on("desk"), lamp(g, c, part, shade),
+    notebook(c), teapot(g, c, { steam: Boolean(view.tea) }), on("desk"), lamp(g, c, part, shade, dark),
     // В день рождения на столе — торт: после стола и лампы, иначе его закрывает мебель (так было до 0.45.0).
     thing("торт", () => cake(g, c)),
     // Пол.
@@ -2347,7 +2363,7 @@ export function drawInside(view = {}, options = {}) {
     pet?.walk ?? "",
     thing("ёлка", () => tree(g, c, part)),
     fxShown("haze", () => haze(g, part)),
-    airLight(g, part), she.painted ? airOnHer(g, part) : "",
+    airLight(g, part, dark), she.painted ? airOnHer(g, part, dark) : "",
     she.note ?? "",
     `<rect class="frame" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" fill="none"/>`,
   ].join("");
@@ -2367,10 +2383,14 @@ export function drawInside(view = {}, options = {}) {
     tap("window", "Окно", [WIN.x, WIN.y, WIN.w, WIN.h]),
     // Полка с книгами (0.45.0): нажал — она берёт книгу и садится читать. Вещи на полках — поверх: они ниже в списке.
     tap("book", "Полка с книгами", BOOKS, "books"),
+    // Колонка на нижней полке (0.46.0): нажал — три минуты музыки, она танцует. Поверх полки с книгами.
+    tap("music", "Колонка", SPEAKER_ZONE, "speaker"),
     ...owned.filter(([key]) => !FRONT_THINGS.has(key)).map(thingZone),
     // Коробка Байта: нажал — что он в неё натаскал. Сам Байт, если сидит в ней, — поверх.
     tap("box", "Коробка Байта", [BOX.x, BOX.y + 8, BOX.w, BOX.h - 8], "box"),
     ...(herCloser ? [catZone, ...seatZone, herZone, headZone] : [herZone, headZone, catZone, ...seatZone]),
+    // Лампа (0.46.0): нажал — свет гаснет или загорается. Абажур любимого цвета, если он есть, — поверх колпака.
+    tap("lamp", "Лампа", LAMP_ZONE, "switch"),
     ...owned.filter(([key]) => FRONT_THINGS.has(key) && key !== "место").map(thingZone),
     // Колючка на полу — и поливают её там, где она лежит.
     ...Object.entries(CARE_ZONES).map(([act, [label, id, box]]) => tap(act, label, act === "water" && fx.has("cactus") ? FALLEN.zone : box, id)),

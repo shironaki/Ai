@@ -550,10 +550,14 @@ const CARE = Object.freeze(["pet", "feed", "play", "tea", "water", "pat"]);
 export const READ_MS = 30 * 60 * 1000;
 /** Читает ли она сейчас по этой записи: книгу взяла не раньше получаса назад и после этого ей не наливали чай. */
 export const readingNow = (state, at) => Number(state?.book) > 0 && at - Number(state.book) < READ_MS && Number(state.book) >= (Number(state?.tea) || 0);
+/** Сколько играет колонка после нажатия (0.46.0): три минуты — одна «пластинка». */
+export const MUSIC_MS = 3 * 60_000;
+/** Играет ли колонка сейчас: её включили меньше трёх минут назад (и не выключили — тогда отметка стёрта). */
+export const musicNow = (state, at) => Number(state?.music) > 0 && at - Number(state.music) >= 0 && at - Number(state.music) < MUSIC_MS;
 
 export function createRoom({ store = null, now = () => Date.now() } = {}) {
   const usable = () => Boolean(store?.available);
-  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, seen: [], scene: null, near: 0, loot: [] });
+  const blank = () => ({ at: 0, n: 0, day: "", done: {}, last: "", lastAt: 0, cared: "", care: 0, water: 0, tea: 0, book: 0, music: 0, dark: false, seen: [], scene: null, near: 0, loot: [] });
 
   /** Запись о комнате человека; счётчики дня — только за `day` (вчерашние не в счёт). */
   async function read(userId, day = "") {
@@ -629,6 +633,29 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     return { ok: true, again, state: next, saved: await write(userId, next) };
   }
 
+  /**
+   * Лампа (нажали на неё, 0.46.0): свет гаснет — остаётся гирлянда — или загорается снова. Запоминается, пока не
+   * нажмут ещё раз: `dark`. В отношения не идёт: это не забота.
+   */
+  async function lamp(userId, { day } = {}) {
+    const state = await read(userId, day);
+    const at = now();
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, dark: state.dark !== true };
+    return { ok: true, dark: next.dark, state: next, saved: await write(userId, next) };
+  }
+
+  /**
+   * Колонка (нажали на неё, 0.46.0): три минуты играет музыка (`MUSIC_MS`), и она танцует; нажали, пока играет, —
+   * выключили. `on` — играет ли после нажатия. В отношения не идёт: это не забота.
+   */
+  async function music(userId, { day } = {}) {
+    const state = await read(userId, day);
+    const at = now();
+    const playing = musicNow(state, at);
+    const next = { ...state, at: state.at || at, near: at, day, done: state.done, music: playing ? 0 : at };
+    return { ok: true, on: !playing, state: next, saved: await write(userId, next) };
+  }
+
   /** Байта хотели обидеть: он прячется (до трёх часов — или пока не приласкают). В отношения это не идёт: игра. */
   async function scare(userId, { day } = {}) {
     const state = await read(userId, day);
@@ -657,5 +684,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId, state) { return write(userId, { ...state, at: state.at || now(), near: now() }); }
 
-  return { read, visit, care, book, choose, scare, near, look };
+  return { read, visit, care, book, lamp, music, choose, scare, near, look };
 }

@@ -28,7 +28,7 @@ import * as logic from "./logic.js";
 // а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`, с 0.45.0 —
 // `frameOf`, `applyBook`, `demoBook`), перед вызовом проверяется.
 const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
-const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook } = logic;
+const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic } = logic;
 /** Второй кадр картинки (движение внутри позы, 0.45.0); прежний `scene.js` кадров не знает. */
 const frameName = (name) => (typeof frameOf === "function" ? frameOf(name) : null);
 // Что бывает за окном: с 0.44.0 — семь видов неба (погода города человека); прежняя логика знает два.
@@ -264,7 +264,7 @@ async function play(change) {
 // телефоны), поэтому запомненное «включено» ждёт первого касания страницы. Модуль `sound.js` грузится, когда звук
 // включили: не загрузился или телефон звука не умеет — комната остаётся тихой, и только.
 const SOUND_KEY = "ai-room-sound";
-const SOUNDS = Object.freeze({ pet: "purr", feed: "crunch", play: "toy", tea: "pour", water: "drip", pat: "pat" });
+const SOUNDS = Object.freeze({ pet: "purr", feed: "crunch", play: "toy", tea: "pour", water: "drip", pat: "pat", lamp: "click" });
 const canSound = typeof (globalThis.AudioContext ?? globalThis.webkitAudioContext) === "function";
 let sound = null, soundOn = false, soundBusy = false;
 const soundKept = () => { try { return localStorage.getItem(SOUND_KEY) === "1"; } catch { return false; } };
@@ -298,6 +298,21 @@ function stopSound() {
   paintSound();
 }
 const ring = (name) => { if (soundOn && Object.hasOwn(SOUNDS, name)) { try { sound?.play(SOUNDS[name]); } catch { /* звук не важнее комнаты */ } } };
+// Колонка (0.46.0): пока она играет, телефон сам выводит тихую мелодию (`sound.tune`), а на рисунке над ней ноты.
+// `tuneUntil` — до какого времени играет: звук включили позже или страницу развернули — мелодия продолжается.
+let tuneTimer = 0, tuneUntil = 0;
+function retune() {
+  const left = tuneUntil - Date.now();
+  if (left > 1500 && soundOn) { try { sound?.tune?.(left / 1000); } catch { /* звук не важнее комнаты */ } }
+}
+function tuneFor(ms) {
+  clearTimeout(tuneTimer);
+  if (!(ms > 0)) { tuneUntil = 0; try { sound?.hush?.(); } catch { /* звук не важнее комнаты */ } return; }
+  tuneUntil = Date.now() + ms;
+  retune();
+  // Доиграла — ноты гаснут, а комната спрашивается заново: она возвращается к своим делам.
+  tuneTimer = setTimeout(() => { tuneUntil = 0; state = { ...state, music: 0 }; paint(); tick(); }, ms + 1500);
+}
 
 function fetchSprite(name) {
   if (!canPaint || !name || asked.has(name)) return;
@@ -513,6 +528,7 @@ async function enter() {
   paint();
   if (state.demo) {
     state = applyLook(state, demoLook(new Date().getHours(), params), Date.now());
+    tuneFor(state.music);
     if (params.say) state = { ...state, said: params.say };
     paint();
     scheduleTick();
@@ -525,6 +541,7 @@ async function enter() {
   }
   const at = Date.now();
   state = applyLook(state, await call({ do: "look" }), at);
+  tuneFor(state.music);
   lookedAt = Date.now();
   paint();
   buzz(state.ready ? "light" : "error");
@@ -560,10 +577,42 @@ async function book() {
   buzz(result?.ok === true ? "light" : "error");
 }
 
+/** Лампа (0.46.0): свет гаснет — остаётся гирлянда — или загорается; как оставили, так и запомнится. */
+async function lamp() {
+  if (typeof applyLamp !== "function" || typeof demoLamp !== "function") return;
+  scheduleTurn();
+  state = { ...state, busy: "lamp" };
+  paint();
+  const result = state.demo ? demoLamp(state) : await call({ do: "lamp" });
+  state = applyLamp(state, result);
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
+  if (result?.changed === true) ring("lamp");
+}
+
+/**
+ * Колонка (0.46.0): три минуты тихой музыки, и она танцует; нажали, пока играет, — выключили. Нажатие на колонку —
+ * и есть просьба о звуке: выключенный звук включается (телефон даёт звук только с касания), как кнопкой «звук».
+ */
+async function music() {
+  if (typeof applyMusic !== "function" || typeof demoMusic !== "function") return;
+  scheduleTurn();
+  if (!soundOn && canSound && !(state.music > 0)) keepSound(await startSound());
+  state = { ...state, busy: "music" };
+  paint();
+  const result = state.demo ? demoMusic(state) : await call({ do: "music" });
+  state = applyMusic(state, result);
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
+  if (result?.ok === true) tuneFor(state.music);
+}
+
 async function act(name) {
   if (!state.ready || state.busy || acting) return;
   if (name === "pat") { await pat(); return; }
   if (name === "book") { await book(); return; }
+  if (name === "lamp") { await lamp(); return; }
+  if (name === "music") { await music(); return; }
   // Любое нажатие отодвигает её и Байта следующий ход: дать прочесть ответ.
   scheduleTurn();
   if (!CARE.includes(name)) {
@@ -617,14 +666,15 @@ $("sound")?.addEventListener("click", async () => {
   if (soundOn) { stopSound(); keepSound(false); return; }
   const ok = await startSound();
   keepSound(ok);
+  if (ok) retune();
   if (!ok) { state = { ...state, tone: "warn", said: "Звук не включился: этот телефон не дал комнате звучать." }; paint(); }
 });
-if (canSound && soundKept()) document.addEventListener("pointerdown", () => { if (!soundOn) startSound(); }, { once: true });
+if (canSound && soundKept()) document.addEventListener("pointerdown", () => { if (!soundOn) startSound().then(retune); }, { once: true });
 // Комнату свернули — звук и своя жизнь ждут; вернулись — продолжаются, а комната спрашивается заново, если
 // за это время сменился час или прошло больше минуты.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { try { sound?.off(); } catch { /* звук не важнее комнаты */ } return; }
-  if (soundOn) startSound();
+  if (soundOn) startSound().then(retune);
   scheduleTurn();
   const left = canTick && state.ready ? tickLeft() : null;
   if (left != null && (left <= 0 || Date.now() - lookedAt > 60_000)) tick(); else scheduleTick();

@@ -196,7 +196,7 @@ test("рисунок: нажатия — отдельным слоем пове�
   assert.deepEqual(zones[0], { act: "window", label: "Окно", id: "", x: 124, y: 44, w: 264, h: 218 });
   assert.deepEqual(zones.slice(-4).map(zone => [zone.act, zone.id, zone.label]), [["water", "plant", "Колючка"], ["tea", "kettle", "Чайник"], ["feed", "bowl", "Миска Байта"], ["play", "toy", "Клубок"]], "забота — поверх всех");
   // Слова нажатий — те же, что знает страница и сердце: «pet» — погладить.
-  assert.deepEqual([...new Set(zones.map(zone => zone.act.replace(/:.*/u, ":")))].sort(), ["book", "box", "feed", "her", "pet", "play", "tea", "thing:", "water", "window"]);
+  assert.deepEqual([...new Set(zones.map(zone => zone.act.replace(/:.*/u, ":")))].sort(), ["book", "box", "feed", "her", "lamp", "music", "pet", "play", "tea", "thing:", "water", "window"]);
   assert.deepEqual(zones.find(zone => zone.act === "pet").id, "cat");
   assert.deepEqual(zones.find(zone => zone.act === "her").id, "her");
   for (const act of ["pet", "feed", "play", "tea", "water"]) assert.ok(logic.CARE.includes(act));
@@ -254,7 +254,7 @@ test("рисунок: незнакомое и чужое не ломает ка�
   for (const view of [undefined, {}, { her: null, cat: null }, { part: 5, things: "все", plant: 1 }]) {
     const markup = drawRoom(view);
     assert.equal(wellFormed(markup), "");
-    assert.deepEqual(zonesOf(markup).map(zone => zone.act), ["window", "book", "box", "water", "tea", "feed", "play"]);
+    assert.deepEqual(zonesOf(markup).map(zone => zone.act), ["window", "book", "music", "box", "lamp", "water", "tea", "feed", "play"]);
   }
   // Незнакомые поза, место, фигура и час — заменяются известными.
   const odd = drawRoom({ part: "полдень", her: { pose: "на потолке", key: "восторг" }, cat: { shape: "шар", place: "луна", key: "?" }, things: ["рояль"] });
@@ -1541,7 +1541,8 @@ test("страница: папка уходит на платформу как �
   // веки, наряд, новые места нажатий, снег и праздники — предел поднят с 220 до 270 КБ; с 0.44.0 — небо семи видов,
   // кресло, шаги её и Байта, сценка дня на рисунке, своя жизнь и смена часа — с 270 до 340 КБ (по сети это около
   // 90 КБ: текст сжимается вчетверо). Звук и её картинки в предел не входят: они догружаются по ходу дела.
-  assert.ok(total < 340_000, `страница весит ${total} байт — открываться должна сразу`);
+  // С 0.46.0 — лапы Байта, шаг в два кадра, лампа-выключатель, колонка и лист «движение»: с 340 до 360 КБ.
+  assert.ok(total < 360_000, `страница весит ${total} байт — открываться должна сразу`);
   assert.ok(statSync(new URL("sound.js", folder)).size < 16_000, "звук — маленький модуль: шум и тон делает сам телефон");
   // Её картинки (0.40.0) — по модулю на спрайт, и ничего больше. Грузится только та, что нужна сейчас (и следующая
   // поза — заранее), поэтому мера у каждой своя; все вместе — чтобы папка не разбухала незаметно: предел растёт

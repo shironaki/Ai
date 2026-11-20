@@ -50,6 +50,8 @@ export function blank(hour = 12) {
     // 0.44.0. Луна по фазе; что сценка дня изменила в комнате; её нет в комнате (ушла к шкафу) или она только что
     // вошла; сколько осталось до смены часа (`left`, мс — от `at`, когда пришёл ответ); её слова у шкафа.
     moon: 0.3, fx: [], away: false, entering: false, clock: null, wardrobe: null,
+    // 0.46.0. Лампа погашена — горит одна гирлянда; сколько ещё играет колонка (мс от ответа сердца; 0 — молчит).
+    dark: false, music: 0,
   };
 }
 
@@ -81,6 +83,7 @@ export function viewOf(state) {
     ...(skyOf(state.sky) === "rain" ? {} : { sky: skyOf(state.sky) }),
     ...(Array.isArray(state.fx) && state.fx.length ? { fx: state.fx } : {}),
     ...(Number.isFinite(state.moon) ? { moon: state.moon } : {}),
+    ...(state.dark === true ? { dark: true } : {}), ...(state.music > 0 ? { music: true } : {}),
   };
 }
 /** Следующая её поза (без распорядка: позы состояния идут по кругу). */
@@ -166,6 +169,8 @@ export function applyLook(state, result, at = 0) {
     // Луна — по дню человека; дня в ответе нет — по часам устройства; нет и их — обычный месяц.
     moon: moonOf(text(result.clock?.day, 10) || (at > 0 ? at : null)), fx: sceneOf(result.scene)?.fx ?? [], away: false, entering: false,
     clock: clockOf(result.clock, at), wardrobe: wardrobeOf(result.wardrobe),
+    // Прежнее сердце о лампе и колонке не знает (полей нет) — тогда они остаются какими были.
+    dark: result.dark === undefined ? state.dark === true : result.dark === true, music: result.music === undefined ? count(state.music) : count(result.music),
     cat: catOf(result.cat, null, { first: true }), plant: result.plant?.state === "dry" ? "dry" : "wet",
     things: things.map(item => item.key), lamp: /^#[0-9a-f]{6}$/iu.test(String(result.lamp ?? "")) ? result.lamp : "",
     fed: done.feed > 0, tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
@@ -249,6 +254,26 @@ export function applyBook(state, result) {
   const her = result.her && typeof result.her === "object" && state.her ? herOf(result.her) : null;
   return {
     ...state, busy: "", tone: "", retry: false,
+    ...(her ? { her, turn: 0, lines: { ...state.lines, ...(text(result.her.line) ? { her: text(result.her.line) } : {}) } } : {}),
+    said: text(result.line) || "…",
+  };
+}
+
+/** Ответ на нажатие по лампе (`do: "lamp"`, 0.46.0): свет погашен или горит — и её слова об этом. */
+export function applyLamp(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  return { ...state, busy: "", tone: "", retry: false, dark: result.dark === true, said: text(result.line) || "…" };
+}
+
+/**
+ * Ответ на нажатие по колонке (`do: "music"`, 0.46.0): играет ли она (`on`) и сколько ещё (`left`, мс); сердце шлёт
+ * её заново (`her`) — она танцует или возвращается к своим делам. Когда ей не до танцев, приходят одни слова.
+ */
+export function applyMusic(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  const her = result.her && typeof result.her === "object" && state.her ? herOf(result.her) : null;
+  return {
+    ...state, busy: "", tone: "", retry: false, music: result.on === true ? count(result.left) || 180_000 : 0,
     ...(her ? { her, turn: 0, lines: { ...state.lines, ...(text(result.her.line) ? { her: text(result.her.line) } : {}) } } : {}),
     said: text(result.line) || "…",
   };
@@ -370,9 +395,12 @@ export function demoLook(hour = 12, params = {}) {
     ok: true, do: "look", build: "", clock: { hour, part, ...(left > 0 ? { left } : {}) }, greet: DEMO_NOTE, window: sky === "rain" ? DEMO_RAIN[part] : DEMO_WINDOW[sky], sky,
     wardrobe: DEMO_WARDROBE[wearAt(part)],
     her: { pose: fixed ? params.her : beats[0][0], key: params.key ?? key, line: fixed ? "" : beats[0][1], beats: fixed || params.key ? [] : beats.map(([pose, line]) => ({ pose, line })) },
-    cat: { shape, place, key: catKey, line: params.cat ? "" : DEMO_CAT[0][2], beats: params.cat ? [] : DEMO_CAT.map(([one, where, line]) => ({ shape: one, place: where, line })), still: Boolean(params.cat) },
+    // Гроза (0.46.0): Байт под пледом, наружу один хвост, — как у сердца (запас «+комната:байт:гроза»).
+    cat: sky === "storm" && !params.cat ? { shape: "tail", place: "plaid", key: "шалит", line: "Гром — и Байта как не бывало: из-под пледа торчит один хвост и делает вид, что он ни при чём.", beats: [], still: true }
+      : { shape, place, key: catKey, line: params.cat ? "" : DEMO_CAT[0][2], beats: params.cat ? [] : DEMO_CAT.map(([one, where, line]) => ({ shape: one, place: where, line })), still: Boolean(params.cat) },
     plant: { state: params.plant === "wet" ? "wet" : "dry" }, done: {}, cared: false,
     things: listed.map(name => ({ key: name, title: name, line: DEMO_THINGS[name] ?? "" })), lamp: params.lamp ?? "", drawing: "", fresh: [], next: null,
+    dark: params.dark === "1", music: params.music === "1" ? 180_000 : 0,
     box: { count: 2, line: "В коробке Байта — его трофеи: носок неизвестного происхождения и лампочка от гирлянды. Растёт с каждой сценкой." }, patted: false,
     scene: params.scene === "0" ? null : { key: DEMO_SCENE.key, text: DEMO_SCENE.text, options: DEMO_SCENE.options, pick: null, outcome: null, fx: String(params.fx ?? "sock").split(",").filter(Boolean) }, first: true,
   };
@@ -397,6 +425,22 @@ export function demoBook(state) {
   // Те же слова, что прислало бы сердце: запасы «+комната:полка» и «+комната:она:уют».
   const line = "Читаю в кресле. Глава такая, что не оторваться: Байт зовёт ужинать уже второй раз.";
   return { ok: true, do: "book", build: "", line: "Возьму вот эту — «Маленького принца». Перечитываю каждую осень. Кресло, я иду.", taken: true, again: false, her: { key: "уют", pose: "read", line, beats: [{ pose: "read", line }] } };
+}
+/** Лампа на витрине: вечером и ночью — гаснет и загорается; днём она не горит и так. */
+export function demoLamp(state) {
+  if (state.part !== "вечер" && state.part !== "ночь") return { ok: true, do: "lamp", build: "", line: "Днём лампа отдыхает: за окном светлее, чем от неё. Вечером — другое дело.", dark: state.dark === true, changed: false };
+  const dark = state.dark !== true;
+  return { ok: true, do: "lamp", build: "", line: dark ? "Гашу лампу. Остаётся гирлянда — так даже уютнее." : "Свет вернулся. Гирлянда делает вид, что и одна справлялась.", dark, changed: true };
+}
+/** Колонка на витрине: три минуты музыки, и она танцует; нажали ещё раз — выключила и вернулась к своим делам. */
+export function demoMusic(state) {
+  if (state.her?.key === "сон") return { ok: true, do: "music", build: "", line: "…Сплю. Музыку — утром, ладно?", on: false, left: 0 };
+  if (state.music > 0) {
+    const [key, beats] = DEMO_HER[PARTS.includes(state.part) ? state.part : "день"];
+    return { ok: true, do: "music", build: "", line: "Выключаю. Тишина — тоже музыка: так считает Байт, когда спит.", on: false, left: 0, her: { key, pose: beats[0][0], line: beats[0][1], beats: beats.map(([pose, line]) => ({ pose, line })) } };
+  }
+  const line = "Танцую под lo-fi из колонки. Плохо, зато от души — Байт не жалуется.";
+  return { ok: true, do: "music", build: "", line: "О, музыка. Ставлю lo-fi — тихо, чтобы Байт не возражал. И да, я буду танцевать.", on: true, left: 180_000, her: { key: "игра", pose: "dance", line, beats: [{ pose: "dance", line }] } };
 }
 /** «Погладить её» на витрине. */
 export function demoPat(state) {

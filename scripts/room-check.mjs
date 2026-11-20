@@ -221,6 +221,41 @@ try {
       }
     }
   }
+  // Колонка (0.46.0): нажали — над ней три ноты и она танцует; нажали ещё раз — выключила. Спит — только отвечает.
+  {
+    const before = await said();
+    if (!seen.zones.includes("music")) fail("колонка: места на рисунке нет");
+    else if (await tapZone("music")) {
+      const after = await said();
+      if (!after || after === before) fail("колонка: её слова не изменились");
+      else if (!/^…Сплю/u.test(after)) {
+        let plays = false;
+        for (let i = 0; i < 40 && !plays; i += 1) { await pause(150); plays = await page.evaluate(() => document.querySelectorAll("#inside .note").length === 3 && Boolean(document.querySelector('#inside use[href="#r-her-play2"], #inside use[href="#r-her-home-play2"]'))); }
+        if (!plays) fail("колонка: музыка включена — а трёх нот над колонкой или танца на рисунке нет");
+        await tapZone("music");
+        let quiet = false;
+        for (let i = 0; i < 40 && !quiet; i += 1) { await pause(150); quiet = await page.evaluate(() => document.querySelectorAll("#inside .note").length < 3); }
+        if (!quiet) fail("колонка: выключили — а ноты остались");
+      }
+    }
+  }
+  // Лампа (0.46.0): вечером и ночью нажатие гасит её (тёплого света лампы на рисунке нет) и зажигает; днём — только слова.
+  {
+    const before = await said();
+    if (!seen.zones.includes("lamp")) fail("лампа: места на рисунке нет");
+    else if (await tapZone("lamp")) {
+      const after = await said();
+      if (!after || after === before) fail("лампа: её слова не изменились");
+      else if (!/^Днём/u.test(after)) {
+        const glow = () => page.evaluate(() => Boolean(document.querySelector('#inside [id$="lampGlow"]')));
+        await pause(300);
+        if (await glow()) fail("лампа: погасили — а её свет на рисунке остался");
+        await tapZone("lamp");
+        await pause(300);
+        if (!(await glow())) fail("лампа: включили — а света на рисунке нет");
+      }
+    }
+  }
   // Кнопки под рисунком: второй раз за день — другие слова; кнопка остаётся отмеченной.
   for (const act of ["pet", "feed", "play", "tea", "water"]) {
     const before = await said();
