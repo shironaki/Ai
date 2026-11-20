@@ -462,7 +462,21 @@ const DROPS = Object.freeze([[146, 86, 1], [171, 142, 1.2], [199, 70, 0.9], [229
  * Само стекло: тень от рамы сверху, блики; в дождь и грозу — капли и запотевший низ, в снег и туман — только
  * запотевший низ, в сухую погоду стекло чистое. Лежит поверх дождя, под рамой.
  */
-function glass(g, part, sky = "rain", ajar = false) {
+/**
+ * Свет меняется не разом (0.49.0): перед переменой за окном проступает следующий — тёплый закат перед вечером, заря
+ * перед утром, синева перед ночью. `glow` — `{ to, k }`: к какому свету идёт и на сколько (0…1). В пасмурную погоду
+ * солнца не видно: небо просто темнеет или светлеет.
+ */
+function skyGlow(g, sky, glow) {
+  const k = Math.min(1, Math.max(0, Number(glow?.k) || 0)), to = glow?.to, a = (value) => Math.round(value * k * 100) / 100;
+  if (!k || (to !== "утро" && to !== "вечер" && to !== "ночь")) return "";
+  const { x, y, w, h } = WIN, box = `class="dusk" x="${x}" y="${y}" width="${w}" height="${h}"`;
+  if (to === "ночь") return `<rect ${box} fill="${g.lin("duskNight", [[0, "#0b1030", a(0.5)], [1, "#0b1030", a(0.2)]])}"/>`;
+  if (!open(sky)) return `<rect ${box} fill="${to === "вечер" ? "#141a33" : "#dfe6f2"}" opacity="${a(to === "вечер" ? 0.24 : 0.14)}"/>`;
+  const [low, high] = to === "вечер" ? ["#ffb060", "#ff7e4a"] : ["#ffc79a", "#ff8fa3"];
+  return `<rect ${box} fill="${g.lin("duskWarm", [[0, high, 0], [0.42, high, a(0.16)], [0.8, low, a(0.5)], [1, low, a(0.62)]])}"/>`;
+}
+function glass(g, part, sky = "rain", ajar = false, glow = null) {
   const { x, y, w, h } = WIN;
   const ink = lit(part) ? "#dfe6ff" : "#ffffff";
   // Створка открыта — в её проёме стекла нет: ни капель, ни запотевшего низа, ни бликов.
@@ -471,6 +485,7 @@ function glass(g, part, sky = "rain", ajar = false) {
     : g.raw("pane", id => `<clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}"/></clipPath>`);
   const drop = ([dx, dy, k], index) => `<g transform="translate(${dx} ${dy}) scale(${k})"><g${index % 5 === 0 ? ` class="slide s${(index / 5) % 3}"` : ""}><path d="M0 -10 V-3" stroke="${ink}" stroke-width="0.7" stroke-linecap="round" opacity="0.22"/><path d="M0 -3.2 q2.7 3.4 0 5.8 q-2.7 -2.4 0 -5.8z" fill="${ink}" opacity="0.42"/><circle cx="-0.6" cy="0.6" r="0.6" fill="#ffffff" opacity="0.85"/></g></g>`;
   return [
+    skyGlow(g, sky, glow),
     `<g clip-path="${clip}">`,
     `<rect x="${x}" y="${y}" width="${w}" height="28" fill="${g.lin("glassTop", [[0, "#0b1030", 0.36], [1, "#0b1030", 0]])}"/>`,
     wet(sky) || sky === "snow" || sky === "fog" ? `<rect x="${x}" y="${y + h - 56}" width="${w}" height="56" fill="${g.lin("glassFog", [[0, "#ffffff", 0], [1, "#ffffff", lit(part) ? 0.12 : 0.22]])}"/>` : "",
@@ -2512,7 +2527,7 @@ function insideOf(view = {}, options = {}) {
   const box = boxBack(c) + on("box") + boxFront(g, c);
 
   const parts = [
-    glass(g, part, sky, ajar), walls(g, c), windowFrame(g, c),
+    glass(g, part, sky, ajar, view.glow), walls(g, c), windowFrame(g, c),
     curtains(g, c, ajar && !fx.has("curtains")), fxShown("curtains", () => curtainsShut(c)), garland(g, c, part, { rogue: fx.has("blink") }),
     thing("фонарь", () => lantern(g, c, part)),
     starMap(g, c),

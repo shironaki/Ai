@@ -975,7 +975,7 @@ test("функция комнаты: зайти — всё, что видно; �
   assert.equal(seen.ok, true);
   assert.deepEqual([seen.do, seen.build, seen.formal, seen.first], ["look", BUILD, true, true]);
   // Часы человека — и сколько осталось до вечера (0.44.0): открытая страница сама спросит комнату, когда час сменится.
-  assert.deepEqual(seen.clock, { hour: 14, part: "день", day: "2026-11-18", left: 4 * 3_600_000 });
+  assert.deepEqual(seen.clock, { hour: 14, part: "день", day: "2026-11-18", left: 4 * 3_600_000, lightLeft: 4 * 3_600_000 });
   assert.ok(pool("зайти").includes(seen.greet), seen.greet);
   // За окном — не вечный дождь: города гость не называл — погоду она выдумывает сама, и слова об окне — о ней.
   assert.equal(seen.sky, madeUpSky(5, NOON));
@@ -1722,7 +1722,7 @@ test("страница: папка уходит на платформу как �
   const waited = new Set(classes);
   gather({ part: "день", her: { pose: "desk", key: "дело" }, things: [] }, { sprites: {} });
   assert.deepEqual([...classes].filter(name => !waited.has(name)).sort(), ["coming", "d0", "d1", "d2", "dot"]);
-  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "snow", "far", "near", "b0", "s0", "d0", "m-calm", "m-smile", "fx", ...scene.SCENE_FX.map(name => `fx-${name}`), ...SKY_STILL, ...CAT_SHAPES]);
+  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "dusk", "city", "rain", "snow", "far", "near", "b0", "s0", "d0", "m-calm", "m-smile", "fx", ...scene.SCENE_FX.map(name => `fx-${name}`), ...SKY_STILL, ...CAT_SHAPES]);
   assert.deepEqual([...classes].filter(name => !styled.has(name) && !still.has(name)).sort(), [], "класс в рисунке есть, а правила в стилях нет");
   // «fading» ставит не рисунок, а сама страница — на копию прежнего слоя: она тает поверх нового, когда час или
   // погода сменились при открытой комнате (0.44.0).

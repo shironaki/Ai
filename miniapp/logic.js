@@ -49,7 +49,7 @@ const count = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? 
 export function blank(hour = 12) {
   return {
     ready: false, demo: false, busy: "", tone: "", said: "Дверь открывается…", retry: false,
-    part: partOf(hour), light: "", her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, tea: false,
+    part: partOf(hour), light: "", glow: null, her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, tea: false,
     lines: { her: "", window: "", cat: "", box: "", things: {} }, done: {}, scene: null, build: "", next: null,
     // Которая по счёту её поза (позы состояния идут по кругу) и гладили ли её сегодня; что за окном (`SKIES`).
     // Пока сердце не ответило, за окном — ровное серое небо: какая там погода, ещё неизвестно.
@@ -104,6 +104,7 @@ export function viewOf(state) {
     part: state.part, her, cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed, tea: state.tea,
     // Свет по солнцу назван, только когда он разошёлся с часами: иначе описание рисунка то же, что и было.
     ...(lightOf(state) !== state.part ? { light: lightOf(state) } : {}),
+    ...(state.glow ? { glow: state.glow } : {}),
     // Прежнему рисунку небо называлось только когда шёл снег: слово «rain» в описании ему не нужно и теперь.
     ...(skyOf(state.sky) === "rain" ? {} : { sky: skyOf(state.sky) }),
     ...(Array.isArray(state.fx) && state.fx.length ? { fx: state.fx } : {}),
@@ -228,6 +229,19 @@ export function applyGift(state, result) {
   if (!result || result.ok !== true) return refused(state, result);
   return { ...state, busy: "", tone: "", retry: false, gifts: giftsOf(result.gifts), said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || "Спасибо." };
 }
+/**
+ * Свет меняется не разом (0.49.0, «более живая погода»). Сердце называет срок до перемены света (`clock.lightLeft`, мс);
+ * в последние пятьдесят минут за окном проступает следующий свет: заря перед утром, закат перед вечером, синева перед
+ * ночью. `k` — доля, шагами по четверти: рисунок перерисовывается четыре раза, а не каждую минуту. Перед днём ничего
+ * не подмешивается: утро и день красятся одинаково. Прежнее сердце срока не называет — зари нет.
+ */
+export const GLOW_MS = 50 * 60_000;
+export function glowOf(clock, light) {
+  const left = Number(clock?.lightLeft), index = PARTS.indexOf(light);
+  if (!Number.isFinite(left) || left <= 0 || left >= GLOW_MS || index < 0) return null;
+  const to = PARTS[(index + 1) % PARTS.length];
+  return to === "день" ? null : { to, k: Math.max(1, Math.ceil((1 - left / GLOW_MS) * 4)) / 4 };
+}
 /** Часы человека из ответа: сколько осталось до ближайшей перемены (`left`, мс) и когда это было сказано (`at`). */
 function clockOf(raw, at, step = 0) {
   // `step` (0.48.0) — через сколько сменится шаг её дня или место Байта: страница спросит комнату в ближайший из сроков.
@@ -287,6 +301,7 @@ export function applyLook(state, result, at = 0) {
   const said = [text(result.greet), lines.her, lines.cat, ...fresh.map(key => `Новое в комнате. ${thingLines[key]}`), offer].filter(Boolean).join("\n");
   return {
     ...state, ready: true, busy: "", tone: "", retry: false, part, light: PARTS.includes(result.clock?.light) ? result.clock.light : "",
+    glow: glowOf(result.clock, PARTS.includes(result.clock?.light) ? result.clock.light : part),
     her: herOf(result.her),
     turn: 0, patted: result.patted === true, sky: skyOf(result.sky),
     // Луна — по дню человека; дня в ответе нет — по часам устройства; нет и их — обычный месяц.
@@ -658,7 +673,7 @@ export function demoLook(hour = 12, params = {}) {
     ok: true, do: "look", build: "", owner: true, kinds: [...BREWS], open: params.open === "1",
     ...(timed ? { step: Math.max(3_000, Math.round((10 - (minute % 10)) * 60_000)) } : {}),
     ...(timed && block[0] === 13 && (hour - 13) * 60 + minute < 25 ? { offer: { id: "витрина", kind: "tea", text: DEMO_OFFER } } : {}),
-    clock: { hour, part, ...(PARTS.includes(params.light) ? { light: params.light } : {}), ...(left > 0 ? { left } : {}) }, greet: DEMO_NOTE, window: sky === "rain" ? DEMO_RAIN[part] : DEMO_WINDOW[sky], sky,
+    clock: { hour, part, ...(PARTS.includes(params.light) ? { light: params.light } : {}), ...(left > 0 ? { left } : {}), ...(Number(params.glow) > 0 ? { lightLeft: Number(params.glow) * 60_000 } : {}) }, greet: DEMO_NOTE, window: sky === "rain" ? DEMO_RAIN[part] : DEMO_WINDOW[sky], sky,
     wardrobe: DEMO_WARDROBE[wearAt(part)],
     her: { pose: fixed ? params.her : beats[0][0], key: params.key ?? key, line: fixed ? "" : beats[0][1], beats: fixed || params.key ? [] : beats.map(([pose, line]) => ({ pose, line })), ...(steady && !fixed && !params.key ? { steady: true } : {}) },
     // Гроза (0.46.0): Байт под пледом, наружу один хвост, — как у сердца (запас «+комната:байт:гроза»).

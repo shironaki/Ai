@@ -379,3 +379,41 @@ test("рисунок: Байт просится на руки и приноси�
   assert.ok(!/\bimport\b/u.test(module.replace(/\/\*[\s\S]*?\*\//gu, "")) && !/Telegram|fetch\(|innerHTML/u.test(module));
   assert.deepEqual(albumPage.listOf({ items: [null, { title: "" }, { k: "snap", title: "Снимок", view: "нет" }, { k: "first", title: "Первый раз", date: "1 мая", told: true }] }).map(item => [item.kind, item.title, item.view, item.told]), [["snap", "Снимок", null, false], ["first", "Первый раз", null, true]]);
 });
+
+test("свет меняется не разом: за пятьдесят минут до перемены за окном проступает следующий свет — шагами по четверти", async () => {
+  // Страница: срок до перемены света называет сердце; доля растёт четвертями, перед днём ничего не подмешивается.
+  const glow = (minutes, light) => logic.glowOf({ lightLeft: minutes * 60_000 }, light);
+  assert.deepEqual([60, 50, 49, 38, 37, 25, 13, 12, 1].map(minutes => glow(minutes, "день")?.k ?? 0), [0, 0, 0.25, 0.25, 0.5, 0.5, 0.75, 1, 1]);
+  assert.deepEqual([glow(10, "день").to, glow(10, "вечер").to, glow(10, "ночь").to, glow(10, "утро")], ["вечер", "ночь", "утро", null]);
+  assert.deepEqual([logic.glowOf({}, "день"), logic.glowOf({ lightLeft: -5 }, "день"), logic.glowOf({ lightLeft: 60_000 }, "полдень"), logic.glowOf(null, "день")], [null, null, null, null], "прежнее сердце срока не называет — зари нет");
+  // Сердце: без города свет идёт по часам — до шести вечера полчаса, значит закат наполовину.
+  reset();
+  const time = clock("2026-11-18T14:30:00Z");
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const look = await h.onRoom({ do: "look" }, from(31));
+  assert.equal(look.clock.lightLeft, 30 * 60_000);
+  assert.ok(look.clock.left <= look.clock.lightLeft);
+  const state = logic.applyLook(logic.blank(17), look, time.now());
+  assert.deepEqual(state.glow, { to: "вечер", k: 0.5 });
+  assert.deepEqual(logic.viewOf(state).glow, { to: "вечер", k: 0.5 });
+  // В три часа дня до перемены далеко: в описании рисунка поля нет — рисунок тот же, что и был.
+  time.set("2026-11-18T12:00:00Z");
+  const noon = logic.applyLook(state, await h.onRoom({ do: "look", again: true }, from(31)), time.now());
+  assert.equal(noon.glow, null);
+  assert.ok(!("glow" in logic.viewOf(noon)));
+  // Рисунок: ясным днём — тёплая полоса у горизонта, в дождь — небо темнеет, перед ночью — синева сверху.
+  const view = (extra) => ({ part: "день", sky: "clear", her: null, cat: null, things: [], ...extra });
+  const plain = scene.drawRoom(view({}));
+  const dusk = (extra) => scene.drawRoom(view(extra)).match(/<rect class="dusk"[^>]*>/u)?.[0] ?? "";
+  assert.ok(!plain.includes('class="dusk"'));
+  assert.match(dusk({ glow: { to: "вечер", k: 1 } }), /fill="url\(#[^)]+\)"/u);
+  assert.match(dusk({ glow: { to: "вечер", k: 1 }, sky: "rain" }), /fill="#141a33" opacity="0\.24"/u);
+  assert.match(dusk({ glow: { to: "вечер", k: 0.5 }, sky: "rain" }), /opacity="0\.12"/u);
+  assert.match(dusk({ part: "ночь", glow: { to: "утро", k: 0.25 }, sky: "fog" }), /fill="#dfe6f2"/u);
+  assert.notEqual(dusk({ part: "вечер", glow: { to: "ночь", k: 1 } }), "");
+  for (const bad of [{ to: "день", k: 1 }, { to: "вечер", k: 0 }, { to: "вечер", k: "много" }, "вечер", { k: 1 }]) assert.equal(scene.drawRoom(view({ glow: bad })), plain, JSON.stringify(bad));
+  // Окно открыто — шторы ходят от сквозняка, каждая в своём ритме; закрыто — висят.
+  assert.equal((scene.drawRoom(view({ open: true })).match(/<g class="breeze( b1)?">/gu) ?? []).length, 2);
+  assert.ok(!plain.includes('class="breeze'));
+  assert.match(read("miniapp/index.html"), /#room \.breeze \{[^}]*animation: breeze/u);
+});

@@ -646,7 +646,8 @@ test("смена часа 0.44.0: страница сама спрашивает
   const h = heart(ON, { now: time.now, random: () => 0 });
   const seen = await h.onRoom({ do: "look" }, from(5));
   // Сколько осталось до вечера — в ответе: страница заведёт на это свои часы.
-  assert.deepEqual(seen.clock, { hour: 17, part: "день", day: TODAY, left: 30_000 });
+  // `lightLeft` (0.49.0) — срок до перемены света: без города он тот же, что до перемены часа.
+  assert.deepEqual(seen.clock, { hour: 17, part: "день", day: TODAY, left: 30_000, lightLeft: 30_000 });
   let state = logic.applyLook(logic.blank(17), seen, time.now());
   assert.deepEqual(state.clock, { left: 30_000, at: time.now(), day: TODAY });
   assert.deepEqual(roomOf(5).n, 1);
@@ -1785,7 +1786,7 @@ test("0.47.0, свет по солнцу в комнате: зимой в чет
   reset();
   const alone = heart({ ...ON, SOURCES: true }, { now: () => Date.parse("2027-01-15T13:00:00Z"), random: () => 0 });
   const plainLook = await alone.onRoom({ do: "look" }, from(5));
-  assert.deepEqual(Object.keys(plainLook.clock).sort(), ["day", "hour", "left", "part"]);
+  assert.deepEqual(Object.keys(plainLook.clock).sort(), ["day", "hour", "left", "lightLeft", "part"]);
   assert.equal((await alone.onRoom({ do: "lamp" }, from(5))).changed, false, "день по часам — лампа не горит");
   // За полярным кругом в декабре солнце не встаёт: посчитать нечего — тоже по часам, и комната открывается.
   reset();

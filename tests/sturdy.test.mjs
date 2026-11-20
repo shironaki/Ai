@@ -282,7 +282,7 @@ const LOOK = {
   ok: [(value) => value === true, "page"], do: [(value) => value === "look", "only-heart: страница знает, что спрашивала"],
   build: [isText, "page"], formal: [isFlag, "only-heart: «вы» или «ты» уже в самих словах"], once: [(value) => value === true, "page"],
   again: [isFlag, "only-heart: отметка, что это сверка"], repeat: [isFlag, "page"], step: [isCount, "page"],
-  clock: [(value) => scene.PARTS.includes(value.part) && Number.isInteger(value.hour) && /^\d{4}-\d\d-\d\d$/u.test(value.day) && value.left > 0 && (value.light === undefined || scene.PARTS.includes(value.light)), "page"],
+  clock: [(value) => scene.PARTS.includes(value.part) && Number.isInteger(value.hour) && /^\d{4}-\d\d-\d\d$/u.test(value.day) && value.left > 0 && value.lightLeft >= value.left && (value.light === undefined || scene.PARTS.includes(value.light)), "page"],
   wardrobe: [(value) => isText(value.leave) && isText(value.back), "page"], greet: [isText, "page"], window: [isText, "page"],
   sky: [(value) => scene.SKIES.includes(value), "page"], city: [isFlag, "only-heart: настоящая ли погода — для тестов и хозяина"],
   box: [(value) => value && isText(value.line), "page"], patted: [isFlag, "page"],

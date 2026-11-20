@@ -2424,9 +2424,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // `step` (0.48.0) — через сколько миллисекунд сменится шаг её дня или место Байта: страница спросит комнату
         // и тогда. Отдельным полем ответа: прежняя страница знает только `clock.left` и сверяется раз в десять минут.
         const step = Math.max(30_000, Math.min(CAT_STEP_MS - (now() % CAT_STEP_MS), ...lefts.filter(value => Number.isFinite(value) && value > 0)));
+        // `lightLeft` (0.49.0, «более живая погода») — через сколько сменится свет за окном: в последние минуты перед
+        // переменой страница понемногу подмешивает следующий свет — зарю, закат, синеву ночи.
         return {
           step,
-          clock: { hour: feel.hour, part, day: today, left: Math.max(30_000, Math.min(byClock, sun?.left ?? byClock)), ...(sun ? { light: sun.light } : {}) },
+          clock: { hour: feel.hour, part, day: today, left: Math.max(30_000, Math.min(byClock, sun?.left ?? byClock)), lightLeft: Math.max(30_000, sun?.left ?? byClock), ...(sun ? { light: sun.light } : {}) },
           wardrobe: { leave: roomLine(turn, `шкаф:${wear}`), back: roomLine(turn, `переоделась:${wear}`) },
         };
       };
