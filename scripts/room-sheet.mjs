@@ -201,7 +201,12 @@ async function motionCells() {
     const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
     const inside = drawInside(described, { sprites: all, prefix: `${letters[index]}-`, ...(was ? { was } : {}), ...(catWas ? { catWas } : {}), ...(enter === true ? { enter: true } : {}) });
     for (const found of inside.matchAll(/href="#r-her-([a-z0-9-]+?)(?:-blink)?"/gu)) used.add(found[1]);
-    return `<figure data-at="${Number(at) || 0}"><svg id="room" xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}"><rect width="${WIDTH}" height="${HEIGHT}" fill="#7d8597"/>${inside}</svg><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
+    // За окном — небо и город этого часа (неподвижные: стили неба на лист не берутся). Имена красок у каждого рисунка
+    // свои: буквы с конца алфавита, чтобы не совпасть с буквами самой комнаты; рисунков больше тринадцати — серый фон.
+    const back = sheet.views.length <= 13 && typeof scene.drawBackdrop === "function"
+      ? scene.drawBackdrop(described?.part, described?.sky ?? "rain", { phase: Number.isFinite(described?.moon) ? described.moon : 0.3, prefix: `${letters[letters.length - 1 - index]}-` })
+      : `<rect width="${WIDTH}" height="${HEIGHT}" fill="#7d8597"/>`;
+    return `<figure data-at="${Number(at) || 0}"><svg id="room" xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${back}${inside}</svg><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
   });
   const store = `<svg width="0" height="0" style="position:absolute"><defs>${[...used].map(name => scene.drawSprite(name, all[name])).join("")}</defs></svg>`;
   return { list, extra: `<style>${css}</style>${store}` };

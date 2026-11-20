@@ -1484,3 +1484,45 @@ test("0.46.0, гроза: Байт под пледом — наружу один
   assert.match(demo.cat.line, /из-под пледа/u);
   assert.deepEqual([logic.demoLook(14, { sky: "storm", cat: "sit.bowl.сыт" }).cat.place, logic.demoLook(14, { sky: "rain" }).cat.place === "plaid"], ["bowl", false]);
 });
+
+
+test("0.46.0, вечерняя тень на идущей: пока она идёт мимо окна, тень комнаты ложится и на неё — маской с теми же движениями; днём маски нет", () => {
+  const view = (part) => ({ part, sky: "clear", her: { pose: "desk", key: "дело", beat: true }, cat: null, plant: "wet", things: [] });
+  const walking = (part, x) => scene.drawInside(view(part), { ...PAINTED, sprites: { ...SPRITES, ...FRAME_SPRITES }, was: { name: part === "день" ? "work" : "home-work", x } });
+  for (const part of ["вечер", "ночь"]) for (const x of [100, 300]) {
+    const markup = walking(part, x);
+    const mask = markup.match(/<mask id="r-herAirWalk" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="124" y="44" width="264" height="218">(.*?)<\/mask><path fill="url\(#r-dusk\)" d="M124 44V262H388V44Z" mask="url\(#r-herAirWalk\)"\/>/u);
+    assert.ok(mask, `${part}, от ${x}: маска тени на идущей`);
+    // Силуэт движется так же, как сама картинка «идёт»: тот же путь и срок, то же покачивание, те же два кадра.
+    const stride = markup.match(/<g class="stride" style="([^"]+)"><g class="step">/u);
+    assert.ok(stride && mask[1].startsWith(`<g class="stride" style="${stride[1]}"><g class="step">`), `${part}, от ${x}: путь и срок — те же`);
+    assert.match(mask[1], /<g class="fr a pace"><use href="#r-her-home-walk" [^>]+\/><\/g><g class="fr b pace"><use href="#r-her-home-walkb" [^>]+\/><\/g>/u);
+    assert.equal(/scale\(-1 1\)/u.test(mask[1]), /<g class="step"><g transform="translate\([-\d.]+ 0\) scale\(-1 1\)">/u.test(markup.slice(0, markup.indexOf("<mask id=\"r-herAirWalk\""))), "повёрнута так же, как сама картинка");
+    // В маске — одни картинки: без света часа и без своих масок.
+    assert.doesNotMatch(mask[1], /<mask|<rect/u);
+    // Тень новой позы проявляется вместе с ней — когда дошла, а не сразу тёмным силуэтом на окне; тень прежней — тает с ней.
+    const late = markup.match(/<g class="arrive late" style="(--t:[\d.]+s)">/u);
+    assert.ok(late && markup.includes(`<g class="arrive late" style="${late[1]}"><path fill="url(#r-dusk)" d="M124 44V262H388V44Z" mask="url(#r-herMask)"/></g>`), `${part}, от ${x}: тень новой позы — с ней`);
+    assert.ok(markup.includes('<g class="leave"><path fill="url(#r-dusk)" d="M124 44V262H388V44Z" mask="url(#r-herMaskWas)"/></g>'), `${part}, от ${x}: тень прежней позы — с ней`);
+    for (const id of ["r-herMask", "r-herMaskWas", "r-herAirWalk"]) assert.equal(markup.split(`<mask id="${id}"`).length, 2, `${id}: маска одна`);
+  }
+  // Сменила позу на том же месте (не идёт): тень новой позы проявляется с ней, прежней — тает.
+  const same = scene.drawInside(view("вечер"), { ...PAINTED, was: { name: "home-tea", x: scene.spriteStand(view("вечер")).x } });
+  assert.ok(same.includes('<g class="arrive"><path fill="url(#r-dusk)" d="M124 44V262H388V44Z" mask="url(#r-herMask)"/></g>'));
+  assert.ok(same.includes('<g class="leave"><path fill="url(#r-dusk)" d="M124 44V262H388V44Z" mask="url(#r-herMaskWas)"/></g>'));
+  assert.doesNotMatch(same, /herAirWalk|class="stride"/u);
+  // Ушла к шкафу: прежняя поза тает со своей тенью, идущая — под своей; новой позы нет, и тени её нет.
+  const gone = scene.drawInside({ ...view("вечер"), her: { away: true } }, { ...PAINTED, sprites: { ...SPRITES, ...FRAME_SPRITES }, was: { name: "home-work", x: 252 } });
+  assert.ok(gone.includes('<g class="leave"><path fill="url(#r-dusk)" d="M124 44V262H388V44Z" mask="url(#r-herMaskWas)"/></g>'));
+  assert.match(gone, /<mask id="r-herAirWalk"/u);
+  assert.doesNotMatch(gone, /mask="url\(#r-herMask\)"/u);
+  // Ничего не менялось — тень на ней лежит просто так, без групп.
+  assert.match(scene.drawInside(view("вечер"), PAINTED), /<\/g><path fill="url\(#r-dusk\)" d="M124 44V262H388V44Z" mask="url\(#r-herMask\)"\/>|[^>]><path fill="url\(#r-dusk\)" d="M124 44V262H388V44Z" mask="url\(#r-herMask\)"\/>/u);
+  assert.doesNotMatch(scene.drawInside(view("вечер"), PAINTED), /class="(?:arrive|leave)"/u);
+  // Днём тени нет — и маски нет; стоит на месте — тоже.
+  assert.doesNotMatch(walking("день", 100), /herAirWalk/u);
+  assert.doesNotMatch(scene.drawInside(view("вечер"), PAINTED), /herAirWalk/u);
+  // Второй кадр шага не загрузился — в маске одна картинка.
+  const single = scene.drawInside(view("вечер"), { ...PAINTED, was: { name: "home-work", x: 100 } });
+  assert.match(single, /<mask id="r-herAirWalk"[^>]*><g class="stride" style="[^"]+"><g class="step"><use href="#r-her-home-walk" [^>]+\/><\/g><\/g><\/mask>/u);
+});

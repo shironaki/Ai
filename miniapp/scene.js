@@ -1033,7 +1033,25 @@ function airLight(g, part, off = false) {
  * Без этого по светлому свитеру шла бы ровная полоса по линии подоконника — выше неё тени нет (окно «дырой»).
  * Маской служит её же картинка (`r-herMask`): тень ложится только на неё, город за стеклом остаётся ярким.
  */
-const airOnHer = (g, part, off = false) => (lit(part) ? `<path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="url(#${g.id("herMask")})"/>` : "");
+const airOn = (g, part, off, mask) => (lit(part) ? `<path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="url(#${g.id(mask)})"/>` : "");
+const airOnHer = (g, part, off = false) => airOn(g, part, off, "herMask");
+/**
+ * Тень на ней при смене позы (0.46.0) появляется и уходит вместе с ней самой. Раньше тень новой позы ложилась на окно
+ * сразу — тёмным силуэтом там, куда она ещё не дошла, — а прежняя поза таяла без тени, с полосой по линии подоконника.
+ * `she.enter` — как проявляется новая поза (открывающий тег её группы), `she.left` — прежняя поза тает на рисунке.
+ */
+const airOnHerMoving = (g, part, off, she) => (lit(part) ? [
+  she.painted ? (she.enter ? `${she.enter}${airOnHer(g, part, off)}</g>` : airOnHer(g, part, off)) : "",
+  she.left ? `<g class="leave">${airOn(g, part, off, "herMaskWas")}</g>` : "",
+].join("") : "");
+/**
+ * То же — пока она идёт (0.46.0): без этого вечером по свитеру идущей шла та самая полоса по линии подоконника. Маска —
+ * её силуэт в пути (`herWalking`, `shape`): группы и классы те же, что у картинки «идёт», и стили страницы двигают
+ * их одинаково — шаг, кадры, путь. Маска не шире окна: тень вне окна ложится общим слоем.
+ */
+const airOnWalker = (g, part, off, shape) => (lit(part) && shape
+  ? `<mask id="${g.id("herAirWalk")}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}">${shape}</mask><path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="url(#${g.id("herAirWalk")})"/>`
+  : "");
 /**
  * Свет на полу: днём — от окна, вечером и ночью — тёплое пятно под лампой и синева от окна. Ложится на пол до
  * мебели и фигур: поверх них у света был бы край, и ноги ниже плинтуса выглядели бы выцветшими.
@@ -1904,11 +1922,16 @@ function herWalking(g, part, walker, from, to) {
   const place = spritePlace(walker.name, walker.sprite, to), seconds = walkSeconds(from, to);
   const first = spriteLit(part, walker.name, place, g.id("herMaskWalk"));
   // Шаг в два кадра (0.46.0): ноги в шаге — ноги вместе, ступня поднята; меняются в такт покачиванию (`.pace`).
+  const second = walker.frame ? spritePlace(walker.name, walker.frame.sprite, to) : null;
   const lit = walker.frame
-    ? `<g class="fr a pace">${first}</g><g class="fr b pace">${spriteLit(part, walker.frame.name, spritePlace(walker.name, walker.frame.sprite, to), g.id("herMaskWalkB"))}</g>`
+    ? `<g class="fr a pace">${first}</g><g class="fr b pace">${spriteLit(part, walker.frame.name, second, g.id("herMaskWalkB"))}</g>`
     : first;
-  const facing = to < from ? `<g transform="translate(${n(to * 2)} 0) scale(-1 1)">${lit}</g>` : lit;
-  return { seconds, svg: `<g class="stride" style="--dx:${n(from - to)}px;--t:${seconds}s"><g class="step">${facing}</g></g>` };
+  const stride = (body) => `<g class="stride" style="--dx:${n(from - to)}px;--t:${seconds}s"><g class="step">${to < from ? `<g transform="translate(${n(to * 2)} 0) scale(-1 1)">${body}</g>` : body}</g></g>`;
+  // Её силуэт в пути — для вечерней тени на фоне окна (`airOnWalker`): те же группы и те же движения, что у самой
+  // картинки «идёт», но одни картинки, без света часа.
+  const bare = (name, at) => `<use href="#r-her-${name}" ${at.at}/>`;
+  const shape = walker.frame ? `<g class="fr a pace">${bare(walker.name, place)}</g><g class="fr b pace">${bare(walker.frame.name, second)}</g>` : bare(walker.name, place);
+  return { seconds, svg: stride(lit), shape: stride(shape) };
 }
 /**
  * Она — картинкой: ссылка на определение спрайта (`drawSprite`), тень под ногами, свет часа, веки, место нажатия и
@@ -1936,7 +1959,9 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   const shade = shadow(g, x + (low ? 0 : 2), feet - 2, low ? wide * 0.44 : kind === "stand" ? 36 : wide * 0.36, low ? 7 : 6, 0.34);
   const was = before ? `<g class="leave">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>` : "";
   return {
-    y: feet, painted: name, walk: walk?.seconds ?? 0,
+    y: feet, painted: name, walk: walk?.seconds ?? 0, walkShape: walk?.shape ?? "",
+    // Как проявляется новая поза и тает ли прежняя: так же появляется и уходит вечерняя тень на ней (`airOnHerMoving`).
+    enter: walk ? `<g class="arrive late" style="--t:${walk.seconds}s">` : before ? `<g class="arrive">` : "", left: Boolean(before),
     front: walk
       ? `${was}${walk.svg}<g class="arrive late" style="--t:${walk.seconds}s">${shade}${body}</g>`
       : `${shade}${before ? `${was}<g class="arrive">${body}</g>` : body}`,
@@ -1958,7 +1983,7 @@ function changingNote(delay = 0) {
 function herLeaving(g, part, ghost, walker) {
   const before = spritePlace(ghost.name, ghost.sprite, ghost.x);
   const walk = walker ? herWalking(g, part, walker, ghost.x, DOOR_X) : null;
-  return { y: FEET, walk: walk?.seconds ?? 0.5, front: `<g class="leave">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>${walk?.svg ?? ""}`, note: changingNote(walk?.seconds ?? 0.5) };
+  return { y: FEET, walk: walk?.seconds ?? 0.5, walkShape: walk?.shape ?? "", left: true, front: `<g class="leave">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>${walk?.svg ?? ""}`, note: changingNote(walk?.seconds ?? 0.5) };
 }
 
 // ── Байт ─────────────────────────────────────────────────────────────────────
@@ -2369,7 +2394,7 @@ export function drawInside(view = {}, options = {}) {
     pet?.walk ?? "",
     thing("ёлка", () => tree(g, c, part)),
     fxShown("haze", () => haze(g, part)),
-    airLight(g, part, dark), she.painted ? airOnHer(g, part, dark) : "",
+    airLight(g, part, dark), airOnHerMoving(g, part, dark, she), airOnWalker(g, part, dark, she.walkShape),
     she.note ?? "",
     `<rect class="frame" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" fill="none"/>`,
   ].join("");
