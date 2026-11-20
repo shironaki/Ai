@@ -30,6 +30,13 @@
  * проверки это и нужно (видно, как заплатка легла при свете часа); на снимке для владельца она выглядела бы
  * так, будто у неё закрыты глаза, — такому листу пишется `"lids": false`.
  *
+ * Лист «движение» (0.46.0) — `"motion": true` у листа. Рисунки кладутся в страницу не картинками, а самой разметкой,
+ * со стилями движения из `miniapp/index.html` (правила `#room …` и их `@keyframes`), и каждое движение остановлено в
+ * миг `"at"` (миллисекунды от появления рисунка): так шаг Байта, её шаг и вторые кадры поз видны по кадрам, а не
+ * «на слово». У рисунка можно назвать, откуда идут: `"was": { "name": "work", "x": 160 }` — она, `"catWas": { "x":
+ * 300, "y": 456, "shape": "sit" }` — Байт, `"enter": true` — она входит от двери. Рисунков — не больше двадцати
+ * шести (у каждого своя приставка имён красок); за окном на таком листе пусто — слой неба на странице отдельный.
+ *
  * Она на листах — как на странице: картинкой из `miniapp/her/` (с 0.40.0). Четвёртое слово `drawn` рисует её
  * кодом: таким остаётся запасной вид, и его тоже надо видеть.
  *
@@ -183,7 +190,24 @@ const zoom = sheet.zoom ?? 1;
 // Места нажатий: вещи — жёлтым, она — алым, Байт — синим, забота — зелёным; окно — одной рамкой, иначе оно красит всё.
 const paint = sheet.zones ? `<style>.zones rect{fill:#ffd400!important;fill-opacity:.14!important;stroke:#ffd400;stroke-width:1}.zones [data-act="window"] rect{fill-opacity:0!important;stroke-dasharray:4 3}.zones #her rect{fill:#ff2d6f!important;stroke:#ff2d6f}.zones #cat rect{fill:#2d9bff!important;stroke:#2d9bff}${["water", "tea", "feed", "play"].map(act => `.zones [data-act="${act}"] rect`).join(",")}{fill:#22d36b!important;stroke:#22d36b}</style>` : "";
 const lids = sheet.lids === false ? "<style>.wink{display:none}</style>" : "";
-const cells = sheet.views.map(({ label = "", view: described, crop, sprites: wanted, frame = false }) => {
+/** Лист «движение»: рисунки разметкой, со стилями страницы; что остановить и когда — в `data-at` у рисунка. */
+const motion = sheet.motion === true;
+async function motionCells() {
+  const markup = await readFile(resolve(root, "miniapp/index.html"), "utf8");
+  const css = (/<style>([\s\S]*?)<\/style>/u.exec(markup)?.[1] ?? "").split("\n").filter(line => /^(?:#room \.|@keyframes )/u.test(line)).join("\n");
+  const all = { ...sprites, ...frames }, letters = "abcdefghijklmnopqrstuvwxyz", used = new Set();
+  if (sheet.views.length > letters.length) { console.error("На листе «движение» — не больше 26 рисунков."); process.exit(2); }
+  const list = sheet.views.map(({ label = "", view: described, crop, at = 0, was = null, catWas = null, enter = false }, index) => {
+    const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
+    const inside = drawInside(described, { sprites: all, prefix: `${letters[index]}-`, ...(was ? { was } : {}), ...(catWas ? { catWas } : {}), ...(enter === true ? { enter: true } : {}) });
+    for (const found of inside.matchAll(/href="#r-her-([a-z0-9-]+?)(?:-blink)?"/gu)) used.add(found[1]);
+    return `<figure data-at="${Number(at) || 0}"><svg id="room" xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}"><rect width="${WIDTH}" height="${HEIGHT}" fill="#7d8597"/>${inside}</svg><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
+  });
+  const store = `<svg width="0" height="0" style="position:absolute"><defs>${[...used].map(name => scene.drawSprite(name, all[name])).join("")}</defs></svg>`;
+  return { list, extra: `<style>${css}</style>${store}` };
+}
+const moving = motion ? await motionCells() : null;
+const cells = moving ? moving.list : sheet.views.map(({ label = "", view: described, crop, sprites: wanted, frame = false }) => {
   const sprites_off = wanted === false;
   const base = how(sheet.sprites === false || sprites_off);
   const shown = frame === true && base.sprites ? { sprites: { ...base.sprites, ...frames } } : base;
@@ -193,7 +217,7 @@ const cells = sheet.views.map(({ label = "", view: described, crop, sprites: wan
   return `<figure><img width="${w * zoom}" height="${h * zoom}" src="data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}"><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
 });
 // Рисунки идут строками и переносятся по ширине листа: вырезки бывают разного размера.
-const html = `<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#1b1b22;font:12px system-ui,sans-serif;color:#ddd}main{display:flex;flex-wrap:wrap;align-items:flex-start;box-sizing:border-box;width:${Number(sheet.width) || 1214}px;gap:6px;padding:6px}figure{margin:0}figcaption{padding:2px 0 0;height:14px}img{display:block}</style><main>${cells.join("")}</main>`;
+const html = `<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#1b1b22;font:12px system-ui,sans-serif;color:#ddd}main{display:flex;flex-wrap:wrap;align-items:flex-start;box-sizing:border-box;width:${Number(sheet.width) || 1214}px;gap:6px;padding:6px}figure{margin:0}figcaption{padding:2px 0 0;height:14px}img,svg{display:block}</style>${moving ? `${lids}${moving.extra}` : ""}<main>${cells.join("")}</main>`;
 
 const executablePath = await chromium.executablePath();
 process.env.LD_LIBRARY_PATH = [join(tmpdir(), "al2023/lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(":");
@@ -204,6 +228,15 @@ const browser = await puppeteer.launch({ args: [...chromium.args, "--no-sandbox"
 try {
   const page = await browser.newPage();
   await page.setContent(html, { waitUntil: "load" });
+  // Лист «движение»: каждое движение — в свой миг (`at` рисунка) и стоп.
+  if (motion) await page.evaluate(() => {
+    for (const animation of document.getAnimations()) {
+      const cell = animation.effect?.target?.closest?.("figure");
+      if (!cell) continue;
+      animation.pause();
+      animation.currentTime = Number(cell.dataset.at) || 0;
+    }
+  });
   const size = await page.evaluate(() => { const box = document.querySelector("main").getBoundingClientRect(); return { width: Math.ceil(box.width), height: Math.ceil(box.height) }; });
   await page.setViewport({ ...size, deviceScaleFactor: scale });
   await page.screenshot({ path: out });

@@ -1617,13 +1617,21 @@ export const HER_SPRITES = Object.freeze({
  * Кадры движения внутри позы (0.45.0, «больше кадров, чтоб казалась живой»): вторая картинка той же позы — та же
  * фигура точка в точку, изменено одно. Страница кладёт её поверх первой на то же место и показывает по-своему:
  * `sip` — изредка и ненадолго (подносит кружку к губам и отпивает), `glance` — подолгу (пишет, глядя в блокнот; а
- * первая картинка — подняла глаза), `dance` — попеременно, в такт. Кадр — не поза: в списки состояний, в счёт поз
+ * первая картинка — подняла глаза), `dance` — попеременно, в такт, `pace` — второй кадр шага. Кадр — не поза: в списки состояний, в счёт поз
  * и в её слова о числе поз не входит; своего места, век и пара у него нет — они живут с первым кадром.
  */
 export const HER_FRAMES = Object.freeze({
   tea3: ["tea3b", "sip"], "home-tea3": ["home-tea3b", "sip"],
   work: ["workb", "glance"], "home-work": ["home-workb", "glance"],
-  "home-play2": ["home-play2b", "dance"],
+  play2: ["play2b", "dance"], "home-play2": ["home-play2b", "dance"],
+  // 0.46.0. С кружкой у подоконника — отпивает; под гирляндой первая картинка сама «пьёт», поэтому кадр — «опустила
+  // кружку», и показан он подолгу (`glance`); с книгой — переворачивает страницу; «идёт» — второй кадр шага
+  // (`pace`: ноги вместе, ступня поднята) попеременно с первым (ноги в шаге). У «под гирляндой в свитере» кадра
+  // пока нет: на нарисованном юбка вышла серой, а не тёмно-красной, — при смене кадров она бы мигала.
+  tea: ["teab", "sip"], "home-tea": ["home-teab", "sip"],
+  tea2: ["tea2b", "glance"],
+  read: ["readb", "sip"], "home-read": ["home-readb", "sip"],
+  walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"],
 });
 const FRAME_NAMES = new Set(Object.values(HER_FRAMES).map(([name]) => name));
 /** Имя второго кадра этой картинки; `null` — кадра у неё нет. */
@@ -1875,7 +1883,11 @@ export const DOOR_X = -74;
  */
 function herWalking(g, part, walker, from, to) {
   const place = spritePlace(walker.name, walker.sprite, to), seconds = walkSeconds(from, to);
-  const lit = spriteLit(part, walker.name, place, g.id("herMaskWalk"));
+  const first = spriteLit(part, walker.name, place, g.id("herMaskWalk"));
+  // Шаг в два кадра (0.46.0): ноги в шаге — ноги вместе, ступня поднята; меняются в такт покачиванию (`.pace`).
+  const lit = walker.frame
+    ? `<g class="fr a pace">${first}</g><g class="fr b pace">${spriteLit(part, walker.frame.name, spritePlace(walker.name, walker.frame.sprite, to), g.id("herMaskWalkB"))}</g>`
+    : first;
   const facing = to < from ? `<g transform="translate(${n(to * 2)} 0) scale(-1 1)">${lit}</g>` : lit;
   return { seconds, svg: `<g class="stride" style="--dx:${n(from - to)}px;--t:${seconds}s"><g class="step">${facing}</g></g>` };
 }
@@ -1940,6 +1952,17 @@ function catTail(f, d, rings, { cls = "tailwag", tip = "" } = {}) {
 }
 const catPaw = (f, x, y, rx = 4.2) => `<ellipse cx="${x}" cy="${y}" rx="${rx}" ry="2.7" fill="${f.catLight}"/><path d="M${x - 1.4} ${y - 0.6} v2 M${x + 1.2} ${y - 0.6} v2" stroke="${f.cat}" stroke-width="0.7" stroke-linecap="round"/>`;
 
+/**
+ * Лапа идущего Байта (0.46.0): две части — от плеча (бедра) до сгиба и от сгиба до подушечки. Каждая часть качается
+ * стилями страницы вокруг своего начала (`.lg.up`, `.lg.low`): на полу лапа уходит назад прямой, в воздухе сгибается
+ * и выносится вперёд. `far` — дальняя лапа (темнее); `turn` — которой по счёту она ступает: задняя, передняя с той
+ * же стороны, задняя с другой, передняя с другой — так ходят коты. Без стилей лапа стоит прямо: он просто стоит.
+ */
+function catLeg(f, x, y, far, turn) {
+  const ink = `fill="none" stroke="${far ? f.catDark : f.cat}" stroke-width="${far ? 5.6 : 5.8}" stroke-linecap="round"`;
+  return `<g transform="translate(${x} ${y})"><g class="lg up p${turn}"><path d="M0 0 V8.2" ${ink}/><g transform="translate(0 8.2)"><g class="lg low p${turn}"><path d="M0 0 V6" ${ink}/>${catPaw(f, -0.8, 7.2, 3.8)}</g></g></g></g>`;
+}
+
 /** Морда. Точка отсчёта — центр. `eyes` — open, closed, narrow, wide. */
 function catHead(g, f, eyes = "open") {
   const eye = (s) => {
@@ -1975,7 +1998,7 @@ function catHead(g, f, eyes = "open") {
  * спит клубком; walk — идёт; play — в прыжке за игрушкой; eat — ест; claw — точит когти, стоя; eyes — одни глаза
  * из темноты; tail — один хвост; belly — на спине, лапы кверху.
  */
-function catShape(g, f, shape, { eyes = "open", angry = false } = {}) {
+function catShape(g, f, shape, { eyes = "open", angry = false, gait = false } = {}) {
   const coat = fur(g, f);
   const wag = angry ? "tailwag angry" : "tailwag";
   switch (shape) {
@@ -1995,12 +2018,13 @@ function catShape(g, f, shape, { eyes = "open", angry = false } = {}) {
     ].join("");
     case "walk": return [
       catTail(f, "M21 -25 Q33 -33 30 -49", "M26.6 -31.6 l3.4 2.4 M29.4 -37.6 l3.6 0.6 M28.6 -43.6 l3.6 -0.8", { cls: wag, tip: "M30.4 -46 L30 -49" }),
-      `<path d="M-6 -14 L-3.4 -2.6 M19 -15 L22.6 -2.6" stroke="${f.catDark}" stroke-width="5.6" stroke-linecap="round"/>`,
-      catPaw(f, -3, -1.6, 3.8), catPaw(f, 23, -1.6, 3.8),
+      // `gait` — он идёт (0.46.0): лапы — отдельными частями, шагают по очереди; иначе — прежняя неподвижная фигура.
+      gait ? catLeg(f, -7, -17, true, 3) + catLeg(f, 19.5, -17.4, true, 2)
+        : `<path d="M-6 -14 L-3.4 -2.6 M19 -15 L22.6 -2.6" stroke="${f.catDark}" stroke-width="5.6" stroke-linecap="round"/>${catPaw(f, -3, -1.6, 3.8)}${catPaw(f, 23, -1.6, 3.8)}`,
       `<path d="M-19 -22 C-19 -30.6 -8 -32.6 4 -32 C18 -32 25 -26.6 24 -18.6 C23 -12 12 -10.6 0 -11.2 C-10 -11.2 -19 -13 -19 -22Z" fill="${coat}"/>`,
       stripes(f, "M-3 -32 q-1.6 4.6 0.2 8.6 M5 -32.4 q-1.4 4.8 0.4 9 M13 -31.6 q-1 4.6 0.8 8.6 M20 -28.6 q-0.4 3.6 1 6.6"),
-      `<path d="M-13 -14 L-18.6 -2.6 M13 -14 L9 -2.6" stroke="${f.cat}" stroke-width="5.8" stroke-linecap="round"/>`,
-      catPaw(f, -19.4, -1.6, 3.8), catPaw(f, 8.4, -1.6, 3.8),
+      gait ? catLeg(f, -12.4, -17, false, 1) + catLeg(f, 14.6, -17, false, 0)
+        : `<path d="M-13 -14 L-18.6 -2.6 M13 -14 L9 -2.6" stroke="${f.cat}" stroke-width="5.8" stroke-linecap="round"/>${catPaw(f, -19.4, -1.6, 3.8)}${catPaw(f, 8.4, -1.6, 3.8)}`,
       at(-21, -30, catHead(g, f, eyes)),
     ].join("");
     case "play": return [
@@ -2115,12 +2139,24 @@ function catBoxAt(spot, shape) {
 }
 /** Точка на полу под местом Байта: по ней он идёт, даже если сидел на подоконнике или на шкафу. У миски пол начинается выше. */
 const floorUnder = ({ x, y }) => ({ x: Math.max(24, Math.min(376, x)), y: Math.max(x < 120 ? 424 : 452, Math.min(497, y)) });
-/** Сколько секунд Байт идёт: около ста точек в секунду, не меньше семи десятых секунды и не больше двух с половиной. */
-const trotSeconds = (from, to) => Math.round(Math.max(0.7, Math.min(2.5, Math.hypot(to.x - from.x, to.y - from.y) / 100)) * 10) / 10;
+/**
+ * Сколько секунд Байт идёт (0.46.0): шагом — около пятидесяти пяти точек в секунду, не меньше секунды и не больше
+ * четырёх с половиной; за игрушкой (`runs`) — бегом, около ста точек в секунду. До 0.46.0 он всегда «бежал рысцой»:
+ * сто точек в секунду неподвижной фигурой, которая подпрыгивала, — владелец назвал это «прыг-прыг-прыг».
+ */
+export const catSeconds = (from, to, runs = false) => Math.round(Math.max(runs ? 0.7 : 1, Math.min(runs ? 2.5 : 4.5, Math.hypot(to.x - from.x, to.y - from.y) / (runs ? 100 : 55))) * 10) / 10;
+/** На сколько точек лапа уходит назад, пока стоит на полу (полкруга шага): длина лапы и размах — в `catLeg` и в стилях `legUp`. */
+const STEP_REACH = 13.5;
+/**
+ * Сколько длится круг шага — все четыре лапы по разу: такой, чтобы лапа на полу не скользила. За полкруга она
+ * проходит назад `STEP_REACH` точек — столько же должен пройти он сам. Быстрее трети секунды лапы не мелькают,
+ * медленнее двух третей — не волочатся.
+ */
+export const gaitSeconds = (distance, seconds) => Math.round(Math.max(0.32, Math.min(0.64, 2 * STEP_REACH * seconds / Math.max(1, distance))) * 100) / 100;
 /**
  * Байт. `given` — место, выбранное заранее (когда она стоит картинкой: `herStand`); иначе — по её позе. `was` — где
  * и каким он был на прежнем рисунке (`castOf`): перешёл на другое место — прежний тает, по полу идёт Байт, на новом
- * месте проявляется новый (стили страницы: `.leave`, `.stride`, `.late`). Сам шаг (`walk`) рисуется поверх всей
+ * месте проявляется новый (стили страницы: `.leave`, `.stride`, `.late`, лапы — `.lg`). Сам шаг (`walk`) рисуется поверх всей
  * комнаты: по полу он идёт перед мебелью, куда бы ни шёл.
  */
 function cat(g, f, view, pose, given = null, was = null) {
@@ -2148,9 +2184,9 @@ function cat(g, f, view, pose, given = null, was = null) {
   let svg = settled, walk = "", seconds = 0;
   if (moved) {
     const from = floorUnder(was), to = floorUnder(spot);
-    seconds = trotSeconds(from, to);
-    // Идёт мордой вперёд: фигура «идёт» нарисована мордой влево.
-    walk = `<g class="stride" style="--dx:${n(from.x - to.x)}px;--dy:${n(from.y - to.y)}px;--t:${seconds}s"><g class="step trot">${figure(to, "walk", catShape(g, f, "walk", { eyes: "open", angry }), to.x > from.x, 1)}</g></g>`;
+    seconds = catSeconds(from, to, key === "игра");
+    // Идёт мордой вперёд: фигура «идёт» нарисована мордой влево. Лапы шагают (`gait`), круг шага — по скорости (`--g`).
+    walk = `<g class="stride" style="--dx:${n(from.x - to.x)}px;--dy:${n(from.y - to.y)}px;--t:${seconds}s;--g:${gaitSeconds(Math.hypot(to.x - from.x, to.y - from.y), seconds)}s"><g class="pad">${figure(to, "walk", catShape(g, f, "walk", { eyes: "open", angry, gait: true }), to.x > from.x, 1)}</g></g>`;
     const ghost = figure(was, was.shape, catShape(g, f, was.shape, { eyes, angry }), was.mirror === true, Number(was.k) > 0 ? Number(was.k) : 1);
     svg = `<g class="leave">${ghost}</g><g class="arrive late" style="--t:${seconds}s">${settled}</g>`;
   }
@@ -2232,7 +2268,8 @@ export function drawInside(view = {}, options = {}) {
   const was = sprite && before && (before.name !== name || Math.abs(before.x - stand.x) >= 12) ? before : null;
   // Картинка «идёт» в её нынешнем наряде: есть — от места к месту она доходит шагом, нет — тает и проявляется.
   const strider = loaded && view.her ? walkOf(view) : null;
-  const walker = strider && fitsSprite(loaded[strider]) ? { name: strider, sprite: loaded[strider] } : null;
+  const pace = strider ? frameOf(strider) : null;
+  const walker = strider && fitsSprite(loaded[strider]) ? { name: strider, sprite: loaded[strider], ...(pace && fitsSprite(loaded[pace]) ? { frame: { name: pace, sprite: loaded[pace] } } : {}) } : null;
   // Она только что вошла (вернулась от шкафа): идёт от левого края рисунка.
   const door = sprite && walker && options?.enter === true ? { name: strider, sprite: loaded[strider], x: DOOR_X } : null;
   // Второй кадр её позы: загружен — она движется внутри позы; нет — стоит одной картинкой, как раньше.
@@ -2350,7 +2387,7 @@ export function drawRoom(view = {}, options = {}) {
   const part = partIn(view), name = spriteOf(view), sky = skyIn(view?.sky);
   // В кладовую — всё, на что рисунок ссылается: нынешняя поза, прежняя (она тает) и, если она идёт, картинка «идёт».
   const moving = options?.was || options?.enter === true;
-  const wanted = [name, frameOf(name), options?.was?.name, moving ? walkOf(view) : null].filter((item, index, all) => item && options?.sprites?.[item] && all.indexOf(item) === index);
+  const wanted = [name, frameOf(name), options?.was?.name, moving ? walkOf(view) : null, moving ? frameOf(walkOf(view)) : null].filter((item, index, all) => item && options?.sprites?.[item] && all.indexOf(item) === index);
   const store = wanted.map(item => drawSprite(item, options.sprites[item])).join("");
   return `${drawBackdrop(part, sky, { phase: Number.isFinite(view?.moon) ? view.moon : 0.3 })}<g clip-path="url(#s-glass)" pointer-events="none"><g transform="translate(${WIN.x} ${WIN.y})">${drawRain(part, undefined, sky)}</g></g>${store ? `<defs>${store}</defs>` : ""}${drawInside(view, options)}`;
 }

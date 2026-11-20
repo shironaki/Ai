@@ -20,6 +20,11 @@
 #                                   образец для средства рисования: её картинка из модуля — на зелёном фоне
 #                                   (closed — с закрытыми глазами: перенести веки на ту же позу в другом наряде)
 #
+#   bash scripts/verify.sh contact <лист.png> <высота> <картинка.png>…
+#                                   сырые картинки в ряд: что вернула нейросеть
+#   bash scripts/verify.sh pairs <лист.png> <поза>:<кадр>[:<рост>] …
+#                                   второй кадр позы поверх самой позы: совпали ли голова и ступни (числом и глазами)
+#
 # Зависимостей у проекта нет и не будет (на платформе нет npm), поэтому eslint и
 # Node 24 ставятся во временную папку (VERIFY_TMP, по умолчанию /tmp) при первом
 # запуске. В песочнице чата эта папка исчезает между ходами: первый запуск в ходе
@@ -208,6 +213,22 @@ ref() {
   (cd "$PAGE" && node room-ref.mjs "$ROOT" "$names" "$out" "$@")
 }
 
+# Картинки рядом и наложением: сценарий — scripts/room-pairs.mjs.
+pairs() {
+  local mode="$1" out="${2:-}"; shift 2 || true
+  if [ -z "$out" ] || [ -z "${1:-}" ]; then echo "Нужно: bash scripts/verify.sh contact <лист.png> <высота> <png>… | pairs <лист.png> <поза>:<кадр>[:<рост>] …"; return 1; fi
+  browser
+  cp "$ROOT/scripts/room-pairs.mjs" "$PAGE/room-pairs.mjs"
+  case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
+  if [ "$mode" = "contact" ]; then
+    local height="$1" files=() file; shift
+    for file in "$@"; do case "$file" in /*) files+=("$file") ;; *) files+=("$PWD/$file") ;; esac; done
+    (cd "$PAGE" && node room-pairs.mjs "$ROOT" contact "$out" "$height" "${files[@]}")
+  else
+    (cd "$PAGE" && node room-pairs.mjs "$ROOT" pairs "$out" "$@")
+  fi
+}
+
 case "${1:-quick}" in
   quick) lint; ci ;;
   all) lint; ci; node24 ;;
@@ -221,5 +242,7 @@ case "${1:-quick}" in
   ref) shift; ref "$@" ;;
   squeeze) shift; squeeze "$@" ;;
   seen) seen ;;
+  contact) shift; pairs contact "$@" ;;
+  pairs) shift; pairs pairs "$@" ;;
   *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

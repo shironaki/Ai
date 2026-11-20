@@ -433,8 +433,9 @@ function paint() {
     drawn.view = key;
     drawn.cast = castNow(view);
     // До какого времени на рисунке идёт переход (она идёт, тает, проявляется): запоздавший второй кадр его не обрывает.
-    const stride = $("inside").querySelector(".stride"), moving = stride || $("inside").querySelector(".leave, .arrive");
-    if (moving) drawn.until = Date.now() + (stride ? (Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5) * 1000 : 0) + FADE_MS + 200;
+    // Идут и она, и Байт — ждём того, кто идёт дольше (с 0.46.0 Байт идёт шагом, до четырёх с половиной секунд).
+    const strides = [...$("inside").querySelectorAll(".stride")], moving = strides.length > 0 || $("inside").querySelector(".leave, .arrive");
+    if (moving) drawn.until = Date.now() + Math.max(0, ...strides.map(stride => Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5)) * 1000 + FADE_MS + 200;
   }
   const say = $("say");
   if (say.textContent !== state.said) {

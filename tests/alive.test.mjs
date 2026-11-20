@@ -833,16 +833,18 @@ test("рисунок 0.44.0: она сидит в кресле комнаты; �
   const sill = scene.castOf(cat("sit", "sill"), PAINTED), bowl = scene.castOf(cat("sit", "bowl"), PAINTED);
   assert.ok(bowl.cat.y - sill.cat.y > 100, "подоконник выше пола");
   const trot = scene.drawInside(cat("sit", "bowl"), { ...PAINTED, was: sill.her, catWas: sill.cat });
-  const path = trot.match(/<g class="stride" style="--dx:(-?[\d.]+)px;--dy:(-?[\d.]+)px;--t:([\d.]+)s"><g class="step trot">/u);
+  // С 0.46.0 он идёт лапами (`.pad`, `.lg`), а не подпрыгивает неподвижной фигурой (`.step.trot` до 0.46.0).
+  const path = trot.match(/<g class="stride" style="--dx:(-?[\d.]+)px;--dy:(-?[\d.]+)px;--t:([\d.]+)s;--g:([\d.]+)s"><g class="pad">/u);
   assert.ok(path, "Байт идёт");
   assert.equal(Number(path[1]), sill.cat.x - bowl.cat.x, "от подоконника до миски — по горизонтали весь путь");
   assert.ok(Math.abs(Number(path[2])) < 60, `по полу, а не по воздуху: ${path[2]}`);
-  assert.ok(Number(path[3]) >= 0.7 && Number(path[3]) <= 2.5, path[3]);
+  assert.ok(Number(path[3]) >= 1 && Number(path[3]) <= 4.5, path[3]);
   assert.match(trot, /<g class="cat walk">/u);
-  assert.doesNotMatch(scene.drawInside(cat("sit", "sill"), { ...PAINTED, was: sill.her, catWas: sill.cat }), /step trot/u, "на месте — не идёт");
+  assert.doesNotMatch(trot, /step trot/u, "подскоков больше нет");
+  assert.doesNotMatch(scene.drawInside(cat("sit", "sill"), { ...PAINTED, was: sill.her, catWas: sill.cat }), /class="pad"/u, "на месте — не идёт");
   // «Ушёл под кресло» — уходит туда шагом, и дальше видны одни глаза.
   const hid = scene.drawInside(cat("eyes", "under", "обижен"), { ...PAINTED, was: sill.her, catWas: sill.cat });
-  assert.match(hid, /step trot/u);
+  assert.match(hid, /class="pad"/u);
   assert.equal(scene.castOf(cat("eyes", "under", "обижен"), PAINTED).cat.shape, "eyes");
   // Прежнего места не назвали (первый рисунок) — он просто там, где сказано.
   assert.doesNotMatch(scene.drawInside(cat("sit", "bowl"), PAINTED), /class="stride"|class="leave"/u);
@@ -973,17 +975,24 @@ test("торт 0.45.0: стоит на столе, как она и говори
 
 test("кадры 0.45.0: второй кадр — та же поза, а не новая; лежит поверх первой и в списки поз не входит; не загрузился — стоит одной картинкой", () => {
   const frames = Object.entries(scene.HER_FRAMES);
-  assert.deepEqual(frames.map(([base, [name, how]]) => `${base}>${name}:${how}`), ["tea3>tea3b:sip", "home-tea3>home-tea3b:sip", "work>workb:glance", "home-work>home-workb:glance", "home-play2>home-play2b:dance"]);
-  for (const [base, [name]] of frames) {
+  assert.deepEqual(frames.map(([base, [name, how]]) => `${base}>${name}:${how}`), [
+    "tea3>tea3b:sip", "home-tea3>home-tea3b:sip", "work>workb:glance", "home-work>home-workb:glance", "play2>play2b:dance", "home-play2>home-play2b:dance",
+    // 0.46.0: чай у подоконника, книга, шаг — в обоих нарядах; чай под гирляндой — пока только в куртке.
+    "tea>teab:sip", "home-tea>home-teab:sip", "tea2>tea2b:glance", "read>readb:sip", "home-read>home-readb:sip", "walk>walkb:pace", "home-walk>home-walkb:pace",
+  ]);
+  for (const [base, [name, how]] of frames) {
     assert.ok(Object.hasOwn(scene.HER_SPRITES, base), base);
     assert.ok(!Object.hasOwn(scene.HER_SPRITES, name), `${name}: кадр — не поза`);
     assert.equal(scene.frameOf(base), name);
     // Та же фигура того же роста: кадр кладётся с числами первой картинки (`tall`, место), своя у него только ось.
     assert.equal(FRAME_SPRITES[name].h, SPRITES[base].h, name);
-    assert.ok(Math.abs(FRAME_SPRITES[name].w - SPRITES[base].w) <= 16, `${name}: ширина ${FRAME_SPRITES[name].w} против ${SPRITES[base].w}`);
+    // Ширина: у неподвижной позы — почти та же; у танца лента улетает в другую сторону, у шага ноги сходятся —
+    // там разница больше, а совпадение головы и тела смотрит `verify.sh pairs` (ось тела у кадра — от первой картинки).
+    const slack = how === "dance" || how === "pace" ? 50 : 16;
+    assert.ok(Math.abs(FRAME_SPRITES[name].w - SPRITES[base].w) <= slack, `${name}: ширина ${FRAME_SPRITES[name].w} против ${SPRITES[base].w}`);
     assert.equal(FRAME_SPRITES[name].blink, undefined, `${name}: веки живут в первом кадре`);
   }
-  for (const none of ["tea", "walk", "tea3b", "constructor", "", null, undefined, 7]) assert.equal(scene.frameOf(none), null, String(none));
+  for (const none of ["tired", "play", "tea3b", "walkb", "constructor", "", null, undefined, 7]) assert.equal(scene.frameOf(none), null, String(none));
   // Кадр не попадает ни в один список поз: ни днём, ни вечером, ни по реплике.
   const names = new Set(frames.map(([, [name]]) => name));
   for (const key of Object.keys(scene.MOODS)) for (const part of scene.PARTS) for (const pose of scene.HER_POSES) for (const beat of [false, true]) {
@@ -1008,6 +1017,8 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
     [{ ...seated, her: { pose: "desk", key: "дело", beat: true } }, "work", "workb", "glance"],
     [{ ...seated, part: "ночь", her: { pose: "desk", key: "дело", beat: true, wear: "home" } }, "home-work", "home-workb", "glance"],
     [{ ...seated, part: "вечер", her: { pose: "dance", key: "игра", beat: true } }, "home-play2", "home-play2b", "dance"],
+    // 0.46.0: танец — и в куртке; чай у подоконника, чай под гирляндой, книга.
+    [{ ...seated, her: { pose: "dance", key: "игра", beat: true } }, "play2", "play2b", "dance"],
   ]) {
     assert.equal(scene.spriteOf(view), base);
     const drawn = scene.drawRoom(view, { sprites: { ...SPRITES, ...FRAME_SPRITES } });
@@ -1018,14 +1029,14 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
   const single = scene.drawRoom(seated, PAINTED);
   assert.doesNotMatch(single, /class="fr /u);
   assert.match(single, /<g class="alive"><use href="#r-her-tea3" /u);
-  assert.doesNotMatch(scene.drawRoom({ ...seated, her: { pose: "dance", key: "игра", beat: true } }, { sprites: { ...SPRITES, ...FRAME_SPRITES } }), /class="fr /u, "в куртке у танца второго кадра нет");
+  assert.doesNotMatch(scene.drawRoom({ ...seated, her: { pose: "nap", key: "сон", beat: true } }, { sprites: { ...SPRITES, ...FRAME_SPRITES } }), /class="fr /u, "у спящей второго кадра нет");
   // Негодный кадр — тоже одной картинкой.
   assert.doesNotMatch(scene.drawRoom(seated, { sprites: { ...SPRITES, tea3b: { ...FRAME_SPRITES.tea3b, src: "javascript:alert(1)" } } }), /class="fr |alert/u);
 
   // Страница: движение кадров — стилями; при «меньше движения» второй кадр не показывается вовсе.
   const html = read("miniapp/index.html");
   assert.match(html, /#room \.fr\.b \{ opacity: 0; \}/u);
-  for (const how of ["sip", "glance", "dance"]) for (const layer of ["a", "b"]) assert.match(html, new RegExp(`#room \\.${how}\\.${layer} \\{ animation: \\w+ [\\d.]+s linear infinite; \\}`, "u"), `${how}.${layer}`);
+  for (const how of ["sip", "glance", "dance", "pace"]) for (const layer of ["a", "b"]) assert.match(html, new RegExp(`#room \\.${how}\\.${layer} \\{ animation: \\w+ [\\d.]+s linear infinite; \\}`, "u"), `${how}.${layer}`);
   assert.match(html, /@media \(prefers-reduced-motion: reduce\) \{\n {2}#room \*,/u);
   // И грузит второй кадр страница сама — после самой позы; старая копия `scene.js` кадров не знает, и это не поломка.
   const app = read("miniapp/app.js");
@@ -1131,3 +1142,87 @@ test("«считаю капли» — не «читаю»: место в её с
   assert.equal(room.herPose("Чай, кресло, плед и «Маленький принц» — в таком порядке. Пока на первом пункте.", "уют"), "chair");
 });
 
+test("0.46.0, Байт идёт лапами: четыре лапы из двух частей шагают по очереди, круг шага — по скорости; стоя на месте лапами не перебирает", () => {
+  const room = (shape, place, key = "сыт") => ({ part: "день", sky: "clear", her: { pose: "desk", key: "дело" }, cat: { shape, place, key }, plant: "wet", things: [] });
+  const from = scene.castOf(room("sit", "near"), PAINTED), to = scene.castOf(room("sit", "bowl"), PAINTED);
+  const walking = scene.drawInside(room("sit", "bowl"), { ...PAINTED, was: from.her, catWas: from.cat });
+  const gait = walking.slice(walking.indexOf('<g class="pad">'), walking.indexOf("</g></g></g>", walking.indexOf('<g class="cat walk">')));
+  // Каждая лапа — верх (от плеча) и низ (от сгиба), у каждой свой черёд: 0 — передняя ближняя, 1 — задняя ближняя,
+  // 2 — передняя дальняя, 3 — задняя дальняя. Так ходят коты: задняя, за ней передняя с той же стороны.
+  for (const turn of [0, 1, 2, 3]) for (const part of ["up", "low"]) assert.equal(walking.split(`<g class="lg ${part} p${turn}">`).length - 1, 1, `${part} p${turn}`);
+  assert.ok(gait.length > 200, "лапы — внутри идущей фигуры");
+  // Группа, которую качают стили, своего сдвига не несёт: сдвиг — у группы снаружи, иначе стиль его затрёт.
+  assert.doesNotMatch(walking, /<g class="(?:lg|pad)[^"]*" transform=/u);
+  assert.match(walking, /<g transform="translate\([-\d.]+ [-\d.]+\)"><g class="lg up p0">/u);
+  // Круг шага — по скорости: за полкруга лапа уходит назад на столько, сколько он сам прошёл; не мелькает и не волочится.
+  const style = /--dx:(-?[\d.]+)px;--dy:(-?[\d.]+)px;--t:([\d.]+)s;--g:([\d.]+)s"><g class="pad">/u.exec(walking).slice(1).map(Number);
+  const distance = Math.hypot(style[0], style[1]);
+  assert.equal(style[2], scene.catSeconds(from.cat, to.cat));
+  assert.equal(style[3], scene.gaitSeconds(distance, style[2]));
+  assert.ok(style[3] >= 0.32 && style[3] <= 0.64, String(style[3]));
+  const slip = Math.abs(distance / style[2] * style[3] / 2 - 13.5);
+  assert.ok(slip < 2.5, `лапа на полу скользит на ${slip.toFixed(1)} точки за шаг`);
+  // Шагом — не быстрее шестидесяти точек в секунду (до 0.46.0 — сто, и неподвижной фигурой); за игрушкой — бегом.
+  for (const [a, b] of [[{ x: 90, y: 440 }, { x: 330, y: 470 }], [{ x: 60, y: 450 }, { x: 110, y: 452 }], [{ x: 40, y: 440 }, { x: 380, y: 480 }]]) {
+    const far = Math.hypot(b.x - a.x, b.y - a.y), walk = scene.catSeconds(a, b), run = scene.catSeconds(a, b, true);
+    assert.ok(walk >= 1 && walk <= 4.5 && run >= 0.7 && run <= 2.5 && run <= walk, `${far}: ${walk} / ${run}`);
+    if (far > 60 && far < 240) assert.ok(far / walk <= 60, `${far} за ${walk} с`);
+    const beat = scene.gaitSeconds(far, walk);
+    assert.ok(beat >= 0.32 && beat <= 0.64, String(beat));
+  }
+  const play = scene.drawInside(room("play", "rug", "игра"), { ...PAINTED, was: from.her, catWas: scene.castOf(room("sit", "bowl"), PAINTED).cat });
+  const ran = /--t:([\d.]+)s;--g:([\d.]+)s"><g class="pad">/u.exec(play);
+  if (ran) assert.ok(Number(ran[1]) <= 2.5, `за игрушкой — бегом: ${ran[1]}`);
+  // Стоит на месте в той же фигуре («ходит кругами») — прежний неподвижный рисунок: лапами не перебирает.
+  const still = scene.drawInside(room("walk", "near", "шалит"), PAINTED);
+  assert.match(still, /class="cat walk"/u);
+  assert.doesNotMatch(still, /class="lg |class="pad"/u);
+
+  // Страница: лапы качаются стилями, каждая в свой черёд; подскока (`.trot`) больше нет; при «меньше движения» — стоят.
+  const html = read("miniapp/index.html");
+  assert.match(html, /#room \.lg \{ animation: var\(--g, 0\.5s\) linear infinite; \}/u);
+  assert.match(html, /#room \.lg\.up \{ animation-name: legUp; \}\n#room \.lg\.low \{ animation-name: legLow; \}/u);
+  for (const [turn, part] of [[1, "0.75"], [2, "0.5"], [3, "0.25"]]) assert.ok(html.includes(`#room .lg.p${turn} { animation-delay: calc(var(--g, 0.5s) * -${part}); }`), `p${turn}`);
+  assert.match(html, /@keyframes legUp \{ 0% \{ transform: rotate\(26deg\); \} 50% \{ transform: rotate\(-26deg\); \}/u, "полкруга лапа на полу: уходит назад прямой");
+  assert.match(html, /@keyframes legLow \{ 0%, 50% \{ transform: rotate\(0deg\); \}/u, "на полу лапа не согнута");
+  assert.match(html, /#room \.pad \{ animation: pad var\(--g, 0\.5s\) ease-in-out infinite; \}/u);
+  assert.doesNotMatch(html, /\.trot\b/u);
+});
+
+test("0.46.0, её шаг в два кадра: «ноги в шаге» и «ноги вместе» — попеременно, в обоих нарядах, в обе стороны; кадр не загрузился — идёт одной картинкой", () => {
+  const all = { sprites: { ...SPRITES, ...FRAME_SPRITES } };
+  const view = (part, pose) => ({ part, sky: "clear", her: { pose, key: "дело", beat: true }, cat: null, plant: "wet", things: [] });
+  for (const [part, name, frame] of [["день", "walk", "walkb"], ["вечер", "home-walk", "home-walkb"]]) {
+    assert.equal(scene.walkOf(view(part, "desk")), name);
+    assert.equal(scene.frameOf(name), frame);
+    const right = scene.drawInside(view(part, "desk"), { ...all, was: { name: part === "день" ? "work" : "home-work", x: 100 } });
+    // (В сумерках у каждой картинки поверх ещё слой света — поэтому между кадрами может стоять не один элемент.)
+    const pair = new RegExp(`<g class="step"><g class="fr a pace"><use href="#r-her-${name}" (?:(?!class="fr ).)*</g><g class="fr b pace"><use href="#r-her-${frame}" `, "u");
+    assert.match(right, pair, `${part}: оба кадра шага — внутри покачивания`);
+    // Идёт влево — оба кадра отражены вместе: одна группа с отражением вокруг них.
+    const left = scene.drawInside(view(part, "shelf"), { ...all, was: { name: part === "день" ? "work" : "home-work", x: 300 } });
+    assert.match(left, new RegExp(`<g class="step"><g transform="translate\\([-\\d.]+ 0\\) scale\\(-1 1\\)"><g class="fr a pace"><use href="#r-her-${name}" (?:(?!class="fr ).)*</g><g class="fr b pace"><use href="#r-her-${frame}" `, "u"), `${part}: влево`);
+    // Ось тела и рост у кадров шага общие: голова не прыгает.
+    const at = (which) => new RegExp(`<use href="#r-her-${which}" transform="translate\\(([-\\d.]+) ([-\\d.]+)\\) scale\\(([\\d.]+)\\)"`, "u").exec(right).slice(1).map(Number);
+    const [ax, ay, ak] = at(name), [bx, by, bk] = at(frame);
+    assert.deepEqual([ay, ak], [by, bk]);
+    assert.ok(Math.abs((ax + SPRITES[name].w * SPRITES[name].cx * ak) - (bx + FRAME_SPRITES[frame].w * FRAME_SPRITES[frame].cx * bk)) < 0.2, `${name}: ось`);
+    // Второй кадр не загружен — идёт одной картинкой, как до 0.46.0.
+    const single = scene.drawInside(view(part, "desk"), { ...PAINTED, was: { name: part === "день" ? "work" : "home-work", x: 100 } });
+    assert.match(single, new RegExp(`<g class="step"><use href="#r-her-${name}" `, "u"));
+    assert.doesNotMatch(single, /class="fr [ab] pace"/u);
+    // И входит от двери — тоже в два кадра.
+    assert.match(scene.drawInside(view(part, "chair"), { ...all, enter: true }), /<g class="fr b pace">/u, `${part}: входит`);
+  }
+  // Определения обоих кадров шага — в рисунке, когда она идёт; когда стоит — их нет.
+  const moving = scene.drawRoom(view("день", "desk"), { ...all, was: { name: "work", x: 100 } });
+  assert.match(moving, /<image id="r-her-walk" /u);
+  assert.match(moving, /<image id="r-her-walkb" /u);
+  assert.doesNotMatch(scene.drawRoom(view("день", "desk"), all), /r-her-walkb/u);
+  // Страница: кадры шага меняются в такт покачиванию — тот же круг 0,62 с.
+  const html = read("miniapp/index.html");
+  assert.match(html, /#room \.step \{[^}]*animation: step 0\.62s /u);
+  assert.match(html, /#room \.pace\.a \{ animation: paceA 0\.62s linear infinite; \}\n#room \.pace\.b \{ animation: paceB 0\.62s linear infinite; \}/u);
+  // И второй кадр шага страница грузит сама: следом за любой загруженной картинкой — её кадр (`fetchSprite`).
+  assert.match(read("miniapp/app.js"), /settle\(name, store\(name, sprite\) \? sprite : false\);\n[^\n]*\n\s+fetchSprite\(frameName\(name\)\);/u);
+});

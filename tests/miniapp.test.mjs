@@ -1613,14 +1613,17 @@ test("страница: папка уходит на платформу как �
   gather({ part: "день", her: { pose: "shelf", key: "дело", beat: true }, cat: { shape: "sit", place: "bowl", key: "сыт" }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 }, catWas: { x: 300, y: 456, shape: "sit", mirror: false, k: 1 } });
   gather({ part: "вечер", her: { pose: "chair", key: "уют", beat: true }, things: [] }, { ...PAINTED, enter: true });
   gather({ part: "вечер", her: { pose: "desk", key: "дело", away: true }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 } });
-  assert.deepEqual([...classes].filter(name => !lived.has(name)).sort(), ["changing", "late", "step", "stride", "trot"]);
+  // С 0.46.0 Байт идёт лапами: `pad` — тело, `lg` — часть лапы (`up`, `low`), `p0`–`p3` — которой по счёту она ступает.
+  assert.deepEqual([...classes].filter(name => !lived.has(name)).sort(), ["changing", "late", "lg", "low", "p0", "p1", "p2", "p3", "pad", "step", "stride", "up"]);
   // Вторые кадры поз (0.45.0): слои кадров и вид их движения — когда кадр загружен.
   const framed = new Set(classes);
   const withFrames = { sprites: { ...SPRITES, ...FRAME_SPRITES } };
   gather({ part: "день", her: { pose: "chair", key: "уют", beat: true }, things: [] }, withFrames);
   gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, things: [] }, withFrames);
   gather({ part: "вечер", her: { pose: "dance", key: "игра", beat: true }, things: [] }, withFrames);
-  assert.deepEqual([...classes].filter(name => !framed.has(name)).sort(), ["a", "b", "dance", "fr", "glance", "sip"]);
+  // 0.46.0: шаг в два кадра — `pace`.
+  gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, things: [] }, { ...withFrames, was: { name: "work", x: 100 } });
+  assert.deepEqual([...classes].filter(name => !framed.has(name)).sort(), ["a", "b", "dance", "fr", "glance", "pace", "sip"]);
   // Сценка дня на рисунке и небо по погоде: у каждой перемены и у каждого неба — свои классы.
   const staged = new Set(classes);
   for (const name of scene.SCENE_FX) gather({ part: "день", her: { pose: "desk", key: "дело" }, cat: { shape: "belly", place: "near", key: "ласка" }, things: [...THINGS], fx: [name] });

@@ -167,9 +167,29 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 #room .stride { opacity: 0; animation: stride var(--t, 1.5s) linear; }
 @keyframes stride { from { transform: translate(var(--dx, 0px), var(--dy, 0px)); opacity: 1; } 90% { opacity: 1; } to { transform: translate(0px, 0px); opacity: 0; } }
 #room .step { transform-box: fill-box; transform-origin: 50% 100%; animation: step 0.62s ease-in-out infinite; }
-#room .step.trot { animation-duration: 0.34s; }
 @keyframes step { 0%, 50%, 100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-2.6px) rotate(-0.7deg); } 75% { transform: translateY(-2.6px) rotate(0.7deg); } }
 #room .arrive.late { animation: arrive 0.5s ease-out backwards; animation-delay: calc(var(--t, 1.5s) - 0.3s); }
+/* Её шаг в два кадра (0.46.0): «ноги в шаге» и «ноги вместе» меняются в такт покачиванию — вместе она выше. */
+#room .pace.a { animation: paceA 0.62s linear infinite; }
+#room .pace.b { animation: paceB 0.62s linear infinite; }
+@keyframes paceA { 0%, 12.4% { opacity: 1; } 12.5%, 37.4% { opacity: 0; } 37.5%, 62.4% { opacity: 1; } 62.5%, 87.4% { opacity: 0; } 87.5%, 100% { opacity: 1; } }
+@keyframes paceB { 0%, 12.4% { opacity: 0; } 12.5%, 37.4% { opacity: 1; } 37.5%, 62.4% { opacity: 0; } 62.5%, 87.4% { opacity: 1; } 87.5%, 100% { opacity: 0; } }
+/* Байт идёт лапами (0.46.0). Каждая лапа — две части: верхняя качается от плеча, нижняя — от сгиба. Полкруга лапа
+   стоит на полу и уходит назад прямой, полкруга — в воздухе: сгибается и выносится вперёд. Лапы ступают по очереди:
+   задняя, передняя с той же стороны, задняя с другой, передняя с другой (`p0`–`p3`). Круг шага (`--g`) рисунок
+   считает по скорости — лапа на полу не скользит. Точка поворота — начало своей группы: у этих групп нет ни сдвига,
+   ни `transform-box`. Подскоков нет: тело лишь чуть покачивается (`.pad`). */
+#room .lg { animation: var(--g, 0.5s) linear infinite; }
+#room .lg.up { animation-name: legUp; }
+#room .lg.low { animation-name: legLow; }
+#room .lg.p0 { animation-delay: 0s; }
+#room .lg.p1 { animation-delay: calc(var(--g, 0.5s) * -0.75); }
+#room .lg.p2 { animation-delay: calc(var(--g, 0.5s) * -0.5); }
+#room .lg.p3 { animation-delay: calc(var(--g, 0.5s) * -0.25); }
+@keyframes legUp { 0% { transform: rotate(26deg); } 50% { transform: rotate(-26deg); } 62% { transform: rotate(-12deg); } 74% { transform: rotate(8deg); } 88% { transform: rotate(24deg); } 100% { transform: rotate(26deg); } }
+@keyframes legLow { 0%, 50% { transform: rotate(0deg); } 62% { transform: rotate(-65deg); } 74% { transform: rotate(-55deg); } 88% { transform: rotate(-20deg); } 100% { transform: rotate(0deg); } }
+#room .pad { animation: pad var(--g, 0.5s) ease-in-out infinite; }
+@keyframes pad { 0%, 50%, 100% { transform: translateY(0); } 25%, 75% { transform: translateY(-0.7px); } }
 /* Она дышит: картинка чуть растёт и опадает от ступней. */
 #room .alive { transform-box: fill-box; transform-origin: 50% 100%; animation: alive 4.8s ease-in-out infinite; }
 @keyframes alive { 50% { transform: scale(1.003, 1.008); } }
