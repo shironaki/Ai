@@ -801,10 +801,14 @@ test("рисунок 0.44.0: она сидит в кресле комнаты; �
   assert.match(moved, /href="#r-her-walk"/u);
   assert.match(moved, /<g class="leave">/u);
   assert.match(moved, new RegExp(`<g class="arrive late" style="--t:${stride[2]}s">`, "u"));
-  // Идёт влево — картинка отражена: нарисована она лицом вправо.
+  // Картинка «идёт» нарисована лицом влево (сообщение 47: «она ходит задом наперёд» — до 0.48.0 код считал, что
+  // вправо): идёт вправо — отражена вокруг места, куда идёт; идёт влево — как нарисована.
+  assert.ok(from.her.x < to.her.x, "от шкафа к столу — вправо");
+  assert.match(moved, new RegExp(`<g class="step"><g transform="translate\\(${to.her.x * 2} 0\\) scale\\(-1 1\\)">`, "u"));
   const back = scene.drawInside(view("shelf", "дело"), { ...PAINTED, was: to.her, catWas: to.cat });
-  assert.match(back, /<g class="step"><g transform="translate\([\d.]+ 0\) scale\(-1 1\)">/u);
-  assert.doesNotMatch(moved, /<g class="step"><g transform="translate\([\d.]+ 0\) scale\(-1 1\)">/u);
+  assert.match(back, /<g class="stride" [^>]*><g class="step">/u);
+  assert.doesNotMatch(back, /<g class="step"><g transform="translate\([\d.]+ 0\) scale\(-1 1\)">/u);
+  for (const name of ["walk", "home-walk"]) assert.equal(scene.HER_SPRITES[name].faces, "left", name);
   // Осталась на месте — никуда не идёт; сменила позу на том же месте — прежняя тает, без шага.
   const stay = scene.drawInside(view("desk", "дело"), { ...PAINTED, was: to.her, catWas: to.cat });
   assert.doesNotMatch(stay, /class="stride"/u);
@@ -1228,11 +1232,12 @@ test("0.46.0, её шаг в два кадра: «ноги в шаге» и «н
     assert.equal(scene.frameOf(name), frame);
     const right = scene.drawInside(view(part, "desk"), { ...all, was: { name: part === "день" ? "work" : "home-work", x: 100 } });
     // (В сумерках у каждой картинки поверх ещё слой света — поэтому между кадрами может стоять не один элемент.)
-    const pair = new RegExp(`<g class="step"><g class="fr a pace"><use href="#r-her-${name}" (?:(?!class="fr ).)*</g><g class="fr b pace"><use href="#r-her-${frame}" `, "u");
-    assert.match(right, pair, `${part}: оба кадра шага — внутри покачивания`);
-    // Идёт влево — оба кадра отражены вместе: одна группа с отражением вокруг них.
+    const pair = `<g class="fr a pace"><use href="#r-her-${name}" (?:(?!class="fr ).)*</g><g class="fr b pace"><use href="#r-her-${frame}" `;
+    // Идёт влево — как нарисована (лицом влево): оба кадра шага — внутри покачивания.
     const left = scene.drawInside(view(part, "shelf"), { ...all, was: { name: part === "день" ? "work" : "home-work", x: 300 } });
-    assert.match(left, new RegExp(`<g class="step"><g transform="translate\\([-\\d.]+ 0\\) scale\\(-1 1\\)"><g class="fr a pace"><use href="#r-her-${name}" (?:(?!class="fr ).)*</g><g class="fr b pace"><use href="#r-her-${frame}" `, "u"), `${part}: влево`);
+    assert.match(left, new RegExp(`<g class="step">${pair}`, "u"), `${part}: влево — оба кадра шага внутри покачивания`);
+    // Идёт вправо — оба кадра отражены вместе: одна группа с отражением вокруг них.
+    assert.match(right, new RegExp(`<g class="step"><g transform="translate\\([-\\d.]+ 0\\) scale\\(-1 1\\)">${pair}`, "u"), `${part}: вправо`);
     // Ось тела и рост у кадров шага общие: голова не прыгает.
     const at = (which) => new RegExp(`<use href="#r-her-${which}" transform="translate\\(([-\\d.]+) ([-\\d.]+)\\) scale\\(([\\d.]+)\\)"`, "u").exec(right).slice(1).map(Number);
     const [ax, ay, ak] = at(name), [bx, by, bk] = at(frame);
@@ -1240,7 +1245,7 @@ test("0.46.0, её шаг в два кадра: «ноги в шаге» и «н
     assert.ok(Math.abs((ax + SPRITES[name].w * SPRITES[name].cx * ak) - (bx + FRAME_SPRITES[frame].w * FRAME_SPRITES[frame].cx * bk)) < 0.2, `${name}: ось`);
     // Второй кадр не загружен — идёт одной картинкой, как до 0.46.0.
     const single = scene.drawInside(view(part, "desk"), { ...PAINTED, was: { name: part === "день" ? "work" : "home-work", x: 100 } });
-    assert.match(single, new RegExp(`<g class="step"><use href="#r-her-${name}" `, "u"));
+    assert.match(single, new RegExp(`<g class="step"><g transform="translate\\([-\\d.]+ 0\\) scale\\(-1 1\\)"><use href="#r-her-${name}" `, "u"));
     assert.doesNotMatch(single, /class="fr [ab] pace"/u);
     // И входит от двери — тоже в два кадра.
     assert.match(scene.drawInside(view(part, "chair"), { ...all, enter: true }), /<g class="fr b pace">/u, `${part}: входит`);
@@ -1619,7 +1624,8 @@ test("0.46.0, вечерняя тень на идущей: пока она ид�
   assert.doesNotMatch(scene.drawInside(view("вечер"), PAINTED), /herAirWalk/u);
   // Второй кадр шага не загрузился — в маске одна картинка.
   const single = scene.drawInside(view("вечер"), { ...PAINTED, was: { name: "home-work", x: 100 } });
-  assert.match(single, /<mask id="r-herAirWalk"[^>]*><g class="stride" style="[^"]+"><g class="step"><use href="#r-her-home-walk" [^>]+\/><\/g><\/g><\/mask>/u);
+  // (Идёт вправо — картинка, нарисованная лицом влево, отражена: и в маске тоже.)
+  assert.match(single, /<mask id="r-herAirWalk"[^>]*><g class="stride" style="[^"]+"><g class="step"><g transform="translate\([-\d.]+ 0\) scale\(-1 1\)"><use href="#r-her-home-walk" [^>]+\/><\/g><\/g><\/g><\/mask>/u);
 });
 
 // ── 0.47.0: свет по солнцу (идея 164) ────────────────────────────────────────

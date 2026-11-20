@@ -1643,7 +1643,9 @@ export const HER_SPRITES = Object.freeze({
   jealous3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   sleep: { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
   // Идёт (0.44.0): не поза состояния, а то, как она переходит от места к месту; смотрит вправо, влево — отражением.
-  walk: { tall: 374, kind: "walk" },
+  // `faces` — куда она на картинке идёт. Обе «идёт» нарисованы лицом влево (образец — `verify.sh ref walk,walkb,
+  // home-walk,home-walkb`): идёт вправо — картинка отражается. До 0.48.0 код считал наоборот, и она шла задом наперёд.
+  walk: { tall: 374, kind: "walk", faces: "left" },
   // В свитере — те же позы, что в куртке (нейросеть переодела те же картинки): и числа те же.
   "home-tea": { tall: 390, mark: ["steam", 0.115, 0.228] },
   "home-tea2": { tall: 390, mark: ["steam", 0.36, 0.13] },
@@ -1664,7 +1666,7 @@ export const HER_SPRITES = Object.freeze({
   "home-jealous2": { tall: 390, half: 64 },
   "home-jealous3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
   "home-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
-  "home-walk": { tall: 374, kind: "walk" },
+  "home-walk": { tall: 374, kind: "walk", faces: "left" },
 });
 /**
  * Кадры движения внутри позы (0.45.0, «больше кадров, чтоб казалась живой»): вторая картинка той же позы — та же
@@ -1936,7 +1938,8 @@ export const walkSeconds = (from, to) => Math.round(Math.max(1, Math.min(3.5, Ma
 export const DOOR_X = -74;
 /**
  * Она идёт: картинка «идёт» едет от `from` к `to` и покачивается в такт шагам (стили страницы: `.stride`, `.step`).
- * Нарисована лицом вправо; влево — отражением. В конце пути тает: на её месте проявляется новая поза.
+ * Куда она на картинке смотрит, записано у самой картинки (`faces` в `HER_SPRITES`); идёт в другую сторону —
+ * отражением. В конце пути тает: на её месте проявляется новая поза.
  */
 function herWalking(g, part, walker, from, to) {
   const place = spritePlace(walker.name, walker.sprite, to), seconds = walkSeconds(from, to);
@@ -1946,7 +1949,9 @@ function herWalking(g, part, walker, from, to) {
   const lit = walker.frame
     ? `<g class="fr a pace">${first}</g><g class="fr b pace">${spriteLit(part, walker.frame.name, second, g.id("herMaskWalkB"))}</g>`
     : first;
-  const stride = (body) => `<g class="stride" style="--dx:${n(from - to)}px;--t:${seconds}s"><g class="step">${to < from ? `<g transform="translate(${n(to * 2)} 0) scale(-1 1)">${body}</g>` : body}</g></g>`;
+  // Отражать ли: картинка смотрит влево, а идти вправо (или наоборот). Оба кадра шага отражаются вместе.
+  const flipped = (to < from) !== (HER_SPRITES[walker.name]?.faces === "left");
+  const stride = (body) => `<g class="stride" style="--dx:${n(from - to)}px;--t:${seconds}s"><g class="step">${flipped ? `<g transform="translate(${n(to * 2)} 0) scale(-1 1)">${body}</g>` : body}</g></g>`;
   // Её силуэт в пути — для вечерней тени на фоне окна (`airOnWalker`): те же группы и те же движения, что у самой
   // картинки «идёт», но одни картинки, без света часа.
   const bare = (name, at) => `<use href="#r-her-${name}" ${at.at}/>`;
