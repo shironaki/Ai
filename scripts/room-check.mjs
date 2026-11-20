@@ -244,6 +244,54 @@ try {
     // Вернуть как было: звук проверяется отдельно (шаг 7).
     if (sounded.on) { await page.evaluate(() => document.getElementById("sound").click()); await pause(300); }
   }
+  // Кнопки под рисунком (0.47.0): чай на выбор, тихий час, наряд по просьбе.
+  {
+    const chip = (id) => page.evaluate((name) => { const button = document.getElementById(name); return button && !button.hidden ? button.textContent.trim() : ""; }, id);
+    const idle = (id) => page.evaluate((name) => document.getElementById(name)?.disabled === false, id);
+    const press = async (id) => { await page.evaluate((name) => document.getElementById(name).click(), id); await pause(400); };
+    const tea = await chip("brew");
+    if (!/^Чай: (?:жасмин|улун|мята)$/u.test(tea)) fail(`кнопки: «Чай: …» под рисунком нет (${tea || "скрыта"})`);
+    else {
+      const before = await said();
+      await press("brew");
+      const next = await chip("brew");
+      if (next === tea || !/^Чай: (?:жасмин|улун|мята)$/u.test(next)) fail(`кнопки: чай не сменился (${tea} → ${next})`);
+      if ((await said()) === before) fail("кнопки: о новом чае она ничего не сказала");
+    }
+    const quiet = await chip("quiet");
+    if (quiet !== "Посидеть рядом") fail(`кнопки: «Посидеть рядом» под рисунком нет (${quiet || "скрыта"})`);
+    else {
+      await press("quiet");
+      let counts = false;
+      for (let i = 0; i < 20 && !counts; i += 1) { await pause(150); counts = /^Тихий час · \d+:\d\d$/u.test(await chip("quiet")); }
+      if (!counts) fail(`кнопки: тихий час начат — а отсчёта на кнопке нет («${await chip("quiet")}»)`);
+      const curled = await page.evaluate(() => document.getElementById("quiet").getAttribute("aria-pressed") === "true");
+      if (counts && !curled) fail("кнопки: тихий час идёт — а кнопка не отмечена нажатой");
+      await press("quiet");
+      if ((await chip("quiet")) !== "Посидеть рядом") fail("кнопки: тихий час закончили — а отсчёт на кнопке остался");
+    }
+    const wear = await chip("wear");
+    if (!/^Надеть (?:свитер|куртку)$/u.test(wear)) fail(`кнопки: «Надеть …» под рисунком нет (${wear || "скрыта"})`);
+    else {
+      // Сцена у шкафа: уходит, «*переодевается*», возвращается в другом. Спит — не переодевается: кнопка прежняя.
+      const dressed = async (was) => {
+        await press("wear");
+        for (let i = 0; i < 100; i += 1) { await pause(250); const now = await chip("wear"); if (now !== was && /^Надеть/u.test(now) && await idle("wear")) return true; }
+        return false;
+      };
+      const turned = await dressed(wear);
+      if (!turned && !/Сплю/u.test(await said())) fail(`кнопки: нажали «${wear}» — а наряд не сменился`);
+      if (turned) {
+        await pause(1500);
+        const home = wear === "Надеть свитер";
+        const worn = await page.evaluate(() => Array.from(document.querySelectorAll('#inside use[href^="#r-her-"]'), (node) => node.getAttribute("href")));
+        if (worn.some((href) => href.startsWith("#r-her-home-") !== home)) fail(`кнопки: надела ${home ? "свитер" : "куртку"} — а на рисунке ${worn.join(", ")}`);
+        // Вернуть как было: дальше проверяется наряд по часам.
+        if (!(await dressed(await chip("wear")))) fail("кнопки: обратно наряд не сменился");
+        await pause(1200);
+      }
+    }
+  }
   // Лампа (0.46.0): вечером и ночью нажатие гасит её (тёплого света лампы на рисунке нет) и зажигает; днём — только слова.
   {
     const before = await said();
