@@ -1687,8 +1687,10 @@ test("страница: папка уходит на платформу как �
   gather({ part: "вечер", her: { pose: "dance", key: "игра", beat: true }, things: [] }, withFrames);
   // 0.46.0: шаг в два кадра — `pace`.
   gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, things: [] }, { ...withFrames, was: { name: "work", x: 100 } });
+  // 0.49.0: взмах метёлкой и ленточкой — `sweep`.
+  gather({ part: "день", her: { pose: "dust", key: "дело", beat: true }, things: [] }, withFrames);
   // С 0.48.0 — «lk» и «nl»: на каком кадре она смотрит на зрителя, а на каком нет.
-  assert.deepEqual([...classes].filter(name => !framed.has(name)).sort(), ["a", "b", "dance", "fr", "glance", "lk", "nl", "pace", "sip"]);
+  assert.deepEqual([...classes].filter(name => !framed.has(name)).sort(), ["a", "b", "dance", "fr", "glance", "lk", "nl", "pace", "sip", "sweep"]);
   // Мимика 0.48.0: встаёт из кресла («rise»), клюёт носом («slow»), Байт замечает, что она подошла («notice», «hop», «mark»).
   const mimed = new Set(classes);
   gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, things: [] }, { ...PAINTED, was: { name: "tea3", x: 196 } });

@@ -1079,8 +1079,6 @@ window.addEventListener("pageshow", () => { if (!document.hidden) wake(); });
 // Связь вернулась — страница не ждёт нажатия: открывает комнату или сверяется.
 window.addEventListener("online", () => { if (resting) return; if (!state.ready) enter(); else if (state.down) tick(); });
 window.addEventListener("offline", () => { if (state.ready && !state.down) { state = { ...state, down: true }; paint(); } });
-// Проверке в браузере (своя машина): идут ли часы страницы.
-if (local) window.roomClock = () => ({ resting, oops: oops.length, down: state.down === true });
 
 // «На главный экран»: кнопка видна там, где Telegram это умеет и где комнату туда ещё не добавили.
 (function homeScreen() {

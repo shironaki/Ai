@@ -1703,6 +1703,17 @@ export const HER_FRAMES = Object.freeze({
   tea2: ["tea2b", "glance", "b"], "home-tea2": ["home-tea2b", "glance", "b"],
   read: ["readb", "sip"], "home-read": ["home-readb", "sip"],
   walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"],
+  // 0.49.0 (сообщение 48: «поворот головы», «поправляет волосы, меняет положение рук»): кадры для пяти поз дня, у
+  // которых движения не было. С блокнотом у подоконника: ручка у губ, смотрит на зрителя ↔ пишет, глаза в блокнот
+  // (подолгу). В кресле с блокнотом: изредка поправляет волосы и смотрит в сторону. С метёлкой: взмах — вверх и
+  // вниз, попеременно (`sweep`). С книгами: изредка оборачивается к зрителю — на этом кадре она и смотрит (`b`).
+  // С ленточкой: лента взлетает волной. Четвёртое слово — рост кадра относительно позы: лента в свитере взлетает
+  // выше головы, и картинка кадра выше картинки позы в 1,0714 раза (ступни — на той же линии).
+  work2: ["work2b", "glance"], "home-work2": ["home-work2b", "glance"],
+  work3: ["work3b", "sip"], "home-work3": ["home-work3b", "sip"],
+  tidy: ["tidyb", "sweep", ""], "home-tidy": ["home-tidyb", "sweep", ""],
+  books: ["booksb", "sip", "b"], "home-books": ["home-booksb", "sip", "b"],
+  play3: ["play3b", "sweep", ""], "home-play3": ["home-play3b", "sweep", "", 1.0714],
 });
 const FRAME_NAMES = new Set(Object.values(HER_FRAMES).map(([name]) => name));
 /** Имя второго кадра этой картинки; `null` — кадра у неё нет. */
@@ -1941,8 +1952,9 @@ export function spriteStand(view = {}) {
 }
 
 /** Куда ложится картинка: рост, ширина, левый верхний угол; `at` — сдвиг и размер для `<use>`, `box` — рамка. */
-function spritePlace(name, sprite, x) {
-  const { tall } = HER_SPRITES[name], kind = kindOf(name);
+function spritePlace(name, sprite, x, grow = 1) {
+  // `grow` — рост второго кадра относительно позы (0.49.0): кадр выше позы — ступни остаются на той же линии.
+  const tall = HER_SPRITES[name].tall * (grow > 0 ? grow : 1), kind = kindOf(name);
   const k = tall / sprite.h, wide = sprite.w * k, axis = Number.isFinite(sprite.cx) && sprite.cx > 0.1 && sprite.cx < 0.9 ? sprite.cx : 0.5;
   const feet = kind === "floor" ? FEET_SIT : FEET, top = feet - tall, left = x - wide * axis;
   return { tall, kind, wide, feet, top, left, at: `transform="translate(${n(left)} ${n(top)}) scale(${Math.round(k * 10000) / 10000})"`, box: `x="${n(left)}" y="${n(top)}" width="${n(wide)}" height="${n(tall)}"` };
@@ -2006,7 +2018,7 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   // (`.poked`): подняла глаза. У танца пометок нет — он не прерывается.
   const looks = frame ? HER_FRAMES[name]?.[2] ?? "a" : "", seen = (which) => (looks ? (looks === which ? " lk" : " nl") : "");
   const core = frame
-    ? `<g class="alive"><g class="fr a ${frame.how}${seen("a")}">${lit}${alive}</g><g class="fr b ${frame.how}${seen("b")}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x), g.id("herMaskB"))}</g></g>`
+    ? `<g class="alive"><g class="fr a ${frame.how}${seen("a")}">${lit}${alive}</g><g class="fr b ${frame.how}${seen("b")}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x, frame.grow), g.id("herMaskB"))}</g></g>`
     : `<g class="alive">${lit}</g>${alive}`;
   // Стоя она ещё и чуть покачивается (0.48.0, «небольшие движения головы»): вся фигура, от ступней; голова идёт дальше всех.
   const body = kind === "stand" ? `<g class="lean">${core}</g>` : core;
@@ -2391,7 +2403,7 @@ function insideOf(view = {}, options = {}) {
   const door = sprite && walker && options?.enter === true ? { name: strider, sprite: loaded[strider], x: DOOR_X } : null;
   // Второй кадр её позы: загружен — она движется внутри позы; нет — стоит одной картинкой, как раньше.
   const alt = sprite && Object.hasOwn(HER_FRAMES, name) ? HER_FRAMES[name] : null;
-  const frame = alt && loaded && fitsSprite(loaded[alt[0]]) ? { name: alt[0], sprite: loaded[alt[0]], how: alt[1] } : null;
+  const frame = alt && loaded && fitsSprite(loaded[alt[0]]) ? { name: alt[0], sprite: loaded[alt[0]], how: alt[1], grow: Number(alt[3]) > 0 ? Number(alt[3]) : 1 } : null;
   const she = sprite ? herPainted(g, c, f, part, name, sprite, stand.x, door ?? was, walker, frame, view.her?.face)
     // Её на рисунке нет, а только что была: уходит к шкафу, за левый край.
     : view.her?.away === true ? (before ? herLeaving(g, part, before, walker) : { note: changingNote() })

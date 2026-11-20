@@ -9,7 +9,7 @@
  *       поза, посередине кадр, справа наложение (поза — красным, кадр — голубым, общее — белым). Числом — на
  *       сколько точек рисунка кадр надо сдвинуть, чтобы совпали голова и ступни: «голова 0, 0 · ступни 0, 0» —
  *       кадр лежит точка в точку. Сдвиг головы по горизонтали лечится осью (шестое слово `verify.sh sprite`),
- *       сдвиг по вертикали — ростом кадра (третье число в `HER_FRAMES`).
+ *       сдвиг по вертикали — ростом кадра (четвёртое слово в `HER_FRAMES`).
  *
  * Зачем. Кадр, который «прыгает» относительно позы на несколько точек, на странице виден как дрожание. В 0.45.0
  * это ловилось временным сценарием в `/tmp`, и к следующему ходу его уже не было. Браузер — тот же, что у
@@ -61,7 +61,7 @@ try {
       const [base, frame, grow] = word.split(":");
       if (!Object.hasOwn(scene.HER_SPRITES, base)) { console.error(`Позы «${base}» в HER_SPRITES нет.`); process.exit(2); }
       const tall = scene.HER_SPRITES[base].tall;
-      pairs.push({ base, frame, tall, grow: Number(grow) > 0 ? Number(grow) : Number(scene.HER_FRAMES?.[base]?.[2]) > 0 ? Number(scene.HER_FRAMES[base][2]) : 1, a: await module(base), b: await module(frame) });
+      pairs.push({ base, frame, tall, grow: Number(grow) > 0 ? Number(grow) : Number(scene.HER_FRAMES?.[base]?.[3]) > 0 ? Number(scene.HER_FRAMES[base][3]) : 1, a: await module(base), b: await module(frame) });
     }
     await page.setContent(`<!doctype html><meta charset="utf-8"><style>${style}</style><main></main>`, { waitUntil: "load" });
     const lines = await page.evaluate(async (list) => {

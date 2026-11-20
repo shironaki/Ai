@@ -150,6 +150,9 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 #room .glance.b { animation: glanceB 11s linear infinite; }
 #room .dance.a { animation: flipA 1.1s linear infinite; }
 #room .dance.b { animation: flipB 1.1s linear infinite; }
+/* 0.49.0: взмах метёлкой и ленточкой — попеременно, неторопливо. */
+#room .sweep.a { animation: flipA 2.6s linear infinite; }
+#room .sweep.b { animation: flipB 2.6s linear infinite; }
 @keyframes sipB { 0%, 70% { opacity: 0; } 73%, 86% { opacity: 1; } 89%, 100% { opacity: 0; } }
 @keyframes sipA { 0%, 72.9% { opacity: 1; } 73%, 86% { opacity: 0; } 86.1%, 100% { opacity: 1; } }
 @keyframes glanceB { 0%, 58% { opacity: 1; } 61%, 88% { opacity: 0; } 91%, 100% { opacity: 1; } }
