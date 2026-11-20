@@ -84,14 +84,18 @@ export const catBeat = (state) => (Array.isArray(state.cat?.beats) && state.cat.
 export function viewOf(state) {
   const turn = Number.isInteger(state.turn) && state.turn > 0 ? state.turn : 0;
   const beat = herBeat(state);
-  const her = !state.her ? null : {
+  // Сценка встречи (0.49.0): пока идёт её шаг, на рисунке — то, о чём она рассказывает: она на том месте, Байт в той позе.
+  const told = storyBeat(state);
+  const her = !state.her ? null : told?.her ? {
+    pose: told.her.pose, key: told.her.key || state.her.key, ...(state.her.wear ? { wear: state.her.wear } : {}), beat: true,
+  } : {
     pose: beat?.pose ?? state.her.pose, key: state.her.key, ...(state.her.wear ? { wear: state.her.wear } : {}), ...(state.her.face ? { face: state.her.face } : {}),
     ...(beat ? { beat: true } : turn ? { turn } : {}), ...(state.away ? { away: true } : {}),
   };
   const pet = catBeat(state);
   // Она дразнит Байта ленточкой — он рядом и ловит её, чем бы ни был занят до того (если не спит и не прячется).
   const teased = her && !state.away && her.pose === "ribbon" && state.cat && state.cat.still !== true;
-  const cat = !state.cat ? null : {
+  const cat = !state.cat ? null : told?.cat ? { shape: told.cat.shape, place: told.cat.place, key: state.cat.key } : {
     shape: teased ? "play" : pet?.shape ?? state.cat.shape, place: teased ? "near" : pet?.place ?? state.cat.place, key: state.cat.key,
     // Бежит он только туда, куда его послал сам ответ; следующий шаг распорядка — уже шагом.
     ...(state.cat.run === true && !teased && !pet ? { run: true } : {}),
@@ -107,6 +111,9 @@ export function viewOf(state) {
     ...(state.dark === true ? { dark: true } : {}), ...(state.music > 0 ? { music: true } : {}),
     // 0.48.0. Окно открыто по нажатию: створка распахнута, слышна улица.
     ...(state.open === true ? { open: true } : {}),
+    // 0.49.0. Её вещи и подарки — в описании, только когда они есть: без них рисунок тот же, что и был.
+    ...(state.own && (state.own.sketches > 0 || state.own.book || state.own.card) ? { own: state.own } : {}),
+    ...(Array.isArray(state.gifts) && state.gifts.length ? { gifts: state.gifts } : {}),
   };
 }
 /**
@@ -186,6 +193,41 @@ function herOf(raw) {
     // не ведёт. `face` — мимика: drowsy — клюёт носом.
     ...(raw?.steady === true ? { steady: true } : {}), ...(raw?.face === "drowsy" ? { face: "drowsy" } : {}) };
 }
+/** Её вещи и подарки из ответа сердца (0.49.0): что из этого стоит в комнате. */
+export const GIFT_KINDS = Object.freeze(["flower", "book", "toy"]);
+const ownOf = (raw) => ({ sketches: Math.min(3, count(raw?.sketches)), book: raw?.book === true, card: raw?.card === true });
+const giftsOf = (raw) => (Array.isArray(raw) ? raw : []).filter(kind => GIFT_KINDS.includes(kind));
+/**
+ * Сценка встречи (0.49.0, сообщение 48: «если человек долго не заходил — небольшая сценка: чем занималась, что
+ * произошло, что хочет рассказать»): шаги — её слова и то, что при этом на рисунке: она (место и занятие) или Байт.
+ */
+function storyOf(raw) {
+  return (Array.isArray(raw) ? raw : []).filter(beat => beat && typeof beat === "object" && text(beat.line)).slice(0, 4).map(beat => ({
+    line: text(beat.line),
+    ...(HER_POSES.includes(beat.her?.pose) ? { her: { pose: beat.her.pose, key: text(beat.her.key, 16) } } : {}),
+    ...(CAT_SHAPES.includes(beat.cat?.shape) && CAT_PLACES.includes(beat.cat?.place) ? { cat: { shape: beat.cat.shape, place: beat.cat.place } } : {}),
+  }));
+}
+/** Шаг сценки, который сейчас на рисунке; `null` — сценка не идёт. */
+const storyBeat = (state) => (Array.isArray(state?.story) && Number.isInteger(state.storyAt) && state.storyAt >= 0 ? state.story[state.storyAt] ?? null : null);
+/** Сколько шагов сценки ещё не показано (считая нынешний — нет). */
+export const storyLeft = (state) => (Array.isArray(state?.story) && state.story.length ? state.story.length - 1 - (Number.isInteger(state.storyAt) ? state.storyAt : -1) : 0);
+/**
+ * Следующий шаг сценки: её слова — этого шага, рисунок — тоже (`viewOf`). После последнего шага сценка кончается, и
+ * комната возвращается к нынешней минуте.
+ */
+export function applyStory(state) {
+  const beats = Array.isArray(state?.story) ? state.story : [];
+  if (!beats.length) return state;
+  const at = (Number.isInteger(state.storyAt) ? state.storyAt : -1) + 1;
+  if (at >= beats.length) return { ...state, story: [], storyAt: -1, tone: "", retry: false, said: herBeat(state)?.line || state.lines?.her || state.said };
+  return { ...state, storyAt: at, tone: "", retry: false, asking: "", said: beats[at].line };
+}
+/** Ответ на подарок (`do: "gift"`, идея 163): что теперь стоит в комнате и её слова. */
+export function applyGift(state, result) {
+  if (!result || result.ok !== true) return refused(state, result);
+  return { ...state, busy: "", tone: "", retry: false, gifts: giftsOf(result.gifts), said: [text(result.line), text(result.note)].filter(Boolean).join("\n") || "Спасибо." };
+}
 /** Часы человека из ответа: сколько осталось до ближайшей перемены (`left`, мс) и когда это было сказано (`at`). */
 function clockOf(raw, at, step = 0) {
   // `step` (0.48.0) — через сколько сменится шаг её дня или место Байта: страница спросит комнату в ближайший из сроков.
@@ -256,6 +298,10 @@ export function applyLook(state, result, at = 0) {
     // показывала кнопки под рисунком). Кнопки — хозяину: сердце 0.47.0 этого слова не знает — тогда как раньше.
     brew: BREWS.includes(result.brew) ? result.brew : BREWS.includes(result.kind) ? result.kind : "", quiet: count(result.quiet), quietEnd: text(result.quietEnd),
     owner: result.owner === undefined ? BREWS.includes(result.brew) : result.owner === true,
+    // 0.49.0. Её вещи (следы её событий), подарки человека, альбом (сколько записей и сколько новых), событие, что
+    // идёт сейчас, и сценка встречи после долгой отлучки (её шаги покажет кнопка под словами).
+    own: ownOf(result.own), gifts: giftsOf(result.gifts), album: { count: count(result.album?.count), fresh: count(result.album?.fresh) },
+    event: text(result.event, 12), story: storyOf(result.story), storyAt: -1,
     // 0.49.0. `once` — это сердце помнит номера действий: не дошедший запрос страница может повторить сама.
     // Ответ пришёл — пометка «нет связи» снята.
     once: result.once === true, down: false,
@@ -284,7 +330,8 @@ export function applyTick(state, result, at = 0) {
   const cat = seen.cat?.steady ? seen.cat : state.cat && seen.cat && state.cat.key === seen.cat.key && seen.cat.still !== true && catBeat(state) ? same(catBeat(state), seen.cat) : seen.cat;
   // Она предложила чай, пока страница открыта, — выбор показывается один раз: те же слова второй раз не спрашивают.
   const asking = seen.offer && seen.offer !== state.offer && seen.kinds.length > 1 ? "tea" : state.asking;
-  return { ...seen, her, cat, asking, told: state.told, said: state.said, tone: state.tone, retry: state.retry, busy: state.busy, demo: state.demo, patted: state.patted || seen.patted };
+  // Сценка встречи (0.49.0) — её ведёт человек: сверка её не обрывает и не начинает заново.
+  return { ...seen, her, cat, asking, told: state.told, said: state.said, tone: state.tone, retry: state.retry, busy: state.busy, demo: state.demo, patted: state.patted || seen.patted, story: Array.isArray(state.story) ? state.story : [], storyAt: Number.isInteger(state.storyAt) ? state.storyAt : -1 };
 }
 
 /**
@@ -708,6 +755,29 @@ export function demoMusic(state) {
   return { ok: true, do: "music", build: "", line: "О, музыка. Ставлю lo-fi — тихо, чтобы Байт не возражал. И да, я буду танцевать.", on: true, left: 180_000, her: { key: "игра", pose: "dance", line, beats: [{ pose: "dance", line }] } };
 }
 /** «Погладить её» на витрине. */
+/**
+ * Витрина (0.49.0): альбом без сердца — несколько записей для примера и подарки понарошку; снимок — нынешняя комната.
+ * Настоящий альбом ведёт сердце: он открывается из Telegram.
+ */
+export function demoAlbum(state) {
+  const today = new Date(), iso = (back) => { const date = new Date(today.getTime() - back * 86_400_000); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
+  const months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+  const dated = (day) => `${Number(day.slice(8))} ${months[Number(day.slice(5, 7)) - 1]}`;
+  const kept = Array.isArray(state.snaps) ? state.snaps : [];
+  const items = [
+    ...kept.map(item => ({ k: "snap", key: "", day: iso(0), title: "Снимок на память", view: item.view, line: item.line })).reverse(),
+    ...(Array.isArray(state.gifts) ? state.gifts : []).map(kind => ({ k: "gift", key: kind, day: iso(0), title: { flower: "Цветок от вас", book: "Книга от вас", toy: "Игрушка Байту от вас" }[kind] })),
+    { k: "cat", key: "gift", day: iso(1), title: "Байт принёс добычу" }, { k: "event", key: "sketch", day: iso(2), title: "Нарисовала набросок для комнаты" },
+    { k: "first", key: "tea", day: iso(5), title: "Первая чашка чая от вас" }, { k: "first", key: "visit", day: iso(6), title: "Первый раз у меня в комнате" },
+  ].map(item => ({ ...item, date: dated(item.day) }));
+  return { ok: true, do: "album", items, line: "Вот что я сохранила. Это витрина: настоящий альбом — в комнате, открытой из чата.", gift: { ok: true, days: 0 }, kinds: [...GIFT_KINDS], gifts: Array.isArray(state.gifts) ? state.gifts : [] };
+}
+export function demoGift(state, kind) {
+  if (!GIFT_KINDS.includes(kind)) return { ok: false, code: "unknown", text: "Такого подарка у меня в списке нет." };
+  const words = { flower: "Цветок… Поставлю на шкаф, на видное место. Спасибо.", book: "Книга! Положу на шкаф: дочитаю свою — и возьмусь за неё.", toy: "Байт уже обнюхивает мышь. Кажется, это любовь." };
+  return { ok: true, do: "gift", taken: true, days: 7, gifts: [...new Set([...(Array.isArray(state.gifts) ? state.gifts : []), kind])], line: `${words[kind]} ${DEMO_NOTE}` };
+}
+export const demoSnap = () => ({ ok: true, do: "snap", taken: true, line: "Запомнила этот момент. На витрине он проживёт, пока открыта страница." });
 export function demoPat(state) {
   return { ok: true, do: "pat", build: "", line: state.patted ? "Ещё? Я не против. Только Байту не говорите: он считает, что гладить положено его." : "…Так можно было? Ладно. Мне нравится.", again: state.patted === true, counted: false };
 }

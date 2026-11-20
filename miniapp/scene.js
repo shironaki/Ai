@@ -29,7 +29,8 @@ export const WIDTH = 400;
 export const HEIGHT = 520;
 export const PARTS = Object.freeze(["утро", "день", "вечер", "ночь"]);
 export const HER_POSES = Object.freeze(["desk", "shelf", "chair", "nap", "sill", "back", "map", "garland", "dance", "ribbon", "lie", "read", "feed", "dust", "sort"]);
-export const CAT_SHAPES = Object.freeze(["sit", "lie", "curl", "walk", "play", "eat", "claw", "eyes", "tail", "belly"]);
+// 0.49.0: beg — встал на задние лапы и тянется к ней (просится на руки); gift — сидит, у лап игрушка (принёс добычу).
+export const CAT_SHAPES = Object.freeze(["sit", "lie", "curl", "walk", "play", "eat", "claw", "eyes", "tail", "belly", "beg", "gift"]);
 export const CAT_PLACES = Object.freeze(["bowl", "sill", "chair", "rug", "pillow", "desk", "box", "near", "top", "under", "plaid"]);
 export const THINGS = Object.freeze(["кружка", "тапочки", "подушка", "снимок", "плед", "календарь", "кресло", "кактус", "место", "абажур", "рисунок", "ёлка", "торт", "свеча", "фонарь"]);
 /**
@@ -1881,6 +1882,8 @@ function catAhead(place, shape, herX, name = "") {
       const left = herX + from - 38, right = herX + to + 38;
       // Не у самого края рисунка и не под ёлкой в правом углу: туда за ним не дотянуться.
       const fits = [herX <= 226 ? right : left, herX <= 226 ? left : right].filter(x => x >= 40 && x <= 330);
+      // Просится на руки (0.49.0) — вплотную к её ногам и лапами к ней: фигура тянется влево, слева от неё — отражена.
+      if (shape === "beg") { const close = [herX <= 226 ? herX + to + 20 : herX + from - 20, herX <= 226 ? herX + from - 20 : herX + to + 20].filter(x => x >= 40 && x <= 330); return (close.length ? close : [Math.max(40, Math.min(330, herX + from - 20))]).map(x => ({ x, y: 497, layer: "front", k: 1.2, mirror: x < herX })); }
       return (fits.length ? fits : [Math.max(40, Math.min(330, left))]).map(x => ({ x, y: 497, layer: "front", k: 1.2 }));
     }
     case "under": {
@@ -2082,6 +2085,27 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   };
 }
 /**
+ * Её вещи и подарки (0.49.0, сообщение 48: «личные предметы… некоторые появляются после значимых событий»; идея 163 —
+ * подарки). Её вещи — следы её событий: наброски, приклеенные к стеклу (до трёх), открытка с небом на подоконнике,
+ * найденная книга на табурете. Подарки человека: цветок в вазе и книга — на шкафу, игрушечная мышь — на полу у миски.
+ * Что из этого есть, говорит сердце (`view.own`, `view.gifts`); нажатий у них нет — о них рассказывает альбом.
+ */
+const ownOf = (view) => ({ sketches: Math.max(0, Math.min(3, Math.floor(Number(view?.own?.sketches) || 0))), book: view?.own?.book === true, card: view?.own?.card === true });
+const giftsOf = (view) => new Set((Array.isArray(view?.gifts) ? view.gifts : []).filter(kind => ["flower", "book", "toy"].includes(kind)));
+function sketches(c, count) {
+  const doodles = [
+    `<path d="M3 9.6 l1 -4 l2 2 q1 -0.6 2 0 l2 -2 l1 4 q0.4 3.4 -4 3.4 q-4.4 0 -4 -3.4z" fill="${c.cat}"/>`,
+    `<path d="M6 3.6 l1.1 2.6 l2.8 0.2 l-2.1 1.8 l0.7 2.7 l-2.5 -1.5 l-2.5 1.5 l0.7 -2.7 l-2.1 -1.8 l2.8 -0.2z" fill="${c.gold}"/>`,
+    `<path d="M6 11 q-5 -3.6 -3.2 -6.4 q1.6 -2 3.2 0.4 q1.6 -2.4 3.2 -0.4 q1.8 2.8 -3.2 6.4z" fill="${c.red}"/>`,
+  ];
+  return [[153, 207, -6], [169, 213, 5], [160, 228, -3]].slice(0, count).map(([x, y, turn], index) => `<g transform="translate(${x} ${y}) rotate(${turn})"><rect x="0.6" y="0.8" width="12" height="15" rx="0.8" fill="#1a0f1e" opacity="0.18"/><rect width="12" height="15" rx="0.8" fill="${c.paper}"/>${doodles[index]}<rect x="3.4" y="-1.4" width="5.2" height="2.6" fill="${c.plaidLight}" opacity="0.85"/></g>`).join("");
+}
+const skyCard = (c) => `<g transform="rotate(-7 204 262)"><rect x="198" y="245" width="12" height="17" rx="0.8" fill="${c.paper}"/><rect x="199.2" y="246.2" width="9.6" height="11.4" fill="#f0a36b"/><rect x="199.2" y="246.2" width="9.6" height="5" fill="#8a7fc0"/><circle cx="204" cy="253.4" r="2.2" fill="#ffe2a6"/></g>`;
+const foundBook = (c) => `<rect x="${STOOL.rest - 11}" y="${STOOL.y - 5}" width="22" height="5" rx="0.9" fill="${c.plaid}"/><rect x="${STOOL.rest - 11}" y="${STOOL.y - 5}" width="22" height="1.4" rx="0.7" fill="${c.plaidLight}"/><path d="M${STOOL.rest + 5} ${STOOL.y - 5} v7.4 l1.5 -1.4 l1.5 1.4 v-7.4z" fill="${c.red}"/>`;
+const giftFlower = (c) => `<path d="M22 158 q-1.6 -8 1 -15" fill="none" stroke="${c.greenDark}" stroke-width="1.4" stroke-linecap="round"/><path d="M22.4 152 q4 -1.6 5 -5 q-4.4 0 -5 5z" fill="${c.green}"/><g fill="${c.red}"><circle cx="23" cy="140.6" r="2.4"/><circle cx="20.2" cy="142.6" r="2.4"/><circle cx="25.8" cy="142.6" r="2.4"/><circle cx="21.4" cy="145.6" r="2.4"/><circle cx="24.8" cy="145.6" r="2.4"/></g><circle cx="23" cy="143.4" r="1.7" fill="${c.gold}"/><path d="M17.6 157 h9.6 l-1.2 13 h-7.2z" fill="${c.plaidLight}"/><path d="M17.6 157 h9.6 l-0.3 2.6 h-9z" fill="${lt(c.plaidLight, 0.45)}"/>`;
+const giftBook = (c) => `<rect x="34" y="164.6" width="25" height="5.4" rx="0.9" fill="${c.greenDark}"/><rect x="34" y="164.6" width="25" height="1.5" rx="0.7" fill="${c.green}"/><rect x="37" y="166.6" width="7" height="1.6" fill="${c.gold}"/>`;
+const giftToy = (f) => `<g transform="translate(34 476)"><ellipse cx="0" cy="1.6" rx="8" ry="2" fill="#1a0f1e" opacity="0.2"/><ellipse cx="0" cy="-2.4" rx="6.6" ry="4" fill="${f.rugLight}"/><circle cx="-4" cy="-5.6" r="2" fill="${f.rugLight}"/><circle cx="-5.4" cy="-2.2" r="0.8" fill="${f.ink}"/><path d="M6.4 -2 q5 -3.6 7 1.4" fill="none" stroke="${f.rugLight}" stroke-width="1.2" stroke-linecap="round"/></g>`;
+/**
  * Её картинка ещё в пути (0.49.0): на её месте — мягкий силуэт и три точки, чтобы было видно, что она появляется, а
  * не пропала. До шести секунд (потом её рисует код); картинка пришла — силуэт сменяется ею.
  */
@@ -2235,6 +2259,10 @@ function catShape(g, f, shape, { eyes = "open", angry = false, gait = false } = 
       eyes === "narrow" ? `<path d="M-10.6 -8.6 L-2 -6.6 M10.6 -8.6 L2 -6.6" stroke="#120c18" stroke-width="2.2" stroke-linecap="round"/>` : "",
     ].join("");
     case "tail": return catTail(f, "M-2 -2 Q9 -4 10 -15 Q10.6 -23 16.6 -24", "M3.6 -3.4 l1.6 3.4 M8.6 -9 l3.4 1.2 M9.8 -16 l3.6 -0.4 M12 -22.6 l2 3", { cls: wag, tip: "M14 -23.4 L16.6 -24" });
+    // 0.49.0 (сообщение 48). Принёс добычу: сидит, у лап — игрушечная мышь. Просится на руки: встал на задние лапы
+    // и тянется к ней — та же фигура, что «точит когти», но глаза круглые, хвост спокоен, лапы не дерут, а тянутся.
+    case "gift": return `${catShape(g, f, "sit", { eyes, angry })}<g><ellipse cx="-24" cy="-3.4" rx="5.6" ry="3.6" fill="${f.rugLight}"/><circle cx="-26.6" cy="-6.2" r="1.7" fill="${f.rugLight}"/><circle cx="-27.6" cy="-3" r="0.7" fill="${f.ink}"/><path d="M-18.6 -3 q4 -3 6 1" fill="none" stroke="${f.rugLight}" stroke-width="1.1" stroke-linecap="round"/></g>`;
+    case "beg": return catShape(g, f, "claw", { eyes: "wide" }).replace('class="scratch"', 'class="reach"').replace("tailwag angry", "tailwag");
     case "sit":
     default: return [
       catTail(f, "M10 -5 Q28 -3 26 -18", "M17 -4.6 l0.6 3.6 M24 -7.6 l3.4 1.8 M25 -14 l3.6 -0.2", { cls: wag, tip: "M26.2 -15 L26 -18" }),
@@ -2254,6 +2282,7 @@ const PILLOW_ASIDE = 32;
 const CAT_BOX = Object.freeze({
   sit: [-22, -62, 30, 2], lie: [-38, -46, 37, 6], curl: [-30, -30, 28, 5], walk: [-42, -54, 34, 2], play: [-50, -56, 40, 3],
   eat: [-38, -36, 40, 3], claw: [-30, -72, 30, 2], eyes: [-22, -18, 22, 8], tail: [-12, -30, 26, 4], belly: [-42, -40, 40, 5],
+  beg: [-30, -72, 30, 2], gift: [-34, -62, 30, 2],
 });
 /**
  * Где Байт: точка на рисунке и слой. `pose` — её поза: он не садится ей на лицо и не прячется за ней.
@@ -2339,7 +2368,7 @@ function cat(g, f, view, pose, given = null, was = null) {
   // Тень под ним: на полу — пятно, на подоконнике, столе и шкафу — полоска.
   const under = small || spot.bare || spot.layer === "lap" || spot.layer === "box" || shape === "play" ? ""
     : spot.shade ? `<ellipse cx="${spot.x + (shape === "sit" ? 3 : 0)}" cy="${spot.y + 0.6}" rx="${shape === "sit" ? 19 : 27}" ry="2.2" fill="#1a0f1e" opacity="0.24"/>`
-      : shadow(g, spot.x + (shape === "sit" ? 3 : 0), spot.y + 1, (shape === "sit" || shape === "claw" ? 22 : 32) * k, 4.6 * k, 0.34);
+      : shadow(g, spot.x + (shape === "sit" || shape === "gift" ? 3 : 0), spot.y + 1, (["sit", "claw", "beg", "gift"].includes(shape) ? 22 : 32) * k, 4.6 * k, 0.34);
   const figure = (at0, kind, inner, mirror, scale) => at(at0.x, at0.y, `<g class="cat ${kind}">${inner}</g>`, `${mirror ? " scale(-1 1)" : ""}${scale === 1 ? "" : ` scale(${scale})`}`);
   const settled = under + figure(spot, shape, `${body}${extra}`, spot.mirror, k);
   const moved = was && CAT_SHAPES.includes(was.shape) && Number.isFinite(was.x) && Number.isFinite(was.y) && Math.hypot(was.x - spot.x, was.y - spot.y) >= 16;
@@ -2469,6 +2498,7 @@ function insideOf(view = {}, options = {}) {
   const shade = /^#[0-9a-f]{6}$/iu.test(String(view.lamp ?? "")) && has("абажур") ? view.lamp : DAY.lamp;
   // 0.46.0. Лампу погасили нажатием: вечером и ночью светит одна гирлянда (днём лампа не горит и так). Колонка играет.
   const dark = lit(part) && view.dark === true, music = view.music === true;
+  const own = ownOf(view), gifted = giftsOf(view);
   // Вещь рисуется, только если она у человека есть. Плед, которым она укрыта, с кресла снят — нажать на него там нельзя.
   const thing = (key, body) => (has(key) ? body() : "");
   const stoolFree = !(she.stoolUsed || pose === "garland");
@@ -2486,9 +2516,11 @@ function insideOf(view = {}, options = {}) {
     starMap(g, c),
     thing("рисунок", () => drawing(c)),
     thing("календарь", () => calendar(c)),
-    sill(g, c), fxShown("window", () => sashOpen(c), ajar && !fx.has("curtains")),
+    // 0.49.0: её наброски на стекле и открытка на подоконнике — за ней и за Байтом, перед окном.
+    sill(g, c) + (own.sketches ? sketches(c, own.sketches) : "") + (own.card ? skyCard(c) : ""), fxShown("window", () => sashOpen(c), ajar && !fx.has("curtains")),
     fxShown("puddle", () => puddle()), fxShown("boat", () => boat(c)),
-    bookcase(g, c, has, part, music), on("top"),
+    // 0.49.0: подарки на шкафу — цветок в вазе и книга; Байт на шкафу сидит перед ними.
+    bookcase(g, c, has, part, music) + (gifted.has("flower") ? giftFlower(c) : "") + (gifted.has("book") ? giftBook(c) : ""), on("top"),
     thing("свеча", () => candle(c)),
     thing("подушка", () => sillPillow(g, c)),
     thing("место", () => sillSeat(g, c)),
@@ -2503,7 +2535,7 @@ function insideOf(view = {}, options = {}) {
     thing("кресло", () => armchair(g, c, CHAIR2.x, CHAIR2.y, { second: true, k: CHAIR2.k })),
     armchair(g, c, CHAIR.x, CHAIR.y, { k: CHAIR.k }), on("under"), noPlaid ? "" : plaidOnChair(g, c, has("плед")),
     she.seat ?? "", on("lap"),
-    stoolFree ? stool(g, c, STOOL.rest, STOOL.y) : "",
+    stoolFree ? stool(g, c, STOOL.rest, STOOL.y) + (own.book ? foundBook(c) : "") : "",
     desk(g, c),
     notebook(c), teapot(g, c, { steam: Boolean(view.tea) }), on("desk"), lamp(g, c, part, shade, dark),
     // В день рождения на столе — торт: после стола и лампы, иначе его закрывает мебель (так было до 0.45.0).
@@ -2511,7 +2543,7 @@ function insideOf(view = {}, options = {}) {
     // Пол.
     motes(part, sky),
     at(BOWL.dx, BOWL.dy, bowl(g, c, Boolean(view.fed))),
-    yarn(g, c),
+    yarn(g, c) + (gifted.has("toy") ? giftToy(f) : ""),
     boxNear ? "" : box,
     fxShown("cactus", () => cactusFallen(g, c, view.plant !== "dry")),
     fxShown("sock", () => sock(c, ...sockAt)),

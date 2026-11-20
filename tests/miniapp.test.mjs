@@ -1593,7 +1593,8 @@ test("страница: папка уходит на платформу как �
   assert.ok(!["dist", "build", "out"].includes(config.static.source));
   assert.doesNotMatch(read(".gitignore"), /^\/?miniapp\/?$/mu);
   const folder = new URL("miniapp/", ROOT);
-  assert.deepEqual(readdirSync(folder).sort(), ["app.js", "her", "index.html", "logic.js", "scene.js", "sound.js"], "в папке — только страница: всё, что в ней лежит, становится публичным");
+  // 0.49.0: альбом воспоминаний — отдельным модулем (`album.js`): грузится, когда его открыли.
+  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "scene.js", "sound.js"], "в папке — только страница: всё, что в ней лежит, становится публичным");
   const page = ["app.js", "index.html", "logic.js", "scene.js"];
   const total = page.reduce((sum, name) => sum + statSync(new URL(name, folder)).size, 0);
   // Мера — о скорости, а не о платформе: эти четыре файла нужны, чтобы комната открылась. С 0.41.0 в них позы,
@@ -1820,7 +1821,7 @@ test("страница: папка уходит на платформу как �
   // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
   assert.match(app, /const fresh = putInside\(view, options, fade\);/u);
   assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
-  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js`"], "страница грузит по ходу дела только её картинки и звук");
+  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, звук и альбом (0.49.0)");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).
   assert.match(app, /const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";/u);

@@ -239,7 +239,8 @@ const demoNow = () => ({ ...params, minute: new Date().getMinutes() + new Date()
 const demoTick = () => demoLook(new Date().getHours(), { ...demoNow(), open: state.open ? "1" : "0", dark: state.dark ? "1" : "0", brew: state.brew, ...(params.then ? { part: params.then } : {}), ...(params.thenSky ? { sky: params.thenSky } : {}), ...(params.thenLight ? { light: params.thenLight } : {}), left: "" });
 async function tick() {
   if (!canTick || !state.ready) return;
-  if (state.busy || acting) { clearTimeout(tickTimer); tickTimer = setTimeout(tick, 3_000); return; }
+  // Идёт действие, сцена у шкафа или сценка встречи (0.49.0) — сверка подождёт: рисунок сейчас не про нынешнюю минуту.
+  if (state.busy || acting || (Number.isInteger(state.storyAt) && state.storyAt >= 0)) { clearTimeout(tickTimer); if (!resting) tickTimer = setTimeout(tick, 3_000); return; }
   // Страница свёрнута — вопрос подождёт: его задаст возвращение.
   if (document.hidden) return;
   const at = Date.now();
@@ -575,6 +576,7 @@ function paint() {
   paintSound();
   paintChips();
   paintTeas();
+  paintStory();
   soundScene();
   $("foot").textContent = [
     state.next ? `Новая вещь появится через ${state.next} ${plural(state.next, "день", "дня", "дней")}` : "",
@@ -758,7 +760,16 @@ function paintChips() {
   // С 0.48.0 эти кнопки — хозяину (сообщение 47): гостю те же дела даёт сам рисунок (чайник спросит, какой чай) и
   // её собственная воля (наряд — по погоде).
   const known = state.ready && Boolean(state.brew) && state.owner === true, idle = !state.busy && !acting;
-  const wear = $("wear"), brew = $("brew"), quiet = $("quiet");
+  const wear = $("wear"), brew = $("brew"), quiet = $("quiet"), albumChip = $("album");
+  // Альбом (0.49.0) — всем: это не управление комнатой, а память о ней. Точка на кнопке — в альбоме есть новое.
+  // Сердце без альбома (до 0.49.0) поля `album` не шлёт — кнопки нет; на витрине альбом — для примера.
+  if (albumChip) {
+    const can = state.ready && canAlbum && (state.demo || state.once === true);
+    albumChip.hidden = !can;
+    albumChip.disabled = !idle;
+    albumChip.setAttribute("aria-pressed", albumShown ? "true" : "false");
+    if (can) albumChip.querySelector("span").textContent = state.album?.fresh > 0 && !albumShown ? "Альбом •" : "Альбом";
+  }
   if (quiet) {
     const can = known && typeof applyQuiet === "function" && typeof demoQuiet === "function", left = quietLeft();
     quiet.hidden = !can;
@@ -961,6 +972,91 @@ async function air() {
   // Открыли окно — она оборачивается к нему, и волосы качнулись от сквозняка (0.49.0).
   if (result?.ok === true) { lookAt("win"); if (state.open === true) react("g-hair", 2600); }
 }
+// ── Альбом воспоминаний, подарки, снимок, сценка встречи (0.49.0) ─────────────
+// Альбом — отдельным модулем (`album.js`): грузится, когда его открыли. Страница даёт ему список от сердца и три
+// дела: подарить, сохранить этот момент, нарисовать снимок (комната той минуты — тем же рисунком, отдельной картинкой).
+let albumModule = null, albumShown = false;
+const canAlbum = typeof logic.applyGift === "function" && typeof logic.demoAlbum === "function";
+/** Снимок — отдельной картинкой SVG: имена её красок не спорят с комнатой на странице; веки, второй кадр и метки спрятаны. */
+async function thumbOf(view) {
+  const name = canPaint ? spriteOf(view) : null;
+  if (name) await settled([name], 4000);
+  const body = scene.drawRoom(view, canPaint ? { sprites } : undefined);
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.WIDTH ?? 400} ${scene.HEIGHT ?? 520}"><style>.wink,.fr.b,.mark,.emo,.coming{display:none}</style>${body}</svg>`)}`;
+}
+function closeAlbum() {
+  albumShown = false;
+  const box = $("albumBox");
+  if (box) box.hidden = true;
+  paintChips();
+}
+async function album() {
+  const box = $("albumBox");
+  if (!box || !canAlbum || !state.ready || state.busy || acting) return;
+  if (albumShown) { closeAlbum(); return; }
+  scheduleTurn();
+  state = { ...state, busy: "album" };
+  paint();
+  try { albumModule ??= await import("./album.js"); } catch { albumModule = null; }
+  const result = state.demo ? logic.demoAlbum(state) : await send({ do: "album" }, () => album());
+  if (!albumModule || result?.ok !== true) { state = refused({ ...state, busy: "" }, albumModule ? result : { ok: false, code: "error", text: "Альбом не загрузился. Попробуйте ещё раз." }); paint(); buzz("error"); return; }
+  state = { ...state, busy: "", tone: "", retry: false, said: typeof result.line === "string" && result.line ? result.line : state.said, album: { count: Array.isArray(result.items) ? result.items.length : 0, fresh: 0 } };
+  albumShown = true;
+  box.hidden = false;
+  albumModule.show(box, result, { thumb: thumbOf, gift: give, snap: keep, close: closeAlbum });
+  paint();
+  buzz("light");
+}
+/** Обновить открытый альбом после подарка или снимка. */
+async function refreshAlbum() {
+  if (!albumShown || !albumModule) return;
+  const result = state.demo ? logic.demoAlbum(state) : await call({ do: "album" });
+  if (result?.ok === true) albumModule.show($("albumBox"), result, { thumb: thumbOf, gift: give, snap: keep, close: closeAlbum });
+}
+/** Подарить (идея 163): цветок, книгу или игрушку Байту — раз в неделю; подарок остаётся в комнате и в альбоме. */
+async function give(kind) {
+  if (!state.ready || state.busy || acting) return;
+  state = { ...state, busy: "gift" };
+  paint();
+  const result = state.demo ? logic.demoGift(state, kind) : await send({ do: "gift", kind }, () => give(kind));
+  if (repeated(result)) return;
+  state = logic.applyGift(state, result);
+  paint();
+  buzz(result?.ok === true && result.taken ? "medium" : result?.ok === true ? "light" : "error");
+  if (result?.ok === true && result.taken) { react("glad", 1800); heart("her"); }
+  await refreshAlbum();
+}
+/** Сохранить этот момент (идея 165): комната этой минуты ложится в альбом; сердце собирает её само. */
+async function keep() {
+  if (!state.ready || state.busy || acting) return;
+  state = { ...state, busy: "snap" };
+  paint();
+  const result = state.demo ? logic.demoSnap() : await send({ do: "snap" }, () => keep());
+  if (repeated(result)) return;
+  if (result?.ok !== true) { state = refused(state, result); paint(); buzz("error"); return; }
+  // Витрина помнит снимки сама, пока открыта страница.
+  const snaps = state.demo ? [...(Array.isArray(state.snaps) ? state.snaps : []), { view: viewOf(state), line: state.lines?.her ?? "" }].slice(-4) : state.snaps;
+  state = { ...state, busy: "", tone: "", retry: false, said: typeof result.line === "string" && result.line ? result.line : state.said, ...(state.demo ? { snaps } : {}) };
+  paint();
+  buzz(result.taken ? "medium" : "light");
+  await refreshAlbum();
+}
+/** Сценка встречи: следующий шаг — её слова и картинка этого шага; после последнего комната возвращается к нынешней минуте. */
+function tell() {
+  if (!state.ready || state.busy || acting || typeof logic.applyStory !== "function") return;
+  scheduleTurn();
+  state = logic.applyStory(state);
+  paint();
+  buzz("light");
+}
+function paintStory() {
+  const box = $("story"), button = $("storyNext");
+  if (!box || !button) return;
+  const left = typeof logic.storyLeft === "function" && state.ready ? logic.storyLeft(state) : 0, going = Number.isInteger(state.storyAt) && state.storyAt >= 0;
+  box.hidden = !(left > 0 || going) || state.asking === "tea";
+  button.disabled = Boolean(state.busy) || acting;
+  button.textContent = !going ? "Что тут было без меня?" : left > 0 ? "Дальше" : "Понятно";
+}
 /** Выбор чая под её словами (0.48.0): виден, пока она спрашивает, какой налить; нынешний чай отмечен. */
 function paintTeas() {
   const teas = $("teas");
@@ -1060,6 +1156,8 @@ const showOops = () => { const box = $("oops"); if (!box) return; box.hidden = !
 $("foot").addEventListener("click", showOops);
 $("foot").addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showOops(); } });
 $("quiet")?.addEventListener("click", () => sit());
+$("album")?.addEventListener("click", () => album());
+$("storyNext")?.addEventListener("click", () => tell());
 $("wear")?.addEventListener("click", () => dress());
 $("brew")?.addEventListener("click", () => steep());
 $("teas")?.addEventListener("click", (event) => {

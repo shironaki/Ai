@@ -290,6 +290,17 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 #room .m-tired .alive, #room .m-sleep .alive { animation-duration: 6.4s; }
 #room .m-happy .alive { animation-duration: 3.9s; }
 #room .m-pout .lean, #room .m-jealous .lean { animation-duration: 11s; }
+/* 0.49.0 — альбом воспоминаний: список по дням, снимки — картинкой; под списком — подарки и «сохранить этот момент». */
+.album { list-style: none; margin: 6px 0 8px; padding: 0; max-height: 46vh; overflow: auto; }
+.album li { display: grid; grid-template-columns: 5.6em 1fr; gap: 2px 10px; padding: 6px 0; border-top: 1px solid rgba(127, 127, 127, 0.22); font-size: 13px; line-height: 1.35; }
+.album li:first-child { border-top: 0; }
+.album .when { opacity: 0.66; white-space: nowrap; }
+.album .line { grid-column: 2; opacity: 0.75; font-style: italic; }
+.album img { grid-column: 2; width: 132px; max-width: 100%; border-radius: 8px; margin-top: 4px; display: block; background: rgba(127, 127, 127, 0.18); aspect-ratio: 10 / 13; }
+.album .new .what::after { content: " •"; color: var(--accent); }
+.albumNote { margin: 6px 0 0; font-size: 12px; opacity: 0.7; }
+/* 0.49.0 — Байт просится на руки: лапы тянутся к ней. */
+#room .reach { animation: scratch 1.5s ease-in-out infinite alternate; }
 /* 0.49.0 — страница свёрнута: движение на рисунке стоит (.resting); её картинка ещё в пути — мягкий силуэт и три
    точки (.coming); журнал ошибок под строкой «страница N» (.oops). */
 .resting #room *, .resting #sky *, .resting .rainbox * { animation-play-state: paused !important; }
@@ -329,6 +340,8 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
     </div>
   </div>
   <section class="panel">
+    <div class="choice" id="story" hidden><button type="button" class="main" id="storyNext">Что тут было без меня?</button></div>
+    <div class="card" id="albumBox" aria-label="Альбом воспоминаний" hidden></div>
     <div class="card" id="scene" hidden>
       <h2>Сценка дня</h2>
       <p id="sceneText"></p>
@@ -347,6 +360,7 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
     </div>
     <div class="tools" id="tools" hidden>
       <button type="button" class="chip" id="sound" aria-pressed="false" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6h2.6L8 3v10L4.6 10H2z" fill="currentColor"/><path class="wave" d="M10.4 5.4a3.6 3.6 0 0 1 0 5.2M12.4 3.6a6.2 6.2 0 0 1 0 8.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Включить звук</span></button>
+      <button type="button" class="chip" id="album" aria-pressed="false" aria-controls="albumBox" hidden><span>Альбом</span></button>
       <button type="button" class="chip" id="quiet" aria-pressed="false" hidden><span>Посидеть рядом</span></button>
       <button type="button" class="chip" id="wear" hidden><span>Надеть свитер</span></button>
       <button type="button" class="chip" id="brew" hidden><span>Чай: жасмин</span></button>

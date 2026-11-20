@@ -229,12 +229,14 @@ test("журнал ошибок: без подписи Telegram, адресов 
 
 test("страница: действия идут с номером и через одну дверь; свёрнутая страница останавливает все свои часы", () => {
   const app = read("miniapp/app.js");
-  // Напрямую сердце зовут только вход, сверка, отчёт об ошибках и сама «дверь» действий.
+  // Напрямую сердце зовут только вход, сверка, отчёт об ошибках, перечитывание открытого альбома (оно ничего не
+  // меняет) и сама «дверь» действий.
   const direct = [...app.matchAll(/(?<![a-zA-Z])call\(\{ ([^}]*)\}\)/gu)].map(found => found[1].trim());
-  assert.deepEqual(direct.sort(), ['...input, id', '...input, id', 'do: "look"', 'do: "look", again: true', 'do: "oops", page: PAGE, items'].sort());
+  assert.deepEqual(direct.sort(), ['...input, id', '...input, id', 'do: "album"', 'do: "look"', 'do: "look", again: true', 'do: "oops", page: PAGE, items'].sort());
   const sends = [...app.matchAll(/await send\(\{ do: ("[a-z]+"|name)/gu)].map(found => found[1]);
-  assert.deepEqual(sends.sort(), ['"book"', '"brew"', '"call"', '"lamp"', '"music"', '"pat"', '"pick"', '"quiet"', '"wear"', '"window"', "name"].sort(), "каждое действие — через `send`");
-  assert.equal((app.match(/if \(repeated\(result\)\) return;/gu) ?? []).length, sends.length, "и у каждого — разбор ответа на повтор");
+  assert.deepEqual(sends.sort(), ['"album"', '"book"', '"brew"', '"call"', '"gift"', '"lamp"', '"music"', '"pat"', '"pick"', '"quiet"', '"snap"', '"wear"', '"window"', "name"].sort(), "каждое действие — через `send`");
+  // Разбор ответа на повтор — у каждого действия, которое что-то меняет (альбом только читается).
+  assert.equal((app.match(/if \(repeated\(result\)\) return;/gu) ?? []).length, sends.length - 1, "и у каждого — разбор ответа на повтор");
   // Повтор шлётся только сердцу, которое помнит номера.
   assert.match(app, /state\.once && typeof logic\.resend === "function" && logic\.resend\(result\)/u);
   // Все часы страницы названы в `rest` — и ни один не заводится, пока она свёрнута.
@@ -292,6 +294,11 @@ const LOOK = {
   lamp: [isText, "page"], drawing: [isText, "only-heart: подпись рисунка уже в строке вещи"], fresh: [Array.isArray, "page"],
   next: [(value) => value === null || value.days > 0, "page"], scene: [(value) => value === null || (isText(value.key) && Array.isArray(value.options)), "page"],
   first: [isFlag, "only-heart: первый ли заход — слова приветствия уже другие"],
+  // 0.49.0: её вещи, подарки, альбом, событие дня, сценка встречи.
+  own: [(value) => isCount(value.sketches) && value.sketches <= 3 && isFlag(value.book) && isFlag(value.card), "page"],
+  gifts: [(value) => Array.isArray(value) && value.every(kind => logic.GIFT_KINDS.includes(kind)), "page"],
+  album: [(value) => isCount(value.count) && isCount(value.fresh), "page"], event: [isText, "page"],
+  story: [(value) => Array.isArray(value) && value.length > 0 && value.every(beat => isText(beat.line) && beat.line), "page"],
 };
 test("договор сердца и страницы: каждое поле ответа «зайти» описано, годно и прочитано страницей", async () => {
   const source = `${read("miniapp/logic.js")}\n${read("miniapp/app.js")}`;
@@ -322,5 +329,5 @@ test("договор сердца и страницы: каждое поле о�
     for (const [name, value] of Object.entries(twice)) { assert.ok(Object.hasOwn(LOOK, name) && LOOK[name][0](value), `повтор: ${name}`); seen.add(name); }
   }
   // Поля, которых эти заходы не дали (предложение чая, слова конца тихого часа), проверены в `tests/alive.test.mjs`.
-  assert.deepEqual(Object.keys(LOOK).filter(name => !seen.has(name)).sort(), ["offer", "quietEnd"]);
+  assert.deepEqual(Object.keys(LOOK).filter(name => !seen.has(name)).sort(), ["event", "offer", "quietEnd", "story"]);
 });

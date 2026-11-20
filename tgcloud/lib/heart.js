@@ -72,7 +72,8 @@ import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS 
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
-import { createRoom, parseRoom, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, sceneByKey, herPose, catPose, catAfter, colourHex,
+import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES } from "./keepsake.js";
+import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, sceneByKey, herPose, catPose, catAfter, colourHex,
   skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
   READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow } from "./room.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
@@ -312,6 +313,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // Привычки: счёт дней подряд, без наград и наказаний.
   const habits = createHabits({ store, now });
   const room = createRoom({ store, now });
+  // Альбом воспоминаний, подарки и снимки (0.49.0) — отдельной записью: история не лежит в состоянии комнаты.
+  const keepsakes = createKeepsakes({ store, now });
+  /** Сколько минут после того, как открыли окно, Байт сидит на подоконнике и смотрит на улицу. */
+  const WINDOW_WATCH_MS = 10 * 60_000;
+  const GIFT_POOL = Object.freeze({ flower: "цветок", book: "книга", toy: "игрушка" });
+  const GIFT_SAID = Object.freeze({ flower: "цветок", book: "книгу", toy: "игрушку для Байта" });
+  const YEAR_MONTHS = Object.freeze(["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]);
+  /** «20 ноября» — день альбома словами; другой год — с годом. */
+  const dateWords = (day, today = "") => { const [year, month, date] = String(day).split("-").map(Number); return YEAR_MONTHS[month - 1] ? `${date} ${YEAR_MONTHS[month - 1]}${today && !String(today).startsWith(`${year}-`) ? ` ${year}` : ""}` : ""; };
+  /** «вчера», «позавчера», «4 дня назад». */
+  const agoWords = (count) => (count <= 1 ? "вчера" : count === 2 ? "позавчера" : `${days(count)} назад`);
   // Слух, зрение и чтение ссылок: отдельные модели того же провайдера.
   const SENSES = config.SENSES !== false;
   const senses = createSenses({
@@ -1955,6 +1967,14 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Ей налили чай — час она с кружкой: дела и ленточка ждут, пока чай не остыл.
     const warm = Number(state?.tea) > 0 && at - Number(state.tea) >= 0 && at - Number(state.tea) < TEA_WARM_MS;
     if ((mood === "дело" || mood === "игра") && warm) return { key: "уют", put: "", said: "", pool: "день:чай", since: Number(state.tea), ends: TEA_WARM_MS - (at - Number(state.tea)), stage };
+    // Небольшое событие её дня (0.49.0, сообщение 48): двадцать пять минут она занята им — нашла книгу, рисует
+    // набросок, смотрит на небо, устроила перерыв. Только когда она спокойна и день идёт своим чередом; событие о
+    // Байте (шалость) её с места не снимает — оно видно по нему. Чай, книга с полки, музыка и тихий час сильнее:
+    // это просьбы человека.
+    const event = calm && mood === stage.key ? eventNow(today, minutesNow(turn)) : null;
+    if (event?.pose) {
+      return { key: event.her, put: event.pose, said: lineAt(turn, `событие:${event.pool}`, dayNo(today)), only: true, hold: true, ends: Math.max(1000, Math.round((event.to - minutesNow(turn)) * 60_000)), stage, event: event.key };
+    }
     // Не по расписанию: обида, ревность, усталость, сон среди дня. Уставшая, она откладывает то, что требует сил.
     if (mood !== stage.key) return { key: mood, put: "", said: "", pool: `она:${mood}`, lead: mood === "устала" && stage.active ? lineAt(turn, "день:отложила", stage.index, { "план": stage.title }) : "", stage };
     return { key: mood, put: "", said: "", pool: stage.pool, plan: true, stage };
@@ -1992,7 +2012,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // О плане она говорит, когда спокойна: что было до этого и что дальше. Спит, обижена, устала — не до планов.
     const plan = HER_CALM.includes(st.key) && before && after ? lineAt(turn, "день:план", st.stage.index, { "было": EPISODES[before.name].title, "дальше": EPISODES[after.name].title, "время": hhmm(after.from) }) : "";
     const face = st.plan && st.stage.face ? st.stage.face : st.key === "устала" ? "drowsy" : "";
-    return { key: st.key, pose: beat.pose, line: beat.line, beats, left, stage: st.stage.name, plan, face, put: st.put, onPlan: st.plan === true };
+    return { key: st.key, pose: beat.pose, line: beat.line, beats, left, stage: st.stage.name, plan, face, put: st.put, onPlan: st.plan === true, event: st.event ?? "" };
   }
   /** Что с Байтом (0.48.0, поверх `catState`): утром она его кормит — три часа после этого он не голоден. */
   function catKey(turn, state, feel, today) {
@@ -2075,6 +2095,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Что за её окном: строки запасов с пометками погоды говорятся только под своё небо.
     await roomSky(turn);
     // «Что делаешь?» (0.48.0): шаг её дня — тот же, что на рисунке, — и что по плану дальше. Заходом не считается.
+    // Альбом словами (0.49.0): шесть последних записей; целиком и со снимками — в мини-приложении.
+    if (asked.op === "album") {
+      const album = await keepsakes.read(userId);
+      if (album.lost) return tell(ROOM_DOWN);
+      const formal = owner(userId) ? true : turn.manner?.formal !== false;
+      const list = album.items.slice(-6).reverse();
+      if (!list.length) return tell(roomLine(turn, "альбом:пусто") || "Альбом пока пуст: в него ложится то, что было у меня при вас.");
+      return tell([roomLine(turn, "альбом") || "Вот что я сохранила.", ...list.map(item => `• ${dateWords(item.day || calendarDate(Number(item.at) || now(), zoneOf(turn)), today)} — ${fill(captionOf(item), { formal })}`)].join("\n"));
+    }
+    // Подарок словами (идея 163, 0.49.0): «дарю тебе цветок», «принёс тебе книгу», «это Байту игрушка».
+    if (asked.op.startsWith("gift")) {
+      const kind = { giftflower: "flower", giftbook: "book", gifttoy: "toy" }[asked.op];
+      const done = await keepsakes.gift(userId, kind, { day: today });
+      if (!done.ok) return tell(ROOM_DOWN);
+      if (done.early) { const wait = Math.ceil(done.left / 86_400_000); return tell(roomLine(turn, "подарок:рано", { "дней": days(wait) }) || `Подарки — не чаще раза в неделю. Следующий — через ${days(wait)}.`); }
+      let counted = false;
+      const cared = await room.amend(userId, today, (state) => { counted = state.cared !== today; return counted ? { ...state, cared: today, care: (Number(state.care) || 0) + 1, near: now() } : null; });
+      if (counted && cared.saved) await roomCared(userId, turn);
+      return tell(roomLine(turn, `подарок:${GIFT_POOL[kind]}`) || "Спасибо. Это останется у меня.");
+    }
     // «Ошибки комнаты» (0.49.0): что прислала страница мини-приложения — хозяину, в личке. Заходом не считается.
     if (asked.op === "oops") {
       if (!owner(userId)) return turn.isPrivate ? say(turn, "Журнал страницы — для хозяина.") : null;
@@ -2275,12 +2315,28 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const free = !after && !held && !hides && !naps && key !== "обижен";
         const eats = free && she.pose === "feed", beside = free && !eats && she.key === "сон" && key === "спит";
         const count = Math.floor(now() / CAT_STEP_MS) + roomSeed(userId, today);
-        const beats = held || hides || naps || eats || beside ? [] : catBeats(key);
+        // 0.49.0 (сообщение 48: «Байт не должен быть просто генератором случайных действий… его поведение должно
+        // учитывать состояние Аи и происходящее в комнате»). По старшинству: шалость — событие её дня; только что
+        // открыли окно — он уже на подоконнике; вечером приносит ей добычу; она сидит — приходит к ней (ложится у ног,
+        // просится на руки). Она спит или клюёт носом — шумного он не затевает; спит сам — там, где сейчас уместно.
+        const minute = minutesNow(turn), sheSleeps = she.key === "сон", awake = free && !eats && !beside && key !== "спит";
+        const event = eventNow(today, minute), bring = catGift(today);
+        const prank = awake && !sheSleeps && event?.key === "prank";
+        const airy = awake && !prank && airNow(state, now()) && now() - Number(state.open) < WINDOW_WATCH_MS;
+        const gift = awake && !prank && !airy && !sheSleeps && Boolean(bring) && minute >= bring.from && minute < bring.to;
+        const seated = she.pose === "chair" || she.pose === "read";
+        const comes = awake && !prank && !airy && !gift && seated && HER_CALM.includes(she.key) && ["сыт", "ласка", "шалит"].includes(key) && count % 3 === 1;
+        const fits = { asleep: sheSleeps || she.face === "drowsy", seated, sunny: (sky === "clear" || sky === "clouds") && ["утро", "день"].includes(turn.light || partOfDay(feel.hour)) };
+        const special = prank ? `событие:${event.pool}` : airy ? "байт:окно" : gift ? "байт:добыча" : comes ? "байт:к ней" : "";
+        const beats = held || hides || naps || eats || beside || special ? [] : catBeats(key).filter(item => catFits(item.line, fits));
         const from = beats.length ? count % beats.length : 0, beat = beats[from] ?? null;
         // Распорядок — по порядку от нынешней реплики: прежняя страница идёт по нему сама, нынешняя (`steady`) — нет.
         const order = [...beats.slice(from), ...beats.slice(0, from)];
+        // С места не ходит (спит) — реплика из тех, что сейчас уместны: «на солнце» — в солнечный день, «у ног» — когда она сидит.
+        const settledLine = () => { const lines = roomLines(turn, `байт:${key}`).filter(item => catFits(item, fits)); return lines.length ? lines[count % lines.length] : lineAt(turn, `байт:${key}`, count); };
         const raw = after || held ? "" : eats ? lineAt(turn, "байт:завтрак", count) : beside ? lineAt(turn, "байт:ночь", count)
-          : hides ? lineAt(turn, "байт:гроза", count) : naps ? lineAt(turn, "байт:тихий час", count) : beat ? beat.line : lineAt(turn, `байт:${key}`, count);
+          : hides ? lineAt(turn, "байт:гроза", count) : naps ? lineAt(turn, "байт:тихий час", count)
+            : special ? lineAt(turn, special, prank ? dayNo(today) : count) : beat ? beat.line : settledLine();
         const moved = after ? catAfter(after, { again }) : null;
         const cat = after
           ? (moved ? { key, ...catPose(line, key, moved), beats: order, still: order.length < 2, steady: true } : null)
@@ -2289,7 +2345,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
               : naps ? { key: "спит", shape: "curl", place: "pillow", line: raw, beats: [], still: true }
                 : eats ? { key, shape: "eat", place: "near", line: raw, beats: [], still: true }
                   : beside ? { key, shape: "curl", place: "near", line: raw, beats: [], still: true }
-                    : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2, steady: true };
+                    // Особый случай (0.49.0): где он и какой — по словам о нём, как и всегда; `prank` и `gift` — отметки для альбома.
+                    : special ? { key, ...catPose(raw, key), line: raw, beats: [], still: true, steady: true, ...(prank ? { prank: true } : gift ? { gift: true } : {}) }
+                      : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2, steady: true };
         return {
           ...(cat ? { cat } : {}),
           plant: { state: plantState({ water: state.water, at: now() }) === "полита" ? "wet" : "dry" },
@@ -2322,7 +2380,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const step = herStep(turn, feel, state, today);
         return {
           key: step.key, pose: step.pose, line: step.line, beats: step.beats, steady: true, left: step.left, stage: step.stage,
-          ...(step.plan ? { plan: step.plan } : {}), ...(step.face ? { face: step.face } : {}), wear: wearNow(state, now()) ?? wornNow(turn, state, today),
+          ...(step.plan ? { plan: step.plan } : {}), ...(step.face ? { face: step.face } : {}), ...(step.event ? { event: step.event } : {}), wear: wearNow(state, now()) ?? wornNow(turn, state, today),
         };
       };
       /** Поставила ли её сценка дня: тогда ответ на выбор несёт её заново — как ответ на чай. */
@@ -2369,6 +2427,28 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         // страница спросила один раз, а не при каждой сверке.
         const stage = stageNow(turn, today), sinceStage = (minutesNow(turn) - stage.from) * 60_000;
         const asks = stage.name === "чай" && she.stage === "чай" && she.key === "уют" && herStep(turn, feel, visit.state, today).onPlan && sinceStage < 25 * 60_000 && !(Number(visit.state.tea) >= now() - sinceStage);
+        // 0.49.0 (сообщение 48) — альбом воспоминаний, её вещи, подарки, встреча после отлучки. В альбом ложится то, что
+        // было при человеке или что она ему рассказала: первый заход, памятные даты, событие её дня, добыча Байта.
+        // Альбом — не главное: его сбой комнату не роняет.
+        const minute = minutesNow(turn), shown = picture(visit.state), happened = eventFor(today);
+        const album = await keepsakes.read(userId);
+        const entries = [];
+        if (visit.first) entries.push({ k: "first", key: "visit", day: today, at: now() });
+        for (const mark of MILESTONES) if (things.days >= mark) entries.push({ k: "date", key: String(mark), day: dayOf(dayNo(today) - (things.days - mark)), at: now() });
+        if (happened && minute >= happened.from) entries.push({ k: "event", key: happened.key, day: today, at: now() });
+        if (shown.cat?.gift) entries.push({ k: "cat", key: "gift", day: today, at: now() });
+        // Долго не был: два последних события без него — о них она расскажет сценкой, и они тоже ложатся в альбом.
+        const lastDay = Number(before.near) > 0 ? calendarDate(Number(before.near), zoneOf(turn)) : "";
+        const missed = !again && lastDay && away >= AWAY_MS ? missedEvents(lastDay, today).slice(-2) : [];
+        for (const past of missed) entries.push({ k: "event", key: past.key, day: past.day, at: now(), told: true });
+        const fresh = album.lost ? [] : (await keepsakes.add(userId, entries, album).catch(() => ({ added: [] }))).added;
+        // Встреча-сценка: «чем занималась, что произошло, что хочет рассказать» — шаги с её местом (или местом Байта).
+        const story = missed.map((past) => {
+          const told = lineAt(turn, `было:${past.pool}`, dayNo(past.day), { "когда": agoWords(dayNo(today) - dayNo(past.day)) });
+          return told ? { line: spoken(told), ...(past.pose ? { her: { key: past.her, pose: past.pose } } : { cat: catPose(told, "шалит") }) } : null;
+        }).filter(Boolean);
+        if (story.length) story.push({ line: spoken(roomLine(turn, "встреча:конец") || "Вот так. Остальное — в альбоме.") });
+        const own = ownThings(today, minute);
         return {
           // `once` (0.49.0): это сердце помнит номера действий — страница может сама повторить запрос, не дошедший за срок.
           ok: true, do: "look", build: BUILD, formal, once: true, ...(again ? { again: true } : {}), ...(repeat ? { repeat: true } : {}),
@@ -2376,7 +2456,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           greet: spoken(greet), window: windowLine(turn, sky), sky, city: turn.skyReal === true,
           box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
           her: she,
-          ...picture(visit.state),
+          ...shown,
+          // 0.49.0. Её вещи — следы её событий (наброски на стекле, найденная книга, открытка); подарки человека,
+          // что сейчас стоят в комнате; альбом — сколько записей и сколько новых; идёт ли событие; сценка встречи.
+          own: { sketches: own.sketches.length, book: Boolean(own.book), card: Boolean(own.card) },
+          gifts: giftsShown([...album.items, ...fresh], now()), album: { count: album.items.length + fresh.length, fresh: fresh.length },
+          ...(she.event || shown.cat?.prank ? { event: she.event || "prank" } : {}), ...(story.length ? { story } : {}),
           // 0.48.0. Кнопки под рисунком (тихий час, наряд, чай) — хозяину: остальным те же дела доступны на самом
           // рисунке и её собственной волей. Окно открыто (час после нажатия). Чай: какой наливают и какие есть.
           owner: owner(userId), open: airNow(visit.state, now()), kind: brewOf(visit.state), kinds: [...BREWS],
@@ -2406,6 +2491,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const instead = async (done) => (done?.repeat ? looking({ again: true, repeat: true })
         : done?.lost || done?.saved === false ? refuse("storage", NOT_KEPT)
           : done?.slow ? refuse("slow", "Не так быстро: я не успеваю. Подождите несколько секунд.") : null);
+      /**
+       * Первый раз (0.49.0): запись в альбом — одна на человека и действие. Отметка «уже было» — в записи комнаты,
+       * чтобы не читать альбом при каждом нажатии. Альбом — не главное: его сбой действие не роняет.
+       */
+      const firstTime = async (state, name) => {
+        if (Array.isArray(state?.firsts) && state.firsts.includes(name)) return;
+        try {
+          await keepsakes.add(userId, [{ k: "first", key: name, day: today, at: now() }]);
+          await room.amend(userId, today, (fresh) => (Array.isArray(fresh.firsts) && fresh.firsts.includes(name) ? null : { ...fresh, firsts: [...(Array.isArray(fresh.firsts) ? fresh.firsts : []), name].slice(-24) }));
+        } catch { /* альбом подождёт */ }
+      };
       // `await` — чтобы поломка внутри попала в общий `catch` ниже, а не ушла наружу отказом обещания.
       if (op === "look") return await looking({ again: input?.again === true });
       if (ROOM_POOL[op]) {
@@ -2417,6 +2513,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (done.first) await roomCared(userId, turn);
         // Первая такая забота за день остаётся в переписке: на «он наелся?» модель ответит, зная, что его кормили.
         if (!done.again && !done.early) await keepThread(turn, ROOM_SAID[op], raw);
+        if (!done.early) await firstTime(done.state, op);
         return {
           ok: true, do: op, build: BUILD, line: spoken(raw), again: Boolean(done.again), early: Boolean(done.early), peace: Boolean(done.peace), counted: Boolean(done.first),
           // Налили чай — она берёт кружку: страница получает её заново (чем занята, где, распорядок).
@@ -2436,6 +2533,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const raw = roomLine(turn, `она:погладить${done.again ? ":ещё" : ""}`) || "…Ладно. Мне нравится.";
         if (done.first) await roomCared(userId, turn);
         if (!done.again) await keepThread(turn, "погладить тебя по голове", raw);
+        await firstTime(done.state, "pat");
         return { ok: true, do: op, build: BUILD, line: spoken(raw), again: Boolean(done.again), shy: false, counted: Boolean(done.first), ...stageNote() };
       }
       if (op === "book") {
@@ -2449,6 +2547,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.again ? "полка:ещё" : "полка") || "Возьму книгу.";
         if (!done.again) await keepThread(turn, "[в комнате] предложил тебе почитать", raw);
+        await firstTime(done.state, "book");
         return { ok: true, do: op, build: BUILD, line: spoken(raw), taken: true, again: Boolean(done.again), her: herNow(done.state), ...stageNote() };
       }
       if (op === "quiet") {
@@ -2460,6 +2559,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.on ? "тихий час" : "тихий час:стоп") || (done.on ? "Сажусь рядом." : "Хорошо, хватит.");
         if (done.on) await keepThread(turn, "[в комнате] сел рядом поработать в тишине", raw);
+        if (done.on) await firstTime(done.state, "quiet");
         const shown = picture(done.state);
         return { ok: true, do: op, build: BUILD, line: spoken(raw), on: done.on, left: done.on ? QUIET_MS : 0, end: done.on ? spoken(roomLine(turn, "тихий час:конец")) : "", her: herNow(done.state), ...(shown.cat ? { cat: shown.cat } : {}) };
       }
@@ -2494,6 +2594,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const done = await room.call(userId, once);
         { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.again ? "байт:позвать:ещё" : "байт:позвать") || (done.again ? "Байт удрал под кресло." : "Байт подошёл.");
+        if (!done.again) await firstTime(done.state, "call");
         const shown = picture(done.state, { after: "call", again: done.again, line: raw });
         return { ok: true, do: op, build: BUILD, line: spoken(raw), came: !done.again, fled: Boolean(done.again), ...(shown.cat ? { cat: { ...shown.cat, ...(done.again ? { run: true } : {}) } } : {}), ...stageNote() };
       }
@@ -2505,6 +2606,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         { const other = await instead(done); if (other) return other; }
         const asleep = herState(turn, feel, done.state, today).key === "сон";
         const raw = roomLine(turn, `створка:${done.open ? "открыть" : "закрыть"}${asleep ? ":сон" : ""}`) || (done.open ? "Открыла окно." : "Закрыла окно.");
+        if (done.open) await firstTime(done.state, "window");
         return { ok: true, do: op, build: BUILD, line: spoken(raw), open: done.open, window: windowLine(turn, sky) };
       }
       if (op === "lamp") {
@@ -2534,6 +2636,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         { const other = await instead(done); if (other) return other; }
         const raw = roomLine(turn, done.on ? "колонка" : "колонка:стоп") || (done.on ? "Включаю." : "Выключила.");
         if (done.on) await keepThread(turn, "[в комнате] включил тебе музыку", raw);
+        if (done.on) await firstTime(done.state, "music");
         return { ok: true, do: op, build: BUILD, line: spoken(raw), on: done.on, left: done.on ? MUSIC_MS : 0, her: herNow(done.state), ...stageNote() };
       }
       if (op === "pick") {
@@ -2543,6 +2646,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (picked.first) await roomCared(userId, turn);
         const outcome = fill(picked.outcome, { formal });
         await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
+        // Сыгранная сценка — в альбом (0.49.0): с днём, а не только трофеем в коробке.
+        await firstTime(picked.state, "scene");
+        await keepsakes.add(userId, [{ k: "scene", key: picked.scene.key, day: today, at: now() }]).catch(() => null);
         // Рисунок идёт за словами исхода: Байт — туда, где сказано, комната — такой, как сказано.
         const shown = picture(picked.state);
         return {
@@ -2551,6 +2657,53 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ...(herPut(picked.state) ? { her: herNow(picked.state) } : {}),
           cared: picked.state.cared === today, box: roomBox(turn, picked.state), ...stageNote(),
         };
+      }
+      if (op === "album") {
+        // Альбом воспоминаний (0.49.0): записи альбома и её рисунки для человека — по дням, новые сверху. Подпись —
+        // не её речь, а подпись; у снимка — комната той минуты (`view`): страница рисует её заново. `gift` — можно ли
+        // сейчас подарить (раз в неделю) и через сколько дней.
+        const album = await keepsakes.read(userId);
+        if (album.lost) return refuse("storage", MEMORY_DOWN);
+        const zone = zoneOf(turn), drawn = await store.get(ALBUM_KEY(userId)).catch(() => null);
+        const items = [
+          ...album.items.map((item, index) => ({ n: index, k: item.k, key: String(item.key ?? ""), day: item.day || calendarDate(Number(item.at) || now(), zone), title: fill(captionOf(item), { formal }), ...(item.k === "snap" && item.view ? { view: item.view, line: String(item.line ?? "") } : {}), ...(item.told ? { told: true } : {}) })),
+          ...(Array.isArray(drawn?.items) ? drawn.items : []).filter(item => item?.q && Number(item.at) > 0).slice(-6).map((item, index) => ({ n: -1 - index, k: "draw", key: "", day: calendarDate(Number(item.at), zone), title: `Рисунок: «${String(item.q).replace(/\s+/gu, " ").trim().slice(0, 60)}»` })),
+        ].sort((one, two) => (one.day < two.day ? 1 : one.day > two.day ? -1 : two.n - one.n)).slice(0, 40).map(({ n: _order, ...item }) => ({ ...item, date: dateWords(item.day, today) }));
+        const wait = album.gift > 0 ? GIFT_EVERY_MS - (now() - album.gift) : 0;
+        return {
+          ok: true, do: op, build: BUILD, items, line: spoken(roomLine(turn, items.length ? "альбом" : "альбом:пусто") || (items.length ? "Вот что я сохранила." : "Альбом пока пуст.")),
+          gift: { ok: wait <= 0, days: wait > 0 ? Math.ceil(wait / 86_400_000) : 0 }, kinds: [...GIFTS], gifts: giftsShown(album.items, now()),
+        };
+      }
+      if (op === "gift") {
+        // Подарок (идея 163, 0.49.0): цветок, книга, игрушка Байту — остаётся в комнате и в альбоме с датой; не чаще
+        // раза в неделю. Подарок — забота дня, как чай: в отношения идёт раз в день.
+        const kind = String(input?.kind ?? "");
+        if (!GIFTS.includes(kind)) return refuse("unknown", "Такого подарка у меня в списке нет.");
+        const done = await keepsakes.gift(userId, kind, { day: today });
+        if (!done.ok) return refuse("storage", NOT_KEPT);
+        const wait = Math.ceil((done.left ?? 0) / 86_400_000);
+        if (done.early) return { ok: true, do: op, build: BUILD, taken: false, days: wait, gifts: giftsShown(done.album.items, now()), line: spoken(roomLine(turn, "подарок:рано", { "дней": days(wait) }) || `Подарки — не чаще раза в неделю. Следующий — через ${days(wait)}.`) };
+        const raw = roomLine(turn, `подарок:${GIFT_POOL[kind]}`) || "Спасибо. Это останется у меня.";
+        await keepThread(turn, `[в комнате] подарил тебе ${GIFT_SAID[kind]}`, raw);
+        let counted = false;
+        const cared = await room.amend(userId, today, (state) => { counted = state.cared !== today; return counted ? { ...state, cared: today, care: (Number(state.care) || 0) + 1, near: now() } : null; });
+        if (counted && cared.saved) await roomCared(userId, turn);
+        return { ok: true, do: op, build: BUILD, taken: true, days: 7, gifts: giftsShown(done.album.items, now()), line: spoken(raw), counted: counted && cared.saved, ...stageNote() };
+      }
+      if (op === "snap") {
+        // Снимок на память (идея 165, 0.49.0): комната этой минуты ложится в альбом — её собирает сердце, а не
+        // страница, и страница потом рисует её заново. Не чаще раза в десять минут, не больше восьми.
+        const seen = await looking({ again: true });
+        if (seen.ok !== true) return seen;
+        const view = {
+          part: seen.clock.part, ...(seen.clock.light ? { light: seen.clock.light } : {}), sky: seen.sky,
+          her: { key: seen.her.key, pose: seen.her.pose, wear: seen.her.wear }, ...(seen.cat ? { cat: { shape: seen.cat.shape, place: seen.cat.place, key: seen.cat.key } } : {}),
+          things: seen.things.map(item => item.key), plant: seen.plant.state, lamp: seen.lamp, dark: seen.dark, open: seen.open, fed: seen.done.feed > 0, tea: seen.done.tea > 0, own: seen.own, gifts: seen.gifts,
+        };
+        const done = await keepsakes.snap(userId, view, seen.her.line, { day: today });
+        if (!done.ok) return refuse("storage", NOT_KEPT);
+        return { ok: true, do: op, build: BUILD, taken: !done.early, line: spoken(roomLine(turn, done.early ? "снимок:рано" : "снимок") || (done.early ? "Снимок уже есть — следующий чуть позже." : "Запомнила этот момент.")) };
       }
       if (op === "oops") {
         // Журнал ошибок страницы (0.49.0): три последние записи за заход — место, код и короткий текст. Кто зашёл, не
@@ -6230,6 +6383,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       store.remove(PACK_KEY(actorId)).catch(() => false),
       // Комната: что он делал с Байтом и какие вещи для него появились — тоже его.
       store.remove(ROOM_KEY(actorId)).catch(() => false),
+      keepsakes.clear(actorId),
       // Шутки, счёт поступков и дней — его; находки из разговоров наедине с ним — тоже.
       bond.forget(actorId).then(() => true).catch(() => false),
       knowledge.forget(actorId).then(() => true).catch(() => false),
