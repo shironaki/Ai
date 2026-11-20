@@ -109,6 +109,29 @@ export function viewOf(state) {
     ...(state.open === true ? { open: true } : {}),
   };
 }
+/**
+ * Жест между делами (0.49.0, сообщение 48: «движения должны зависеть от занятия и настроения», «не постоянно»). Раз в
+ * полминуты страница спрашивает, что ей сделать, и на две-три секунды ставит слово на рисунок — остальное делают
+ * стили. Что бывает: tilt — наклон головы; nod — кивок; hair — качнулись волосы (чаще при открытом окне); bow —
+ * наклонилась; peek — подняла глаза на зрителя (у поз со вторым кадром); look-cat и look-win — посмотрела в сторону
+ * Байта и окна; away — отвернулась; huff — зажмурилась и отвернулась, над головой «жилка»; sigh — вздохнула, капля;
+ * yawn — клюёт носом, «z z». Спит — жестов нет. `count` — который это жест по счёту: они идут по кругу, а не случайно.
+ */
+export const GESTURES = Object.freeze(["tilt", "nod", "hair", "bow", "peek", "look-cat", "look-win", "away", "huff", "sigh", "yawn"]);
+export function gestureOf(state, count = 0) {
+  const her = state?.her;
+  if (!state?.ready || !her || state.away || her.key === "сон") return "";
+  const cat = state.cat, lively = Boolean(cat) && (cat.place === "near" || ["play", "walk", "claw", "beg", "gift"].includes(cat.shape));
+  const airy = state.open === true;
+  const list = her.key === "обида" ? ["huff", "away", "huff", ""]
+    : her.key === "ревность" ? ["huff", "peek", "away"]
+      : her.key === "устала" ? ["sigh", "yawn", "sigh", ""]
+        : her.face === "drowsy" ? ["yawn", "nod", "yawn", ""]
+          : her.key === "игра" ? ["tilt", lively ? "look-cat" : "hair", "peek", "bow", "look-cat"]
+            : her.key === "дело" ? ["nod", lively ? "look-cat" : "bow", airy ? "hair" : "tilt", "peek", "look-win"]
+              : ["tilt", airy ? "hair" : "look-win", lively ? "look-cat" : "nod", "peek", airy ? "look-win" : "hair"];
+  return list[(Number.isInteger(count) && count > 0 ? count : 0) % list.length];
+}
 /** Следующая её поза (без распорядка: позы состояния идут по кругу). */
 export const nextTurn = (state) => ({ ...state, turn: (Number.isInteger(state.turn) && state.turn > 0 ? state.turn : 0) + 1 });
 /**

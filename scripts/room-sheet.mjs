@@ -212,13 +212,13 @@ async function motionCells() {
   return { list, extra: `<style>${css}</style>${store}` };
 }
 const moving = motion ? await motionCells() : null;
-const cells = moving ? moving.list : sheet.views.map(({ label = "", view: described, crop, sprites: wanted, frame = false }) => {
+const cells = moving ? moving.list : sheet.views.map(({ label = "", view: described, crop, sprites: wanted, frame = false, style = "" }) => {
   const sprites_off = wanted === false;
   const base = how(sheet.sprites === false || sprites_off);
   const shown = frame === true && base.sprites ? { sprites: { ...base.sprites, ...frames } } : base;
   const second = frame === true ? "<style>.fr.a{display:none}</style>" : "";
   const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${lids}${second}${drawRoom(described, shown)}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${lids}${second}${typeof style === "string" && style ? `<style>${style.replace(/</gu, "")}</style>` : ""}${drawRoom(described, shown)}</svg>`;
   return `<figure><img width="${w * zoom}" height="${h * zoom}" src="data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}"><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
 });
 // Рисунки идут строками и переносятся по ширине листа: вырезки бывают разного размера.

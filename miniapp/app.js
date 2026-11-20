@@ -211,7 +211,8 @@ function scheduleTurn() {
   turnTimer = setTimeout(() => {
     lifeTurn += 1;
     // По очереди: она, Байт. Кому идти некуда, тот ход пропускает — второй не ходит за двоих.
-    if (lifeTurn % 2) { if (!state.her?.steady) herStep(); } else if (!state.cat?.steady) catStep();
+    // Её день ведёт сердце (`steady`) — тогда ход уходит на жест (0.49.0): наклон головы, взгляд на Байта, вздох.
+    if (lifeTurn % 2) { if (!state.her?.steady) herStep(); else gesture(); } else if (!state.cat?.steady) catStep(); else gesture();
     scheduleTurn();
   }, TURN_MS[0] + Math.random() * (TURN_MS[1] - TURN_MS[0]));
 }
@@ -858,6 +859,8 @@ async function beckon() {
   paint();
   buzz(result?.ok === true ? "light" : "error");
   if (result?.came === true) ring("pet");
+  // Байт подошёл или удрал — она смотрит ему вслед (0.49.0).
+  if (result?.ok === true) lookAt("cat", result.fled === true);
 }
 
 /** Лампа (0.46.0): свет гаснет — остаётся гирлянда — или загорается; как оставили, так и запомнится. */
@@ -891,6 +894,29 @@ async function music() {
   paint();
   buzz(result?.ok === true ? "light" : "error");
   if (result?.ok === true) tuneFor(state.music);
+}
+
+// ── Жесты (0.49.0) ───────────────────────────────────────────────────────────
+// Между делами она не замирает: раз в полминуты — жест по занятию и настроению (`logic.gestureOf`), и по событию —
+// взгляд туда, где что-то случилось: Байт подошёл, окно открыли. Жест — слово на рисунке на две-три секунды.
+const GESTURE_MS = Object.freeze({ tilt: 2800, nod: 1600, hair: 2600, bow: 2800, away: 3200, huff: 2200, sigh: 3000, yawn: 3000 });
+let gestures = 0;
+/** Посмотреть в сторону: `to` — Байт или окно. Сторона — по тому, где они на рисунке относительно неё. */
+function lookAt(to, ask = false) {
+  const herX = drawn.cast?.her?.x, toX = to === "cat" ? drawn.cast?.cat?.x : 256;
+  if (!Number.isFinite(herX) || !Number.isFinite(toX) || Math.abs(toX - herX) < 14) return false;
+  react(toX < herX ? "look-l" : "look-r", 3200);
+  if (ask) react("g-ask", 2200);
+  return true;
+}
+function gesture(name = "") {
+  if (typeof logic.gestureOf !== "function" || !state.ready || state.busy || acting || document.hidden || Date.now() < drawn.until) return;
+  const what = name || logic.gestureOf(state, gestures);
+  if (!name) gestures += 1;
+  if (!what) return;
+  if (what === "look-cat" || what === "look-win") { lookAt(what === "look-cat" ? "cat" : "win", gestures % 2 === 0); return; }
+  if (what === "peek") { react("peek", 2600); return; }
+  react(`g-${what}`, GESTURE_MS[what] ?? 2600);
 }
 
 /** Мимика по нажатию (0.48.0): слово на рисунке комнаты на короткое время — остальное делают стили страницы. */
@@ -932,6 +958,8 @@ async function air() {
   paint();
   buzz(result?.ok === true ? "light" : "error");
   if (result?.ok === true) ring("lamp");
+  // Открыли окно — она оборачивается к нему, и волосы качнулись от сквозняка (0.49.0).
+  if (result?.ok === true) { lookAt("win"); if (state.open === true) react("g-hair", 2600); }
 }
 /** Выбор чая под её словами (0.48.0): виден, пока она спрашивает, какой налить; нынешний чай отмечен. */
 function paintTeas() {
@@ -958,6 +986,8 @@ async function care(name, extra = {}) {
   if (!result.again) heart(name === "tea" ? "her" : name === "water" ? "plant" : "cat");
   // Налили чай — румянец (0.48.0).
   if (name === "tea") react("glad", 1800);
+  // Позаботились о Байте — она смотрит в его сторону (0.49.0).
+  if (name === "pet" || name === "feed" || name === "play") lookAt("cat");
 }
 
 async function act(name) {
@@ -980,6 +1010,8 @@ async function act(name) {
     const next = applyTap(state, name);
     if (next) { state = next; paint(); buzz("light"); }
     if (name === "her" && next) react("poked", 900);
+    // Клевала носом, а её тронули — над головой «!» (0.49.0).
+    if (name === "her" && next && state.her?.face === "drowsy") react("g-bang", 2200);
     // Прежнее сердце (без распорядка): она ответила и сменила позу.
     if (name === "her" && next && !state.her?.steady && !(canBeat && nextBeat(state, "her"))) turn();
     return;

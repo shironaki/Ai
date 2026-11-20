@@ -1726,6 +1726,8 @@ const SPRITE_OF = Object.freeze({
   "дело": ["work", "work2", "work3"], "уют": ["tea", "tea2", "tea3"], "игра": ["play", "play2", "play3"], "сон": ["sleep"],
   "устала": ["tired", "tired2", "tired3"], "обида": ["pout", "pout2"], "ревность": ["jealous", "jealous2", "jealous3"],
 });
+/** Состояние по имени картинки (без наряда и номера позы): `tired2` → «устала». Дела дня — «дело». */
+const HER_MOOD = Object.freeze({ work: "дело", tea: "уют", read: "уют", play: "игра", sleep: "сон", tired: "устала", pout: "обида", jealous: "ревность", tidy: "дело", books: "дело", feed: "дело" });
 /**
  * С какой позы начать: с той, что ближе к её словам. Сердце шлёт позу по её реплике: «танцую» — она танцует,
  * «дразню Байта ленточкой» — присела с ленточкой, «чай, кресло, плед» — сидит с кружкой, «пью чай» — пьёт.
@@ -1991,6 +1993,34 @@ function herWalking(g, part, walker, from, to) {
   return { seconds, svg: stride(lit), shape: stride(shape) };
 }
 /**
+ * Слой головы (0.49.0, сообщение 48: «поворот головы», «движение волос — небольшое, почти незаметное»). Картинка
+ * цельная, отдельной головы у неё нет — поэтому поверх картинки лежит она же, обрезанная мягким овалом вокруг
+ * головы. Пока слой неподвижен, он совпадает с картинкой точка в точку и его не видно; стили страницы наклоняют его
+ * на градус-два вокруг шеи (`.hd`) и чуть сдвигают низ — концы волос (`.hr`). Край овала тает, поэтому шва нет: у
+ * края слой прозрачен, и видна сама картинка. Веки и румянец — в слое: они наклоняются вместе с головой.
+ */
+function headLayer(g, name, place, x, y, inside) {
+  const id = g.id("herHead"), soft = g.rad("hd", [[0, "#ffffff", 1], [0.66, "#ffffff", 1], [1, "#ffffff", 0]]);
+  const mask = `<mask id="${id}" maskUnits="userSpaceOnUse" x="${n(x - 44)}" y="${n(y - 45)}" width="88" height="96"><ellipse cx="${n(x)}" cy="${n(y + 3)}" rx="42" ry="46" fill="${soft}"/></mask>`;
+  return `${mask}<g class="hd" style="transform-origin:${n(x)}px ${n(y + 30)}px"><g class="hr" style="transform-origin:${n(x)}px ${n(y - 24)}px"><g mask="url(#${id})"><use href="#r-her-${name}" ${place.at}/>${inside}</g></g></g>`;
+}
+/**
+ * Метки-эмоции у головы (0.49.0, «разные реакции глаз: удивление, интерес, сонливость, недовольство»): «!», «?»,
+ * «жилка» недовольства, капля усталости, «z z». Нарисованы всегда и не видны, пока страница не покажет нужную
+ * (стили: `.g-bang`, `.g-ask`, `.g-huff`, `.g-sigh`, `.g-yawn`). Глаза при этом — веками: зажмурилась, моргнула дважды.
+ */
+function emoMarks(x, y) {
+  const font = `text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" stroke="#3a2412" stroke-width="0.7" paint-order="stroke"`;
+  const mark = (name, body) => `<g class="emo e-${name}" opacity="0">${body}</g>`;
+  return [
+    mark("bang", `<text x="${n(x + 27)}" y="${n(y - 20)}" font-size="17" fill="#ffd166" ${font}>!</text>`),
+    mark("ask", `<text x="${n(x + 27)}" y="${n(y - 20)}" font-size="16" fill="#9ad7ff" ${font}>?</text>`),
+    mark("huff", `<path transform="translate(${n(x + 26)} ${n(y - 28)})" d="M-5.5 -2q3.5 0 3.5 -3.5M5.5 -2q-3.5 0 -3.5 -3.5M-5.5 2q3.5 0 3.5 3.5M5.5 2q-3.5 0 -3.5 3.5" fill="none" stroke="#e2364f" stroke-width="1.9" stroke-linecap="round"/>`),
+    mark("drop", `<path d="M${n(x + 28)} ${n(y - 36)}q4.2 5.8 4.2 8.4a4.2 4.2 0 0 1 -8.4 0q0 -2.6 4.2 -8.4z" fill="#bfe6ff" stroke="#3a6a8a" stroke-width="0.6"/>`),
+    mark("zz", `<text x="${n(x + 25)}" y="${n(y - 20)}" font-size="12" fill="#ffffff" ${font}>z</text><text x="${n(x + 33)}" y="${n(y - 29)}" font-size="9" fill="#ffffff" ${font}>z</text>`),
+  ].join("");
+}
+/**
  * Она — картинкой: ссылка на определение спрайта (`drawSprite`), тень под ногами, свет часа, веки, место нажатия и
  * место, где её гладят (голова). `ghost` — её прежняя поза `{ name, sprite, x }`: она тает, пока новая проявляется;
  * стояла в другом месте и есть картинка «идёт» (`walker`) — доходит до нового места шагом.
@@ -2013,7 +2043,10 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   // Она дышит: картинка чуть растёт и опадает от ступней (стили страницы, `.alive`); пар и «z z Z» живут своей жизнью.
   // Второй кадр той же позы (`HER_FRAMES`) — поверх первого, на том же месте: ось тела у них общая. Веки и пар —
   // внутри первого кадра: пока она отпивает, кружки на коленях нет, и пара над ней тоже.
-  const lit = spriteLit(part, name, place, g.id("herMask"), lids);
+  // Слой головы (0.49.0) — у стоящей, сидящей и присевшей; спит на полу или идёт — без него (веки тогда на самой картинке).
+  const [hx, hy] = HER_SPRITES[name].head ?? [null, 0.07], headX = hx == null ? x : left + wide * hx, headY = top + tall * hy;
+  const headed = !low && kind !== "walk";
+  const lit = spriteLit(part, name, place, g.id("herMask"), headed ? headLayer(g, name, place, headX, headY, lids) : lids);
   // Кадр, на котором она смотрит на зрителя, помечен `lk`, второй — `nl`: нажали на неё — страница показывает первый
   // (`.poked`): подняла глаза. У танца пометок нет — он не прерывается.
   const looks = frame ? HER_FRAMES[name]?.[2] ?? "a" : "", seen = (which) => (looks ? (looks === which ? " lk" : " nl") : "");
@@ -2021,13 +2054,17 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
     ? `<g class="alive"><g class="fr a ${frame.how}${seen("a")}">${lit}${alive}</g><g class="fr b ${frame.how}${seen("b")}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x, frame.grow), g.id("herMaskB"))}</g></g>`
     : `<g class="alive">${lit}</g>${alive}`;
   // Стоя она ещё и чуть покачивается (0.48.0, «небольшие движения головы»): вся фигура, от ступней; голова идёт дальше всех.
-  const body = kind === "stand" ? `<g class="lean">${core}</g>` : core;
+  // Три слоя движения (0.49.0, «разделить переходы, мимику и постоянное состояние»): переход — снаружи (`.arrive`,
+  // `.leave`, `.lower`, `.rise`); мимика — `.mim` (вздрогнула, вздохнула, наклонилась) и слой головы; постоянное —
+  // внутри (`.lean`, `.alive`). Реакция больше не подменяет дыхание: они складываются. Настроение — словом на слое
+  // мимики (`m-calm`, `m-tired`…). Метки-эмоции — рядом с головой, вне покачивания.
+  const mood = MOODS[HER_MOOD[name.replace(/^[a-z]+-/u, "").replace(/\d$/u, "")] ?? ""] ?? "calm";
+  const body = `<g class="mim m-${mood}">${kind === "stand" ? `<g class="lean">${core}</g>` : core}</g>${headed ? emoMarks(headX, headY) : ""}`;
   // Садится — опускается, встаёт — поднимается (0.48.0, «естественные переходы между сидячими и стоячими позами»).
   const down = kind === "stand" ? "" : " lower", up = ghost && !["stand", "walk"].includes(kindOf(ghost.name)) ? " rise" : "";
   const before = ghost ? spritePlace(ghost.name, ghost.sprite, ghost.x) : null;
   // Идёт, а не тает на месте: когда стояла (или сидела) в другой точке, сама не на полу и картинка «идёт» загружена.
   const walk = ghost && walker && Math.abs(ghost.x - x) >= 12 && !low && kindOf(ghost.name) !== "floor" ? herWalking(g, part, walker, ghost.x, x) : null;
-  const [hx, hy] = HER_SPRITES[name].head ?? [null, 0.07], headX = hx == null ? x : left + wide * hx, headY = top + tall * hy;
   const reach = low ? 30 : kind === "stand" ? 22 : 25;
   const shade = shadow(g, x + (low ? 0 : 2), feet - 2, low ? wide * 0.44 : kind === "stand" ? 36 : wide * 0.36, low ? 7 : 6, 0.34);
   const was = before ? `<g class="leave${up}">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>` : "";

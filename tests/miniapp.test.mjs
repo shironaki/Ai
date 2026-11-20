@@ -711,7 +711,10 @@ test("она картинкой: у каждого состояния своя �
     // И ещё одна — в маске румянца (0.48.0): он есть у картинок с веками, кроме четырёх, где лицо повёрнуто или наклонено.
     const rosy = Boolean(SPRITES[name]?.blink) && HER_SPRITES[name].blush !== false;
     assert.equal(markup.includes('<g class="blush" opacity="0" mask="url(#r-herBlush)" style="mix-blend-mode:multiply">'), rosy, label);
-    assert.equal((markup.match(new RegExp(`<use href="#r-her-${name}" transform="translate\\([\\d.-]+ [\\d.-]+\\) scale\\([\\d.]+\\)"/>`, "gu")) ?? []).length, (part === "день" ? 1 : 2) + (rosy ? 1 : 0), label);
+    // И ещё одна — слой головы (0.49.0): та же картинка под мягким овалом; у спящей на полу слоя нет.
+    const headed = HER_SPRITES[name].kind !== "floor";
+    assert.equal(markup.includes('<g class="hd" style="transform-origin:'), headed, label);
+    assert.equal((markup.match(new RegExp(`<use href="#r-her-${name}" transform="translate\\([\\d.-]+ [\\d.-]+\\) scale\\([\\d.]+\\)"/>`, "gu")) ?? []).length, (part === "день" ? 1 : 2) + (rosy ? 1 : 0) + (headed ? 1 : 0), label);
     assert.equal(markup.includes('<mask id="r-herMask" style="mask-type:alpha" maskUnits="userSpaceOnUse"'), part !== "день", label);
     // Сама картинка — не в комнате: комнату перерисовывает каждое нажатие, и картинка грузилась бы заново.
     assert.ok(!markup.includes("<image") && !markup.includes("base64"), label);
@@ -765,14 +768,14 @@ test("она картинкой: у каждого состояния своя �
     const dusk = { part: "вечер", her: { pose: "desk", key: "дело" }, cat, plant: "wet", things: [] };
     const changed = drawInside(dusk, { ...PAINTED, was: { name: "work", x: 252 } });
     assert.equal(wellFormed(changed), "");
-    assert.ok(changed.includes('<g class="leave"><use href="#r-her-work" ') && changed.includes('<g class="arrive"><g class="lean"><g class="alive"><use href="#r-her-home-work" ') && changed.includes('<mask id="r-herMaskWas" '));
+    assert.ok(changed.includes('<g class="leave"><use href="#r-her-work" ') && changed.includes('<g class="arrive"><g class="mim m-calm"><g class="lean"><g class="alive"><use href="#r-her-home-work" ') && changed.includes('<mask id="r-herMaskWas" '));
     assert.deepEqual(zonesOf(changed), zonesOf(drawInside(dusk, PAINTED)));
 
     const view = { part: "день", her: { pose: "desk", key: "дело", turn: 1 }, cat, plant: "wet", things: [] };
     const plain = drawInside(view, PAINTED), smooth = drawInside(view, { ...PAINTED, was: { name: "work", x: 252 } });
     assert.ok(!plain.includes('class="leave"') && !plain.includes('class="arrive"'));
     assert.equal(wellFormed(smooth), "");
-    assert.ok(smooth.includes('<g class="leave"><use href="#r-her-work" ') && smooth.includes('<g class="arrive"><g class="lean"><g class="alive"><use href="#r-her-work2" ') && !smooth.includes('<mask id="r-herMaskWas" '));
+    assert.ok(smooth.includes('<g class="leave"><use href="#r-her-work" ') && smooth.includes('<g class="arrive"><g class="mim m-calm"><g class="lean"><g class="alive"><use href="#r-her-work2" ') && !smooth.includes('<mask id="r-herMaskWas" '));
     assert.deepEqual(zonesOf(smooth), zonesOf(plain));
     // Прежняя — та же самая, незнакомая, не загруженная или без места: тогда смена — без перехода.
     for (const was of [{ name: "work2", x: 252 }, { name: "constructor", x: 252 }, { name: "чужая", x: 252 }, { name: "work", x: "252" }, null, "work", { name: "work" }]) assert.equal(drawInside(view, { ...PAINTED, was }), plain, JSON.stringify(was));
@@ -1652,7 +1655,8 @@ test("страница: папка уходит на платформу как �
   // и хвост замрёт, а тесты промолчат. Поэтому: у каждого класса из рисунка, кроме неподвижных, есть правило,
   // и каждое правило для рисунка относится к классу, который рисунок в самом деле ставит.
   const css = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
-  const styled = new Set([...css.matchAll(/(?:#room|#sky)((?: ?\.[a-z][a-z0-9]*)+)/gu)].flatMap(found => found[1].match(/[a-z][a-z0-9]*/gu)));
+  // Имена классов — с дефисом тоже (0.49.0: `g-tilt`, `look-l`, `e-bang`, `m-tired`).
+  const styled = new Set([...css.matchAll(/(?:#room|#sky)((?: ?\.[a-z][a-z0-9-]*)+)/gu)].flatMap(found => found[1].match(/[a-z][a-z0-9-]*/gu)));
   const classes = new Set();
   let turn = 0;
   const cats = ["шалит", "сыт", "обижен", "игра"];
@@ -1670,7 +1674,10 @@ test("страница: папка уходит на платформу как �
   gather({ part: "день", her: { pose: "desk", key: "дело", turn: 1 }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 } });
   // С 0.44.0 — ещё «alive»: картинка дышит.
   // С 0.48.0 — «lean» (стоя покачивается) и «blush» (румянец под глазами, невидимый до ласки).
-  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["alive", "arrive", "blush", "lean", "leave", "wink"]);
+  // С 0.49.0 — три слоя движения: слой мимики («mim») с настроением («m-…»), слой головы («hd») и концы волос
+  // («hr»), метки-эмоции («emo», «e-…»): невидимы, пока страница не покажет жест.
+  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["alive", "arrive", "blush", "e-ask", "e-bang", "e-drop", "e-huff", "e-zz", "emo", "hd", "hr", "lean", "leave",
+    ...Object.values(MOODS).map(mood => `m-${mood}`), "mim", "wink"].sort());
   // Своя жизнь (0.44.0): она идёт от места к месту, входит и уходит к шкафу; Байт идёт сам; на её месте — надпись.
   const lived = new Set(classes);
   gather({ part: "день", her: { pose: "shelf", key: "дело", beat: true }, cat: { shape: "sit", place: "bowl", key: "сыт" }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 }, catWas: { x: 300, y: 456, shape: "sit", mirror: false, k: 1 } });
@@ -1713,7 +1720,7 @@ test("страница: папка уходит на платформу как �
   const waited = new Set(classes);
   gather({ part: "день", her: { pose: "desk", key: "дело" }, things: [] }, { sprites: {} });
   assert.deepEqual([...classes].filter(name => !waited.has(name)).sort(), ["coming", "d0", "d1", "d2", "dot"]);
-  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "snow", "far", "near", "b0", "s0", "d0", "fx", ...scene.SCENE_FX.map(name => `fx-${name}`), ...SKY_STILL, ...CAT_SHAPES]);
+  const still = new Set(["art", "zones", "backdrop", "frame", "glow", "city", "rain", "snow", "far", "near", "b0", "s0", "d0", "m-calm", "m-smile", "fx", ...scene.SCENE_FX.map(name => `fx-${name}`), ...SKY_STILL, ...CAT_SHAPES]);
   assert.deepEqual([...classes].filter(name => !styled.has(name) && !still.has(name)).sort(), [], "класс в рисунке есть, а правила в стилях нет");
   // «fading» ставит не рисунок, а сама страница — на копию прежнего слоя: она тает поверх нового, когда час или
   // погода сменились при открытой комнате (0.44.0).
@@ -1721,7 +1728,11 @@ test("страница: папка уходит на платформу как �
   // Мимику по нажатию (0.48.0) тоже ставит страница — на сам рисунок комнаты, на короткое время: «poked» — нажали на
   // неё, «patted» — погладили, «glad» — налили чай.
   for (const name of ["poked", "patted", "glad"]) assert.match(read("miniapp/app.js"), new RegExp(`react\\("${name}", \\d+\\)`, "u"), name);
-  assert.deepEqual([...styled].filter(name => !classes.has(name) && !["fading", "poked", "patted", "glad"].includes(name)).sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
+  // Жесты 0.49.0 — тоже слова страницы на рисунке: наклон головы, взгляд в сторону, вздох, метки-эмоции (`gesture`,
+  // `lookAt` в app.js; какой жест — `logic.gestureOf`).
+  const GESTURE_WORDS = ["peek", "look-l", "look-r", "g-ask", "g-bang", ...logic.GESTURES.filter(name => !["peek", "look-cat", "look-win"].includes(name)).map(name => `g-${name}`)];
+  for (const name of logic.GESTURES.filter(word => !["peek", "look-cat", "look-win"].includes(word))) assert.ok(styled.has(`g-${name}`), `жест «${name}»: правило в стилях`);
+  assert.deepEqual([...styled].filter(name => !classes.has(name) && !["fading", "poked", "patted", "glad", ...GESTURE_WORDS].includes(name)).sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
   for (const name of ["breath", "blink", "slide", "bulb", "tailwag", "steam", "zzz"]) assert.ok(classes.has(name) && styled.has(name), name);
   // Правило с классом из рисунка действует только внутри рисунка (`#room`, `#sky`) — или на сам слой дождя
   // (`.plane.far`, `.plane.near`). У струй внутри слоя те же классы `far` и `near`: правило `.rainbox .far` двигало

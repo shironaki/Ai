@@ -1007,16 +1007,21 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
     "tea3>tea3b:sip", "home-tea3>home-tea3b:sip", "work>workb:glance", "home-work>home-workb:glance", "play2>play2b:dance", "home-play2>home-play2b:dance",
     // 0.46.0: чай у подоконника, книга, шаг — в обоих нарядах; чай под гирляндой в свитере — с 0.47.0.
     "tea>teab:sip", "home-tea>home-teab:sip", "tea2>tea2b:glance", "home-tea2>home-tea2b:glance", "read>readb:sip", "home-read>home-readb:sip", "walk>walkb:pace", "home-walk>home-walkb:pace",
+    // 0.49.0: кадры для поз дня, у которых движения не было.
+    "work2>work2b:glance", "home-work2>home-work2b:glance", "work3>work3b:sip", "home-work3>home-work3b:sip", "tidy>tidyb:sweep", "home-tidy>home-tidyb:sweep",
+    "books>booksb:sip", "home-books>home-booksb:sip", "play3>play3b:sweep", "home-play3>home-play3b:sweep",
   ]);
-  for (const [base, [name, how]] of frames) {
+  for (const [base, [name, how, , grow = 1]] of frames) {
     assert.ok(Object.hasOwn(scene.HER_SPRITES, base), base);
     assert.ok(!Object.hasOwn(scene.HER_SPRITES, name), `${name}: кадр — не поза`);
     assert.equal(scene.frameOf(base), name);
     // Та же фигура того же роста: кадр кладётся с числами первой картинки (`tall`, место), своя у него только ось.
-    assert.equal(FRAME_SPRITES[name].h, SPRITES[base].h, name);
+    // Четвёртое слово (0.49.0) — рост кадра относительно позы: лента взлетела выше головы, и картинка кадра выше.
+    assert.equal(FRAME_SPRITES[name].h, Math.round(SPRITES[base].h * grow), name);
     // Ширина: у неподвижной позы — почти та же; у танца лента улетает в другую сторону, у шага ноги сходятся —
     // там разница больше, а совпадение головы и тела смотрит `verify.sh pairs` (ось тела у кадра — от первой картинки).
-    const slack = how === "dance" || how === "pace" ? 50 : 16;
+    // Взмах метёлкой и лентой (`sweep`, 0.49.0) — метёлка уходит в сторону: разница ещё больше.
+    const slack = how === "sweep" ? 70 : how === "dance" || how === "pace" ? 50 : 16;
     assert.ok(Math.abs(FRAME_SPRITES[name].w - SPRITES[base].w) <= slack, `${name}: ширина ${FRAME_SPRITES[name].w} против ${SPRITES[base].w}`);
     assert.equal(FRAME_SPRITES[name].blink, undefined, `${name}: веки живут в первом кадре`);
   }
@@ -1032,7 +1037,8 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
   assert.equal(scene.spriteOf(seated), "tea3");
   const both = scene.drawRoom(seated, { sprites: { ...SPRITES, ...FRAME_SPRITES } });
   // (0.48.0: кадр, на котором она смотрит на зрителя, помечен `lk`, второй — `nl`; рядом с веками — румянец, невидимый до ласки.)
-  assert.match(both, /<g class="alive"><g class="fr a sip lk"><use href="#r-her-tea3" [^>]+\/><use class="wink" href="#r-her-tea3-blink"[^>]+\/><mask id="r-herBlush"[^>]+><use href="#r-her-tea3" [^>]+\/><\/mask><g class="blush" opacity="0" [^>]+><g fill="#ff5f7a" [^>]+>(?:<ellipse [^>]+\/>){2}<\/g><\/g><g class="steam"/u, "первый кадр: картинка, веки, румянец и пар над кружкой — вместе");
+  // (0.49.0: веки и румянец — в слое головы: та же картинка под мягким овалом, её наклоняют стили — `hd`, `hr`.)
+  assert.match(both, /<g class="alive"><g class="fr a sip lk"><use href="#r-her-tea3" [^>]+\/><mask id="r-herHead"[^>]+><ellipse [^>]+\/><\/mask><g class="hd" style="transform-origin:[\d.]+px [\d.]+px"><g class="hr" style="transform-origin:[\d.]+px [\d.]+px"><g mask="url\(#r-herHead\)"><use href="#r-her-tea3" [^>]+\/><use class="wink" href="#r-her-tea3-blink"[^>]+\/><mask id="r-herBlush"[^>]+><use href="#r-her-tea3" [^>]+\/><\/mask><g class="blush" opacity="0" [^>]+><g fill="#ff5f7a" [^>]+>(?:<ellipse [^>]+\/>){2}<\/g><\/g><\/g><\/g><\/g><g class="steam"/u, "первый кадр: картинка, слой головы с веками и румянцем и пар над кружкой — вместе");
   assert.match(both, /<\/g><g class="fr b sip nl"><use href="#r-her-tea3b" [^>]+\/><\/g><\/g>/u, "второй кадр — следом, поверх");
   assert.match(both, /<image id="r-her-tea3b" /u, "определение второго кадра — в рисунке");
   // Тот же сдвиг и тот же размер: кадр ложится на ту же фигуру (ось тела у кадров общая, рост — первой картинки).
@@ -2507,7 +2513,8 @@ test("0.48.0, страница: день на витрине идёт по ча�
   // Страница ставит мимику по нажатию и красит кнопки под рисунком только хозяину.
   const app = read("miniapp/app.js");
   assert.match(app, /const known = state\.ready && Boolean\(state\.brew\) && state\.owner === true,/u);
-  assert.match(app, /if \(lifeTurn % 2\) \{ if \(!state\.her\?\.steady\) herStep\(\); \} else if \(!state\.cat\?\.steady\) catStep\(\);/u);
+  // С 0.49.0 ход при сердце, которое ведёт её день, уходит на жест (наклон головы, взгляд на Байта).
+  assert.match(app, /if \(lifeTurn % 2\) \{ if \(!state\.her\?\.steady\) herStep\(\); else gesture\(\); \} else if \(!state\.cat\?\.steady\) catStep\(\); else gesture\(\);/u);
   // Звук: за закрытым окном улица втрое тише и глуше, мелодия — громче; открыто — улица в полный голос.
   const sound = read("miniapp/sound.js");
   assert.match(sound, /const SHUT = 0\.3, OPEN = 0\.75, DUCK = 0\.6, GLASS_HZ = 700, AIR_HZ = 16000, SONG = 1\.9;/u);
