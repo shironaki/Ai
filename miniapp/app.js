@@ -472,6 +472,9 @@ function paint() {
   // Небо красится светом: по солнцу города, а без него по часам (`drawn.part` — каким светом оно нарисовано).
   const light = lightIn(view);
   const outside = drawn.part !== light || drawn.sky !== sky || drawn.moon !== moon;
+  // Ветер (0.51.0): слово на самой странице — облака плывут быстрее, шторы у открытого окна ходят сильнее (стили).
+  document.body.classList.toggle("windy", state.wind === 1);
+  document.body.classList.toggle("gale", state.wind === 2);
   // Час или погода сменились при открытой странице — прежний рисунок тает поверх нового (`ghostOf`).
   const fade = outside && Boolean(drawn.part) && (drawn.part !== light || drawn.sky !== sky);
   if (outside) {

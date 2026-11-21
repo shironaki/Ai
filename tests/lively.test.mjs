@@ -556,3 +556,27 @@ test("взгляд в сторону картинкой (0.51.0): заплатк
   assert.match(app, /if \(Math\.abs\(toX - herX\) < 14\) \{[^}]*const eyes = to === "win" \? sprites\[spriteOf\(viewOf\(state\)\)\] : null;\s*if \(!eyes\?\.lookr && !eyes\?\.lookl\) return false;\s*react\(eyes\.lookr \? "look-r" : "look-l", 3200\);/u);
 });
 
+test("ветер на странице и новые слова (0.51.0): сила — только 1 или 2; ветер в открытое окно — волосы качаются чаще; подарки, снимок, взгляд и ветер — без модели", async () => {
+  const logic = await import("../miniapp/logic.js");
+  assert.equal(logic.blank(12).wind, 0);
+  const demo = (params) => logic.applyLook(logic.blank(12), logic.demoLook(12, { part: "день", key: "дело", scene: "0", ...params }), 0);
+  assert.deepEqual([demo({}).wind, demo({ wind: "1" }).wind, demo({ wind: "2" }).wind, demo({ wind: "9" }).wind, demo({ wind: "сильный" }).wind], [0, 1, 2, 0, 0]);
+  for (const wind of [3, "2", true, -1, null]) assert.equal(logic.applyLook(logic.blank(12), { ...logic.demoLook(12, { part: "день", key: "дело", scene: "0" }), wind }, 0).wind, 0, String(wind));
+  // Жесты: окно открыто и дует — каждый четвёртый жест — волосы; улыбка при этом остаётся; окно закрыто — как без ветра.
+  const row = (state) => Array.from({ length: 12 }, (unused, count) => logic.gestureOf(state, count));
+  const open = demo({ wind: "2", open: "1" }), still = demo({ open: "1" }), shut = demo({ wind: "2" });
+  assert.deepEqual([3, 7, 11].map(count => logic.gestureOf(open, count)), ["hair", "hair", "hair"]);
+  assert.notDeepEqual(row(open), row(still));
+  assert.ok(row(open).includes("smile"), "ветер улыбку не отменяет");
+  assert.deepEqual(row(shut), row({ ...shut, wind: 0 }), "окно закрыто — ветер до неё не доходит");
+  // В обиде, ревности и усталости жесты свои — ветер их не трогает.
+  for (const key of ["обида", "ревность", "устала"]) { const sulk = { ...open, her: { ...open.her, key } }; assert.deepEqual(row(sulk), row({ ...sulk, wind: 0 }), key); }
+  // Слова: то, что после 0.49.0 уходило модели, — и новое о ветре и взгляде.
+  const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
+  const book = createPhrasebook({ random: () => 0 });
+  for (const [said, topic] of [["какие у тебя подарки", "что мне подарили"], ["Что тебе подарили?", "что мне подарили"], ["что ты мне подарила", "что ты мне подарила"],
+    ["сохрани этот момент", "снимок на память"], ["Как сохранить этот момент?", "снимок на память"], ["у тебя ветрено", "ветер за окном"], ["куда ты смотришь", "куда ты смотришь"]]) {
+    assert.ok(book.match(said)?.includes(topic), `${said}: тема «${topic}»`);
+  }
+});
+

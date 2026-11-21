@@ -672,7 +672,8 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     if (!got?.ok || !got.current) return null;
     const code = Number(got.current.weather_code);
     if (!Number.isFinite(code)) return null;
-    return { code, temp: Number(got.current.temperature_2m), place: place.name };
+    // Ветер — в метрах в секунду (`wind_speed_unit=ms`): комнате он нужен для штор и облаков (0.51.0).
+    return { code, temp: Number(got.current.temperature_2m), wind: Number(got.current.wind_speed_10m), place: place.name };
   }
   /** Идёт ли в этом городе снег: `true` / `false`; `null` — узнать не удалось. Коды снега: 71–77, 85, 86. */
   async function snowing(placeText) {

@@ -244,7 +244,7 @@ export function createRoomDoor(deps) {
           // `once` (0.49.0): это сердце помнит номера действий — страница может сама повторить запрос, не дошедший за срок.
           ok: true, do: "look", build: BUILD, formal, once: true, ...(again ? { again: true } : {}), ...(repeat ? { repeat: true } : {}),
           ...clockNow(visit.state, [she.left]),
-          greet: spoken(greet), window: windowLine(turn, sky), sky, city: turn.skyReal === true,
+          greet: spoken(greet), window: windowLine(turn, sky), sky, city: turn.skyReal === true, ...(turn.wind ? { wind: turn.wind } : {}),
           box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
           her: she,
           ...shown,

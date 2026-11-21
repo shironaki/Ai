@@ -285,6 +285,7 @@ const LOOK = {
   clock: [(value) => scene.PARTS.includes(value.part) && Number.isInteger(value.hour) && /^\d{4}-\d\d-\d\d$/u.test(value.day) && value.left > 0 && value.lightLeft >= value.left && (value.light === undefined || scene.PARTS.includes(value.light)), "page"],
   wardrobe: [(value) => isText(value.leave) && isText(value.back), "page"], greet: [isText, "page"], window: [isText, "page"],
   sky: [(value) => scene.SKIES.includes(value), "page"], city: [isFlag, "only-heart: настоящая ли погода — для тестов и хозяина"],
+  wind: [(value) => value === 1 || value === 2, "page"],
   box: [(value) => value && isText(value.line), "page"], patted: [isFlag, "page"],
   her: [(value) => scene.HER_POSES.includes(value.pose) && Object.hasOwn(scene.MOODS, value.key) && isText(value.line) && Array.isArray(value.beats) && value.steady === true && value.left > 0 && isText(value.stage) && scene.HER_WEARS.includes(value.wear), "page"],
   cat: [(value) => scene.CAT_SHAPES.includes(value.shape) && scene.CAT_PLACES.includes(value.place) && isText(value.key) && isText(value.line) && Array.isArray(value.beats), "page"],
@@ -332,7 +333,83 @@ test("договор сердца и страницы: каждое поле о�
     for (const [name, value] of Object.entries(twice)) { assert.ok(Object.hasOwn(LOOK, name) && LOOK[name][0](value), `повтор: ${name}`); seen.add(name); }
   }
   // Поля, которых эти заходы не дали (предложение чая, слова конца тихого часа), проверены в `tests/alive.test.mjs`.
+  // Ветер (0.51.0) эти заходы дают: у одного из них за окном гроза, а она без ветра не бывает. По погоде города —
+  // в `tests/miniapp.test.mjs`.
   assert.deepEqual(Object.keys(LOOK).filter(name => !seen.has(name)).sort(), ["event", "offer", "quietEnd", "story"]);
+});
+
+/**
+ * Тот же договор — для альбома, подарка и снимка (0.51.0, идея 181). Читают их три файла страницы: `app.js` (нажатия),
+ * `logic.js` (состояние) и `album.js` (сам альбом). Запись альбома описана отдельно: её читает только `album.js`.
+ */
+const isGifts = (value) => Array.isArray(value) && value.every(kind => logic.GIFT_KINDS.includes(kind));
+const ANSWERS = {
+  album: {
+    ok: [(value) => value === true, "page"], do: [(value) => value === "album", "only-heart: страница знает, что спрашивала"], build: [isText, "page"],
+    items: [(value) => Array.isArray(value) && value.every(item => isText(item.k) && item.k && isText(item.key) && isText(item.title) && item.title && /^\d{4}-\d\d-\d\d$/u.test(item.day) && isText(item.date) && item.date
+      && (item.line === undefined || isText(item.line)) && (item.told === undefined || isFlag(item.told)) && (item.view === undefined || (scene.PARTS.includes(item.view.part) && scene.HER_POSES.includes(item.view.her.pose)))), "page"],
+    line: [isText, "page"], gift: [(value) => isFlag(value.ok) && isCount(value.days), "page"], kinds: [isGifts, "page"], gifts: [isGifts, "page"],
+  },
+  gift: {
+    ok: [(value) => value === true, "page"], do: [(value) => value === "gift", "only-heart: страница знает, что спрашивала"], build: [isText, "page"],
+    taken: [isFlag, "page"], days: [isCount, "only-heart: срок до следующего подарка — в её словах и в ответе альбома (`gift.days`)"], gifts: [isGifts, "page"],
+    line: [isText, "page"], note: [isText, "page"], counted: [isFlag, "only-heart: пошёл ли подарок в счёт отношений"],
+  },
+  snap: {
+    ok: [(value) => value === true, "page"], do: [(value) => value === "snap", "only-heart: страница знает, что спрашивала"], build: [isText, "page"],
+    taken: [isFlag, "page"], line: [isText, "page"],
+  },
+};
+const ALBUM_ITEM = {
+  k: "page", title: "page", date: "page", line: "page", view: "page", told: "page",
+  key: "only-heart: какой это «первый раз» или подарок — заголовок уже словами", day: "only-heart: день записи — страница показывает готовое `date`",
+};
+test("договор сердца и страницы — альбом, подарок, снимок (0.51.0): каждое поле описано, годно и прочитано страницей", async () => {
+  const source = `${read("miniapp/logic.js")}\n${read("miniapp/app.js")}\n${read("miniapp/album.js")}`;
+  for (const [answer, fields] of Object.entries(ANSWERS)) for (const [name, [, reader]] of Object.entries(fields)) {
+    if (reader === "page") assert.match(source, new RegExp(`result\\??\\.${name}\\b`, "u"), `${answer}.${name}: страница это поле читает`);
+    else assert.match(reader, /^only-heart: \S/u, `${answer}.${name}: названо, почему страница его не читает`);
+  }
+  for (const [name, reader] of Object.entries(ALBUM_ITEM)) {
+    if (reader === "page") assert.match(read("miniapp/album.js"), new RegExp(`item\\.${name}\\b`, "u"), `запись альбома, ${name}: альбом это поле читает`);
+    else assert.match(reader, /^only-heart: \S/u, name);
+  }
+  reset();
+  const time = clock(Date.parse("2026-11-18T11:00:00Z"));
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  await h.onRoom({ do: "look" }, from(5));
+  const seen = { album: new Set(), gift: new Set(), snap: new Set() }, items = new Set();
+  const check = (answer, reply) => {
+    assert.equal(reply.ok, true, JSON.stringify(reply).slice(0, 200));
+    for (const [name, value] of Object.entries(reply)) {
+      assert.ok(Object.hasOwn(ANSWERS[answer], name), `${answer}: поле «${name}» в ответе сердца не описано в договоре`);
+      assert.ok(ANSWERS[answer][name][0](value), `${answer}.${name}: ${JSON.stringify(value).slice(0, 160)}`);
+      seen[answer].add(name);
+    }
+    return reply;
+  };
+  const empty = check("album", await h.onRoom({ do: "album" }, from(5)));
+  assert.deepEqual([empty.gift.ok, empty.kinds], [true, [...logic.GIFT_KINDS]], "подарить можно — альбом покажет кнопки");
+  const given = check("gift", await h.onRoom({ do: "gift", kind: "flower" }, from(5)));
+  assert.deepEqual([given.taken, given.gifts], [true, ["flower"]]);
+  // Страница принимает подарок и остаётся в рабочем виде: он стоит в комнате, её слова — под рисунком.
+  const state = logic.applyGift(logic.applyLook(logic.blank(14), await h.onRoom({ do: "look", again: true }, from(5)), time.now()), given);
+  assert.deepEqual([state.gifts, state.tone, state.said], [["flower"], "", given.line]);
+  // Второй подарок за неделю — отказ словами, а не ошибкой; тот же договор.
+  assert.equal(check("gift", await h.onRoom({ do: "gift", kind: "book" }, from(5))).taken, false);
+  assert.equal(check("snap", await h.onRoom({ do: "snap" }, from(5))).taken, true);
+  assert.equal(check("snap", await h.onRoom({ do: "snap" }, from(5))).taken, false);
+  const album = check("album", await h.onRoom({ do: "album" }, from(5)));
+  assert.equal(album.gift.ok, false, "подарено — альбом вместо кнопок назовёт срок");
+  for (const item of album.items) for (const name of Object.keys(item)) { assert.ok(Object.hasOwn(ALBUM_ITEM, name), `запись альбома: поле «${name}» не описано в договоре`); items.add(name); }
+  assert.ok(album.items.some(item => item.k === "snap" && item.view) && album.items.some(item => item.k === "gift"));
+  // Альбом страницы понимает ответ целиком: записи — те же и в том же порядке, снимок несёт рисунок.
+  const { listOf } = await import("../miniapp/album.js");
+  assert.deepEqual(listOf(album).map(item => item.title), album.items.map(item => item.title));
+  assert.equal(listOf(album).filter(item => item.view).length, album.items.filter(item => item.k === "snap").length);
+  // Чего эти ходы не дали: приписка к словам о подарке и запись «рассказала потом» — они в `tests/lively.test.mjs`.
+  assert.deepEqual(Object.fromEntries(Object.entries(ANSWERS).map(([answer, fields]) => [answer, Object.keys(fields).filter(name => !seen[answer].has(name)).sort()])), { album: [], gift: ["note"], snap: [] });
+  assert.deepEqual(Object.keys(ALBUM_ITEM).filter(name => !items.has(name)).sort(), ["told"]);
 });
 
 test("дверь комнаты вынесена из сердца: списки имён у двери и у сердца совпадают, лишних нет; запас веса сердца назван", async () => {

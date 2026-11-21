@@ -948,6 +948,19 @@ try {
       if (/дожд/u.test(seen.label) !== (sky === "rain")) fail(`погода «${sky}»: подпись рисунка — «${seen.label}»`);
       skies.push(sky);
     }
+    // Ветер (0.51.0): слово на странице — и по нему облака плывут быстрее, шторы у открытого окна ходят сильнее.
+    let winds = 0;
+    for (const [wind, word, cloud, curtain] of [["2", "gale", "36s", "gale"], ["1", "windy", "66s", "breeze"], ["", "", "120s", "breeze"]]) {
+      await open(`part=${encodeURIComponent("день")}&sky=clouds&open=1&turn=600000&scene=0${wind ? `&wind=${wind}` : ""}`);
+      for (let spent = 0; spent < 3000; spent += 150) { if (await tab.evaluate(() => document.querySelectorAll("#sky .drift").length && document.querySelectorAll("#room .breeze").length)) break; await pause(150); }
+      const air = await tab.evaluate(() => ({
+        words: [...document.body.classList].filter(name => name === "gale" || name === "windy").join(" "),
+        cloud: getComputedStyle(document.querySelector("#sky .drift") ?? document.body).animationDuration,
+        curtain: getComputedStyle(document.querySelector("#room .breeze") ?? document.body).animationName,
+      }));
+      if (air.words !== word || air.cloud !== cloud || air.curtain !== curtain) fail(`ветер «${wind || "нет"}»: на странице ${JSON.stringify(air)}`);
+      else winds += 1;
+    }
 
     // Смена часа при открытой странице: день → вечер. Она уходит к шкафу, на её месте — «*переодевается*», свет
     // перетекает, и она возвращается в свитере. Сроки названы в адресе: час «кончается» через секунду.
@@ -980,7 +993,7 @@ try {
     else if (!noon.fading) fail("утро → день: свет сменился рывком — прежний слой не тает");
     else if (noon.note) fail("утро → день: она ушла переодеваться, хотя наряд тот же");
     if (broken.length) fail(`своя жизнь и смена часа — ошибка на странице: ${broken[0].slice(0, 200)}`);
-    if (failures.length === failed) console.log(`  она и Байт сами переходят к следующему занятию и доходят шагом, слова — о нынешней картинке; погода: ${skies.length} видов неба; сценка видна на рисунке; день → вечер: ${sequence}`);
+    if (failures.length === failed) console.log(`  она и Байт сами переходят к следующему занятию и доходят шагом, слова — о нынешней картинке; погода: ${skies.length} видов неба, ветер — ${winds} силы из трёх; сценка видна на рисунке; день → вечер: ${sequence}`);
     await tab.close();
   }
 

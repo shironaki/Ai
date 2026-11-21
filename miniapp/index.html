@@ -312,6 +312,13 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 #room .breeze { transform-box: fill-box; transform-origin: 50% 0; animation: breeze 4.6s ease-in-out infinite alternate; }
 #room .breeze.b1 { animation-delay: -1.9s; }
 @keyframes breeze { from { transform: skewX(-1.1deg); } to { transform: skewX(1.5deg) scaleX(1.012); } }
+/* 0.51.0 — ветер (идея 189). Сердце называет его силу по погоде города, страница ставит слово на себя: .windy — от
+   4 м/с, .gale — от 8 м/с и в грозу. Облака плывут быстрее, шторы у открытого окна ходят сильнее. */
+.windy #sky .drift { animation-duration: 66s; }
+.gale #sky .drift { animation-duration: 36s; }
+.windy #room .breeze { animation-duration: 3.1s; }
+.gale #room .breeze { animation-name: gale; animation-duration: 2.2s; }
+@keyframes gale { from { transform: skewX(-2.4deg); } to { transform: skewX(3.4deg) scaleX(1.03); } }
 /* 0.49.0 — Байт просится на руки: лапы тянутся к ней. */
 #room .reach { animation: scratch 1.5s ease-in-out infinite alternate; }
 /* 0.49.0 — страница свёрнута: движение на рисунке стоит (.resting); её картинка ещё в пути — мягкий силуэт и три

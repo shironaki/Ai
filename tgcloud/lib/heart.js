@@ -1776,7 +1776,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const clock = (at) => { const local = localParts(at, zoneOf(turn)); return `${String(local.hh).padStart(2, "0")}:${String(local.mm).padStart(2, "0")}`; };
     const ctx = voiceCtx(turn, turn.sun ? { "восход": clock(turn.sun.rise), "закат": clock(turn.sun.set) } : {});
     const air = { ...ctx, part: windowTag(ctx.part, turn.light) };
-    return book.pick(`+комната:${WINDOW_POOL[sky] ?? "окно"}`, air) ?? book.pick("+комната:окно", air) ?? "";
+    // Сильный ветер (0.51.0) — слова о нём, а не о небе; у грозы слова свои.
+    const gale = turn.wind >= 2 && sky !== "storm" ? book.pick("+комната:окно:ветер", air) : null;
+    return gale ?? book.pick(`+комната:${WINDOW_POOL[sky] ?? "окно"}`, air) ?? book.pick("+комната:окно", air) ?? "";
   };
   const ROOM_POOL = Object.freeze({ pet: "погладить", feed: "покормить", play: "поиграть", tea: "чай", water: "полить" });
   /**
@@ -1922,9 +1924,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (turn.sky) return turn.sky;
     const city = String(turn.manner?.settings?.city ?? "").trim();
     let sky = null;
-    if (city && sources.available() && typeof sources.skyNow === "function") sky = skyOfCode((await sources.skyNow(city).catch(() => null))?.code);
+    let blow = 0;
+    if (city && sources.available() && typeof sources.skyNow === "function") {
+      const real = await sources.skyNow(city).catch(() => null);
+      sky = skyOfCode(real?.code);
+      blow = sky ? Number(real?.wind) || 0 : 0;
+    }
     turn.skyReal = Boolean(sky);
     turn.sky = sky ?? randomSky({ seed: roomSeed(turn.actorId, "sky"), at: now(), month: localParts(now(), zoneOf(turn)).m });
+    // Ветер (идея 189, 0.51.0) — из той же погоды города, в метрах в секунду: от 4 — «ветрено» (1), от 8 — «сильный»
+    // (2); гроза без ветра не бывает. Погоды нет — ветра нет: выдумывать его не из чего.
+    turn.wind = turn.sky === "storm" || blow >= 8 ? 2 : blow >= 4 ? 1 : 0;
     // Свет за окном — по солнцу того же города (идея 164, 0.47.0): рассвет и закат в комнате тогда же, когда у
     // человека. Солнцу служба погоды не нужна — только место города (оно помнится месяц). Города нет или солнце в
     // этот день не встаёт и не садится — свет идёт по часам (`turn.light` пуст). Её день — наряд, сон, слова — по

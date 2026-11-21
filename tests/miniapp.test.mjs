@@ -1896,3 +1896,33 @@ test("запасная кнопка публикации делает то же,
   assert.match(phone, /tg push miniapp/u);
   assert.match(phone, /ctx="\{ tick: true, deployed: true, page: \\"\$PAGE_URL\\" \}"/u);
 });
+
+test("ветер (0.51.0): сила — из погоды города; сильный — слова об окне о нём; поле в ответе — только когда дует", async () => {
+  const forecast = (code, wind) => ({ current: { temperature_2m: 5, apparent_temperature: 2, weather_code: code, wind_speed_10m: wind }, daily: { temperature_2m_max: [6, 5, 4], temperature_2m_min: [1, 0, -1], weather_code: [code, 3, 3], precipitation_probability_max: [10, 10, 5] } });
+  const moscow = () => source("geocoding-api.open-meteo.com", { results: [{ name: "Москва", country: "Россия", admin1: "Москва", latitude: 55.7558, longitude: 37.6173, timezone: "Europe/Moscow", feature_code: "PPLC" }] });
+  const gale = read("PHRASES.txt").split("== +комната:окно:ветер ==\n")[1].split("\n\n")[0].split("\n").map(line => line.replace(/^\[[^\]]+\] /u, ""));
+  assert.ok(gale.length >= 5);
+  // Ветер бывает при любом небе и при любом окне: в его словах нет ни дождя, ни солнца, ни снега, ни «открыто».
+  for (const line of gale) assert.doesNotMatch(line, /дожд|снег|солн|ясн|туман|гроз|молни|открыт|закрыт/iu, line);
+  for (const [code, wind, level, sky] of [[3, 2.5, 0, "overcast"], [3, 4, 1, "overcast"], [2, 7.9, 1, "clouds"], [0, 8, 2, "clear"], [3, 14, 2, "overcast"], [95, 1, 2, "storm"], [73, 9, 2, "snow"]]) {
+    reset();
+    moscow();
+    source("api.open-meteo.com/v1/forecast", forecast(code, wind));
+    const at = Date.parse("2027-04-15T10:00:00Z");
+    const windy = heart({ ...ON, SOURCES: true }, { now: () => at, random: () => 0 });
+    await windy.onMessage(own("мой город — Москва"), KEY);
+    const out = await windy.onRoom({ do: "look" }, from(OWNER));
+    assert.deepEqual([out.sky, out.city, out.wind], [sky, true, level || undefined], `${code}, ${wind} м/с`);
+    assert.equal(Object.hasOwn(out, "wind"), level > 0, "поле есть, только когда дует: прежняя страница его не ждёт");
+    // Сильный ветер — слова о нём; в грозу — слова грозы; слабее — слова о небе.
+    assert.equal(gale.includes(out.window), level === 2 && sky !== "storm", `${code}, ${wind} м/с: ${out.window}`);
+    // Страница: слово о ветре доходит до её состояния.
+    assert.equal(logic.applyLook(logic.blank(13), out, at).wind, level);
+  }
+  // Города нет — ветра нет: выдумывать его не из чего (кроме грозы — она без ветра не бывает).
+  reset();
+  const calm = heart(ON, { now: () => Date.parse("2027-04-15T10:00:00Z"), random: () => 0 });
+  const out = await calm.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([out.city, out.wind], [false, out.sky === "storm" ? 2 : undefined]);
+});
+

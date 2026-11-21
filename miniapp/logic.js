@@ -53,7 +53,7 @@ export function blank(hour = 12) {
     lines: { her: "", window: "", cat: "", box: "", things: {} }, done: {}, scene: null, build: "", next: null,
     // Которая по счёту её поза (позы состояния идут по кругу) и гладили ли её сегодня; что за окном (`SKIES`).
     // Пока сердце не ответило, за окном — ровное серое небо: какая там погода, ещё неизвестно.
-    turn: 0, patted: false, sky: "overcast",
+    turn: 0, patted: false, sky: "overcast", wind: 0,
     // 0.44.0. Луна по фазе; что сценка дня изменила в комнате; её нет в комнате (ушла к шкафу) или она только что
     // вошла; сколько осталось до смены часа (`left`, мс — от `at`, когда пришёл ответ); её слова у шкафа.
     moon: 0.3, fx: [], away: false, entering: false, clock: null, wardrobe: null,
@@ -132,6 +132,8 @@ export function gestureOf(state, count = 0) {
   if (!state?.ready || !her || state.away || her.key === "сон") return "";
   const cat = state.cat, lively = Boolean(cat) && (cat.place === "near" || ["play", "walk", "claw", "beg", "gift"].includes(cat.shape));
   const airy = state.open === true;
+  // Ветер в открытое окно (0.51.0): волосы качаются чаще — каждый четвёртый жест, кроме обиды, ревности и усталости.
+  if (airy && state.wind > 0 && count % 4 === 3 && !["обида", "ревность", "устала"].includes(her.key) && her.face !== "drowsy") return "hair";
   const list = her.key === "обида" ? ["huff", "away", "huff", ""]
     : her.key === "ревность" ? ["huff", "peek", "away"]
       : her.key === "устала" ? ["sigh", "yawn", "sigh", ""]
@@ -305,6 +307,8 @@ export function applyLook(state, result, at = 0) {
     glow: glowOf(result.clock, PARTS.includes(result.clock?.light) ? result.clock.light : part),
     her: herOf(result.her),
     turn: 0, patted: result.patted === true, sky: skyOf(result.sky),
+    // Ветер (0.51.0): 1 — ветрено, 2 — сильный; прежнее сердце о нём молчит — тогда его нет.
+    wind: result.wind === 1 || result.wind === 2 ? result.wind : 0,
     // Луна — по дню человека; дня в ответе нет — по часам устройства; нет и их — обычный месяц.
     moon: moonOf(text(result.clock?.day, 10) || (at > 0 ? at : null)), fx: sceneOf(result.scene)?.fx ?? [], away: false, entering: false,
     clock: clockOf(result.clock, at, result.step), wardrobe: wardrobeOf(result.wardrobe),
@@ -671,7 +675,7 @@ export function demoLook(hour = 12, params = {}) {
   // Позу назвали в адресе — она стоит в ней и распорядка нет: снимок должен быть таким, каким его попросили.
   const fixed = HER_POSES.includes(params.her);
   return {
-    ok: true, do: "look", build: "", owner: true, kinds: [...BREWS], open: params.open === "1",
+    ok: true, do: "look", build: "", owner: true, kinds: [...BREWS], open: params.open === "1", ...(params.wind === "1" || params.wind === "2" ? { wind: Number(params.wind) } : {}),
     ...(timed ? { step: Math.max(3_000, Math.round((10 - (minute % 10)) * 60_000)) } : {}),
     ...(timed && block[0] === 13 && (hour - 13) * 60 + minute < 25 ? { offer: { id: "витрина", kind: "tea", text: DEMO_OFFER } } : {}),
     clock: { hour, part, ...(PARTS.includes(params.light) ? { light: params.light } : {}), ...(left > 0 ? { left } : {}), ...(Number(params.glow) > 0 ? { lightLeft: Number(params.glow) * 60_000 } : {}) }, greet: DEMO_NOTE, window: sky === "rain" ? DEMO_RAIN[part] : DEMO_WINDOW[sky], sky,
