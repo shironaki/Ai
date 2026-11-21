@@ -2137,7 +2137,8 @@ const giftBook = (c) => `<rect x="34" y="164.6" width="25" height="5.4" rx="0.9"
 const giftToy = (f) => `<g transform="translate(34 476)"><ellipse cx="0" cy="1.6" rx="8" ry="2" fill="#1a0f1e" opacity="0.2"/><ellipse cx="0" cy="-2.4" rx="6.6" ry="4" fill="${f.rugLight}"/><circle cx="-4" cy="-5.6" r="2" fill="${f.rugLight}"/><circle cx="-5.4" cy="-2.2" r="0.8" fill="${f.ink}"/><path d="M6.4 -2 q5 -3.6 7 1.4" fill="none" stroke="${f.rugLight}" stroke-width="1.2" stroke-linecap="round"/></g>`;
 /**
  * Её картинка ещё в пути (0.49.0): на её месте — мягкий силуэт и три точки, чтобы было видно, что она появляется, а
- * не пропала. До шести секунд (потом её рисует код); картинка пришла — силуэт сменяется ею.
+ * не пропала. Ждёт, сколько нужно: с 0.52.0 код рисует её, только если картинку не может показать сам телефон;
+ * картинка пришла — силуэт сменяется ею.
  */
 function herComing(x) {
   const dots = [-10, 0, 10].map((dx, index) => `<circle class="dot d${index}" cx="${n(x + dx)}" cy="330" r="3.2" fill="#ffffff"/>`).join("");
@@ -2179,23 +2180,30 @@ function catLeg(f, x, y, far, turn) {
   return `<g transform="translate(${x} ${y})"><g class="lg up p${turn}"><path d="M0 0 V8.2" ${ink}/><g transform="translate(0 8.2)"><g class="lg low p${turn}"><path d="M0 0 V6" ${ink}/>${catPaw(f, -0.8, 7.2, 3.8)}</g></g></g></g>`;
 }
 
-/** Морда. Точка отсчёта — центр. `eyes` — open, closed, narrow, wide. */
+/**
+ * Морда. Точка отсчёта — центр. `eyes` — open, closed, wide (круглые зрачки: просит), play (шалит: круглые зрачки,
+ * кончик языка), sad (обижен: бровки домиком). Прищура — века с опущенным внутренним краем — больше нет (0.52.0,
+ * сообщение 53: «не нравится вот эта вот хмурая или же хитрая морда кота, есть что-то приятное?»): он был у «шалит»,
+ * а это самое частое его состояние, — и Байт хмурился почти всегда.
+ */
 function catHead(g, f, eyes = "open") {
+  const round = eyes === "wide" || eyes === "play" || eyes === "sad";
   const eye = (s) => {
     const x = s * 6.6, y = -1.8;
     if (eyes === "closed") return `<path d="M${n(x - 3.6)} ${n(y - 0.2)} q3.6 3.2 7.2 0" fill="none" stroke="${f.ink}" stroke-width="1.4" stroke-linecap="round"/>`;
-    const wide = eyes === "wide";
     const ball = [
-      `<ellipse cx="${n(x)}" cy="${n(y)}" rx="${wide ? 4 : 3.6}" ry="${wide ? 4.4 : 4}" fill="${g.lin("catEye", [[0, f.catEyeDark], [0.45, f.catEye], [1, lt(f.catEye, 0.35)]])}" stroke="${f.ink}" stroke-width="0.7"/>`,
-      wide ? `<circle cx="${n(x)}" cy="${n(y + 0.2)}" r="2.7" fill="#1c1a22"/>` : `<ellipse cx="${n(x)}" cy="${n(y + 0.1)}" rx="1.35" ry="3.2" fill="#1c1a22"/>`,
-      `<circle cx="${n(x - 1.1)}" cy="${n(y - 1.6)}" r="${wide ? 1.2 : 0.95}" fill="#ffffff"/>${wide ? `<circle cx="${n(x + 1.3)}" cy="${n(y + 1.6)}" r="0.7" fill="#ffffff"/>` : ""}`,
+      `<ellipse cx="${n(x)}" cy="${n(y)}" rx="${round ? 4 : 3.7}" ry="${round ? 4.4 : 4.1}" fill="${g.lin("catEye", [[0, f.catEyeDark], [0.45, f.catEye], [1, lt(f.catEye, 0.35)]])}" stroke="${f.ink}" stroke-width="0.7"/>`,
+      // Зрачок: круглый — когда просит, шалит или обижен; в покое — овальный, но не щёлкой: щёлка смотрит строго.
+      round ? `<circle cx="${n(x)}" cy="${n(y + (eyes === "sad" ? 0.9 : 0.2))}" r="2.7" fill="#1c1a22"/>` : `<ellipse cx="${n(x)}" cy="${n(y + 0.1)}" rx="2.1" ry="3.3" fill="#1c1a22"/>`,
+      `<circle cx="${n(x - 1.1)}" cy="${n(y - 1.6)}" r="${round ? 1.2 : 1.05}" fill="#ffffff"/><circle cx="${n(x + 1.3)}" cy="${n(y + 1.6)}" r="${round ? 0.7 : 0.55}" fill="#ffffff"/>`,
     ];
-    if (eyes !== "narrow") return `<g class="blink">${ball.join("")}</g>`;
-    // Прищур: веко опущено, внутренний край ниже — недоволен или задумал шалость.
-    const yl = y - 0.2 + (s < 0 ? -1.4 : 1), yr = y - 0.2 + (s < 0 ? 1 : -1.4);
-    return [...ball, `<path d="M${n(x - 4.6)} ${n(y - 5.4)} H${n(x + 4.6)} V${n(yr)} L${n(x - 4.6)} ${n(yl)}Z" fill="${f.cat}"/>`, `<path d="M${n(x - 4.4)} ${n(yl)} L${n(x + 4.4)} ${n(yr)}" stroke="${f.ink}" stroke-width="1.3" stroke-linecap="round"/>`].join("");
+    // Обижен: бровки домиком — жалобно, а не сердито.
+    const brow = eyes === "sad" ? `<path d="M${n(x + s * 3.6)} ${n(y - 4.6)} L${n(x - s * 3)} ${n(y - 6.8)}" fill="none" stroke="${f.catDark}" stroke-width="1.2" stroke-linecap="round"/>` : "";
+    return `<g class="blink">${ball.join("")}</g>${brow}`;
   };
   const ear = (s) => `<path d="M${s * 14.8} -4.6 L${s * 13.6} -22 L${s * 2.2} -12.6Z" fill="${f.cat}"/><path d="M${s * 12.6} -8.6 L${s * 12} -17.8 L${s * 5.6} -12.4Z" fill="${f.catEar}"/>`;
+  const mouth = eyes === "sad" ? `<path d="M0 4.7 v1.6 M-2.6 8 q2.6 -2.2 5.2 0" fill="none" stroke="${f.ink}" stroke-width="0.85" stroke-linecap="round"/>`
+    : `${eyes === "play" ? `<path d="M-1.7 6.5 h3.4 v1.3 a1.7 1.9 0 0 1 -3.4 0z" fill="#f08aa8"/>` : ""}<path d="M0 4.7 v1.3 M0 6 q-2.4 2.2 -4.4 0.2 M0 6 q2.4 2.2 4.4 0.2" fill="none" stroke="${f.ink}" stroke-width="0.85" stroke-linecap="round"/>`;
   return [
     ear(-1), ear(1),
     `<path d="M-15.4 -1 C-15.4 -10 -9 -13.8 0 -13.8 C9 -13.8 15.4 -10 15.4 -1 L19 3 L15.2 3.8 L17.4 7.6 L12.6 7.6 C9 10.8 5 12 0 12 C-5 12 -9 10.8 -12.6 7.6 L-17.4 7.6 L-15.2 3.8 L-19 3Z" fill="${fur(g, f)}"/>`,
@@ -2204,7 +2212,7 @@ function catHead(g, f, eyes = "open") {
     `<ellipse cx="0" cy="5.2" rx="7.8" ry="5.4" fill="${f.catLight}"/>`,
     eye(-1), eye(1),
     `<path d="M-2 2.3 h4 l-2 2.4z" fill="${f.nose}"/>`,
-    `<path d="M0 4.7 v1.3 M0 6 q-2.4 2.2 -4.4 0.2 M0 6 q2.4 2.2 4.4 0.2" fill="none" stroke="${f.ink}" stroke-width="0.85" stroke-linecap="round"/>`,
+    mouth,
     `<path d="M-8.6 4.4 L-22 2 M-8.6 5.8 L-22.6 6.2 M-8.6 7 L-21 10 M8.6 4.4 L22 2 M8.6 5.8 L22.6 6.2 M8.6 7 L21 10" stroke="${f.white}" stroke-width="0.6" stroke-linecap="round" opacity="0.9"/>`,
   ].join("");
 }
@@ -2272,7 +2280,7 @@ function catShape(g, f, shape, { eyes = "open", angry = false, gait = false } = 
       stripes(f, "M9.6 -32 q-4 0.4 -6.6 2.6 M11.4 -25.6 q-4 0.4 -6.6 2.6 M13 -19 q-4 0.4 -6.6 2.6 M14.4 -12.4 q-3.6 0.4 -6 2.4"),
       `<path d="M-6.6 -28 Q-2 -21 -3 -9.6 Q-8 -17 -8.6 -25Z" fill="${f.catLight}" opacity="0.9"/>`,
       `<g class="scratch"><path d="M-6 -35 L-23 -50.6 M-3 -38 L-19.6 -58.6" stroke="${f.cat}" stroke-width="5.8" stroke-linecap="round"/>${catPaw(f, -24.4, -51.6, 3.6)}${catPaw(f, -21, -59.6, 3.6)}</g>`,
-      at(3, -46.6, catHead(g, f, eyes === "open" ? "narrow" : eyes), " rotate(-10)"),
+      at(3, -46.6, catHead(g, f, eyes), " rotate(-10)"),
     ].join("");
     case "belly": return [
       // На спине: светлый живот кверху, лапы поджаты, голова повёрнута к зрителю. «Это ловушка — но приятная».
@@ -2285,8 +2293,9 @@ function catShape(g, f, shape, { eyes = "open", angry = false, gait = false } = 
     case "eyes": return [
       // Темнота, из которой смотрят два глаза.
       `<ellipse cx="0" cy="-5" rx="19" ry="6" fill="#120c18" opacity="0.55"/>`,
-      [-6, 6].map(x => `<ellipse cx="${x}" cy="-5.4" rx="4" ry="${eyes === "narrow" ? 2.4 : 3.4}" fill="${DAY.catEye}"/><ellipse cx="${x}" cy="-5.4" rx="1.2" ry="${eyes === "narrow" ? 2.2 : 3}" fill="#17131c"/><circle cx="${x - 1.2}" cy="-6.4" r="0.8" fill="#ffffff"/>`).join(""),
-      eyes === "narrow" ? `<path d="M-10.6 -8.6 L-2 -6.6 M10.6 -8.6 L2 -6.6" stroke="#120c18" stroke-width="2.2" stroke-linecap="round"/>` : "",
+      // Обижен — смотрит из темноты жалобно: зрачки круглые, верхний край глаз скошен наружу (0.52.0: сердитых бровей нет).
+      [-6, 6].map(x => `<ellipse cx="${x}" cy="-5.4" rx="4" ry="3.6" fill="${DAY.catEye}"/>${eyes === "sad" ? `<circle cx="${x}" cy="-4.8" r="2.3" fill="#17131c"/>` : `<ellipse cx="${x}" cy="-5.4" rx="1.7" ry="3" fill="#17131c"/>`}<circle cx="${x - 1.2}" cy="-6.4" r="0.9" fill="#ffffff"/>`).join(""),
+      eyes === "sad" ? `<path d="M-10.8 -7 L-2.4 -9.6 M10.8 -7 L2.4 -9.6" stroke="#120c18" stroke-width="2.2" stroke-linecap="round"/>` : "",
     ].join("");
     case "tail": return catTail(f, "M-2 -2 Q9 -4 10 -15 Q10.6 -23 16.6 -24", "M3.6 -3.4 l1.6 3.4 M8.6 -9 l3.4 1.2 M9.8 -16 l3.6 -0.4 M12 -22.6 l2 3", { cls: wag, tip: "M14 -23.4 L16.6 -24" });
     // 0.49.0 (сообщение 48). Принёс добычу: сидит, у лап — игрушечная мышь. Просится на руки: встал на задние лапы
@@ -2385,7 +2394,7 @@ function cat(g, f, view, pose, given = null, was = null) {
   const spot = given ?? catSpot(place, asked, pose);
   const shape = catShapeAt(spot, asked, place);
   const key = view?.key ?? "";
-  const eyes = shape === "lie" && (key === "голоден" || key === "игра" || key === "ласка" || key === "сыт") ? "closed" : key === "обижен" || key === "шалит" ? "narrow" : key === "голоден" ? "wide" : "open";
+  const eyes = shape === "lie" && (key === "голоден" || key === "игра" || key === "ласка" || key === "сыт") ? "closed" : key === "обижен" ? "sad" : key === "шалит" ? "play" : key === "голоден" ? "wide" : "open";
   const k = spot.k ?? 1, small = shape === "eyes" || shape === "tail";
   const angry = key === "обижен" || key === "шалит";
   const body = catShape(g, f, shape, { eyes, angry });

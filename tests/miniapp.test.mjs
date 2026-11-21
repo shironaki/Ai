@@ -1414,7 +1414,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "14");
+  assert.equal(logic.PAGE, "15");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1819,11 +1819,21 @@ test("страница: папка уходит на платформу файл
   assert.ok(markupWrites.some(drawnParts), "рисунок по частям на странице есть");
   assert.match(app, /const still = scene\.drawParts\(view, calm\), moving = options \? scene\.drawParts\(view, options\) : still;/u, "части рисунка — только из рисунка");
   // Её картинки (0.40.0): модуль грузится по имени из рисунка и только когда нужен; новые имена рисунка перед
-  // вызовом проверяются (рядом может лежать прежний `scene.js`); не загрузилась — она нарисована кодом.
+  // вызовом проверяются (рядом может лежать прежний `scene.js`). С 0.52.0 (сообщение 53): не пришла — она НЕ
+  // нарисована кодом, на её месте силуэт, а страница просит картинку снова; кодом — только если картинка пришла,
+  // а показать её телефон не может.
   assert.match(app, /const canPaint = typeof spriteOf === "function" && typeof drawSprite === "function";/u);
   assert.match(app, /if \(!canPaint \|\| !name \|\| asked\.has\(name\)\) return;/u);
   assert.match(app, /import\(`\.\/her\/\$\{name\}\.js`\)/u);
-  assert.match(app, /\.catch\(\(\) => \{ clearTimeout\(late\); settle\(name, false\); \}\);/u);
+  assert.doesNotMatch(app, /SPRITE_WAIT_MS|clearTimeout\(late\)/u, "срока, после которого её рисует код, больше нет");
+  assert.match(app, /const SPRITE_AGAIN_MS = Object\.freeze\(\[2_000, 5_000, 12_000, 25_000, 60_000\]\);/u);
+  assert.match(app, /if \(error\?\.message === "empty" \|\| error\?\.message === "unreadable"\) \{ settle\(name, false\); return; \}/u, "кодом — только когда картинку не показать");
+  assert.match(app, /const wait = SPRITE_AGAIN_MS\[attempt\];\n\s+if \(wait === undefined\) \{ note\("картинка", "late", name\); asked\.delete\(name\); return; \}\n\s+sooner\.set\(name, \[setTimeout\(\(\) => loadSprite\(name, attempt \+ 1, ""\), wait\), attempt \+ 1\]\);/u, "не пришла — просит снова, а потом пишет в журнал");
+  assert.match(app, /\(attempt \? import\(`\.\/her\/\$\{name\}\.js\?again=\$\{attempt\}`\) : import\(`\.\/her\/\$\{name\}\.js`\)\)/u, "повторная просьба — под другим адресом");
+  // Память телефона (0.52.0): последние восемь картинок — в `localStorage`, под номером страницы; всё в try/catch.
+  assert.match(app, /const HER_KEY = `ai-room-her:\$\{PAGE\}:`, HER_LIST = "ai-room-her", HER_KEPT = 8;/u);
+  assert.match(app, /if \(kept\) \{ if \(JSON\.stringify\(sprite\) !== kept && await decoded\(sprite\)\) keepSprite\(name, sprite\); return; \}/u, "картинка из памяти уже на рисунке: новая — в следующий заход");
+  assert.match(app, /tardy \? "картинка Аи ещё в пути" : ""/u);
   // Модуль пришёл, а картинку в нём браузер показать не может (не знает формата, страница не даёт) — это тоже
   // «не загрузилась»: иначе рисунок сослался бы на картинку, которой не видно, и её в комнате не было бы вовсе.
   // Так и было до выпуска 0.40.0: ошибка разбора картинки проглатывалась. Случай открывает `verify.sh page` (шаг 6).
@@ -1837,7 +1847,7 @@ test("страница: папка уходит на платформу файл
   // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
   assert.match(app, /const fresh = putInside\(view, options, fade\);/u);
   assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
-  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, звук и альбом (0.49.0)");
+  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, звук и альбом (0.49.0)");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).
   assert.match(app, /const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";/u);

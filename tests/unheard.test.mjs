@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { heart, message, group, reset, last, chats, says, sdk, toOwner, OWNER, KEY } from "./fixtures/kit.mjs";
 
-const { parseTeach, clearsShownList, notForDictionary, createTaught, UNHEARD_KEY, TAUGHT_KEY } = await import("../tgcloud/lib/taught.js");
+const { parseTeach, clearsShownList, notForDictionary, createTaught, beforeOf, UNHEARD_KEY, TAUGHT_KEY } = await import("../tgcloud/lib/taught.js");
 const { introRequest, nameReply, ASKS_NAME } = await import("../tgcloud/lib/personal.js");
 const { clean } = await import("../tgcloud/lib/catalogue.js");
 const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
@@ -535,4 +535,56 @@ test("отклики по контексту: перечень не пересе
   }
   // Просьбы к ней самой — не отклик: их словарю знать положено.
   for (const word of ["не грусти", "не бойся", "не спорь", "тыква на подоконнике"]) assert.equal(taught.worth(word), word, word);
+});
+
+
+test("что было перед непонятой репликой (0.52.0, сообщение 53): её реплика «до» и её ответ — без автора; хозяину — «разбор 2»", async () => {
+  // Её реплика «до»: ответ на саму реплику, уже лёгший в переписку, — не «до».
+  const talk = [{ role: "user", content: "привет" }, { role: "assistant", content: "Угадайте, кто сегодня уронил кактус." }];
+  assert.equal(beforeOf(talk, "кто же"), "Угадайте, кто сегодня уронил кактус.");
+  assert.equal(beforeOf([...talk, { role: "user", content: "кто же" }, { role: "assistant", content: "Байт, конечно." }], "кто же"), "Угадайте, кто сегодня уронил кактус.");
+  assert.equal(beforeOf([{ role: "user", content: "кек чебурек" }, { role: "assistant", content: "Что?" }], "кек чебурек"), "", "разговор с неё начался");
+  assert.equal(beforeOf(null, "кек"), "");
+  for (const said of ["разбор 2", "Разбор 2.", "покажи разбор 12", "контекст 3", "подробнее 1", "разбери фразу №4", "разбор номер 5"]) assert.equal(typeof parseTeach(said)?.unheardRow, "number", said);
+  for (const said of ["разбор", "разбор полётов", "разбери 2 задачи по физике", "контекст"]) assert.equal(parseTeach(said)?.unheardRow, undefined, said);
+
+  reset();
+  const h = heart(ON, { now: () => NOON });
+  // Гость: приветствие — словарь (оно остаётся в переписке); «кек чебурек» — к модели и в список, с тем, что было до.
+  sdk().fetchQueue.push(says("Это ты сейчас заклинание прочитал? Мой номер 8 900 123-45-67 — шучу."), says("Ладно."));
+  await h.onMessage(message("привет"), KEY);
+  const greeting = last();
+  await h.onMessage(message("кек чебурек"), KEY);
+  await h.onMessage(message("го встр кек"), KEY);
+  const map = JSON.parse(sdk().kv.get(UNHEARD_KEY)).map;
+  assert.deepEqual(Object.keys(map).sort(), ["го встр кек", "кек чебурек"]);
+  assert.equal(map["кек чебурек"].p, greeting.length > 110 ? `${greeting.slice(0, 110).trimEnd()}…` : greeting, "перед репликой — её приветствие");
+  assert.equal(map["кек чебурек"].a, "Это ты сейчас заклинание прочитал? Мой номер # ### ###-##-## — шучу.", "ответ — с закрытыми цифрами");
+  assert.equal(map["го встр кек"].p, map["кек чебурек"].a, "перед второй — её ответ на первую");
+  assert.deepEqual(Object.keys(map["кек чебурек"]).sort(), ["a", "at", "n", "p"], "автора в записи нет");
+
+  // Хозяин: номера — из показанного списка; без списка — подсказка.
+  await h.onMessage(own("разбор 1"), KEY);
+  assert.equal(last(OWNER), "Номера берутся из списка: сначала — «что не поняла?», потом — «разбор 3».");
+  await h.onMessage(own("что не поняла?"), KEY);
+  assert.match(last(OWNER), /1\. «[^»]+»\n2\. «[^»]+»[\s\S]*Что было перед фразой и что я ответила — «разбор 2»\.$/u);
+  const second = /2\. «([^»]+)»/u.exec(last(OWNER))[1];
+  await h.onMessage(own("разбор 2"), KEY);
+  assert.equal(last(OWNER), [`«${second}»`, `Перед этим я сказала: «${map[second].p}»`, `Ответила: «${map[second].a}»`, "", "Кто это написал, я не записываю."].join("\n"));
+  await h.onMessage(own("разбор 9"), KEY);
+  assert.equal(last(OWNER), "Номера берутся из списка: сначала — «что не поняла?», потом — «разбор 3».");
+  // Гостю «разбор 2» — обычные слова: список видит только хозяин.
+  sdk().fetchQueue.push(says("Какой разбор?"));
+  await h.onMessage(message("разбор 2"), KEY);
+  assert.equal(last(), "Какой разбор?");
+
+  // Запись без «до» (старше 0.52.0) — сказано честно; «что было перед» живёт только у шестидесяти свежих.
+  const taught = createTaught({ store: { available: true, get: async (key) => JSON.parse(sdk().kv.get(key) ?? "null"), set: async (key, value) => { sdk().kv.set(key, JSON.stringify(value)); return true; } }, now: () => NOON });
+  seed(["ну ты и булка"]);
+  await h.onMessage(own("что не поняла?"), KEY);
+  await h.onMessage(own("разбор 1"), KEY);
+  assert.match(last(OWNER), /^«ну ты и булка»\nЧто я сказала перед этим, не записано: разговор с неё начался — или запись старше сборки 0\.52\.0\.\n\nКто это написал, я не записываю\.$/u);
+  for (let index = 0; index < 64; index += 1) await taught.note(`фраза ${"абвгдежзиклмнопрст"[index % 18]}${"уфхцчшщэюя"[Math.floor(index / 18)]} кек`, { before: "до", after: "после" });
+  const rows = await taught.unheard({ limit: 200 });
+  assert.equal(rows.filter(row => row.p === "до" && row.a === "после").length, 60);
 });

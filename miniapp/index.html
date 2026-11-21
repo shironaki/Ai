@@ -324,6 +324,9 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 /* 0.49.0 — страница свёрнута: движение на рисунке стоит (.resting); её картинка ещё в пути — мягкий силуэт и три
    точки (.coming); журнал ошибок под строкой «страница N» (.oops). */
 .resting #room *, .resting #sky *, .resting .rainbox * { animation-play-state: paused !important; }
+/* 0.52.0 — силуэт проступает через полсекунды: картинка из памяти телефона успевает раньше, и он не мелькает. */
+#room .coming { animation: comingIn 0.4s ease-out 0.5s both; }
+@keyframes comingIn { from { opacity: 0; } }
 #room .coming .dot { animation: pulse 1.2s ease-in-out infinite; }
 #room .coming .d1 { animation-delay: 0.2s; }
 #room .coming .d2 { animation-delay: 0.4s; }

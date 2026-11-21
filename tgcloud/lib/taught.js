@@ -21,6 +21,27 @@ export const UNHEARD_KEY = "heart:unheard:v1";
 const MAX_ITEMS = 300;
 const MAX_ANSWERS = 8;
 const MAX_UNHEARD = 200;
+// Что было перед непонятой репликой и что она на неё ответила (0.52.0, сообщение 53: «даже ты не знаешь, что было
+// до того слова, которое не поняла Аи»): начало двух её реплик, без автора, цифры и адреса закрыты. Только у
+// шестидесяти самых свежих записей: список лежит одной записью базы и не должен разбухать.
+const CTX_MAX = 110, CTX_KEPT = 60;
+const brief = (text) => {
+  const line = squash(text).replace(/https?:\S+|www\.\S+|@\w+/giu, "…").replace(/\d/gu, "#");
+  return line.length > CTX_MAX ? `${line.slice(0, CTX_MAX).trimEnd()}…` : line;
+};
+/**
+ * Её реплика перед этой репликой человека — из переписки (последние двенадцать сообщений, `store.memory`). Ответ
+ * на саму реплику мог уже лечь в переписку: тогда он и реплика — не «до».
+ */
+export function beforeOf(history, prompt) {
+  const list = Array.isArray(history) ? history : [];
+  let index = list.length - 1;
+  if (list[index]?.role === "assistant" && list[index - 1]?.role === "user" && squash(list[index - 1].content) === squash(prompt).slice(0, 400)) index -= 2;
+  while (index >= 0 && list[index]?.role !== "assistant") index -= 1;
+  return index >= 0 ? String(list[index].content ?? "") : "";
+}
+/** «Разбор 3», «контекст 3», «подробнее 3» — что было перед третьей репликой показанного списка. */
+const UNHEARD_ROW = /^(?:(?:покажи|дай)\s+)?(?:разбор|разбери|контекст|подробнее)(?:\s+(?:фразы|фразу|реплики|реплику|строки|строку))?\s+(?:№\s*|номер\s+)?(\d{1,2})$/u;
 
 const squash = (text) => String(text ?? "").replace(/\s+/gu, " ").trim();
 const unquote = (text) => squash(text).replace(/^[«"“„'`]+|[»"”'`]+$/gu, "").trim();
@@ -74,7 +95,7 @@ const NOT_A_PHRASE = /^(?:это|то|все|всё|такое|вопросы?|�
 /**
  * Слова хозяина о словаре → просьба, иначе null:
  *   { add: { when, say } } · { list: true } · { drop: 3 } · { drop: "фраза" }
- *   { unheard: true } · { unheardClear: true }
+ *   { unheard: true } · { unheardClear: true } · { unheardRow: 3 }
  *   { hint: { when, say } } — похоже на урок, но без кавычек и двоеточия: она переспросит, а не угадает
  */
 export function parseTeach(text) {
@@ -84,6 +105,8 @@ export function parseTeach(text) {
   if (LIST.test(bare)) return { list: true };
   if (UNHEARD_CLEAR.test(bare)) return { unheardClear: true };
   if (UNHEARD.test(bare)) return { unheard: true };
+  const row = bare.toLowerCase().match(UNHEARD_ROW);
+  if (row) return { unheardRow: Number(row[1]) };
   const drop = bare.match(DROP);
   if (drop) return drop[1] ? { drop: Number(drop[1]) } : { drop: unquote(drop[2]) };
   for (const pattern of TEACH) {
@@ -219,17 +242,23 @@ export function createTaught({ store = null, now = () => Date.now(), random = Ma
     if (notForDictionary(key)) return "";
     return key;
   }
-  /** Записать реплику, ушедшую к модели. Без автора: важно, что сказано, а не кем. */
-  async function note(text) {
+  /**
+   * Записать реплику, ушедшую к модели. Без автора: важно, что сказано, а не кем. `before` — её реплика перед
+   * этой, `after` — что она ответила (0.52.0): по ним видно, пробел это словаря или продолжение разговора.
+   */
+  async function note(text, { before = "", after = "" } = {}) {
     const key = worth(text);
     if (!key || !usable()) return false;
     let saved = null;
     try { saved = await store.get(UNHEARD_KEY); } catch { saved = null; }
     const map = saved?.map && typeof saved.map === "object" ? { ...saved.map } : {};
-    const before = map[key];
+    const was = map[key];
     // Отметка сверки (`b` — какой сборкой проверено, `c` — когда) переживает повтор реплики: модель ответила на неё снова.
-    map[key] = { ...(before?.b ? { b: before.b, c: Number(before.c) || 0 } : {}), n: (Number(before?.n) || 0) + 1, at: now() };
+    const p = brief(before) || was?.p || "", a = brief(after) || was?.a || "";
+    map[key] = { ...(was?.b ? { b: was.b, c: Number(was.c) || 0 } : {}), n: (Number(was?.n) || 0) + 1, at: now(), ...(p ? { p } : {}), ...(a ? { a } : {}) };
     const keys = Object.keys(map);
+    // «Что было перед» — только у самых свежих.
+    for (const stale of keys.filter(item => map[item].p || map[item].a).sort((one, two) => map[two].at - map[one].at).slice(CTX_KEPT)) map[stale] = { ...map[stale], p: undefined, a: undefined };
     if (keys.length > MAX_UNHEARD) {
       // Лишнее — самое редкое и самое давнее.
       keys.sort((a, b) => (map[a].n - map[b].n) || (map[a].at - map[b].at));
@@ -245,7 +274,7 @@ export function createTaught({ store = null, now = () => Date.now(), random = Ma
     const map = saved?.map && typeof saved.map === "object" ? saved.map : {};
     return Object.entries(map)
       .filter(([, row]) => !sinceMs || Number(row?.at) >= now() - sinceMs)
-      .map(([text, row]) => ({ text, n: Number(row?.n) || 0, at: Number(row?.at) || 0, b: typeof row?.b === "string" ? row.b : "", c: Number(row?.c) || 0 }))
+      .map(([text, row]) => ({ text, n: Number(row?.n) || 0, at: Number(row?.at) || 0, b: typeof row?.b === "string" ? row.b : "", c: Number(row?.c) || 0, p: typeof row?.p === "string" ? row.p : "", a: typeof row?.a === "string" ? row.a : "" }))
       .sort((a, b) => (b.n - a.n) || (b.at - a.at))
       .slice(0, limit);
   }

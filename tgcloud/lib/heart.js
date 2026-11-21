@@ -78,7 +78,7 @@ import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, cat
   READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow } from "./room.js";
 import { createRoomDoor } from "./roomdoor.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
-import { createTaught, parseTeach, clearsShownList } from "./taught.js";
+import { createTaught, parseTeach, beforeOf, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
@@ -4048,8 +4048,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         ? "Список непонятного очищен: начинаю считать заново. Мою память о вас не трогала — для неё есть «очисти память»."
         : "Список непонятного очищен. Начинаю считать заново.");
     }
+    if (asked.unheardRow != null) {
+      // «Разбор 3» — по номеру из показанного списка: что она сказала перед этой репликой и что ответила (0.52.0).
+      const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+      const text = Array.isArray(shown?.list) && now() - Number(shown.at) < DAY ? shown.list[asked.unheardRow - 1] : null;
+      if (!text) return say(turn, "Номера берутся из списка: сначала — «что не поняла?», потом — «разбор 3».");
+      const row = (await taught.unheard({ limit: 200 })).find(item => item.text === text);
+      if (!row) return say(turn, `«${text}» в списке уже нет.`);
+      return say(turn, [`«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`,
+        row.p ? `Перед этим я сказала: «${row.p}»` : "Что я сказала перед этим, не записано: разговор с неё начался — или запись старше сборки 0.52.0.",
+        row.a ? `Ответила: «${row.a}»` : "", "", "Кто это написал, я не записываю."].filter((line, index) => line || index === 3).join("\n"));
+    }
     const { rows, gone, dropped, waiting } = await unheardNow({ limit: 30 });
-    await store.set(UNHEARD_SHOWN_KEY, { at: now() }).catch(() => false);
+    await store.set(UNHEARD_SHOWN_KEY, { at: now(), list: rows.map(row => row.text) }).catch(() => false);
     const cleaned = goneWords(gone, dropped);
     // В списке — только проверенное. Чего проверить не успела, не показывает, а называет числом (0.36.2).
     const later = waitingWords(waiting);
@@ -4057,7 +4068,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (later) return say(turn, [cleaned, later].filter(Boolean).join(" "));
       return say(turn, cleaned ? `${cleaned} Больше показать нечего.` : "Пока нечего показать: короткого, чего я не узнала бы, не было.");
     }
-    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}${later ? `\n\n${later}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Без кавычек — с двоеточием: на привет отвечай: здравствуй. Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятное».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}${later ? `\n\n${later}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Без кавычек — с двоеточием: на привет отвечай: здравствуй. Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятное».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).\nЧто было перед фразой и что я ответила — «разбор 2».`);
   }
 
   /**
@@ -5301,11 +5312,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   };
   /**
    * Портрет по описанию (идея 197, 0.51.0; разговор со снимка в сообщении 51: «а сможешь нарисовать меня» → «вот так
-   * выгляжу» → «одного зуба нету» — и рисунка человек не получил). После «нарисуй меня» она десять минут ждёт первую
+   * выгляжу» → «одного зуба нету» — и рисунка человек не получил). После «нарисуй меня» она две минуты (с 0.52.0;
+   * было десять — «это много… сократи до 2-3х, а то и до 1-2х», сообщение 53) ждёт первую
    * реплику о внешности (`portraitLooks` в draw.js) и рисует по ней — один раз. Сначала разбор реплики, без базы, и
    * только потом — ждёт ли она описание: как с ответом на «как вас зовут». Фото так не рисуется: его разбирает зрение.
    */
-  const PORTRAIT_WAIT_MS = 10 * 60_000;
+  const PORTRAIT_WAIT_MS = 2 * 60_000;
   const portraitKey = (turn) => `heart:portrait:${turn.chatId}:${turn.actorId}`;
   async function portraitMove(turn, prompt) {
     const looks = portraitLooks(prompt);
@@ -8402,7 +8414,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await store.sweep("heart:said:", 7 * DAY);
       // Вопрос об имени ждёт ответа пять минут; забытые отметки убираются.
       await store.sweep("heart:askname:", DAY);
-      // «Нарисуй меня» ждёт описание десять минут; забытые отметки убираются.
+      // «Нарисуй меня» ждёт описание две минуты; забытые отметки убираются.
       await store.sweep("heart:portrait:", DAY);
       await store.sweep("heart:credit:", 7 * DAY);
       await store.sweep("heart:offer:", 30 * DAY);
@@ -9023,7 +9035,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const sent = await answerByModel(turn, prompt);
     // Короткое, чего не взял ни словарь, ни правило, — в список непонятного. Ответ по справке или длинный ответ —
     // значит, это был вопрос на знание: модель тут на месте, и пробела в словаре нет (17.11.2026).
-    if (unheard && !turn.reference && !(sent?.ok && String(sent.text ?? "").length > UNHEARD_ANSWER_MAX)) await taught.note(prompt).catch(() => false);
+    if (unheard && !turn.reference && !(sent?.ok && String(sent.text ?? "").length > UNHEARD_ANSWER_MAX)) {
+      // Что было перед репликой и что она ответила (0.52.0) — без автора: хозяину по словам «разбор 3».
+      const thread = await store.memory.load({ userId: turn.actorId, chatId: turn.chatId }).catch(() => []);
+      await taught.note(prompt, { before: beforeOf(thread, prompt), after: sent?.ok ? sent.text : "" }).catch(() => false);
+    }
     if (fact && sent?.ok) await offerFact(turn, fact);
     if (about && sent?.ok) await keepSelf(turn, about);
     return sent;

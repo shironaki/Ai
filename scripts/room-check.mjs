@@ -613,34 +613,93 @@ try {
 
   // ── 6. картинка не загрузилась ─────────────────────────────────────────────
   console.log("6. Без её картинки");
-  for (const [mode, what] of [[false, "картинки на сервере нет"], ["broken", "картинка пришла, но не читается"]]) {
-    pictures = mode;
-    const tab = await browser.newPage();
-    const broken = [];
-    tab.on("pageerror", (error) => broken.push(String(error)));
-    // Отказ сервера на сам файл картинки — ожидаемое: его мы и устроили. Всё остальное — ошибка.
-    tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_|404/u.test(message.text())) broken.push(message.text()); });
-    await tab.goto(`${origin}/index.html#part=${encodeURIComponent("вечер")}&things=all`, { waitUntil: "load", timeout: 30_000 });
-    await pause(900);
-    const got = await tab.evaluate(() => ({
+  {
+    // С 0.52.0 (сообщение 53): картинка не пришла — кодом она НЕ нарисована. На её месте силуэт «появляется», комната
+    // работает, а страница просит картинку снова; пришла — встаёт на место. Память телефона перед каждым случаем
+    // пуста: прежние шаги оставили в ней картинки, и без этого она поднялась бы оттуда.
+    const fresh = async (hash) => {
+      const tab = await browser.newPage();
+      const broken = [];
+      tab.on("pageerror", (error) => broken.push(String(error)));
+      // Отказ сервера на сам файл картинки — ожидаемое: его мы и устроили. Всё остальное — ошибка.
+      tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_|404/u.test(message.text())) broken.push(message.text()); });
+      await tab.goto(`${origin}/index.html#${hash}`, { waitUntil: "load", timeout: 30_000 });
+      await tab.evaluate(() => { try { localStorage.clear(); } catch { /* память закрыта — тем более пусто */ } });
+      await tab.reload({ waitUntil: "load", timeout: 30_000 });
+      await pause(1100);
+      return { tab, broken };
+    };
+    const seen = (tab) => tab.evaluate(() => ({
       state: document.querySelector("#app")?.dataset.state ?? "", use: document.querySelectorAll("#inside use").length, kept: document.querySelectorAll("#store image").length,
       her: document.querySelectorAll('#inside .zones [data-act="her"]').length, breath: document.querySelectorAll("#inside .breath").length,
+      coming: document.querySelectorAll("#inside .coming").length, foot: document.querySelector("#foot")?.textContent ?? "",
       moving: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.closest?.("#inside .breath, #inside .blink")).length,
     }));
-    let fed = false;
-    try {
-      await tab.tap('#actions button[data-act="feed"]');
-      await pause(350);
-      fed = await tab.$eval('#actions button[data-act="feed"]', (node) => node.classList.contains("done"));
-    } catch { fed = false; }
-    if (got.state !== "ready") fail(`${what}: комната не открылась — состояние «${got.state}»${broken.length ? `, ${broken[0].slice(0, 170)}` : ""}`);
-    else if (broken.length) fail(`${what}: ошибка на странице — ${broken[0].slice(0, 170)}`);
-    else if (got.use || got.kept) fail(`${what}, а рисунок на неё ссылается (ссылок ${got.use}, в кладовой ${got.kept}): её не видно вовсе`);
-    else if (!got.her || !got.breath) fail(`${what}: она не нарисована кодом — мест нажатия ${got.her}, дышащих частей ${got.breath}`);
-    else if (!got.moving) fail(`${what}: нарисованная кодом, она не дышит и не моргает`);
-    else if (!fed) fail(`${what}: забота не нажимается`);
-    else console.log(`  ${what}: комната открылась, она нарисована кодом (дышит и моргает: ${got.moving}), забота нажимается`);
-    await tab.close();
+    const feeds = async (tab) => {
+      try {
+        await tab.tap('#actions button[data-act="feed"]');
+        await pause(350);
+        return await tab.$eval('#actions button[data-act="feed"]', (node) => node.classList.contains("done"));
+      } catch { return false; }
+    };
+    const hash = `part=${encodeURIComponent("вечер")}&things=all`;
+
+    // а) картинки на сервере нет.
+    pictures = false;
+    {
+      const what = "картинки на сервере нет";
+      const { tab, broken } = await fresh(hash);
+      const got = await seen(tab), fed = await feeds(tab);
+      if (got.state !== "ready") fail(`${what}: комната не открылась — состояние «${got.state}»${broken.length ? `, ${broken[0].slice(0, 170)}` : ""}`);
+      else if (broken.length) fail(`${what}: ошибка на странице — ${broken[0].slice(0, 170)}`);
+      else if (got.use || got.kept) fail(`${what}, а рисунок на неё ссылается (ссылок ${got.use}, в кладовой ${got.kept})`);
+      else if (got.breath) fail(`${what}: она нарисована кодом (дышащих частей ${got.breath}) — с 0.52.0 на её месте должен быть силуэт`);
+      else if (!got.coming) fail(`${what}: силуэта «появляется» на её месте нет — её не видно вовсе`);
+      else if (!fed) fail(`${what}: забота не нажимается`);
+      else {
+        // Картинка появилась на сервере — страница просит её снова сама (первый раз — через две секунды).
+        pictures = true;
+        await pause(3200);
+        const later = await seen(tab);
+        if (!later.kept || !later.use || later.coming) fail(`${what}, потом появилась — а страница её не получила: в кладовой ${later.kept}, ссылок ${later.use}, силуэтов ${later.coming}`);
+        else {
+          // Память телефона: та же вкладка заходит снова, сервер опять без картинок — она на месте сразу.
+          pictures = false;
+          await tab.reload({ waitUntil: "load", timeout: 30_000 });
+          await pause(1100);
+          const again = await seen(tab);
+          if (!again.kept || !again.use || again.coming || again.breath) fail(`второй заход без сети: картинка из памяти телефона не поднялась — в кладовой ${again.kept}, ссылок ${again.use}, силуэтов ${again.coming}`);
+          else console.log(`  ${what}: комната открылась, на её месте силуэт (кодом не нарисована), забота нажимается; картинка появилась — страница получила её сама; второй заход без сети — она на месте из памяти телефона`);
+        }
+      }
+      await tab.close();
+    }
+    // б) долго не приходит: через восемь секунд внизу страницы — «картинка Аи ещё в пути».
+    pictures = false;
+    {
+      const { tab } = await fresh(hash);
+      await pause(7600);
+      const slow = await seen(tab);
+      if (!/картинка Аи ещё в пути/u.test(slow.foot)) fail(`картинка не приходит девять секунд, а внизу страницы об этом ни слова: «${slow.foot}»`);
+      else if (slow.breath || !slow.coming) fail(`картинка не приходит девять секунд: силуэтов ${slow.coming}, нарисованных кодом частей ${slow.breath}`);
+      else console.log("  картинка не приходит: через восемь секунд внизу — «картинка Аи ещё в пути», силуэт на месте");
+      await tab.close();
+    }
+    // в) картинка пришла, но телефон показать её не может — тогда, как и раньше, она нарисована кодом.
+    pictures = "broken";
+    {
+      const what = "картинка пришла, но не читается";
+      const { tab, broken } = await fresh(hash);
+      const got = await seen(tab), fed = await feeds(tab);
+      if (got.state !== "ready") fail(`${what}: комната не открылась — состояние «${got.state}»${broken.length ? `, ${broken[0].slice(0, 170)}` : ""}`);
+      else if (broken.length) fail(`${what}: ошибка на странице — ${broken[0].slice(0, 170)}`);
+      else if (got.use || got.kept) fail(`${what}, а рисунок на неё ссылается (ссылок ${got.use}, в кладовой ${got.kept}): её не видно вовсе`);
+      else if (!got.her || !got.breath) fail(`${what}: она не нарисована кодом — мест нажатия ${got.her}, дышащих частей ${got.breath}`);
+      else if (!got.moving) fail(`${what}: нарисованная кодом, она не дышит и не моргает`);
+      else if (!fed) fail(`${what}: забота не нажимается`);
+      else console.log(`  ${what}: комната открылась, она нарисована кодом (дышит и моргает: ${got.moving}), забота нажимается`);
+      await tab.close();
+    }
   }
   pictures = true;
 

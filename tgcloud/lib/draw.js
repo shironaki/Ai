@@ -245,7 +245,7 @@ const LOOK = "a young adult woman with very long straight black hair and blunt b
 const ROOM = "cozy small room at night, floor-to-ceiling window with rain and city lights outside, wooden desk with a warm lamp and a teapot, bookshelf with manga, blue plaid on an armchair, string lights, a small cactus on the windowsill, a grey cat sleeping on a pillow, anime background art, warm atmosphere, detailed";
 const CAT = "a fluffy grey cat sleeping on a computer keyboard in a cozy room with a rainy window, anime style, warm light, detailed illustration";
 /**
- * Портрет по описанию (идея 197, 0.51.0). После «нарисуй меня» она десять минут ждёт реплику о внешности; здесь —
+ * Портрет по описанию (идея 197, 0.51.0). После «нарисуй меня» она две минуты ждёт реплику о внешности; здесь —
  * разбор такой реплики: приметы для художника или null — это не описание. «У меня тёмные волосы, я ношу очки» →
  * «тёмные волосы, очки». Не описание: вопрос; слова о ней самой («у тебя красивые глаза»); слова о ком-то ещё («у
  * меня рыжий кот»); жалоба («болит зуб»); реплика без единого слова о внешности. Слово считается с начала:

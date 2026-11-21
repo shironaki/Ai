@@ -10,8 +10,8 @@
  *     повторяет то же действие, не дошедший запрос страница повторяет сама (с тем же номером действия), а все
  *     отказы ложатся в журнал ошибок — он открывается нажатием на строку «страница N» внизу;
  *   • страница свёрнута (с 0.49.0) — все её часы стоят: своя жизнь, сверка, кадры, отсчёты, движение на рисунке;
- *   • её картинки (папка `her/`, с 0.40.0): грузится только та, что нужна сейчас; не загрузилась — она нарисована
- *     кодом, как раньше, а комната открывается в любом случае;
+ *   • её картинки (папка `her/`, с 0.40.0): грузится только та, что нужна сейчас; пока картинка в пути — на её
+ *     месте силуэт, а комната открывается в любом случае; последние картинки лежат в памяти телефона (с 0.52.0);
  *   • позы (с 0.41.0): картинок у состояния несколько — она меняет позу сама и от нажатия; следующая картинка
  *     подгружается заранее, а смена идёт только когда она уже здесь;
  *   • своя жизнь (с 0.44.0): она и Байт меняют занятие сами, по очереди, — и доходят до нового места шагом;
@@ -53,8 +53,13 @@ const canCall = Boolean(inTelegram && tg.Serverless && typeof tg.Serverless.call
 const local = /^(?:localhost|127\.0\.0\.1)$/u.test(location.hostname);
 const params = local ? Object.fromEntries(new URLSearchParams(location.hash.replace(/^#/u, ""))) : {};
 const WAIT_MS = 20_000;
-// Сколько ждать её картинку, прежде чем нарисовать её кодом. Придёт позже — картинка встанет на место.
-const SPRITE_WAIT_MS = 6_000;
+// Её картинка не пришла (0.52.0, сообщение 53: «прогружается данный вид иллюстрации… она не появляется, пока не
+// догрузится»): фигуры, нарисованной кодом, на её месте больше нет — силуэт «появляется» ждёт, а страница просит
+// картинку снова: через 2, 5, 12, 25 и 60 секунд. Не пришла и тогда — запись в журнал; новый круг начнётся со
+// следующей перерисовки комнаты или когда вернётся связь.
+const SPRITE_AGAIN_MS = Object.freeze([2_000, 5_000, 12_000, 25_000, 60_000]);
+// Через сколько секунд ожидания внизу страницы появляется «картинка Аи ещё в пути».
+const SPRITE_SLOW_MS = 8_000;
 
 let state = { ...blank(new Date().getHours()), demo: !inTelegram };
 let header = "";
@@ -75,9 +80,12 @@ let acting = false;
 // Картинка на каждое её состояние — отдельным модулем в папке `her/`: `export default { w, h, cx, src }`. Модуль
 // грузится, когда понадобился. Его определение кладётся в рисунок один раз (в «кладовую», `<defs id="store">`), а
 // комната при каждой перерисовке только ссылается на него — так она не моргает от нажатий.
-// `sprites`: имя → спрайт; `false` — не загрузился (она нарисована кодом); имени нет — ещё в пути (её пока не видно).
+// `sprites`: имя → спрайт; `false` — пришла, но этот телефон показать её не может (тогда она нарисована кодом);
+// имени нет — ещё в пути (на её месте силуэт «появляется»): так и при слабой связи, сколько бы ни пришлось ждать.
 const sprites = {};
 const asked = new Set();
+// С какого времени ждём картинку и когда попросим её снова: имя → время, имя → [отсчёт, попытка].
+const since = new Map(), sooner = new Map();
 const kept = [];
 const canPaint = typeof spriteOf === "function" && typeof drawSprite === "function";
 // Позы сменяются, только если рисунок и логика — новые: в прежних копиях этих имён нет.
@@ -126,6 +134,7 @@ function decoded(sprite) {
 function settle(name, sprite) {
   if (sprites[name] === sprite || (sprites[name] && !sprite)) return;
   sprites[name] = sprite;
+  since.delete(name);
   // Перерисовать — только если на рисунке сейчас нужна именно эта картинка: лишняя перерисовка запускает заново
   // гирлянду и хвост Байта.
   const shown = spriteOf(viewOf(state));
@@ -344,21 +353,78 @@ function tuneFor(ms) {
   tuneTimer = setTimeout(() => { tuneUntil = 0; state = { ...state, music: 0 }; paint(); tick(); }, ms + 1500);
 }
 
+// ── Её картинки — в памяти телефона (0.52.0) ─────────────────────────────────
+// Сообщение 53: «если резко зайти или же есть проблемы с сетью…». Последние восемь её картинок лежат в памяти
+// страницы на телефоне (`localStorage`): зашли снова — она на месте сразу, без сети. Картинка из сети спрашивается
+// всё равно: пришла другая (новая сборка) — заменит запись, и в следующий заход покажется уже она. Номер страницы —
+// в имени записи: страница сменилась — прежние записи стираются. Память закрыта или полна — всё идёт из сети.
+const HER_KEY = `ai-room-her:${PAGE}:`, HER_LIST = "ai-room-her", HER_KEPT = 8;
+function keptList() {
+  try { const list = JSON.parse(localStorage.getItem(HER_LIST) ?? "[]"); return Array.isArray(list) ? list.filter(item => typeof item === "string") : []; } catch { return []; }
+}
+function keptSprite(name) {
+  try {
+    const text = localStorage.getItem(HER_KEY + name), sprite = text ? JSON.parse(text) : null;
+    return sprite && typeof sprite.src === "string" ? { sprite, text } : null;
+  } catch { return null; }
+}
+/** Записать картинку (`sprite`) или только отметить, что она снова понадобилась (без него): давние уходят первыми. */
+function keepSprite(name, sprite = null) {
+  try {
+    const key = HER_KEY + name, list = keptList();
+    if (!sprite && !list.includes(key)) return;
+    const rest = list.filter(item => item !== key && item.startsWith(HER_KEY)), gone = [...list.filter(item => !item.startsWith(HER_KEY)), ...rest.slice(0, Math.max(0, rest.length - HER_KEPT + 1))];
+    for (const item of gone) localStorage.removeItem(item);
+    if (sprite) localStorage.setItem(key, JSON.stringify(sprite));
+    localStorage.setItem(HER_LIST, JSON.stringify([...rest.filter(item => !gone.includes(item)), key]));
+  } catch {
+    try { for (const item of keptList()) localStorage.removeItem(item); localStorage.removeItem(HER_LIST); } catch { /* память телефона закрыта: картинки придут из сети */ }
+  }
+}
+
 function fetchSprite(name) {
   if (!canPaint || !name || asked.has(name)) return;
   asked.add(name);
-  const late = setTimeout(() => settle(name, false), SPRITE_WAIT_MS);
-  import(`./her/${name}.js`)
+  if (!since.has(name)) since.set(name, Date.now());
+  // Ждём долго — внизу страницы об этом сказано (`paint`).
+  setTimeout(() => { if (sprites[name] === undefined && state.ready && spriteOf(viewOf(state)) === name) paint(); }, SPRITE_SLOW_MS + 60);
+  const kept = keptSprite(name);
+  if (!kept) { loadSprite(name, 0, ""); return; }
+  // Из памяти телефона — сразу на рисунок; из сети — следом, только сверить.
+  decoded(kept.sprite).then((fine) => {
+    const shown = fine && sprites[name] === undefined && store(name, kept.sprite);
+    if (shown) { settle(name, kept.sprite); fetchSprite(frameName(name)); }
+    loadSprite(name, 0, shown ? kept.text : "");
+  });
+}
+function loadSprite(name, attempt, kept) {
+  sooner.delete(name);
+  // Повторная просьба — под другим адресом: иначе браузер мог бы вернуть запомненный отказ, не спросив сервер.
+  (attempt ? import(`./her/${name}.js?again=${attempt}`) : import(`./her/${name}.js`))
     .then(async (module) => {
       const sprite = module?.default;
       if (!sprite || typeof sprite.src !== "string") throw new Error("empty");
+      // На рисунке уже картинка из памяти телефона: из сети пришла другая — она покажется в следующий заход.
+      if (kept) { if (JSON.stringify(sprite) !== kept && await decoded(sprite)) keepSprite(name, sprite); return; }
       if (!(await decoded(sprite))) throw new Error("unreadable");
-      clearTimeout(late);
       settle(name, store(name, sprite) ? sprite : false);
       // Следом за позой — её второй кадр (0.45.0): когда поза выйдет на рисунок, кадр уже будет здесь.
       fetchSprite(frameName(name));
+      keepSprite(name, sprite);
     })
-    .catch(() => { clearTimeout(late); settle(name, false); });
+    .catch((error) => {
+      if (kept) return;
+      // Картинка пришла, но показать её этот телефон не может — она нарисована кодом, как до 0.40.0. Не пришла
+      // вовсе (связь, сервер) — на её месте силуэт, а страница просит снова.
+      if (error?.message === "empty" || error?.message === "unreadable") { settle(name, false); return; }
+      const wait = SPRITE_AGAIN_MS[attempt];
+      if (wait === undefined) { note("картинка", "late", name); asked.delete(name); return; }
+      sooner.set(name, [setTimeout(() => loadSprite(name, attempt + 1, ""), wait), attempt + 1]);
+    });
+}
+/** Связь вернулась — картинки, которых ждём, спрашиваются сразу, а не по отсчёту. */
+function hurrySprites() {
+  for (const [name, [timer, attempt]] of [...sooner]) { clearTimeout(timer); loadSprite(name, attempt, ""); }
 }
 
 const plural = (count, one, few, many) => {
@@ -503,9 +569,12 @@ function paint() {
     drawn.sky = sky;
     drawn.moon = moon;
   }
+  let tardy = false;
   if (canPaint) {
     const name = spriteOf(view);
     fetchSprite(name);
+    // Её картинка в пути дольше восьми секунд (слабая связь) — об этом сказано внизу страницы: комната работает и без неё.
+    tardy = Boolean(name) && state.ready && view?.her && view.her.away !== true && sprites[name] === undefined && Date.now() - (since.get(name) ?? Date.now()) >= SPRITE_SLOW_MS;
     // Она за делом — следующей может понадобиться картинка с кружкой (ей нальют чай): пусть будет под рукой.
     // Вечером это другая картинка (в свитере), поэтому имя не зашито, а спрашивается у рисунка.
     const withTea = spriteOf({ ...view, tea: true });
@@ -538,6 +607,8 @@ function paint() {
     const fresh = putInside(view, options, fade);
     drawn.view = key;
     drawn.cast = castNow(view);
+    // Картинка, которая сейчас на рисунке, в памяти телефона — последняя: её и ждать в следующий заход.
+    if (drawn.cast?.her?.name) keepSprite(drawn.cast.her.name);
     // До какого времени на рисунке идёт переход (она идёт, тает, проявляется): запоздавший второй кадр его не обрывает.
     // Идут и она, и Байт — ждём того, кто идёт дольше (с 0.46.0 Байт идёт шагом, до четырёх с половиной секунд).
     // Смотрим только в том, что сейчас заменено: в нетронутых частях переходы уже идут своим чередом.
@@ -583,7 +654,7 @@ function paint() {
   soundScene();
   $("foot").textContent = [
     state.next ? `Новая вещь появится через ${state.next} ${plural(state.next, "день", "дня", "дней")}` : "",
-    `страница ${PAGE}`, state.build ? `сердце ${state.build}` : "", state.demo ? "витрина" : "", state.down ? "нет связи: комната как была" : "",
+    `страница ${PAGE}`, state.build ? `сердце ${state.build}` : "", state.demo ? "витрина" : "", state.down ? "нет связи: комната как была" : "", tardy ? "картинка Аи ещё в пути" : "",
   ].filter(Boolean).join(" · ");
   app.dataset.down = state.down ? "1" : "";
   paintOops();
@@ -707,6 +778,9 @@ async function enter() {
     return;
   }
   const at = Date.now();
+  // Пока сердце отвечает, из памяти телефона поднимается картинка, что была на рисунке в прошлый раз (0.52.0):
+  // чаще всего она же и нужна — и тогда она на месте с первой секунды.
+  if (canPaint) { const last = keptList().filter(item => item.startsWith(HER_KEY)).pop(); if (last) fetchSprite(last.slice(HER_KEY.length)); }
   const result = await call({ do: "look" });
   state = applyLook(state, result, at);
   tuneFor(state.music);
@@ -1222,7 +1296,7 @@ document.addEventListener("visibilitychange", () => (document.hidden ? rest() : 
 window.addEventListener("pagehide", rest);
 window.addEventListener("pageshow", () => { if (!document.hidden) wake(); });
 // Связь вернулась — страница не ждёт нажатия: открывает комнату или сверяется.
-window.addEventListener("online", () => { if (resting) return; if (!state.ready) enter(); else if (state.down) tick(); });
+window.addEventListener("online", () => { hurrySprites(); if (resting) return; if (!state.ready) enter(); else if (state.down) tick(); });
 window.addEventListener("offline", () => { if (state.ready && !state.down) { state = { ...state, down: true }; paint(); } });
 
 // «На главный экран»: кнопка видна там, где Telegram это умеет и где комнату туда ещё не добавили.
