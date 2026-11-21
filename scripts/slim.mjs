@@ -26,6 +26,17 @@
  *
  * Итог — одна строка JSON: { files, before, after, body, bodyBefore } — число
  * модулей, их вес в байтах до и после и вес запроса репетиции после и до.
+ *
+ * Страница мини-приложения (0.51.0). В той же копии лежит папка `miniapp/` — она
+ * уходит на платформу файлами, как лежит. Комментарии в её коде — больше трети
+ * веса (21.11.2026: четыре файла страницы — 468 КБ, без комментариев — 306), а
+ * комната открывается тем быстрее, чем страница легче. Поэтому тот же скрипт тем
+ * же разбором и с той же сверкой облегчает и её: `*.js` в самой папке. Картинки
+ * (`miniapp/her/`) — данные, комментариев в них нет; `index.html` не трогается.
+ * Страница — надстройка: не разобрался её файл — она уходит как лежит, а код
+ * облака облегчается всё равно. В итог добавляются { page, pageBefore,
+ * pageFiles } — вес кода страницы вместе с `index.html` после и до и число
+ * облегчённых файлов; не вышло — ещё и `pageError`.
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -128,12 +139,43 @@ export function slimProject(root, { write = true } = {}) {
   return { files: Object.keys(before).length, before: weigh(before), after: weigh(after), body: runBody(after), bodyBefore: runBody(before), heaviest, heaviestBytes };
 }
 
+/** Код страницы мини-приложения: `*.js` в самой папке `miniapp/` (картинки в `her/` — данные, их не трогаем). */
+export function pageFiles(root) {
+  const base = join(root, "miniapp");
+  if (!existsSync(base) || !statSync(base).isDirectory()) return [];
+  return readdirSync(base, { withFileTypes: true }).filter(entry => entry.isFile() && entry.name.endsWith(".js")).map(entry => entry.name).sort();
+}
+
+/**
+ * Облегчить страницу в папке `root` (0.51.0). Пишется всё или ничего: не разобрался хоть один файл — не тронут ни
+ * один, и итог несёт `pageError`. Нет страницы или в ней нет кода — пустой итог. `write: false` — только посчитать.
+ */
+export function slimPage(root, { write = true } = {}) {
+  const names = pageFiles(root);
+  if (!names.length) return {};
+  const base = join(root, "miniapp"), before = {}, after = {};
+  const html = existsSync(join(base, "index.html")) ? statSync(join(base, "index.html")).size : 0;
+  const weigh = (map) => html + Object.values(map).reduce((sum, code) => sum + Buffer.byteLength(code), 0);
+  for (const name of names) before[name] = readFileSync(join(base, name), "utf8");
+  for (const name of names) {
+    try { after[name] = slim(before[name]); } catch (error) {
+      return { page: weigh(before), pageBefore: weigh(before), pageFiles: 0, pageError: `${name}: ${String(error?.message ?? error)}`.slice(0, 200) };
+    }
+  }
+  if (write) for (const name of names) if (after[name] !== before[name]) writeFileSync(join(base, name), after[name]);
+  return { page: weigh(after), pageBefore: weigh(before), pageFiles: names.length };
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const sizeOnly = process.argv.includes("--size"), here = process.argv.includes("--here");
   const root = process.cwd();
   try {
     if (!sizeOnly && !here && existsSync(join(root, ".git"))) throw new Error("здесь репозиторий (.git): комментарии убираются только из копии для облака. Посчитать вес — «node scripts/slim.mjs --size»");
-    console.log(JSON.stringify(slimProject(root, { write: !sizeOnly })));
+    const code = slimProject(root, { write: !sizeOnly });
+    // Страница — после кода и отдельно: её неудача публикации кода не касается.
+    let page = {};
+    try { page = slimPage(root, { write: !sizeOnly }); } catch (error) { page = { pageError: String(error?.message ?? error).slice(0, 200) }; }
+    console.log(JSON.stringify({ ...code, ...page }));
   } catch (error) {
     console.error(`Облегчить код не вышло: ${error.message}`);
     process.exit(1);

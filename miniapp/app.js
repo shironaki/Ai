@@ -918,7 +918,14 @@ let gestures = 0;
 /** Посмотреть в сторону: `to` — Байт или окно. Сторона — по тому, где они на рисунке относительно неё. */
 function lookAt(to, ask = false) {
   const herX = drawn.cast?.her?.x, toX = to === "cat" ? drawn.cast?.cat?.x : 256;
-  if (!Number.isFinite(herX) || !Number.isFinite(toX) || Math.abs(toX - herX) < 14) return false;
+  if (!Number.isFinite(herX) || !Number.isFinite(toX)) return false;
+  if (Math.abs(toX - herX) < 14) {
+    // Стоит прямо перед окном (0.51.0): головой вертеть некуда — бросает взгляд вбок, если у позы есть такие глаза.
+    const eyes = to === "win" ? sprites[spriteOf(viewOf(state))] : null;
+    if (!eyes?.lookr && !eyes?.lookl) return false;
+    react(eyes.lookr ? "look-r" : "look-l", 3200);
+    return true;
+  }
   react(toX < herX ? "look-l" : "look-r", 3200);
   if (ask) react("g-ask", 2200);
   return true;

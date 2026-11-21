@@ -1834,13 +1834,15 @@ const fitsBlink = (sprite) => fitsPatch(sprite, "blink");
  * бы её ни перерисовывали, только ссылается на него по имени (`<use>`): так картинка не грузится заново при каждом
  * нажатии и она не моргает. `drawRoom` кладёт определение сам — листам и тестам хватает одной строки.
  * У спрайта с «веками» определений два: сама картинка и заплатка на глаза; с улыбкой (0.50.0, `smile` — та же
- * заплатка, но на всё лицо: `scripts/room-blink.mjs … as=smile`) — три.
+ * заплатка, но на всё лицо: `scripts/room-blink.mjs … as=smile`) — три; со взглядом в сторону (0.51.0, `lookl` и
+ * `lookr` — те же «веки», но зрачки смотрят вбок: `… as=lookr`) — ещё по одному.
  */
 export function drawSprite(name, sprite) {
   if (!(Object.hasOwn(HER_SPRITES, name) || FRAME_NAMES.has(name)) || !fitsSprite(sprite)) return "";
   const lids = fitsBlink(sprite) ? `<image id="r-her-${name}-blink" x="${n(sprite.blink.x)}" y="${n(sprite.blink.y)}" width="${n(sprite.blink.w)}" height="${n(sprite.blink.h)}" preserveAspectRatio="none" href="${sprite.blink.src}"/>` : "";
   const grin = fitsPatch(sprite, "smile") ? `<image id="r-her-${name}-smile" x="${n(sprite.smile.x)}" y="${n(sprite.smile.y)}" width="${n(sprite.smile.w)}" height="${n(sprite.smile.h)}" preserveAspectRatio="none" href="${sprite.smile.src}"/>` : "";
-  return `<image id="r-her-${name}" width="${n(sprite.w)}" height="${n(sprite.h)}" preserveAspectRatio="none" href="${sprite.src}"/>${lids}${grin}`;
+  const gaze = ["lookl", "lookr"].map(key => (fitsPatch(sprite, key) ? `<image id="r-her-${name}-${key}" x="${n(sprite[key].x)}" y="${n(sprite[key].y)}" width="${n(sprite[key].w)}" height="${n(sprite[key].h)}" preserveAspectRatio="none" href="${sprite[key].src}"/>` : "")).join("");
+  return `<image id="r-her-${name}" width="${n(sprite.w)}" height="${n(sprite.h)}" preserveAspectRatio="none" href="${sprite.src}"/>${lids}${grin}${gaze}`;
 }
 
 /**
@@ -2063,7 +2065,11 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   // улыбаются. Сама не видна (`opacity="0"`): её показывают стили страницы — пока её гладят, когда налили чай или
   // что-то подарили и жестом между делами (`.patted`, `.glad`, `.g-smile`). Лежит поверх век: закрытые глаза под ней те же.
   const grin = eyes && fitsPatch(sprite, "smile") ? `<use class="grin" opacity="0" href="#r-her-${name}-smile" ${place.at}/>` : "";
-  const lids = eyes ? `<use class="wink${face === "drowsy" ? " slow" : ""}" href="#r-her-${name}-blink" ${place.at}/>${grin}${blush}` : "";
+  // Взгляд в сторону (0.51.0, сообщение 52 — «доделывай оставшиеся дела»): заплатка на глаза — зрачки смотрят вбок.
+  // Не видна, пока страница не поставит на рисунок слово «смотрит влево / вправо» (`.look-l`, `.look-r` — те же, что
+  // чуть поворачивают голову). Лежит под веками: моргать не мешает.
+  const gaze = eyes ? ["l", "r"].map(side => (fitsPatch(sprite, `look${side}`) ? `<use class="ey${side}" opacity="0" href="#r-her-${name}-look${side}" ${place.at}/>` : "")).join("") : "";
+  const lids = eyes ? `${gaze}<use class="wink${face === "drowsy" ? " slow" : ""}" href="#r-her-${name}-blink" ${place.at}/>${grin}${blush}` : "";
   const [mark, mx, my] = HER_SPRITES[name].mark ?? [], px = left + wide * (mx ?? 0), py = top + tall * (my ?? 0);
   const alive = mark === "steam" ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity="0.6"><path d="M${n(px - 2.4)} ${n(py)} q-3 -4 0 -8 q3 -4 0 -7"/><path d="M${n(px + 2.8)} ${n(py - 1)} q3 -4 0 -8"/></g>`
     : mark === "zzz" ? zzz(f, n(px), n(py)) : "";

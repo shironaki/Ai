@@ -47,6 +47,8 @@ appendFileSync(process.env.FAKE_LOG, JSON.stringify({
   where: basename(root),
   // Ушли ли из кода комментарии: обработчик песочницы несёт один.
   slim: existsSync("tgcloud/handlers/message.js") && !readFileSync("tgcloud/handlers/message.js", "utf8").includes("комментарий"),
+  // Ушли ли комментарии из кода страницы (0.51.0): у страницы песочницы он тоже один.
+  page: existsSync("miniapp/app.js") && !readFileSync("miniapp/app.js", "utf8").includes("комментарий"),
   token: process.env.TGCLOUD_TOKEN === ${JSON.stringify(TOKEN)},
   key: secrets.includes(${JSON.stringify(KEYS.model)}),
   giga: secrets.includes(${JSON.stringify(KEYS.giga)}),
@@ -213,6 +215,7 @@ function sandbox({ lines = null, slim = true, app = false } = {}) {
     mkdirSync(join(seed, "miniapp"), { recursive: true });
     writeFileSync(join(seed, "tgcloud/endpoints/room.js"), "/** Функция комнаты: комментарий облаку не нужен. */\nexport default async function () { return { ok: true }; }\n");
     writeFileSync(join(seed, "miniapp/index.html"), "<!doctype html><title>Комната</title>\n");
+    writeFileSync(join(seed, "miniapp/app.js"), "// Код страницы: этот комментарий платформе не нужен.\nexport const page = 1;\n");
     writeFileSync(join(seed, "tgcloud.jsonc"), '// страница мини-приложения\n{ "static": { "source": "miniapp" } }\n');
   }
   writeFileSync(join(seed, "package.json"), JSON.stringify({ name: "x", private: true, type: "module", scripts: { ci: "env > \"$FAKE_LOG.ci\"; [ -z \"$FAKE_CI_OUT\" ] || cat \"$FAKE_CI_OUT\"; exit ${FAKE_CI:-0}" } }));
@@ -358,6 +361,10 @@ test("мини-приложение: функция репетируется, у
     assert.ok(calls.slice(1).every(item => item.where === "stage" && item.key && item.slim), "всё — из копии для облака");
     assert.match(done.out, /✓ Сборка 1\.0\.0 опубликована/u);
     assert.match(done.out, /✓ Мини-приложение «Комната» опубликовано: кнопка под ответом на «зайду к тебе» и в меню бота\./u);
+    // Страница уходит без комментариев (0.51.0) — из той же копии, что и код; в папке комментарии на месте.
+    assert.equal(calls.find(item => item.args.join(" ") === "push miniapp").page, true, "страница ушла без комментариев");
+    assert.match(done.out, /Страница комнаты: \d+ КБ без картинок \(с комментариями было бы \d+ КБ\)\./u);
+    assert.match(readFileSync(join(box.phone, "miniapp/app.js"), "utf8"), /этот комментарий платформе не нужен/u);
     assert.deepEqual(toldOwner(box), [], "всё вышло — телефон молчит: о сборке Аи пишет сама");
     assert.equal(box.status(), "", "в папке не менялось ничего");
     // Слепок опубликованного: страница в нём есть, комментариев и ключей — нет.

@@ -784,6 +784,10 @@ main() {
     WORK="$STAGE"
     if [ -n "$SLIM_SAYS" ]; then log "Код для облака: $(kb "$(slim_number body)") одним запросом (с комментариями было бы $(kb "$(slim_number bodyBefore)"))."
     elif [ -f "$STAGE/scripts/slim.mjs" ]; then log "Комментарии из кода убрать не вышло — отправляю как есть. Подробности: $DEPLOY_LOG"; fi
+    # Страница комнаты уходит тоже без комментариев (0.51.0): scripts/slim.mjs облегчает её в той же копии.
+    # Не вышло — она уйдёт как лежит: бота это не держит.
+    if [ -n "$(slim_number page)" ] && [ "$(slim_number page)" != "$(slim_number pageBefore)" ]; then log "Страница комнаты: $(kb "$(slim_number page)") без картинок (с комментариями было бы $(kb "$(slim_number pageBefore)"))."; fi
+    case "$SLIM_SAYS" in *'"pageError"'*) log "Комментарии из страницы комнаты убрать не вышло — она уйдёт как лежит. Подробности: $DEPLOY_LOG" ;; esac
     if ! step "ключи" inject --require-key; then WHY="нет ключа модели"; log "✗ Нет ключа модели (AI_PROVIDER_KEY) в $ENV_FILE."; return 1; fi
     # Репетиция в облаке: код там не собирается — живой бот не тронут.
     retry_step "репетиция: сообщение" tg run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }' \

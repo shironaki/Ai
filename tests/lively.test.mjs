@@ -520,3 +520,39 @@ test("фразы со скриншота владельца (0.50.0): четыр
     "не присылайте ничего", "прекрати присылать сообщения", "пожалуйста не отправляй мне сообщения"]) assert.equal(parseRoom(said)?.op, "noteoff", said);
   for (const said of ["не пиши ночью", "не присылай мне сообщения ночью", "напиши мне сообщение", "хватит писать код", "не присылай мне котов"]) assert.notEqual(parseRoom(said)?.op, "noteoff", said);
 });
+
+test("взгляд в сторону картинкой (0.51.0): заплатка на глаза у восьми поз в обоих нарядах; скрыта, пока она не смотрит в ту сторону; лежит под веками", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const scene = await import("../miniapp/scene.js");
+  const folder = new URL("../miniapp/her/", import.meta.url);
+  const sprites = {};
+  for (const file of readdirSync(folder)) sprites[file.replace(/\.js$/u, "")] = (await import(new URL(file, folder))).default;
+  const gazing = Object.keys(sprites).filter(name => sprites[name].lookr || sprites[name].lookl).sort();
+  const poses = ["play3", "read", "tea", "tea3", "tidy", "work", "work2", "work3"];
+  assert.deepEqual(gazing, [...poses.map(name => `home-${name}`), ...poses].sort());
+  for (const name of gazing) {
+    const { blink, lookr, lookl } = sprites[name];
+    // Все девять картинок вышли «вправо» (к правому краю рисунка) — «влево» пока нет ни у кого.
+    assert.equal(lookl, undefined, name);
+    assert.ok(blink, `${name}: взгляд ставится по векам`);
+    // Заплатка — на глаза: того же размера, что веки, и на том же месте (плюс-минус подгонка).
+    assert.ok(Math.abs(lookr.x - blink.x) <= 8 && Math.abs(lookr.y - blink.y) <= 8 && Math.abs(lookr.w - blink.w) <= 8 && Math.abs(lookr.h - blink.h) <= 8, `${name}: ${JSON.stringify({ ...lookr, src: "" })}`);
+    assert.match(lookr.src, /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/u, name);
+    assert.ok(scene.drawSprite(name, sprites[name]).includes(`<image id="r-her-${name}-lookr" x="${lookr.x}" y="${lookr.y}" width="${lookr.w}" height="${lookr.h}"`), name);
+  }
+  // На рисунке: слой взгляда скрыт (opacity="0") и стоит раньше век — моргание идёт поверх него.
+  const drawn = scene.drawRoom({ part: "день", her: { pose: "chair", key: "уют", beat: true }, cat: { shape: "sit", place: "near", key: "сыт" }, things: ["кресло"] }, { sprites });
+  const name = scene.spriteOf({ part: "день", her: { pose: "chair", key: "уют" } });
+  assert.ok(sprites[name].lookr, `${name}: у позы в кресле взгляд есть`);
+  assert.match(drawn, new RegExp(`<use class="eyr" opacity="0" href="#r-her-${name}-lookr"[^>]+/><use class="wink" href="#r-her-${name}-blink"`, "u"));
+  // Негодная заплатка — рисунок без неё, а не без неё самой; у позы без заплатки слоя нет.
+  const broken = scene.drawRoom({ part: "день", her: { pose: "chair", key: "уют", beat: true }, things: [] }, { sprites: { ...sprites, [name]: { ...sprites[name], lookr: { ...sprites[name].lookr, w: 0 } } } });
+  assert.ok(!broken.includes('class="eyr"') && broken.includes('class="wink"'));
+  // Стили: видна, пока на рисунке слово «смотрит вправо / влево»; страница ставит его и тогда, когда она стоит прямо
+  // перед окном (головой вертеть некуда) — если у позы есть такие глаза.
+  const css = readFileSync(new URL("../miniapp/index.html", import.meta.url), "utf8");
+  assert.ok(css.includes("#room .eyl, #room .eyr { opacity: 0; transition: opacity 0.2s ease-in-out; }") && css.includes("#room .look-l .eyl, #room .look-r .eyr { opacity: 1; }"));
+  const app = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  assert.match(app, /if \(Math\.abs\(toX - herX\) < 14\) \{[^}]*const eyes = to === "win" \? sprites\[spriteOf\(viewOf\(state\)\)\] : null;\s*if \(!eyes\?\.lookr && !eyes\?\.lookl\) return false;\s*react\(eyes\.lookr \? "look-r" : "look-l", 3200\);/u);
+});
+

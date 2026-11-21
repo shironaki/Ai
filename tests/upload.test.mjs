@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const { slim, sameProgram, modules, runBody, KEPT } = await import("../scripts/slim.mjs");
+const { slim, sameProgram, modules, runBody, KEPT, slimPage, pageFiles } = await import("../scripts/slim.mjs");
 
 /**
  * Пределы — не «сколько берёт облако» (этого никто не сказал), а «сколько заведомо проходило»:
@@ -173,4 +173,61 @@ test("разборщик JavaScript, лежащий рядом со скрипт
   const sum = createHash("sha256").update(readFileSync(join(ROOT, "scripts/vendor/acorn.mjs"))).digest("hex");
   assert.equal(sum, "76254fc76529713b4dfd2532972d17a991ffd9aafeebb1f977445b5506b9fb0b");
   assert.match(readFileSync(join(ROOT, "scripts/vendor/acorn.LICENSE"), "utf8"), /^MIT License/u);
+});
+
+
+test("страница уходит без комментариев (0.51.0): только её код, картинки и index.html не тронуты; не разобралась — уходит как лежит, а код облака облегчается всё равно", () => {
+  const dir = mkdtempSync(join(tmpdir(), "heart-slim-page-"));
+  try {
+    mkdirSync(join(dir, "tgcloud/handlers"), { recursive: true });
+    mkdirSync(join(dir, "miniapp/her"), { recursive: true });
+    writeFileSync(join(dir, "tgcloud/handlers/message.js"), "/** Обработчик. */\nexport default async function () { return 1; }\n");
+    writeFileSync(join(dir, "miniapp/index.html"), "<!doctype html><!-- разметка остаётся как есть --><title>Комната</title>\n");
+    writeFileSync(join(dir, "miniapp/app.js"), "// страница\nimport { step } from \"./logic.js\"; /* посреди строки */ step();\n");
+    writeFileSync(join(dir, "miniapp/logic.js"), "/**\n * Логика.\n */\nexport const step = () => \"// не комментарий\";\n");
+    writeFileSync(join(dir, "miniapp/her/tea.js"), "export default { w: 1, h: 1, src: \"data:image/webp;base64,AAAA\" };\n");
+    assert.deepEqual(pageFiles(dir), ["app.js", "logic.js"]);
+    const script = join(ROOT, "scripts/slim.mjs");
+    const run = (...args) => spawnSync(process.execPath, [script, ...args], { cwd: dir, encoding: "utf8" });
+    const html = readFileSync(join(dir, "miniapp/index.html"), "utf8"), picture = readFileSync(join(dir, "miniapp/her/tea.js"), "utf8");
+
+    const sized = JSON.parse(run("--size").stdout);
+    assert.equal(sized.pageFiles, 2);
+    assert.ok(sized.page < sized.pageBefore, "без комментариев страница легче");
+    assert.match(readFileSync(join(dir, "miniapp/app.js"), "utf8"), /страница/u, "«--size» ничего не меняет");
+
+    const done = run();
+    assert.equal(done.status, 0, done.stderr);
+    assert.deepEqual(JSON.parse(done.stdout), sized);
+    assert.equal(readFileSync(join(dir, "miniapp/app.js"), "utf8"), "\nimport { step } from \"./logic.js\"; step();\n");
+    assert.equal(readFileSync(join(dir, "miniapp/logic.js"), "utf8"), "\n\n\nexport const step = () => \"// не комментарий\";\n", "номера строк страницы — те же: журнал её ошибок называет строку репозитория");
+    assert.equal(readFileSync(join(dir, "miniapp/index.html"), "utf8"), html);
+    assert.equal(readFileSync(join(dir, "miniapp/her/tea.js"), "utf8"), picture);
+    assert.equal(sized.page, Buffer.byteLength(html) + Buffer.byteLength(readFileSync(join(dir, "miniapp/app.js"))) + Buffer.byteLength(readFileSync(join(dir, "miniapp/logic.js"))));
+
+    // Файл страницы не разобрался: страница не тронута вся, причина названа; код облака облегчён как обычно.
+    writeFileSync(join(dir, "miniapp/app.js"), "// страница\nexport const page = 1;\n");
+    writeFileSync(join(dir, "miniapp/logic.js"), "// сломано\nexport const = ;\n");
+    writeFileSync(join(dir, "tgcloud/handlers/message.js"), "/** Обработчик. */\nexport default async function () { return 2; }\n");
+    const broken = run();
+    assert.equal(broken.status, 0, broken.stderr);
+    const said = JSON.parse(broken.stdout);
+    assert.match(said.pageError, /^logic\.js: /u);
+    assert.equal(said.page, said.pageBefore);
+    assert.equal(said.pageFiles, 0);
+    assert.match(readFileSync(join(dir, "miniapp/app.js"), "utf8"), /страница/u, "пишется всё или ничего");
+    assert.equal(readFileSync(join(dir, "tgcloud/handlers/message.js"), "utf8"), "\nexport default async function () { return 2; }\n");
+    // Функция для тестов и листов: то же без запуска скрипта; страницы нет — пустой итог, и строка скрипта прежняя.
+    assert.deepEqual(slimPage(join(dir, "tgcloud")), {});
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("страница проекта облегчается целиком: каждый её файл проходит сверку, комментариев в ней — больше четверти", () => {
+  const before = pageFiles(ROOT).reduce((sum, name) => sum + Buffer.byteLength(readFileSync(join(ROOT, "miniapp", name), "utf8")), 0);
+  const after = pageFiles(ROOT).reduce((sum, name) => sum + Buffer.byteLength(slim(readFileSync(join(ROOT, "miniapp", name), "utf8"))), 0);
+  assert.deepEqual(pageFiles(ROOT), ["album.js", "app.js", "logic.js", "scene.js", "sound.js"]);
+  assert.ok(after < before * 0.75, `код страницы: ${before} → ${after} байт`);
+  const said = slimPage(ROOT, { write: false });
+  assert.equal(said.pageError, undefined);
+  assert.equal(said.pageFiles, 5);
 });

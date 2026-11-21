@@ -259,6 +259,10 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 #room .grin { opacity: 0; transition: opacity 0.25s ease-in-out; }
 #room .patted .grin, #room .glad .grin, #room .g-smile .grin { opacity: 1; }
 #room .g-smile .hd { animation: hdTilt 2.6s ease-in-out; }
+/* 0.51.0 — взгляд в сторону картинкой (.eyl, .eyr): заплатка на глаза — зрачки смотрят вбок. Видна, пока она смотрит
+   на Байта или в окно в эту сторону (.look-l, .look-r); лежит под веками — моргать не мешает. */
+#room .eyl, #room .eyr { opacity: 0; transition: opacity 0.2s ease-in-out; }
+#room .look-l .eyl, #room .look-r .eyr { opacity: 1; }
 @keyframes blush { 0% { opacity: 0; } 20%, 70% { opacity: 0.55; } 100% { opacity: 0; } }
 #room .notice .hop { animation: hop 0.45s ease-out both; animation-delay: calc(var(--t, 1s) - 0.4s); }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-3.5px); } }

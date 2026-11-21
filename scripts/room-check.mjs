@@ -138,14 +138,14 @@ try {
     const kept = [...document.querySelectorAll("#store image")], used = [...document.querySelectorAll("#inside use")].map(node => node.getAttribute("href"));
     return {
       // «Веки» (`…-blink`) — заплатка на глаза, она маленькая; «улыбка» (`…-smile`, 0.50.0) — на лицо; сама картинка — в рост.
-      kept: kept.map(node => node.id), sized: kept.every(node => node.namespaceURI === "http://www.w3.org/2000/svg" && node.getBBox().width > (node.id.endsWith("-blink") ? 20 : node.id.endsWith("-smile") ? 40 : 100) && node.getBBox().height > (node.id.endsWith("-blink") ? 8 : node.id.endsWith("-smile") ? 30 : 100)),
+      kept: kept.map(node => node.id), sized: kept.every(node => node.namespaceURI === "http://www.w3.org/2000/svg" && node.getBBox().width > (/-(?:blink|look[lr])$/u.test(node.id) ? 20 : node.id.endsWith("-smile") ? 40 : 100) && node.getBBox().height > (/-(?:blink|look[lr])$/u.test(node.id) ? 8 : node.id.endsWith("-smile") ? 30 : 100)),
       used, inline: document.querySelectorAll("#inside image").length, drawn: document.querySelectorAll("#inside .breath").length,
       // Видна ли она на самом деле: у ссылки на картинку есть размер на экране.
       shown: [...document.querySelectorAll("#inside > .art use")].some(node => node.getBoundingClientRect().height > 200),
     };
   });
   const first = await painted();
-  if (!first.kept.some(id => !/-(?:blink|smile)$/u.test(id)) || !first.sized) fail(`её картинки нет в кладовой рисунка: ${JSON.stringify(first.kept)}`);
+  if (!first.kept.some(id => !/-(?:blink|smile|look[lr])$/u.test(id)) || !first.sized) fail(`её картинки нет в кладовой рисунка: ${JSON.stringify(first.kept)}`);
   if (!first.used.some(href => first.kept.includes(String(href).slice(1))) || !first.shown) fail(`комната не показывает её картинку: ссылки ${JSON.stringify(first.used)}, в кладовой ${JSON.stringify(first.kept)}`);
   if (first.inline) fail(`картинка лежит прямо в комнате (${first.inline}) — будет грузиться заново при каждом нажатии`);
   if (first.drawn) fail("она и картинкой, и нарисована кодом сразу");
@@ -655,16 +655,18 @@ try {
     await pause(900);
     const shownNow = () => tab.evaluate(() => ({
       // Второй кадр позы (`.fr.b`, 0.45.0) — не другая поза: ни в «нарисовано», ни в «видно» он не идёт.
-      used: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile)$/u.test(String(href))),
+      used: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile|look[lr])$/u.test(String(href))),
       // Прежняя поза остаётся в рисунке до следующей перерисовки, но уже растаявшей: что на ней сейчас ВИДНО —
       // это ссылки без тех, чья группа «тает» дошла до прозрачности.
       seen: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(node => { const gone = node.closest(".leave, .stride"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
-        .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile)$/u.test(String(href))),
+        .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile|look[lr])$/u.test(String(href))),
       kept: [...document.querySelectorAll("#store image")].map(node => node.id),
       leave: document.querySelectorAll("#inside .leave").length, arrive: document.querySelectorAll("#inside .arrive").length,
       wink: document.querySelectorAll("#inside use.wink").length,
       // Улыбка (0.50.0): насколько видна заплатка на лицо (0 — скрыта, 1 — видна); второй кадр позы не в счёт.
       grin: [...document.querySelectorAll("#inside use.grin")].filter(node => !node.closest(".fr.b")).map(node => Number(getComputedStyle(node).opacity)),
+      // Взгляд в сторону (0.51.0): насколько видна заплатка на глаза со зрачками вбок.
+      gaze: [...document.querySelectorAll("#inside use.eyl, #inside use.eyr")].filter(node => !node.closest(".fr.b")).map(node => Number(getComputedStyle(node).opacity)),
       winking: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside use.wink")).length,
       pouf: document.querySelectorAll('#inside [fill*="r-pouf"]').length,
     }));
@@ -728,7 +730,7 @@ try {
     // рисунок (`spritesOf` — его держат тесты), а здесь проверяется страница: картинки загрузились, нажатие
     // сменило позу, куртка вечером не показалась ни на миг, веки — там, где они есть в модуле картинки.
     const evening = ["дело", "уют", "игра", "сон", "устала", "обида", "ревность"];
-    let eveningPoses = 0, eveningLids = 0, eveningGrins = 0;
+    let eveningPoses = 0, eveningLids = 0, eveningGrins = 0, eveningGazes = 0;
     for (const key of evening) {
       await tab.goto(`${origin}/index.html#part=${encodeURIComponent("вечер")}&key=${encodeURIComponent(key)}&scene=0`, { waitUntil: "load", timeout: 30_000 });
       await tab.reload({ waitUntil: "load" });
@@ -736,9 +738,9 @@ try {
         const [scene, logic] = await Promise.all([import("./scene.js"), import("./logic.js")]);
         const look = logic.demoLook(20, { part: "вечер", key: mood, scene: "0" });
         const list = scene.spritesOf({ part: "вечер", her: { pose: look.her.pose, key: mood } });
-        const lids = [], grins = [];
-        for (const name of list) { const sprite = (await import(`./her/${name}.js`)).default; lids.push(Boolean(sprite.blink)); grins.push(Boolean(sprite.smile)); }
-        return { list, lids, grins };
+        const lids = [], grins = [], gazes = [];
+        for (const name of list) { const sprite = (await import(`./her/${name}.js`)).default; lids.push(Boolean(sprite.blink)); grins.push(Boolean(sprite.smile)); gazes.push(sprite.lookr ? "r" : sprite.lookl ? "l" : ""); }
+        return { list, lids, grins, gazes };
       }, key);
       if (!plan.list.length || plan.list.some(name => !name.startsWith("home-"))) { fail(`вечер, «${key}»: на ней должен быть свитер, а рисунок называет ${JSON.stringify(plan.list)}`); continue; }
       if ((key === "сон") !== (plan.list.length === 1)) fail(`вечер, «${key}»: поз в свитере — ${plan.list.length}`);
@@ -778,6 +780,22 @@ try {
           const calm = await shownNow();
           if (calm.grin.some(value => value > 0.02)) fail(`вечер, «${key}», «${name}»: улыбка не сошла после поглаживания — ${JSON.stringify(calm.grin)}`);
           eveningGrins += 1;
+        }
+        // Взгляд в сторону (0.51.0): заплатка на глаза есть ровно у тех поз, где она нарисована; в покое скрыта; на
+        // рисунке слово «смотрит вправо» (его ставит жест) — видна; слово сняли — снова скрыта.
+        const side = plan.gazes[index];
+        if (Boolean(side) !== Boolean(dusk.gaze.length)) fail(`вечер, «${key}», «${name}»: заплаток «взгляд в сторону» — ${dusk.gaze.length}, а быть ей ${side ? "положено" : "не положено"}`);
+        if (dusk.gaze.some(value => value > 0.02)) fail(`вечер, «${key}», «${name}»: взгляд в сторону виден в покое — ${JSON.stringify(dusk.gaze)}`);
+        if (side) {
+          await tab.evaluate((word) => document.getElementById("inside").classList.add(word), `look-${side}`);
+          await pause(500);
+          const aside = await shownNow();
+          if (!aside.gaze.some(value => value > 0.5)) fail(`вечер, «${key}», «${name}»: она смотрит в сторону, а глаза прежние — ${JSON.stringify(aside.gaze)}`);
+          await tab.evaluate((word) => document.getElementById("inside").classList.remove(word), `look-${side}`);
+          await pause(450);
+          const back = await shownNow();
+          if (back.gaze.some(value => value > 0.02)) fail(`вечер, «${key}», «${name}»: взгляд в сторону не сошёл — ${JSON.stringify(back.gaze)}`);
+          eveningGazes += 1;
         }
         eveningPoses += 1;
         eveningLids += lids ? 1 : 0;
@@ -834,7 +852,7 @@ try {
     }
     if (snow.things.length !== 3) fail(`праздничные вещи: на рисунке — ${JSON.stringify(snow.things)}, а должны быть торт, свеча и фонарь`);
     if (broken.length) fail(`позы и звук — ошибка на странице: ${broken[0].slice(0, 200)}`);
-    if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний: поз в нём — ${eveningPoses}, сменяются от нажатия, куртка не показывается; моргает на ${eveningLids}, улыбается от поглаживания — ${eveningGrins} из них`);
+    if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний: поз в нём — ${eveningPoses}, сменяются от нажатия, куртка не показывается; моргает на ${eveningLids}, улыбается от поглаживания — ${eveningGrins}, смотрит в сторону глазами — ${eveningGazes} из них`);
     if (failures.length === failed) console.log(`  позы сменяются от нажатия и сами, прежняя тает; моргает (заплаток — ${start.wink}); звук включается нажатием, запоминается, без касания не начинается; снег — хлопьями в двух слоях; торт, свеча и фонарь на месте`);
     await tab.close();
   }
@@ -851,7 +869,7 @@ try {
     const now = () => tab.evaluate(() => {
       // Второй кадр позы (`.fr.b`, 0.45.0) — не другая картинка: в счёт идёт первый кадр, виден он сейчас или нет.
       const visible = (node) => { for (let at = node; at && at.id !== "inside"; at = at.parentElement) if (!at.classList?.contains("fr") && Number(getComputedStyle(at).opacity) <= 0.02) return false; return true; };
-      const hers = [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile)$/u.test(href));
+      const hers = [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile|look[lr])$/u.test(href));
       const strides = [...document.querySelectorAll("#inside .stride")];
       return {
         say: document.getElementById("say").textContent, light: document.getElementById("app").dataset.light, hers: [...new Set(hers)],
@@ -998,7 +1016,7 @@ try {
       album: !document.getElementById("album").hidden, box: !document.getElementById("albumBox").hidden, rows: [...document.querySelectorAll("#albumBox .album li .what")].map(node => node.textContent),
       gifts: [...document.querySelectorAll("#albumBox [data-gift]")].length, notes: [...document.querySelectorAll("#albumBox .albumNote")].map(node => node.textContent),
       thumbs: [...document.querySelectorAll("#albumBox img")].map(node => [String(node.src).slice(0, 26), node.naturalWidth]),
-      hers: [...new Set([...document.querySelectorAll("#inside > .art use")].map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile)$/u.test(href)))],
+      hers: [...new Set([...document.querySelectorAll("#inside > .art use")].map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile|look[lr])$/u.test(href)))],
       flower: document.getElementById("inside").innerHTML.includes('cx="23" cy="143.4"'), art: document.querySelectorAll("#room .art *").length,
       resting: document.documentElement.classList.contains("resting"), running: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.closest?.("#room")).length,
       oops: document.getElementById("oops").hidden ? null : document.getElementById("oops").textContent, head: document.querySelectorAll("#inside .hd").length, words: document.getElementById("inside").getAttribute("class") ?? "",

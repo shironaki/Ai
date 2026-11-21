@@ -160,9 +160,17 @@ page() {
   browser
   previous_page
   cp "$ROOT/scripts/room-check.mjs" "$PAGE/room-check.mjs"
-  local before=""
+  local before="" folder="$ROOT/miniapp"
   if [ -d "$PAGE/previous/miniapp" ]; then before="$PAGE/previous/miniapp"; fi
-  (cd "$PAGE" && node room-check.mjs "$ROOT/miniapp" "${1:--}" "$before")
+  # SLIM=1 (0.51.0) — проверить ту страницу, что уходит на платформу: копию без комментариев (scripts/slim.mjs).
+  if [ -n "${SLIM:-}" ]; then
+    rm -rf "$PAGE/slim" && mkdir -p "$PAGE/slim/scripts" && cp -R "$ROOT/miniapp" "$PAGE/slim/miniapp" \
+      && cp -R "$ROOT/scripts/slim.mjs" "$ROOT/scripts/vendor" "$PAGE/slim/scripts/" || { echo "копия страницы не собралась"; return 1; }
+    (cd "$PAGE/slim" && node scripts/slim.mjs) || return 1
+    folder="$PAGE/slim/miniapp"
+    echo "страница без комментариев: $folder"
+  fi
+  (cd "$PAGE" && node room-check.mjs "$folder" "${1:--}" "$before")
   seen
 }
 
