@@ -345,7 +345,9 @@ test("улыбка картинкой (0.50.0): заплатка на лицо �
     assert.ok(smile.x <= blink.x + 4 && smile.x + smile.w >= blink.x + blink.w - 4 && smile.y <= blink.y + 2 && smile.y + smile.h >= blink.y + blink.h + 20, `${file}: заплатка накрывает глаза и рот`);
     assert.match(smile.src, /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/u);
   }
-  const poses = ["books", "feed", "play3", "read", "tea", "tea3", "tidy", "work", "work2", "work3"];
+  // 0.52.0: одиннадцатая — «play» (она подмигивала; улыбка — оба глаза закрыты). У «play2» и «tea2» глаза закрыты и
+  // так (смеётся, пьёт), «walk» — шаг: улыбка-картинка есть у всех поз, где она нужна.
+  const poses = ["books", "feed", "play", "play3", "read", "tea", "tea3", "tidy", "work", "work2", "work3"];
   assert.deepEqual(smiling.sort(), [...poses, ...poses.map(name => `home-${name}`)].sort());
   // На рисунке: определение заплатки — рядом с картинкой, сама она — в слое головы, поверх век, и не видна.
   const sprite = { w: 300, h: 900, cx: 0.5, src: "data:image/webp;base64,AAAA", blink: { x: 120, y: 60, w: 60, h: 20, src: "data:image/webp;base64,AAAA" }, smile: { x: 118, y: 56, w: 64, h: 60, src: "data:image/webp;base64,BBBB" } };
@@ -530,10 +532,18 @@ test("взгляд в сторону картинкой (0.51.0): заплатк
   const gazing = Object.keys(sprites).filter(name => sprites[name].lookr || sprites[name].lookl).sort();
   const poses = ["play3", "read", "tea", "tea3", "tidy", "work", "work2", "work3"];
   assert.deepEqual(gazing, [...poses.map(name => `home-${name}`), ...poses].sort());
+  // «Влево» (0.52.0). Сторону художник выбирает сам: и по слову «влево», и на зеркальном образце она смотрела
+  // вправо. Помогла цель на картинке — жёлтый шарик слева от головы («смотрит на шарик»): у двух поз стоя вышло, у
+  // трёх сидя она и с шариком посмотрела вправо. Поэтому «влево» — только у этих четырёх картинок.
+  assert.deepEqual(gazing.filter(name => sprites[name].lookl), ["home-tea", "home-work", "tea", "work"]);
   for (const name of gazing) {
     const { blink, lookr, lookl } = sprites[name];
-    // Все девять картинок вышли «вправо» (к правому краю рисунка) — «влево» пока нет ни у кого.
-    assert.equal(lookl, undefined, name);
+    if (lookl) {
+      assert.ok(Math.abs(lookl.x - blink.x) <= 8 && Math.abs(lookl.y - blink.y) <= 8 && Math.abs(lookl.w - blink.w) <= 8 && Math.abs(lookl.h - blink.h) <= 8, `${name}: ${JSON.stringify({ ...lookl, src: "" })}`);
+      assert.match(lookl.src, /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/u, name);
+      assert.notEqual(lookl.src, lookr.src, `${name}: «влево» — другая картинка, чем «вправо»`);
+      assert.ok(scene.drawSprite(name, sprites[name]).includes(`<image id="r-her-${name}-lookl" x="${lookl.x}" y="${lookl.y}" width="${lookl.w}" height="${lookl.h}"`), name);
+    }
     assert.ok(blink, `${name}: взгляд ставится по векам`);
     // Заплатка — на глаза: того же размера, что веки, и на том же месте (плюс-минус подгонка).
     assert.ok(Math.abs(lookr.x - blink.x) <= 8 && Math.abs(lookr.y - blink.y) <= 8 && Math.abs(lookr.w - blink.w) <= 8 && Math.abs(lookr.h - blink.h) <= 8, `${name}: ${JSON.stringify({ ...lookr, src: "" })}`);

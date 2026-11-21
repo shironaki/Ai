@@ -823,7 +823,7 @@ test("портрет по описанию (0.51.0, идея 197): после «
 
   // Разговор со снимка владельца (сообщение 51): просьба вопросом — она просит описание и ждёт его.
   assert.equal(await said("А сможешь нарисовать меня?"), 0);
-  assert.equal(last(), "Я не знаю, как вы выглядите. Опишите себя словами — волосы, глаза, одежду — и я нарисую. Или сразу целиком: «нарисуй девушку с рыжими волосами у окна».");
+  assert.equal(last(), "Я не знаю, как вы выглядите. Опишите себя словами — волосы, глаза, одежду — или пришлите фото, и я нарисую. Или сразу целиком: «нарисуй девушку с рыжими волосами у окна».");
   // «Вот так выгляжу» — не описание: ожидание остаётся. «Одного зуба нету» — уже примета, а не тема словаря.
   assert.equal(await said("вот так выгляжу"), 0);
   assert.equal(await said("одного зуба нету"), 1, last());
@@ -859,3 +859,54 @@ test("портрет по описанию (0.51.0, идея 197): после «
   assert.match(sent(), /портрет человека: 30 лет, парень в чёрной куртке/u);
   assert.equal(await said("нарисуй ещё"), 4, last());
 });
+
+test("портрет по фото (0.52.0): после «нарисуй меня» своё фото — зрение называет приметы, художник рисует; без просьбы фото — обычное фото", async () => {
+  reset();
+  source("flux-1-schnell", image());
+  source("m2m100", translated("portrait of a person: a man about thirty, short dark hair, glasses, grey hoodie"));
+  let at = NOON;
+  const h = heart({ ...ON, PHRASES: true }, { now: () => at });
+  const photo = (caption = null) => message(null, { extra: { photo: [{ file_id: "me", width: 1280, height: 960, file_size: 200_000 }], ...(caption ? { caption } : {}) } });
+  const looks = () => sdk().fetches.filter(item => String(item.url).endsWith("/chat/completions")).map(item => JSON.parse(item.options.body)).filter(body => Array.isArray(body.messages?.[1]?.content));
+  sdk().apiReplies.getFileContent = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5]);
+
+  // Без просьбы: фото — обычное фото: зрение описывает, отвечает она сама; художника не зовут.
+  sdk().fetchQueue.push(says("На фото мужчина в очках у окна."), says("Хороший кадр."));
+  await h.onMessage(photo(), KEY);
+  assert.equal(last(), "Хороший кадр.");
+  assert.equal(photos().length, 0);
+  assert.equal(looks().at(-1).messages[1].content[0].text, "Опиши картинку.");
+
+  // «Нарисуй меня» → «вот так выгляжу» с фото: зрению — вопрос о приметах, художнику — её ответ.
+  await h.onMessage(message("нарисуй меня"), KEY);
+  assert.match(last(), /волосы, глаза, одежду — или пришлите фото, и я нарисую/u);
+  sdk().fetchQueue.push(says("мужчина лет тридцати, короткие тёмные волосы, очки, серое худи"));
+  await h.onMessage(photo("вот так выгляжу"), KEY);
+  assert.equal(photos().length, 1, last());
+  assert.match(looks().at(-1).messages[1].content[0].text, /^Вопрос человека к картинке: «Опиши внешность человека на фото для художника: пол и примерный возраст, волосы, глаза, черты лица, одежда\. Только приметы/u);
+  assert.match(JSON.stringify(asked("m2m100").at(-1)), /портрет человека: мужчина лет тридцати, короткие тёмные волосы, очки, серое худи/u);
+  assert.match(asked("flux-1-schnell").at(-1).prompt, /portrait of a person: a man about thirty/u);
+
+  // Один раз: следующее фото — снова обычное.
+  sdk().fetchQueue.push(says("На фото тот же мужчина."), says("Вижу."));
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 1);
+  assert.equal(last(), "Вижу.");
+  // Фото опоздало (две минуты прошли) — обычное фото, отметка снята со следующим описанием словами.
+  await h.onMessage(message("нарисуй меня"), KEY);
+  at += 2 * 60_000 + 1000;
+  sdk().fetchQueue.push(says("На фото мужчина."), says("Вижу и это."));
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 1);
+  // Зрение не ответило — рисунка нет, она говорит об этом сама; просьба в силе, пока не вышел срок.
+  at = NOON + 3_600_000;
+  await h.onMessage(message("нарисуй меня"), KEY);
+  sdk().fetchQueue.push({ ok: false, status: 503, headers: { get: () => null }, json: async () => ({}), text: async () => "" });
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 1);
+  assert.match(last(), /Не получилось рассмотреть фото|Зрение сейчас перегружено/u);
+  sdk().fetchQueue.push(says("женщина, длинные рыжие волосы, зелёное платье"));
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 2, last());
+});
+

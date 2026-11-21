@@ -697,12 +697,14 @@ test("она картинкой: у каждого состояния своя �
   const grin = SPRITES.tea.smile;
   // Со взглядом в сторону (0.51.0) — четыре: ещё заплатка на глаза, зрачки вбок.
   const gaze = SPRITES.tea.lookr;
-  assert.equal(drawSprite("tea", SPRITES.tea), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/><image id="r-her-tea-smile" x="${grin.x}" y="${grin.y}" width="${grin.w}" height="${grin.h}" preserveAspectRatio="none" href="${grin.src}"/><image id="r-her-tea-lookr" x="${gaze.x}" y="${gaze.y}" width="${gaze.w}" height="${gaze.h}" preserveAspectRatio="none" href="${gaze.src}"/>`);
+  // Со взглядом влево (0.52.0) — пять.
+  const left = SPRITES.tea.lookl;
+  assert.equal(drawSprite("tea", SPRITES.tea), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/><image id="r-her-tea-smile" x="${grin.x}" y="${grin.y}" width="${grin.w}" height="${grin.h}" preserveAspectRatio="none" href="${grin.src}"/><image id="r-her-tea-lookl" x="${left.x}" y="${left.y}" width="${left.w}" height="${left.h}" preserveAspectRatio="none" href="${left.src}"/><image id="r-her-tea-lookr" x="${gaze.x}" y="${gaze.y}" width="${gaze.w}" height="${gaze.h}" preserveAspectRatio="none" href="${gaze.src}"/>`);
   // Негодные «веки» — картинка без них, а не без неё самой.
   for (const blink of [null, "x", { ...lids, w: 0 }, { ...lids, x: SPRITES.tea.w }, { ...lids, src: "javascript:alert(1)" }, { ...lids, src: 'data:image/webp;base64,AAAA"/><script>' }]) {
-    assert.equal(drawSprite("tea", { ...SPRITES.tea, blink, smile: undefined, lookr: undefined }), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/>`, JSON.stringify(blink).slice(0, 50));
+    assert.equal(drawSprite("tea", { ...SPRITES.tea, blink, smile: undefined, lookr: undefined, lookl: undefined }), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/>`, JSON.stringify(blink).slice(0, 50));
     // Негодная улыбка — так же: картинка и веки на месте, заплатки на лицо нет.
-    assert.equal(drawSprite("tea", { ...SPRITES.tea, smile: blink, lookr: blink }), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/>`, JSON.stringify(blink).slice(0, 50));
+    assert.equal(drawSprite("tea", { ...SPRITES.tea, smile: blink, lookr: blink, lookl: blink }), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/>`, JSON.stringify(blink).slice(0, 50));
   }
   for (const [name, sprite] of [["чужая", SPRITES.tea], ["constructor", SPRITES.tea], ["tea", null], ["tea", false], ["tea", { ...SPRITES.tea, w: 0 }], ["tea", { ...SPRITES.tea, h: "900" }],
     ["tea", { ...SPRITES.tea, src: 'data:image/webp;base64,AAAA"/><script>alert(1)</script>' }], ["tea", { ...SPRITES.tea, src: "https://example.com/x.webp" }], ["tea", { ...SPRITES.tea, src: "data:image/svg+xml;base64,AAAA" }]]) {
@@ -1691,7 +1693,7 @@ test("страница: папка уходит на платформу файл
   // С 0.48.0 — «lean» (стоя покачивается) и «blush» (румянец под глазами, невидимый до ласки).
   // С 0.49.0 — три слоя движения: слой мимики («mim») с настроением («m-…»), слой головы («hd») и концы волос
   // («hr»), метки-эмоции («emo», «e-…»): невидимы, пока страница не покажет жест.
-  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["alive", "arrive", "blush", "e-ask", "e-bang", "e-drop", "e-huff", "e-zz", "emo", "eyr", "grin", "hd", "hr", "lean", "leave",
+  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["alive", "arrive", "blush", "e-ask", "e-bang", "e-drop", "e-huff", "e-zz", "emo", "eyl", "eyr", "grin", "hd", "hr", "lean", "leave",
     ...Object.values(MOODS).map(mood => `m-${mood}`), "mim", "wink"].sort());
   // Своя жизнь (0.44.0): она идёт от места к месту, входит и уходит к шкафу; Байт идёт сам; на её месте — надпись.
   const lived = new Set(classes);
@@ -1748,8 +1750,8 @@ test("страница: папка уходит на платформу файл
   // `lookAt` в app.js; какой жест — `logic.gestureOf`).
   const GESTURE_WORDS = ["peek", "look-l", "look-r", "g-ask", "g-bang", ...logic.GESTURES.filter(name => !["peek", "look-cat", "look-win"].includes(name)).map(name => `g-${name}`)];
   for (const name of logic.GESTURES.filter(word => !["peek", "look-cat", "look-win"].includes(word))) assert.ok(styled.has(`g-${name}`), `жест «${name}»: правило в стилях`);
-  // «eyl» — взгляд влево (0.51.0): правило и рисунок к нему готовы, а картинок пока нет — все девять вышли «вправо».
-  assert.deepEqual([...styled].filter(name => !classes.has(name) && !["fading", "poked", "patted", "glad", "eyl", ...GESTURE_WORDS].includes(name)).sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
+  // «eyl» — взгляд влево: с 0.52.0 картинки есть (work, tea и их пары в свитере) — исключением он больше не числится.
+  assert.deepEqual([...styled].filter(name => !classes.has(name) && !["fading", "poked", "patted", "glad", ...GESTURE_WORDS].includes(name)).sort(), [], "правило в стилях есть, а рисунок такого класса не ставит");
   for (const name of ["breath", "blink", "slide", "bulb", "tailwag", "steam", "zzz"]) assert.ok(classes.has(name) && styled.has(name), name);
   // Правило с классом из рисунка действует только внутри рисунка (`#room`, `#sky`) — или на сам слой дождя
   // (`.plane.far`, `.plane.near`). У струй внутри слоя те же классы `far` и `near`: правило `.rainbox .far` двигало
