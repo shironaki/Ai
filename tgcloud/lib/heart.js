@@ -82,7 +82,7 @@ import { createTaught, parseTeach, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
-import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
+import { createDraw, subjectOf, portraitLooks, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, pageText, safeUrl as senseUrl, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 import { toSticker, parseStickerAsk, stickerSource, packName, PACK_KEY, STICKER_STYLE, STICKER_SOURCE_MAX } from "./sticker.js";
 
@@ -144,13 +144,16 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.50.0";
+export const BUILD = "0.51.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.50.0 — улыбаюсь в комнате и понимаю фразы из вашего списка «что не поняла?»; а ещё всё, что несла 0.49.1: память комнаты, жесты, события дня, альбом, подарки",
-  "улыбка: погладите меня в комнате или нальёте чаю — глаза закрываются в улыбке; улыбаюсь и сама, посреди дела; обижена или устала — нет",
-  "фразы: «кого ты любишь», «сегодня день рождения твоего хозяина», «одного зуба нету» — отвечаю сама; «а сможешь нарисовать меня» — берёт рисование; «кто же» и «вот так выгляжу» остаются модели: это продолжение разговора, в списке их больше нет; «не присылай мне сообщения» — то же, что «не пиши»",
+  "0.51.0 — смотрю в сторону глазами, за окном ветер вашего города, рисую портрет по описанию; страница комнаты стала на треть легче; и всё, что несли 0.49.1 и 0.50.0",
+  "взгляд: смотрю на Байта или в окно — теперь не только головой, но и глазами; есть у восьми поз в куртке и в свитере, пока только вправо",
+  "ветер: дует в вашем городе от 4 м/с — облака за моим окном плывут быстрее, шторы у открытого окна ходят чаще, волосы качаются; от 8 м/с шторы ходят ходуном, и слова об окне — о ветре",
+  "портрет: «нарисуй меня» или «а сможешь нарисовать меня?» — попрошу описать себя и по вашим словам о внешности нарисую; жду их десять минут",
+  "улыбка: погладите по голове или нальёте чаю — глаза закрываются в улыбке; обижена или устала — нет",
+  "слова: «кого ты любишь», «сегодня день рождения твоего хозяина», «какие у тебя подарки», «сохрани этот момент» — отвечаю сама; «не присылай мне сообщения» — то же, что «не пиши»",
   "надёжность: сбой базы больше не выглядит пустой комнатой и ничего не стирает; не записалось — так и скажу; повторное нажатие после оборвавшегося ответа не переключает лампу, музыку и окно обратно; свёрнутая страница стоит",
   "движение: наклоняю голову, киваю, поправляю волосы, смотрю на Байта и в окно, вздыхаю, зеваю — по занятию и настроению; десять новых кадров: пишу в блокнот, взмахиваю метёлкой, оборачиваюсь с книгами, лента взлетает",
   "Байт при мне: сижу — приходит сам, ложится у ног, просится на руки; откроете окно — он на подоконнике; вечером приносит добычу; пока сплю — не шумит",
@@ -159,7 +162,7 @@ export const RELEASE_NOTES = Object.freeze([
   "подарки: «дарю тебе цветок», книгу или игрушку Байту — раз в неделю; подарок остаётся в комнате",
   "пишу первой — редко, днём и только о своём дне, тем, кто бывает у меня в комнате; скажете «не пиши» — перестану, «пиши мне» — снова буду",
   "не заходили три дня — расскажу по шагам, что было без вас; перед закатом и рассветом небо за окном меняется понемногу; при открытом окне шторы ходят от сквозняка",
-  "внизу комнаты должно быть «страница 13»; нажмите на эту строку — покажу журнал ошибок страницы; хозяину он есть и здесь: «ошибки комнаты»",
+  "внизу комнаты должно быть «страница 14»; нажмите на эту строку — покажу журнал ошибок страницы; хозяину он есть и здесь: «ошибки комнаты»",
 ]);
 
 const DAY = 86_400_000;
@@ -5296,13 +5299,34 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const idle = (Array.isArray(resting) ? resting : []).filter(Boolean);
     return `${shown}${idle.length ? `${shown ? "; " : ""}запасные отдыхают после отказа: ${idle.join(", ")}` : ""}`;
   };
+  /**
+   * Портрет по описанию (идея 197, 0.51.0; разговор со снимка в сообщении 51: «а сможешь нарисовать меня» → «вот так
+   * выгляжу» → «одного зуба нету» — и рисунка человек не получил). После «нарисуй меня» она десять минут ждёт первую
+   * реплику о внешности (`portraitLooks` в draw.js) и рисует по ней — один раз. Сначала разбор реплики, без базы, и
+   * только потом — ждёт ли она описание: как с ответом на «как вас зовут». Фото так не рисуется: его разбирает зрение.
+   */
+  const PORTRAIT_WAIT_MS = 10 * 60_000;
+  const portraitKey = (turn) => `heart:portrait:${turn.chatId}:${turn.actorId}`;
+  async function portraitMove(turn, prompt) {
+    const looks = portraitLooks(prompt);
+    if (!looks) return null;
+    const waiting = await store.get(portraitKey(turn)).catch(() => null);
+    if (!waiting?.at) return null;
+    await store.remove(portraitKey(turn)).catch(() => false);
+    if (now() - Number(waiting.at) > PORTRAIT_WAIT_MS) return null;
+    return drawPicture(turn, `портрет человека: ${looks}`);
+  }
   async function drawPicture(turn, query, { sticker = null } = {}) {
     const lastKey = `heart:drew:${turn.chatId}`;
     // «Открытку Маше на день рождения»: описание для художника — готовое, слова — подписью.
     const card = parsePostcard(query);
     let subject = card ? { text: "открытка", prompt: postcardPrompt(card.occasion, card.title), card } : subjectOf(query);
     if (!subject) return say(turn, "Что нарисовать? Скажите словами: «нарисуй кота в шляпе».");
-    if (subject.me) return say(turn, `Я не знаю, как ${you(turn, "вы выглядите", "ты выглядишь")}. ${you(turn, "Опишите", "Опиши")} словами — нарисую: «нарисуй девушку с рыжими волосами у окна».`);
+    if (subject.me) {
+      // Ждёт описание (идея 197, 0.51.0): не записалось — остаётся прежний путь, «нарисуй …» целиком.
+      await store.set(portraitKey(turn), { at: now() }).catch(() => false);
+      return say(turn, `Я не знаю, как ${you(turn, "вы выглядите", "ты выглядишь")}. ${you(turn, "Опишите", "Опиши")} себя словами — волосы, глаза, одежду — и я нарисую. Или сразу целиком: «нарисуй девушку с рыжими волосами у окна».`);
+    }
     // Сюжет без манеры («кот в шляпе»): по нему «сделай его из лего» меняет манеру, а не копит их.
     let plain = "";
     if (subject.again) {
@@ -8378,6 +8402,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await store.sweep("heart:said:", 7 * DAY);
       // Вопрос об имени ждёт ответа пять минут; забытые отметки убираются.
       await store.sweep("heart:askname:", DAY);
+      // «Нарисуй меня» ждёт описание десять минут; забытые отметки убираются.
+      await store.sweep("heart:portrait:", DAY);
       await store.sweep("heart:credit:", 7 * DAY);
       await store.sweep("heart:offer:", 30 * DAY);
       await store.sweep("heart:score:", 90 * DAY);
@@ -8936,6 +8962,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       } catch { /* политика не должна глушить разговор */ }
     }
 
+    // Ждёт описание для портрета (идея 197, 0.51.0): раньше словаря — «одного зуба нету» здесь примета, а не новость.
+    // Фото и подпись к нему сюда не идут: их разбирает зрение. База спрашивается, только если реплика — о внешности.
+    if (!dry && !request && draw.available && !turn.media && !turn.wordless) {
+      const portrait = await portraitMove(turn, prompt);
+      if (portrait) return ruled(portrait);
+    }
     // Словарь: «привет», «как дела», вкусы, пасхалки. Модель на это не тратится.
     // Похоже на просьбу, но умения её не взяли, а словарь знает целиком («не молчи» в личке) — тоже словарь.
     if (!request || spoken) {
@@ -9173,7 +9205,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // по сообщению). Вторые убираются семейством; двоеточие после номера обязательно,
   // иначе чат -10 унёс бы с собой и чат -100.
   const CHAT_KEYS = ["heart:chat:", "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:daysum:", "heart:game:", "heart:advised:", "heart:factseen:", "heart:scene:", "heart:tired:told:"];
-  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:", "heart:knows:"];
+  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:", "heart:knows:", "heart:portrait:"];
   async function forgetChat(chatId) {
     for (const prefix of CHAT_KEYS) await store.remove(`${prefix}${chatId}`).catch(() => false);
     // Отрицательный срок — «всё, что есть», включая записанное в эту же секунду.

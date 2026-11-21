@@ -53,11 +53,12 @@ import { join, extname, normalize } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
-const [, , folder, shotArg = "", previous = ""] = process.argv;
+const [, , folder, shotArg = "", previous = "", rootArg = ""] = process.argv;
 const shot = shotArg === "-" ? "" : shotArg;
 // Корень репозитория — на папку выше страницы: шаг 9 берёт оттуда настоящее сердце на стабе базы (`tests/fixtures/kit.mjs`).
-const root = join(folder, "..");
-if (!folder) { console.error("Нужна папка страницы: node room-check.mjs <папка miniapp> [снимок.png|-] [папка прежней страницы]"); process.exit(2); }
+// Проверяется копия страницы без комментариев (`SLIM=1`, 0.51.0) — корень называют четвёртым словом: копия лежит не в нём.
+const root = rootArg || join(folder, "..");
+if (!folder) { console.error("Нужна папка страницы: node room-check.mjs <папка miniapp> [снимок.png|-] [папка прежней страницы] [корень репозитория]"); process.exit(2); }
 
 let chromium, puppeteer;
 try {
@@ -406,7 +407,9 @@ try {
   const later = await painted();
   // С 0.45.0 в кладовой больше картинок: вторые кадры поз и «читает» (нажатие на полку) с её веками; с 0.46.0 —
   // оба кадра шага, кадры ещё шести поз и танец (нажатие на колонку). Главное — что ни одна не лежит дважды.
-  if (new Set(later.kept).size !== later.kept.length || later.kept.length > 24) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
+  // С 0.50.0 и 0.51.0 при картинке лежат её заплатки — веки, улыбка, взгляд (у позы до трёх): счёт идёт по самим картинкам.
+  const whole = later.kept.filter(id => !/-(?:blink|smile|look[lr])$/u.test(id));
+  if (new Set(later.kept).size !== later.kept.length || whole.length > 20) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
   if (!later.shown || later.inline) fail(`после нажатий её картинки не видно: ${JSON.stringify(later.used)}`);
   console.log(`  нажато: забота на рисунке и кнопками, она, окно, вещей — ${Object.keys(lines.things).length}, сценка`);
   if (shot) { await page.screenshot({ path: shot, fullPage: false }); console.log(`  снимок: ${shot}`); }

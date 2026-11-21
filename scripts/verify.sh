@@ -170,7 +170,7 @@ page() {
     folder="$PAGE/slim/miniapp"
     echo "страница без комментариев: $folder"
   fi
-  (cd "$PAGE" && node room-check.mjs "$folder" "${1:--}" "$before")
+  (cd "$PAGE" && node room-check.mjs "$folder" "${1:--}" "$before" "$ROOT")
   seen
 }
 
