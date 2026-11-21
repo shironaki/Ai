@@ -8,8 +8,7 @@
  * награды — дело сестры.
  */
 import { QUIZ, QUIZ_THEMES, quizTheme } from "./data/quiz.js";
-import { TRAITS, ANIMALS } from "./data/animals.js";
-import { QUESTS } from "./data/quest.js";
+import { TRAITS, ANIMALS, QUESTS } from "./data/games.js";
 import { fold } from "./sources.js";
 import { plural } from "./sibling.js";
 

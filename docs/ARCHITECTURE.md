@@ -73,7 +73,8 @@ tgcloud/lib/heart.js           решения: к ней ли это, прави
         ├── lib/tastes.js      анкета «любимое»: разбор фраз, хранение, вопросы; вопрос вечера; «что у нас общего»
         ├── lib/media.js       поиск: картинки, аниме-арт, аниме (и похожее на названное), музыка, видео
         ├── lib/pictures.js    что показать и каким стикером ответить
-        ├── lib/data/          свои данные: города, слова, загадки, фильмы, вопросы для игр и квиза, животные, приключение
+        ├── lib/data/          свои данные: города (`cities.js`), квиз (`quiz.js`), данные игр одним модулем (`games.js`, 0.49.1: слова,
+        │                      загадки, фильмы, животные, приключения, «правда или действие»)
         ├── lib/lessons.js     уроки: правила, поправки, знания; карантин
         ├── lib/pulse.js       счётчики дня для сводки и статуса
         ├── lib/notices.js     вести владельцу: поломки и новости, с очередью
@@ -612,6 +613,9 @@ JPEG или PNG → `{ ok, bytes, width, height, cut }`. Сердце кладё
 | Разборщик JavaScript для этого (acorn 8.19.0, MIT; в облако не уходит) | `scripts/vendor/acorn.mjs`, `scripts/vendor/acorn.LICENSE` |
 | Вес запроса репетиции — как его собирает инструмент | `runBody`, `modules` в `scripts/slim.mjs`; `node scripts/slim.mjs --size` |
 | Сторож веса: запрос ≤ 2 800 000 байт, модуль ≤ 640 000 | `tests/upload.test.mjs` |
+| Сторож числа модулей: не больше 99 (0.49.1; сто первый платформа, по всему, не принимает) | `MODULE_COUNT_LIMIT` в `tests/upload.test.mjs`; число — поле `files` в `node scripts/slim.mjs --size` |
+| Лишнее из облака: что платформа хранит сверх коммита; отправка без целей, которая это убирает | `cloud_modules`, `push_code` в `scripts/phone.sh`; слепок облака — `.tgcloud/remote` в копии |
+| Отказ отправки — словами платформы на экране и в вести владельцу | `refused`, `last_word`, `show_error` в `scripts/phone.sh` |
 | Словарь двумя модулями | `build`, `fresh`, `PARTS` в `scripts/phrases.mjs`; склейка — `SECTIONS` в `lib/phrasebook.js` |
 | Копия для облака и слепок опубликованного | `stage`, `promote`, `snapshot`, `slim` в `scripts/phone.sh`; папки `~/.heart/stage`, `~/.heart/live` |
 | Малый запрос «есть ли связь»; связи нет — не попытка | `reach`, `no_cloud` в `scripts/phone.sh`; файл `~/.heart/waiting` |

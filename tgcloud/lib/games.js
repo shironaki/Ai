@@ -13,8 +13,7 @@
  * забывается через два часа.
  */
 import { CITIES } from "./data/cities.js";
-import { FIVE_LETTER, LONG_WORDS } from "./data/words.js";
-import { RIDDLES, MOVIES } from "./data/riddles.js";
+import { FIVE_LETTER, LONG_WORDS, RIDDLES, MOVIES } from "./data/games.js";
 import { fold, cityKey } from "./sources.js";
 
 export const GAME_KEY = (chatId) => `heart:game:${chatId}`;

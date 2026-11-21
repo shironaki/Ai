@@ -8,7 +8,7 @@ import { heart, message, group, hers, reset, sdk, toChat, last, reactions, chats
 
 const { parseNote, sameList, NOTES_KEY } = await import("../tgcloud/lib/notes.js");
 const { parseQuiet, parseQuestion } = await import("../tgcloud/lib/fun.js");
-const { QUESTIONS } = await import("../tgcloud/lib/data/party.js");
+const { QUESTIONS } = await import("../tgcloud/lib/data/games.js");
 
 test("разбор списков: добавить, показать, вычеркнуть; слова человека сохраняются как написаны", () => {
   assert.deepEqual(parseNote("Список покупок: Молоко, хлеб и Сыр"), { op: "add", kind: "list", list: "покупок", items: ["Молоко", "хлеб", "Сыр"], explicit: true });

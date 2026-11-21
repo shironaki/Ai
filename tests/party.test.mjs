@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { heart, message, group, reset, sdk, calls, toChat, last, reactions, chats, KEY } from "./fixtures/kit.mjs";
 
 const { parseParty, boardResult, boardMove, PARTY_KEY } = await import("../tgcloud/lib/party.js");
-const { TRUTHS, DARES, BOTTLE_FRIENDLY, BOTTLE_WARM } = await import("../tgcloud/lib/data/party.js");
+const { TRUTHS, DARES, BOTTLE_FRIENDLY, BOTTLE_WARM } = await import("../tgcloud/lib/data/games.js");
 const { ACTIONS } = await import("../tgcloud/lib/rp.js");
 
 let serial = 0;

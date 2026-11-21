@@ -25,7 +25,7 @@ const TOKEN = "app123:SECRET-PLATFORM-TOKEN";
 const KEYS = { model: "gsk-SECRET-MODEL-KEY", giga: "GIGA-SECRET-KEY", voice: "777:VOICE-SECRET" };
 
 const FAKE_CLI = `
-import { appendFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve, basename } from "node:path";
 const args = process.argv.slice(2);
@@ -55,6 +55,8 @@ appendFileSync(process.env.FAKE_LOG, JSON.stringify({
   wip: existsSync("tgcloud/wip.js"),
   inRepo: existsSync(".git"),
   strayed: root !== started,
+  // Лежат ли в копии настройки проекта: отправка без целей идёт без них, иначе вместе с кодом ушла бы страница.
+  config: existsSync("tgcloud.jsonc"),
 }) + "\\n");
 if (!found) { console.log("✗ Module not found"); process.exit(1); }
 // В соседнем окне посреди публикации запускают что-то ещё.
@@ -67,7 +69,8 @@ if (process.env.FAKE_MEANWHILE && args[0] === "fetch") {
 // FAKE_FAIL_FROM — только начиная с вызова с таким номером. FAKE_HANG — вызов, на который платформа молчит.
 const fail = String(process.env.FAKE_FAIL || "").split(",").filter(Boolean);
 // Отправку можно уронить и прицельно: «push:app» — код вместе с функцией комнаты, «push:page» — страницу комнаты.
-const name = args[0] === "run" ? "run:" + args[1] : args[0] === "push" && args.includes("miniapp") ? "push:page" : args[0] === "push" && args.includes("endpoints") ? "push:app" : args[0];
+// «push:all» — отправка без целей (0.49.1): ею телефон убирает из облака лишние модули.
+const name = args[0] === "run" ? "run:" + args[1] : args[0] === "push" && args.length === 1 ? "push:all" : args[0] === "push" && args.includes("miniapp") ? "push:page" : args[0] === "push" && args.includes("endpoints") ? "push:app" : args[0];
 const here = !process.env.FAKE_FAIL_IN || process.env.FAKE_FAIL_IN === basename(root);
 const since = order >= Number(process.env.FAKE_FAIL_FROM || 1);
 if ((process.env.FAKE_HANG === args[0] || process.env.FAKE_HANG === name) && here && since) await new Promise((done) => setInterval(done, 600_000));
@@ -82,6 +85,15 @@ if (process.env.FAKE_ROOM_FATAL && existsSync("tgcloud/endpoints/room.js") && (a
 // Как настоящий инструмент: цель, которой нет в проекте, — отказ.
 if (args[0] === "push" && args.includes("endpoints") && !existsSync("tgcloud/endpoints/room.js")) { console.log("Error: Cannot deploy: endpoints — not found"); process.exit(1); }
 if (args[0] === "push" && args.includes("miniapp") && !(existsSync("tgcloud.jsonc") && existsSync("miniapp/index.html"))) { console.log("Error: Cannot deploy: miniapp — not found"); process.exit(1); }
+// Слепок облака (0.49.1): на «fetch» инструмент кладёт модули облака в .tgcloud/remote. FAKE_CLOUD — что платформа
+// хранит сверх коммита (пути через запятую; «-» — ничего лишнего): в слепок ложатся все модули копии и эти.
+if (args[0] === "fetch" && process.env.FAKE_CLOUD) {
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap(item => (item.isDirectory() ? walk(dir + "/" + item.name) : item.name.endsWith(".js") ? [dir + "/" + item.name] : []));
+  const mine = walk("tgcloud").map(path => path.slice("tgcloud/".length));
+  const extra = process.env.FAKE_CLOUD.split(",").filter(path => path && path !== "-");
+  for (const path of [...mine, ...extra]) { mkdirSync(dirname(".tgcloud/remote/" + path), { recursive: true }); writeFileSync(".tgcloud/remote/" + path, "export default 1;\\n"); }
+  console.log("Snapshot updated — " + (mine.length + extra.length) + " modules (revision 7)");
+}
 // Мини-приложение: на отправку страницы платформа отвечает её адресом, и инструмент кладёт ответ в .tgcloud/static.json.
 // FAKE_PAGE_LIVE — страница опубликована раньше: её адрес приходит и с «fetch».
 if ((args[0] === "push" && args.includes("miniapp")) || (args[0] === "fetch" && process.env.FAKE_PAGE_LIVE)) {
@@ -690,6 +702,98 @@ test("старая папка на другой ветке сама перехо
     const quiet = lost.run("once");
     assert.match(quiet.out, /Новое из GitHub не взять: ветки «nope» в GitHub нет/u);
   } finally { lost.clean(); }
+});
+
+test("лишние модули облака: отправка без целей убирает их, страница идёт своим шагом; отказ платформы — её словами на экран и владельцу", { skip }, () => {
+  // 1. В облаке лежит то, чего в коде уже нет (прежний словарь): отправка — без целей, она одна убирает лишнее.
+  // Настройки проекта на это время из копии убраны (иначе вместе с кодом ушла бы страница) и возвращены на место.
+  let box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_CLOUD: "lib/data/phrases.js,lib/old.js" });
+    const pushes = box.cli().filter(item => item.args[0] === "push");
+    assert.deepEqual(pushes.map(item => item.args.join(" ")), ["push", "push miniapp"], done.out);
+    assert.deepEqual(pushes.map(item => item.config), [false, true], "код уходит без настроек проекта, страница — с ними");
+    assert.match(done.out, /В облаке модулей: 6, из них лишних \(в коде их уже нет\): 2 — lib\/data\/phrases, lib\/old\. Убираю их этой публикацией\./u);
+    assert.match(done.out, /✓ Сборка 1\.0\.0 опубликована/u);
+    assert.match(done.out, /✓ Мини-приложение «Комната» опубликовано/u);
+    assert.ok(existsSync(join(box.home, ".heart/live/tgcloud.jsonc")), "в слепке опубликованного настройки проекта на месте");
+    assert.ok(!existsSync(join(box.home, ".heart/live/tgcloud.jsonc.off")));
+    assert.equal(box.status(), "", "в папке не менялось ничего");
+  } finally { box.clean(); }
+
+  // 2. Лишнего нет — отправка как всегда, с целями. Функция комнаты, которую скрипт сам убрал из копии (не прошла
+  // репетицию), в облаке не «лишняя»: её там не трогают.
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_CLOUD: "-" });
+    assert.deepEqual(box.cli().filter(item => item.args[0] === "push").map(item => item.args.join(" ")), ["push handlers lib schema endpoints", "push miniapp"]);
+    assert.doesNotMatch(done.out, /лишних/u);
+  } finally { box.clean(); }
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_CLOUD: "-", FAKE_FAIL: "run:endpoints/room" });
+    assert.deepEqual(box.cli().filter(item => item.args[0] === "push").map(item => item.args.join(" ")), ["push handlers lib schema"]);
+    assert.doesNotMatch(done.out, /лишних/u);
+    assert.match(done.out, /✓ Сборка 1\.0\.0 опубликована/u);
+  } finally { box.clean(); }
+
+  // 3. Платформа не приняла код: её слова — на экране и в вести владельцу, вместе со счётом модулей. Ключи в них
+  // не попадают. Так выглядела бы сборка 0.49.0, будь эта строка в скрипте раньше (сообщение 50).
+  box = sandbox({ app: true });
+  try {
+    const failed = box.run("once", { FAKE_CLOUD: "lib/data/phrases.js", FAKE_FAIL: "push", FAKE_SAYS: `Checking changes...\n  url: https://secret.example/hook\nError: Too many modules (limit: 100) for ${TOKEN}` });
+    assert.deepEqual(box.cli().filter(item => item.args[0] === "push").map(item => item.args.join(" ")), ["push", "push handlers lib schema endpoints", "push handlers lib schema"], "запасные пути — прежние: с целями, потом без функции комнаты");
+    assert.match(failed.out, /✗ Публикация не прошла: платформа не приняла код\. Подробности: /u);
+    assert.match(failed.out, / {3}Error: Too many modules \(limit: 100\) for \*\*\*/u);
+    assert.match(failed.out, /Модулей в коммите: 4, в облаке до отправки: 5\./u);
+    assert.ok(!failed.out.includes(TOKEN) && !failed.out.includes("secret.example"), "ни ключа, ни адреса на экране");
+    assert.equal(toldOwner(box).length, 1);
+    assert.match(toldOwner(box)[0], /text=⚠️ Телефон: сборка 1\.0\.0 не опубликована — платформа не приняла код\. Её ответ: «Error: Too many modules \(limit: 100\) for \*\*\*»\. Модулей в коммите: 4, в облаке до отправки: 5\. Перешлите эту строку в чат разработки\. Аи осталась на прежней сборке\./u);
+    assert.ok(!toldOwner(box)[0].includes(TOKEN.split(":")[1]), "ключ публикации в весть владельцу не попадает");
+    assert.ok(existsSync(join(box.phone, "tgcloud.jsonc")) && !existsSync(join(box.home, ".heart/stage")), "после неудачи копии нет, папка цела");
+  } finally { box.clean(); }
+
+  // 3а. Отправку без целей платформа не приняла, а обычную — приняла: бот и страница опубликованы как раньше, лишнее
+  // осталось в облаке, владелец узнаёт об этом словами платформы. Хуже, чем до 0.49.1, новая отправка не делает.
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_CLOUD: "lib/data/phrases.js", FAKE_FAIL: "push:all", FAKE_SAYS: "Error: Deleting modules is not allowed" });
+    const pushes = box.cli().filter(item => item.args[0] === "push");
+    assert.deepEqual(pushes.map(item => item.args.join(" ")), ["push", "push handlers lib schema endpoints", "push miniapp"]);
+    assert.deepEqual(pushes.map(item => item.config), [false, true, true], "после неудачи настройки проекта на месте");
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована, но лишние модули из облака убрать не вышло \(ответ платформы: «Error: Deleting modules is not allowed»\); перешлите эту строку в чат разработки\./u);
+    assert.match(done.out, /✓ Мини-приложение «Комната» опубликовано/u);
+    assert.match(box.state("published"), /\n1\.0\.0\n/u);
+    assert.match(toldOwner(box).at(-1), /сборка 1\.0\.0 опубликована, но лишние модули из облака убрать не вышло \(ответ платформы: «Error: Deleting modules is not allowed»\)/u);
+  } finally { box.clean(); }
+
+  // 4. Без слепка облака (инструмент его не оставил) — как раньше: с целями, а об отказе — словами платформы.
+  box = sandbox();
+  try {
+    const failed = box.run("once", { FAKE_FAIL: "push", FAKE_SAYS: "Error: schema.js: unexpected token" });
+    assert.deepEqual(box.cli().filter(item => item.args[0] === "push").map(item => item.args.join(" ")), ["push handlers lib schema"]);
+    assert.match(failed.out, /✗ Публикация не прошла: платформа не приняла код\./u);
+    assert.match(failed.out, / {3}Error: schema\.js: unexpected token/u);
+    assert.doesNotMatch(failed.out, /Модулей в коммите/u);
+    assert.match(toldOwner(box)[0], /не опубликована — платформа не приняла код\. Её ответ: «Error: schema\.js: unexpected token»\. Перешлите эту строку в чат разработки\. Аи осталась/u);
+  } finally { box.clean(); }
+
+  // 5. Связь оборвалась на отправке — это по-прежнему «нет связи», а не «платформа не приняла».
+  box = sandbox();
+  try {
+    const cut = box.run("once", { FAKE_FAIL: "push", FAKE_SAYS: "✗ Could not reach the tgcloud server at https://cloud.telegram.org. Check your connection (or the TG_CLOUD_API_URL setting)." });
+    assert.match(cut.out, /✗ Публикация не прошла\. Причина: нет связи с платформой Telegram\. Подробности: /u);
+    assert.doesNotMatch(cut.out, /платформа не приняла код/u);
+  } finally { box.clean(); }
+
+  // 6. Страницу платформа не приняла: её слова — в строке о мини-приложении и в вести владельцу.
+  box = sandbox({ app: true });
+  try {
+    const done = box.run("once", { FAKE_FAIL: "push:page", FAKE_SAYS: "Error: miniapp/her/big.js (3.1 MB): the server refused the upload as too large (HTTP 413)." });
+    assert.match(done.out, /Мини-приложение «Комната» не опубликовано: платформа не приняла страницу комнаты\./u);
+    assert.match(done.out, / {3}Ответ платформы: Error: miniapp\/her\/big\.js \(3\.1 MB\): the server refused the upload as too large \(HTTP 413\)\./u);
+    assert.match(toldOwner(box).at(-1), /Перешлите эту строку в чат разработки\. Ответ платформы: «Error: miniapp\/her\/big\.js \(3\.1 MB\): the server refused the upload as too large \(HTTP 413\)\.»\./u);
+  } finally { box.clean(); }
 });
 
 test("удар через платформу идёт опубликованным кодом, а не тем, что лежит в папке", { skip }, () => {

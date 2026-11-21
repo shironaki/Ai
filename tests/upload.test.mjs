@@ -27,6 +27,17 @@ const { slim, sameProgram, modules, runBody, KEPT } = await import("../scripts/s
  */
 const BODY_LIMIT = 2_800_000;
 const MODULE_LIMIT = 640_000;
+/**
+ * Число модулей (0.49.1). 21.11.2026 сборка 0.49.0 не опубликовалась: репетиции в облаке проходили, а отправку
+ * платформа не принимала (сообщение 50). Вес был ни при чём — и запрос, и самый тяжёлый модуль, и сумма были меньше,
+ * чем у сборок, которые уже стояли в боте. Впервые выросло одно: число модулей. В облаке их стало бы 102 — 101 в
+ * коде и прежний словарь (`lib/data/phrases`), который лежал там с 0.36.3: отправка с целями из облака ничего не
+ * убирает. До этого больше ста не бывало: 99 при 0.38.0–0.41.0 (в боте подтверждены), 100 при 0.42.0–0.48.0.
+ * Предел платформы нигде не назван; по совпадению — сто. Сторож стоит на числе, которое заведомо проходило.
+ * Тест упал — не поднимать число, а складывать модули (данные — первыми, как `lib/data/games.js`): и помнить, что
+ * убранный модуль уходит из облака только отправкой без целей (`push_code` в scripts/phone.sh).
+ */
+const MODULE_COUNT_LIMIT = 99;
 
 test("облегчение: комментарии уходят, а строки, шаблоны и регулярные выражения с «//» и «/*» — нет", () => {
   const source = [
@@ -70,6 +81,9 @@ test("облегчение: каждый модуль проекта читае�
   assert.ok(paths.includes("handlers/message.js") && paths.includes("lib/heart.js") && paths.includes("schema.js"));
   assert.ok(paths.includes("lib/data/phrases-1.js") && paths.includes("lib/data/phrases-2.js"), "словарь — двумя модулями");
   assert.ok(!paths.includes("lib/data/phrases.js"), "прежнего единого модуля словаря нет");
+  // Данные игр — одним модулем (0.49.1): пять прежних файлов в коде не лежат.
+  assert.ok(paths.includes("lib/data/games.js"));
+  for (const old of ["words", "riddles", "animals", "quest", "party"]) assert.ok(!paths.includes(`lib/data/${old}.js`), `lib/data/${old}.js сложен в lib/data/games.js`);
   const heart = readFileSync(join(ROOT, "tgcloud/lib/heart.js"), "utf8"), light = slim(heart);
   assert.equal(light.split("\n").length, heart.split("\n").length);
   assert.match(light, /^export const BUILD = "\d+\.\d+\.\d+";$/mu);
@@ -89,6 +103,9 @@ test("сторож веса: запрос репетиции и каждый м�
     after += Buffer.byteLength(light[path]);
     assert.ok(Buffer.byteLength(light[path]) <= MODULE_LIMIT, `${path}: ${Buffer.byteLength(light[path])} байт после облегчения — больше ${MODULE_LIMIT}. Разделите модуль`);
   }
+  const count = Object.keys(light).length;
+  assert.ok(count <= MODULE_COUNT_LIMIT, `модулей ${count} — больше ${MODULE_COUNT_LIMIT}: сборку с сотней и больше платформа, судя по 0.49.0, не принимает. Сложите модули вместе, число не поднимать`);
+  assert.ok(count > 50, "счёт не пустой: в нём все модули");
   const body = runBody(light);
   assert.ok(after < before * 0.9, `комментарии — заметная часть кода: ${before} → ${after} байт`);
   assert.ok(body <= BODY_LIMIT, `в облако одним запросом уходит ${body} байт — больше ${BODY_LIMIT}. Облегчайте код (docs/IDEAS.md, «Вес кода для облака»), предел не поднимать`);

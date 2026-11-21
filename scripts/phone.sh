@@ -522,10 +522,22 @@ main() {
   }
   # Что ответила платформа — на экран: по этим строкам видно, в чём дело, без
   # похода в журнал. Адрес вебхука и ключи не печатаются.
+  # Файл ответа — первым словом; без него — ответ последнего шага.
   show_error() {
-    [ -f "$STEP_OUT" ] || return 0
-    local line
-    sed $'s/\033\\[[0-9;]*m//g' "$STEP_OUT" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -v -E '://|^[[:space:]]*(expected[[:space:]]+)?url:' | tail -n 4 | scrub | while IFS= read -r line; do log "   ${line:0:300}"; done
+    local file="${1:-$STEP_OUT}" line
+    [ -f "$file" ] || return 0
+    sed $'s/\033\\[[0-9;]*m//g' "$file" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -v -E '://|^[[:space:]]*(expected[[:space:]]+)?url:' | tail -n 4 | scrub | while IFS= read -r line; do log "   ${line:0:300}"; done
+  }
+  # Главная строка ответа платформы — для вести владельцу: последняя, где есть слово об отказе («Error», «✗»,
+  # «limit», «too many»…), а нет такой — просто последняя. Без цвета, адресов и ключей; не длиннее 240 знаков.
+  last_word() {
+    local file="${1:-$STEP_OUT}" text line
+    [ -f "$file" ] || return 0
+    text="$(sed $'s/\033\\[[0-9;]*m//g' "$file" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -v -E '://|^[[:space:]]*(expected[[:space:]]+)?url:')"
+    line="$({ printf '%s\n' "$text" | grep -E -i 'error|✗|✖|refus|reject|denied|invalid|limit|too (many|large)' | tail -n 1; printf '%s\n' "$text" | tail -n 1; } | head -n 1 | scrub)"
+    # Пробелы по краям — прочь: строка встанет в кавычки посреди предложения.
+    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    printf '%s' "${line:0:240}"
   }
   # Малый запрос к платформе: есть ли связь и принят ли токен. Кода он не шлёт.
   # 0 — да; 1 — связи нет; 2 — токен не принят; 3 — платформа ответила иначе.
@@ -639,6 +651,73 @@ main() {
   # Комната не идёт — её функции в копии для облака не место: инструмент
   # проверяет все модули копии, а не только отправляемые. Бот важнее комнаты.
   drop_room() { rm -rf "$STAGE/tgcloud/endpoints" 2>/dev/null; return 0; }
+  # Лишние модули облака (0.49.1). Отправка с целями («push handlers lib schema») из облака ничего не убирает:
+  # модуль, удалённый или переименованный в коде, остаётся там навсегда. Так с 0.36.3 в облаке лежал прежний
+  # словарь (lib/data/phrases), счёт модулей дошёл до ста, и сборка 0.49.0 — с двумя новыми — публиковаться
+  # перестала: репетиции проходили, а отправку платформа не принимала. Что дело в числе модулей — вывод из
+  # совпадения чисел, ответа платформы никто не видел (docs/JOURNAL.md, «Сообщение 50»).
+  # Что хранит платформа, видно после шага «состояние облака»: инструмент кладёт слепок облака в .tgcloud/remote
+  # копии, модуль «lib/x» — файлом lib/x.js. CLOUD_COUNT — сколько модулей в облаке; STALE — те из них, которых в
+  # копии коммита нет; LOCAL_COUNT — сколько модулей в самой копии; MIRROR=1 — отправка пойдёт без целей и
+  # уберёт лишние.
+  local CLOUD_COUNT="" LOCAL_COUNT="" STALE="" MIRROR=0 APP_WORD=""
+  local PUSH_OUT="$HOME_DIR/push.out"
+  cloud_modules() {
+    CLOUD_COUNT=""; LOCAL_COUNT=""; STALE=""
+    local remote="$STAGE/.tgcloud/remote" path
+    [ -d "$remote" ] || return 0
+    CLOUD_COUNT=0
+    LOCAL_COUNT="$(find "$STAGE/tgcloud" -type f -name '*.js' 2>/dev/null | wc -l | tr -d ' ')"
+    # Имена модулей — латиница, цифры, «_», «-» и «/»: пробелов в них нет, цикл по словам безопасен.
+    # shellcheck disable=SC2044
+    for path in $(cd "$remote" 2>/dev/null && find . -type f -name '*.js' 2>/dev/null | sed 's#^\./##' | sort); do
+      CLOUD_COUNT=$((CLOUD_COUNT + 1))
+      [ -f "$STAGE/tgcloud/$path" ] && continue
+      # Функцию комнаты из копии убрал сам скрипт (не прошла репетицию): в облаке она не «лишняя».
+      case "$path" in endpoints/*) [ -d "$STAGE/tgcloud/endpoints" ] || continue ;; esac
+      STALE="${STALE:+$STALE }${path%.js}"
+    done
+    return 0
+  }
+  # Имена через запятую, не больше шести: остальные — числом.
+  few() {
+    local all=$# shown=""
+    while [ $# -gt 0 ] && [ $((all - $#)) -lt 6 ]; do shown="${shown:+$shown, }$1"; shift; done
+    [ $# -gt 0 ] && shown="$shown и ещё $#"
+    printf '%s' "$shown"
+  }
+  # Отправка кода. Лишнего в облаке нет — как всегда, с целями: страница при этом не трогается. Лишнее есть —
+  # без целей: только такая отправка убирает из облака то, чего нет в копии (так устроен инструмент: «a full push
+  # deletes remote modules that are absent locally»). Без целей инструмент отправил бы заодно и страницу комнаты,
+  # а она идёт отдельным шагом и бота держать не должна, — поэтому настройки проекта (tgcloud.jsonc, из них
+  # инструмент узнаёт о странице) на время этой отправки из копии убираются: без них страница не трогается.
+  # Запасные пути после неудачи идут мимо этой функции — прежней отправкой с целями (`publish_steps`).
+  push_code() {
+    [ "$MIRROR" = 1 ] || { tg push "$@"; return $?; }
+    local code name hidden=""
+    for name in tgcloud.jsonc tgcloud.json; do
+      [ -f "$STAGE/$name" ] && mv "$STAGE/$name" "$STAGE/$name.off" 2>/dev/null && hidden="$hidden $name"
+    done
+    tg push; code=$?
+    for name in $hidden; do mv "$STAGE/$name.off" "$STAGE/$name" 2>/dev/null; done
+    return "$code"
+  }
+  # Отправку кода платформа не приняла. Её слова — на экран и владельцу: до 0.49.1 они оставались только в
+  # журнале телефона, и по снимку экрана причину было не узнать (сообщение 50). Связь или токен — как раньше.
+  refused() {
+    local why word counts=""
+    why="$(hint)"
+    if [ -n "$why" ]; then log "✗ Публикация не прошла.$why Подробности: $DEPLOY_LOG"; return 0; fi
+    log "✗ Публикация не прошла: платформа не приняла код. Подробности: $DEPLOY_LOG"
+    show_error "$PUSH_OUT"
+    [ -z "$CLOUD_COUNT" ] || counts=" Модулей в коммите: $LOCAL_COUNT, в облаке до отправки: $CLOUD_COUNT."
+    [ -z "$counts" ] || log "  $counts"
+    word="$(last_word "$PUSH_OUT")"
+    WHY="платформа не приняла код"
+    [ -z "$word" ] || WHY="$WHY. Её ответ: «$word»"
+    WHY="$WHY.$counts Перешлите эту строку в чат разработки"
+    return 0
+  }
   wake_new_build() {
     local out ctx='{ tick: true, deployed: true }'
     # Адрес страницы комнаты сердце узнаёт отсюда: по нему ставятся кнопки.
@@ -653,7 +732,8 @@ main() {
   publish_steps() {
     local head build lack kind
     head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"; build="$(build_of)"
-    WHY=""; CAUSE=""; WORK=""; APP=0; APP_WHY=""; PAGE_URL=""
+    WHY=""; CAUSE=""; WORK=""; APP=0; APP_WHY=""; PAGE_URL=""; CLOUD_COUNT=""; LOCAL_COUNT=""; STALE=""; MIRROR=0; APP_WORD=""
+    rm -f "$PUSH_OUT" 2>/dev/null
     lack="$(lacking)"
     if [ -n "$lack" ]; then
       [ "$lack" = "$LACK_SAID" ] || log "✗ Публикации нет, бот на прежней сборке: $lack."
@@ -741,19 +821,38 @@ main() {
     fi
     local targets="handlers lib schema"
     [ "$APP" = 1 ] && targets="$targets endpoints"
+    # Что платформа хранит сверх коммита. Есть лишнее — отправка пойдёт без целей и уберёт его.
+    cloud_modules
+    if [ -n "$STALE" ]; then
+      MIRROR=1
+      # shellcheck disable=SC2086
+      log "В облаке модулей: $CLOUD_COUNT, из них лишних (в коде их уже нет): $(set -- $STALE; echo $#) — $(few $STALE). Убираю их этой публикацией."
+    fi
+    local stale_word=""
     # shellcheck disable=SC2086
-    if ! step "публикация" tg push $targets; then
-      # Платформа не приняла код вместе с функцией комнаты (а не связь пропала):
-      # бот важнее комнаты — он уходит без неё.
-      if [ "$APP" = 1 ] && ! cut_off && drop_room && step "публикация без комнаты" tg push handlers lib schema; then
-        APP=0; APP_WHY="платформа не приняла функцию комнаты"; WHY=""
+    if ! step "публикация" push_code $targets; then
+      # Ответ на первую отправку — главный: остальные — запасные пути.
+      cp "$STEP_OUT" "$PUSH_OUT" 2>/dev/null
+      # Запасные пути — прежние, с целями: что бы ни вышло с отправкой без целей, скрипт публикует не хуже, чем до
+      # 0.49.1. Сначала — как всегда, с функцией комнаты (лишнее тогда остаётся в облаке до следующего раза); не
+      # вышло — без неё: бот важнее комнаты. Пропала связь — запасные пути не при чём.
+      # shellcheck disable=SC2086
+      if [ "$MIRROR" = 1 ] && ! cut_off && step "публикация с целями" tg push $targets; then
+        stale_word="$(last_word "$PUSH_OUT")"; WHY=""
+      elif [ "$APP" = 1 ] && ! cut_off && drop_room && step "публикация без комнаты" tg push handlers lib schema; then
+        APP=0; APP_WHY="платформа не приняла функцию комнаты"; WHY=""; APP_WORD="$(last_word "$PUSH_OUT")"
       else
-        log "✗ Публикация не прошла.$(hint) Подробности: $DEPLOY_LOG"; return 1
+        refused; return 1
       fi
     fi
     # С этой строки новый код уже в боте: дальнейшие неудачи — не «откат».
     local warn=""
-    step "схема базы" tg migrate --yes || warn="схема базы не применилась"
+    # Лишнее из облака убрать не вышло, а обычная отправка прошла: бот на новой сборке, но счёт модулей в облаке
+    # прежний — об этом должен узнать тот, кто пишет код.
+    if [ -n "$stale_word" ]; then
+      warn="лишние модули из облака убрать не вышло (ответ платформы: «$stale_word»); перешлите эту строку в чат разработки"
+    fi
+    step "схема базы" tg migrate --yes || warn="${warn:+$warn; }схема базы не применилась"
     step "вебхук" webhook_check || true
     if [ -n "$WEBHOOK_MISSING" ]; then
       log "⚠ Бот не подписан на события:$WEBHOOK_MISSING — то, что на них держится (кнопки, секретарь, список её чатов), работать не будет. Пришлите эту строку в чат разработки."
@@ -770,7 +869,7 @@ main() {
         else
           PAGE_URL="$(page_url)"
           if cut_off; then APP_WHY="страница комнаты не отправилась: пропала связь с платформой"
-          else APP_WHY="платформа не приняла страницу комнаты"; fi
+          else APP_WHY="платформа не приняла страницу комнаты"; APP_WORD="$(last_word)"; fi
         fi
         WHY=""
       else
@@ -797,7 +896,9 @@ main() {
       local rest="Комната пока отвечает словами."
       [ -z "$PAGE_URL" ] || rest="Кнопки открывают прежнюю страницу."
       log "⚠ Мини-приложение «Комната» не опубликовано: $APP_WHY. Сам бот на сборке $build. $rest Подробности: $DEPLOY_LOG"
-      tell_owner "⚠️ Телефон: сборка $build опубликована, но мини-приложение «Комната» — нет: $APP_WHY. $rest Перешлите эту строку в чат разработки."
+      # Что именно ответила платформа (0.49.1): по этой строке причину видно без похода в журнал телефона.
+      [ -z "$APP_WORD" ] || log "   Ответ платформы: $APP_WORD"
+      tell_owner "⚠️ Телефон: сборка $build опубликована, но мини-приложение «Комната» — нет: $APP_WHY. $rest Перешлите эту строку в чат разработки.${APP_WORD:+ Ответ платформы: «$APP_WORD».}"
     elif [ -n "$PAGE_URL" ]; then
       log "✓ Мини-приложение «Комната» опубликовано: кнопка под ответом на «зайду к тебе» и в меню бота."
     fi

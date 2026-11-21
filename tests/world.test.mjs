@@ -21,8 +21,7 @@ const { parseGame, tail } = await import("../tgcloud/lib/games.js");
 const { parsePicture } = await import("../tgcloud/lib/pictures.js");
 const { parseReminder, nextOccurrence } = await import("../tgcloud/lib/reminders.js");
 const { CITIES } = await import("../tgcloud/lib/data/cities.js");
-const { FIVE_LETTER, LONG_WORDS } = await import("../tgcloud/lib/data/words.js");
-const { RIDDLES, MOVIES } = await import("../tgcloud/lib/data/riddles.js");
+const { FIVE_LETTER, LONG_WORDS, RIDDLES, MOVIES } = await import("../tgcloud/lib/data/games.js");
 
 const TZ = "Europe/Moscow";
 /** 12 ноября 2026, 16:00 по Москве, четверг. */

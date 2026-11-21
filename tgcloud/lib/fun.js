@@ -12,7 +12,7 @@ import { parseWhois, registeredText } from "./whois.js";
 import { safeName } from "./address.js";
 import { fold } from "./sources.js";
 import { pickSticker } from "./pictures.js";
-import { QUESTIONS } from "./data/party.js";
+import { QUESTIONS } from "./data/games.js";
 import {
   parseOwn, ownActionProblem, matchOwn, actionKeyOf, gifKeyOf, OWN_ACTIONS_MAX, OWN_GIFS_MAX,
   parseBond, bondInfo, bondsOf, partnerOf, bondProblem, bondKeyboard, BONDS, BONDS_KEY, BOND_ASK_TTL_MS,
