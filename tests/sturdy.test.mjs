@@ -334,3 +334,23 @@ test("договор сердца и страницы: каждое поле о�
   // Поля, которых эти заходы не дали (предложение чая, слова конца тихого часа), проверены в `tests/alive.test.mjs`.
   assert.deepEqual(Object.keys(LOOK).filter(name => !seen.has(name)).sort(), ["event", "offer", "quietEnd", "story"]);
 });
+
+test("дверь комнаты вынесена из сердца: списки имён у двери и у сердца совпадают, лишних нет; запас веса сердца назван", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { slim } = await import("../scripts/slim.mjs");
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+  const door = read("tgcloud/lib/roomdoor.js"), heartCode = read("tgcloud/lib/heart.js");
+  const list = (text) => text.split(",").map(name => name.trim()).filter(Boolean);
+  const wanted = list(door.match(/const \{\n([\s\S]*?)\n {2}\} = deps;/u)[1]);
+  const given = list(heartCode.match(/createRoomDoor\(\{\n([\s\S]*?)\n {2}\}\)\)\(input, ctx\);/u)[1]);
+  assert.deepEqual(given, wanted, "сердце даёт двери ровно то, что она берёт");
+  assert.equal(new Set(wanted).size, wanted.length, "без повторов");
+  const body = door.slice(door.indexOf("} = deps;"));
+  for (const name of wanted) assert.match(body, new RegExp(`(?<![.\\w$])${name.replace(/\$/gu, "\\$")}(?![\\w$])`, "u"), `«${name}» двери не нужно — убрать из обоих списков`);
+  assert.ok(!/from "\.\/heart\.js"/u.test(door), "дверь не тянет сердце обратно: всё нужное приходит через deps");
+  assert.match(heartCode, /import \{ createRoomDoor \} from "\.\/roomdoor\.js";/u);
+  // Запас сердца до предела веса модуля — не меньше двадцати килобайт: меньше — выносить следующую часть комнаты
+  // (`roomWords`, `herState`, `herStep`) до выпуска, а не после (сообщение 49: запас оказался три килобайта).
+  const weight = Buffer.byteLength(slim(heartCode));
+  assert.ok(weight < 620_000, `heart.js после облегчения — ${weight} байт: до предела в 640 000 осталось меньше двадцати килобайт`);
+});

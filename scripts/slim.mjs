@@ -122,7 +122,10 @@ export function slimProject(root, { write = true } = {}) {
   const weigh = (map) => Object.values(map).reduce((sum, code) => sum + Buffer.byteLength(code), 0);
   // Пишется всё или ничего: сверка каждого модуля уже прошла.
   if (write) for (const [path, code] of Object.entries(after)) if (code !== before[path]) writeFileSync(join(root, "tgcloud", path), code);
-  return { files: Object.keys(before).length, before: weigh(before), after: weigh(after), body: runBody(after), bodyBefore: runBody(before) };
+  // Самый тяжёлый модуль после облегчения (0.49.0): у модуля свой предел (`tests/upload.test.mjs`), и подойти к нему
+  // незаметно легко — число видно при каждом счёте, а не только когда предел уже пробит.
+  const [heaviest, heaviestBytes] = Object.entries(after).map(([path, code]) => [path, Buffer.byteLength(code)]).sort((one, two) => two[1] - one[1])[0] ?? ["", 0];
+  return { files: Object.keys(before).length, before: weigh(before), after: weigh(after), body: runBody(after), bodyBefore: runBody(before), heaviest, heaviestBytes };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
