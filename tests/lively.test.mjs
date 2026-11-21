@@ -328,6 +328,42 @@ test("пишет первой о событии своего дня — тем, 
   for (const words of ["пиши", "напиши стих", "не пиши так много букв"]) assert.equal(room.parseRoom(words), null, words);
 });
 
+test("улыбка картинкой (0.50.0): заплатка на лицо у двадцати картинок; на рисунке не видна, пока её не покажут стили", async () => {
+  // Сообщение 51 («продолжай генерацию»): десять картинок хода — улыбка с закрытыми глазами для десяти поз; на ту же
+  // позу в свитере она перенесена без новой картинки (лицо у нарядов одно), как веки.
+  const { readdirSync } = await import("node:fs");
+  const dir = new URL("../miniapp/her/", import.meta.url);
+  const smiling = [];
+  for (const file of readdirSync(dir).filter(name => name.endsWith(".js"))) {
+    const sprite = (await import(new URL(file, dir))).default;
+    if (!sprite.smile) continue;
+    smiling.push(file.replace(/\.js$/u, ""));
+    const { blink, smile } = sprite;
+    assert.ok(blink, `${file}: улыбка ставится по векам — веки должны быть`);
+    assert.ok(smile.x >= 0 && smile.y >= 0 && smile.x + smile.w <= sprite.w && smile.y + smile.h <= sprite.h, `${file}: заплатка внутри картинки`);
+    // Лицо целиком: заплатка накрывает веки и уходит ниже них — туда, где рот.
+    assert.ok(smile.x <= blink.x + 4 && smile.x + smile.w >= blink.x + blink.w - 4 && smile.y <= blink.y + 2 && smile.y + smile.h >= blink.y + blink.h + 20, `${file}: заплатка накрывает глаза и рот`);
+    assert.match(smile.src, /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/u);
+  }
+  const poses = ["books", "feed", "play3", "read", "tea", "tea3", "tidy", "work", "work2", "work3"];
+  assert.deepEqual(smiling.sort(), [...poses, ...poses.map(name => `home-${name}`)].sort());
+  // На рисунке: определение заплатки — рядом с картинкой, сама она — в слое головы, поверх век, и не видна.
+  const sprite = { w: 300, h: 900, cx: 0.5, src: "data:image/webp;base64,AAAA", blink: { x: 120, y: 60, w: 60, h: 20, src: "data:image/webp;base64,AAAA" }, smile: { x: 118, y: 56, w: 64, h: 60, src: "data:image/webp;base64,BBBB" } };
+  const drawn = scene.drawRoom({ part: "день", her: { key: "устала", pose: "desk" } }, { sprites: { tired: sprite } });
+  assert.match(drawn, /<image id="r-her-tired-smile" x="118" y="56" width="64" height="60" preserveAspectRatio="none" href="data:image\/webp;base64,BBBB"\/>/u);
+  assert.match(drawn, /<use class="wink" href="#r-her-tired-blink" [^>]+\/><use class="grin" opacity="0" href="#r-her-tired-smile" [^>]+\/>/u);
+  // Без заплатки — как раньше: ни определения, ни слоя.
+  const plain = scene.drawRoom({ part: "день", her: { key: "устала", pose: "desk" } }, { sprites: { tired: { ...sprite, smile: undefined } } });
+  assert.ok(!plain.includes("grin") && !plain.includes("-smile"));
+  // Кривая заплатка (вышла за картинку) не рисуется вовсе.
+  const broken = scene.drawRoom({ part: "день", her: { key: "устала", pose: "desk" } }, { sprites: { tired: { ...sprite, smile: { ...sprite.smile, x: 280 } } } });
+  assert.ok(!broken.includes("grin"));
+  // Стили: видна, пока гладят, когда рада и жестом; страница заменяет жест наклоном головы там, где улыбки нет.
+  const html = readFileSync(new URL("../miniapp/index.html", import.meta.url), "utf8"), app = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  assert.ok(html.includes("#room .grin { opacity: 0;") && html.includes("#room .patted .grin, #room .glad .grin, #room .g-smile .grin { opacity: 1; }"));
+  assert.ok(app.includes('if (what === "smile" && !sprites[spriteOf(viewOf(state))]?.smile) what = "tilt";'));
+});
+
 test("жесты: по занятию и настроению, по кругу, не случайно; спит — жестов нет; слой головы и метки — в рисунке", () => {
   const she = (key, extra = {}) => ({ ready: true, her: { key, pose: "desk", ...(extra.face ? { face: extra.face } : {}) }, cat: extra.cat ?? { place: "pillow", shape: "curl" }, open: extra.open === true });
   const row = (state) => [0, 1, 2, 3, 4].map(count => logic.gestureOf(state, count));
@@ -337,7 +373,10 @@ test("жесты: по занятию и настроению, по кругу, 
   assert.deepEqual(row(she("обида")).filter(Boolean).every(name => ["huff", "away"].includes(name)), true, "обижена — отворачивается и не смотрит на зрителя");
   assert.ok(row(she("устала")).includes("sigh") && !row(she("устала")).includes("peek"));
   assert.ok(row(she("уют", { face: "drowsy" })).includes("yawn"));
-  assert.equal(logic.gestureOf(she("игра"), 7), logic.gestureOf(she("игра"), 2), "жесты идут по кругу");
+  assert.equal(logic.gestureOf(she("игра"), 8), logic.gestureOf(she("игра"), 2), "жесты идут по кругу");
+  // 0.50.0 — улыбка: за делом — шестым жестом, в уюте и за игрой — четвёртым; обижена, ревнует, устала — не улыбается.
+  assert.deepEqual([logic.gestureOf(she("дело"), 5), logic.gestureOf(she("уют"), 3), logic.gestureOf(she("игра"), 3)], ["smile", "smile", "smile"]);
+  for (const key of ["обида", "ревность", "устала"]) assert.ok(![0, 1, 2, 3, 4, 5, 6, 7].some(count => logic.gestureOf(she(key), count) === "smile"), key);
   assert.equal(logic.gestureOf({ ready: false }, 0), "");
   for (const key of Object.keys(scene.MOODS)) for (const name of row(she(key))) assert.ok(name === "" || logic.GESTURES.includes(name), `${key}: ${name}`);
   // На рисунке: слой головы — та же картинка под мягким овалом; слой мимики — с настроением; метки не видны.
@@ -441,4 +480,43 @@ test("«удали всё обо мне»: комната, альбом и ме�
   await h.onMessage(message("да, удали всё", { id: 41 }), KEY);
   assert.deepEqual([roomOf(41), albumOf(41), recent()], [null, null, ["42"]]);
   assert.ok(roomOf(42) && albumOf(42), "чужое на месте");
+});
+
+test("фразы со скриншота владельца (0.50.0): четыре берёт сама, две — продолжение разговора: их ведёт модель, а из списка непонятного они уходят", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { parseMedia } = await import("../tgcloud/lib/media.js");
+  const { notForDictionary } = await import("../tgcloud/lib/taught.js");
+  const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
+  const { clean } = await import("../tgcloud/lib/catalogue.js");
+  const book = createPhrasebook({ random: () => 0 });
+  // Словарь: о любви, о дне рождения хозяина, о зубе — и соседние слова.
+  for (const [said, topic] of [["кого ты любишь", "кого ты любишь"], ["Кого ты любишь больше всех?", "кого ты любишь"], ["кто тебе нравится", "кого ты любишь"],
+    ["сегодня день рождения твоего хозяина", "день рождения хозяина"], ["У хозяина сегодня день рождения!", "день рождения хозяина"],
+    ["одного зуба нету", "нет зуба"], ["у меня выпал зуб", "нет зуба"]]) {
+    assert.ok(book.match(said)?.includes(topic), `${said}: тема «${topic}»`);
+  }
+  // В темах о хозяине нет строк без пометки: иначе он услышит о себе в третьем лице, а гость — «вас, хозяин».
+  const source = readFileSync(new URL("../PHRASES.txt", import.meta.url), "utf8");
+  for (const name of ["кого ты любишь", "день рождения хозяина"]) {
+    const lines = source.split(`== ${name} ==\n`)[1].split("\n\n")[0].split("\n").filter(line => line && !line.startsWith("когда:") && !line.startsWith("#"));
+    assert.ok(lines.some(line => line.startsWith("[хозяин]")) && lines.some(line => line.startsWith("[не хозяин")), name);
+    for (const line of lines) assert.match(line, /^\[(?:хозяин|не хозяин)[\],]/u, `${name}: ${line}`);
+  }
+  // «А сможешь нарисовать меня?» — просьба, сказанная вопросом: её берёт рисование, как «нарисуй меня».
+  for (const said of ["а сможешь нарисовать меня", "А сможешь нарисовать меня?", "сможешь нарисовать кота в шляпе", "можешь нарисовать мне дракона", "ты можешь нарисовать море", "нарисуешь кота", "а нарисуй кота", "сумеешь нарисовать замок"]) {
+    assert.equal(parseMedia(said)?.kind, "draw", said);
+  }
+  assert.match(parseMedia("а сможешь нарисовать меня").query, /^меня\??$/u);
+  // Вопрос об умении, отказ и «нарисуй смайликами» — не рисунок.
+  for (const said of ["ты умеешь рисовать людей", "не можешь нарисовать кота", "сможешь нарисовать смайликами кота", "кто сможет нарисовать кота"]) assert.notEqual(parseMedia(said)?.kind, "draw", said);
+  // «Кто же», «вот так выгляжу» — продолжение разговора: в списке «что не поняла» им не место.
+  for (const said of ["кто же", "и кто же", "а почему", "ну и где же", "кого именно", "что", "вот так выгляжу", "вот так я выгляжу", "вот я", "вот смотри"]) assert.equal(notForDictionary(clean(said)), "talk", said);
+  for (const said of ["это я", "вот это я", "я так выгляжу", "вот как я выгляжу"]) assert.equal(notForDictionary(clean(said)), "talk", said);
+  // А самостоятельные реплики и возгласы в списке остаются — до тех пор, пока словарь их не выучит.
+  for (const said of ["кто писал", "вот блин", "вот это да", "вот это номер был", "вот так сюрприз", "одного зуба нету", "го встречается", "а ты кто"]) assert.equal(notForDictionary(clean(said)), "", said);
+  // «Не пиши… или что-то типа того» (владелец, сообщение 48): те же слова, сказанные иначе, — та же просьба.
+  const { parseRoom } = await import("../tgcloud/lib/room.js");
+  for (const said of ["не пиши", "Не присылай мне сообщения", "не присылай мне больше сообщения", "не шли мне сообщения", "хватит мне писать", "перестань писать", "не надо мне писать",
+    "не присылайте ничего", "прекрати присылать сообщения", "пожалуйста не отправляй мне сообщения"]) assert.equal(parseRoom(said)?.op, "noteoff", said);
+  for (const said of ["не пиши ночью", "не присылай мне сообщения ночью", "напиши мне сообщение", "хватит писать код", "не присылай мне котов"]) assert.notEqual(parseRoom(said)?.op, "noteoff", said);
 });

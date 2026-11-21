@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "12";
+export const PAGE = "13";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -123,9 +123,10 @@ export function viewOf(state) {
  * стили. Что бывает: tilt — наклон головы; nod — кивок; hair — качнулись волосы (чаще при открытом окне); bow —
  * наклонилась; peek — подняла глаза на зрителя (у поз со вторым кадром); look-cat и look-win — посмотрела в сторону
  * Байта и окна; away — отвернулась; huff — зажмурилась и отвернулась, над головой «жилка»; sigh — вздохнула, капля;
- * yawn — клюёт носом, «z z». Спит — жестов нет. `count` — который это жест по счёту: они идут по кругу, а не случайно.
+ * yawn — клюёт носом, «z z»; smile (0.50.0) — улыбнулась, закрыв глаза (у поз с улыбкой-картинкой; у остальных
+ * страница заменяет её наклоном головы). Спит — жестов нет. `count` — который это жест по счёту: они идут по кругу, а не случайно.
  */
-export const GESTURES = Object.freeze(["tilt", "nod", "hair", "bow", "peek", "look-cat", "look-win", "away", "huff", "sigh", "yawn"]);
+export const GESTURES = Object.freeze(["tilt", "nod", "hair", "bow", "peek", "look-cat", "look-win", "away", "huff", "sigh", "yawn", "smile"]);
 export function gestureOf(state, count = 0) {
   const her = state?.her;
   if (!state?.ready || !her || state.away || her.key === "сон") return "";
@@ -135,9 +136,9 @@ export function gestureOf(state, count = 0) {
     : her.key === "ревность" ? ["huff", "peek", "away"]
       : her.key === "устала" ? ["sigh", "yawn", "sigh", ""]
         : her.face === "drowsy" ? ["yawn", "nod", "yawn", ""]
-          : her.key === "игра" ? ["tilt", lively ? "look-cat" : "hair", "peek", "bow", "look-cat"]
-            : her.key === "дело" ? ["nod", lively ? "look-cat" : "bow", airy ? "hair" : "tilt", "peek", "look-win"]
-              : ["tilt", airy ? "hair" : "look-win", lively ? "look-cat" : "nod", "peek", airy ? "look-win" : "hair"];
+          : her.key === "игра" ? ["tilt", lively ? "look-cat" : "hair", "peek", "smile", "bow", "look-cat"]
+            : her.key === "дело" ? ["nod", lively ? "look-cat" : "bow", airy ? "hair" : "tilt", "peek", "look-win", "smile"]
+              : ["tilt", airy ? "hair" : "look-win", lively ? "look-cat" : "nod", "smile", "peek", airy ? "look-win" : "hair"];
   return list[(Number.isInteger(count) && count > 0 ? count : 0) % list.length];
 }
 /** Следующая её поза (без распорядка: позы состояния идут по кругу). */

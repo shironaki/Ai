@@ -579,7 +579,7 @@ test("она картинкой: у каждого состояния своя �
   // Модули картинок: то, что собирает `scripts/room-sprite.mjs`, и ничего сверх.
   for (const [name, sprite] of Object.entries(SPRITES)) {
     // «Веки» (моргание) — только у тех картинок, для которых они собраны (`scripts/room-blink.mjs`).
-    assert.deepEqual(Object.keys(sprite).filter(key => key !== "blink").sort(), ["cx", "h", "src", "w"], name);
+    assert.deepEqual(Object.keys(sprite).filter(key => key !== "blink" && key !== "smile").sort(), ["cx", "h", "src", "w"], name);
     assert.ok(Number.isInteger(sprite.w) && Number.isInteger(sprite.h) && sprite.w >= 200 && sprite.h >= 400 && sprite.h <= 1000, `${name}: ${sprite.w}×${sprite.h}`);
     // Ось тела — около середины; у картинок с рукой, вытянутой в сторону (метёлка, книга у полки — 0.48.0), она
     // смещена к краю: рамка картинки шире фигуры.
@@ -692,10 +692,14 @@ test("она картинкой: у каждого состояния своя �
   for (const name of lidded.filter(item => !item.includes("-"))) assert.ok(lidded.includes(`home-${name}`), `home-${name}: веки есть у пары в куртке — перенести`);
   // У картинки с «веками» определений два: она сама и заплатка на глаза — в точках самой картинки.
   const lids = SPRITES.tea.blink;
-  assert.equal(drawSprite("tea", SPRITES.tea), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/>`);
+  // С улыбкой (0.50.0) — три: ещё заплатка на всё лицо.
+  const grin = SPRITES.tea.smile;
+  assert.equal(drawSprite("tea", SPRITES.tea), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/><image id="r-her-tea-smile" x="${grin.x}" y="${grin.y}" width="${grin.w}" height="${grin.h}" preserveAspectRatio="none" href="${grin.src}"/>`);
   // Негодные «веки» — картинка без них, а не без неё самой.
   for (const blink of [null, "x", { ...lids, w: 0 }, { ...lids, x: SPRITES.tea.w }, { ...lids, src: "javascript:alert(1)" }, { ...lids, src: 'data:image/webp;base64,AAAA"/><script>' }]) {
-    assert.equal(drawSprite("tea", { ...SPRITES.tea, blink }), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/>`, JSON.stringify(blink).slice(0, 50));
+    assert.equal(drawSprite("tea", { ...SPRITES.tea, blink, smile: undefined }), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/>`, JSON.stringify(blink).slice(0, 50));
+    // Негодная улыбка — так же: картинка и веки на месте, заплатки на лицо нет.
+    assert.equal(drawSprite("tea", { ...SPRITES.tea, smile: blink }), `<image id="r-her-tea" width="${SPRITES.tea.w}" height="${SPRITES.tea.h}" preserveAspectRatio="none" href="${SPRITES.tea.src}"/><image id="r-her-tea-blink" x="${lids.x}" y="${lids.y}" width="${lids.w}" height="${lids.h}" preserveAspectRatio="none" href="${lids.src}"/>`, JSON.stringify(blink).slice(0, 50));
   }
   for (const [name, sprite] of [["чужая", SPRITES.tea], ["constructor", SPRITES.tea], ["tea", null], ["tea", false], ["tea", { ...SPRITES.tea, w: 0 }], ["tea", { ...SPRITES.tea, h: "900" }],
     ["tea", { ...SPRITES.tea, src: 'data:image/webp;base64,AAAA"/><script>alert(1)</script>' }], ["tea", { ...SPRITES.tea, src: "https://example.com/x.webp" }], ["tea", { ...SPRITES.tea, src: "data:image/svg+xml;base64,AAAA" }]]) {
@@ -729,7 +733,7 @@ test("она картинкой: у каждого состояния своя �
     // Рисунок целиком несёт и определение картинки — он виден сам по себе (листы, снимки).
     const whole = drawRoom(view, PAINTED);
     assert.equal(wellFormed(whole), "", label);
-    assert.equal((whole.match(/<image /gu) ?? []).length, SPRITES[name].blink ? 2 : 1, label);
+    assert.equal((whole.match(/<image /gu) ?? []).length, 1 + (SPRITES[name].blink ? 1 : 0) + (SPRITES[name].smile ? 1 : 0), label);
     assert.ok(whole.includes(`<defs><image id="r-her-${name}" `), label);
     // Что движется рядом с неподвижной картинкой: пар над её кружкой, «z z Z» над спящей.
     const calm = drawInside({ ...view, cat: null }, PAINTED);
@@ -1407,7 +1411,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "12");
+  assert.equal(logic.PAGE, "13");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1617,7 +1621,7 @@ test("страница: папка уходит на платформу как �
   const weights = pictures.map(name => statSync(new URL(`her/${name}`, folder)).size);
   for (const [index, name] of pictures.entries()) assert.ok(weights[index] < 76_000, `картинка ${name} весит ${weights[index]} байт`);
   assert.ok(weights.reduce((sum, size) => sum + size, 0) < pictures.length * 56_000, `картинки вместе весят ${weights.reduce((sum, size) => sum + size, 0)} байт`);
-  for (const name of pictures) assert.match(read(`miniapp/her/${name}`), /^\/\/ Спрайт Аи «[a-z0-9-]+»: собран командой «bash scripts\/verify\.sh sprite …» \(scripts\/room-sprite\.mjs\)\. Руками не править\.\nexport default \{ w: \d+, h: \d+, cx: [\d.]+, (?:blink: \{ x: \d+, y: \d+, w: \d+, h: \d+, src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \}, )?src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \};\n$/u, name);
+  for (const name of pictures) assert.match(read(`miniapp/her/${name}`), /^\/\/ Спрайт Аи «[a-z0-9-]+»: собран командой «bash scripts\/verify\.sh sprite …» \(scripts\/room-sprite\.mjs\)\. Руками не править\.\nexport default \{ w: \d+, h: \d+, cx: [\d.]+, (?:(?:blink|smile): \{ x: \d+, y: \d+, w: \d+, h: \d+, src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \}, ){0,2}src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \};\n$/u, name);
   const files = [...page, ...pictures.map(name => `her/${name}`)];
 
   const html = read("miniapp/index.html");
@@ -1677,7 +1681,7 @@ test("страница: папка уходит на платформу как �
   // С 0.48.0 — «lean» (стоя покачивается) и «blush» (румянец под глазами, невидимый до ласки).
   // С 0.49.0 — три слоя движения: слой мимики («mim») с настроением («m-…»), слой головы («hd») и концы волос
   // («hr»), метки-эмоции («emo», «e-…»): невидимы, пока страница не покажет жест.
-  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["alive", "arrive", "blush", "e-ask", "e-bang", "e-drop", "e-huff", "e-zz", "emo", "hd", "hr", "lean", "leave",
+  assert.deepEqual([...classes].filter(name => !before.has(name)).sort(), ["alive", "arrive", "blush", "e-ask", "e-bang", "e-drop", "e-huff", "e-zz", "emo", "grin", "hd", "hr", "lean", "leave",
     ...Object.values(MOODS).map(mood => `m-${mood}`), "mim", "wink"].sort());
   // Своя жизнь (0.44.0): она идёт от места к месту, входит и уходит к шкафу; Байт идёт сам; на её месте — надпись.
   const lived = new Set(classes);

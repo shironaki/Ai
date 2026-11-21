@@ -254,6 +254,11 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 #room .poked .alive .fr.nl { opacity: 0; animation: none; }
 #room .patted .wink { opacity: 1; animation: none; }
 #room .patted .blush, #room .glad .blush { animation: blush 1.8s ease-out; }
+/* 0.50.0 — улыбка картинкой (.grin): заплатка на лицо — глаза закрыты дугами, губы улыбаются. Видна, пока её гладят,
+   когда ей налили чай или что-то подарили (.patted, .glad), и жестом между делами (.g-smile). */
+#room .grin { opacity: 0; transition: opacity 0.25s ease-in-out; }
+#room .patted .grin, #room .glad .grin, #room .g-smile .grin { opacity: 1; }
+#room .g-smile .hd { animation: hdTilt 2.6s ease-in-out; }
 @keyframes blush { 0% { opacity: 0; } 20%, 70% { opacity: 0.55; } 100% { opacity: 0; } }
 #room .notice .hop { animation: hop 0.45s ease-out both; animation-delay: calc(var(--t, 1s) - 0.4s); }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-3.5px); } }

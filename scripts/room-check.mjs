@@ -137,15 +137,15 @@ try {
   const painted = () => page.evaluate(() => {
     const kept = [...document.querySelectorAll("#store image")], used = [...document.querySelectorAll("#inside use")].map(node => node.getAttribute("href"));
     return {
-      // «Веки» (`…-blink`) — заплатка на глаза, она маленькая; сама картинка — в рост.
-      kept: kept.map(node => node.id), sized: kept.every(node => node.namespaceURI === "http://www.w3.org/2000/svg" && node.getBBox().width > (node.id.endsWith("-blink") ? 20 : 100) && node.getBBox().height > (node.id.endsWith("-blink") ? 8 : 100)),
+      // «Веки» (`…-blink`) — заплатка на глаза, она маленькая; «улыбка» (`…-smile`, 0.50.0) — на лицо; сама картинка — в рост.
+      kept: kept.map(node => node.id), sized: kept.every(node => node.namespaceURI === "http://www.w3.org/2000/svg" && node.getBBox().width > (node.id.endsWith("-blink") ? 20 : node.id.endsWith("-smile") ? 40 : 100) && node.getBBox().height > (node.id.endsWith("-blink") ? 8 : node.id.endsWith("-smile") ? 30 : 100)),
       used, inline: document.querySelectorAll("#inside image").length, drawn: document.querySelectorAll("#inside .breath").length,
       // Видна ли она на самом деле: у ссылки на картинку есть размер на экране.
       shown: [...document.querySelectorAll("#inside > .art use")].some(node => node.getBoundingClientRect().height > 200),
     };
   });
   const first = await painted();
-  if (!first.kept.some(id => !id.endsWith("-blink")) || !first.sized) fail(`её картинки нет в кладовой рисунка: ${JSON.stringify(first.kept)}`);
+  if (!first.kept.some(id => !/-(?:blink|smile)$/u.test(id)) || !first.sized) fail(`её картинки нет в кладовой рисунка: ${JSON.stringify(first.kept)}`);
   if (!first.used.some(href => first.kept.includes(String(href).slice(1))) || !first.shown) fail(`комната не показывает её картинку: ссылки ${JSON.stringify(first.used)}, в кладовой ${JSON.stringify(first.kept)}`);
   if (first.inline) fail(`картинка лежит прямо в комнате (${first.inline}) — будет грузиться заново при каждом нажатии`);
   if (first.drawn) fail("она и картинкой, и нарисована кодом сразу");
@@ -655,18 +655,27 @@ try {
     await pause(900);
     const shownNow = () => tab.evaluate(() => ({
       // Второй кадр позы (`.fr.b`, 0.45.0) — не другая поза: ни в «нарисовано», ни в «видно» он не идёт.
-      used: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
+      used: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile)$/u.test(String(href))),
       // Прежняя поза остаётся в рисунке до следующей перерисовки, но уже растаявшей: что на ней сейчас ВИДНО —
       // это ссылки без тех, чья группа «тает» дошла до прозрачности.
       seen: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(node => { const gone = node.closest(".leave, .stride"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
-        .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !String(href).endsWith("-blink")),
+        .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile)$/u.test(String(href))),
       kept: [...document.querySelectorAll("#store image")].map(node => node.id),
       leave: document.querySelectorAll("#inside .leave").length, arrive: document.querySelectorAll("#inside .arrive").length,
       wink: document.querySelectorAll("#inside use.wink").length,
+      // Улыбка (0.50.0): насколько видна заплатка на лицо (0 — скрыта, 1 — видна); второй кадр позы не в счёт.
+      grin: [...document.querySelectorAll("#inside use.grin")].filter(node => !node.closest(".fr.b")).map(node => Number(getComputedStyle(node).opacity)),
       winking: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside use.wink")).length,
       pouf: document.querySelectorAll('#inside [fill*="r-pouf"]').length,
     }));
     const waitKept = async (id, ms = 4000) => { for (let spent = 0; spent < ms; spent += 200) { if ((await shownNow()).kept.includes(id)) return true; await pause(200); } return false; };
+    // Погладить по голове — своё место нажатия (`pat`): нажатие на неё саму меняет позу, а не гладит.
+    const tapHead = async () => {
+      const point = await tab.evaluate(() => { const box = document.querySelector('#room .zones [data-act="pat"]')?.getBoundingClientRect(); return box ? { x: box.left + box.width / 2, y: box.top + box.height / 2 } : null; });
+      if (!point) return false;
+      await tab.touchscreen.tap(point.x, point.y);
+      return true;
+    };
     const tapHer = async () => {
       const point = await tab.evaluate(() => { const box = document.querySelector('#room .zones [data-act="her"]')?.getBoundingClientRect(); return box ? { x: box.left + box.width / 2, y: box.top + box.height * 0.6 } : null; });
       if (!point) return false;
@@ -719,7 +728,7 @@ try {
     // рисунок (`spritesOf` — его держат тесты), а здесь проверяется страница: картинки загрузились, нажатие
     // сменило позу, куртка вечером не показалась ни на миг, веки — там, где они есть в модуле картинки.
     const evening = ["дело", "уют", "игра", "сон", "устала", "обида", "ревность"];
-    let eveningPoses = 0, eveningLids = 0;
+    let eveningPoses = 0, eveningLids = 0, eveningGrins = 0;
     for (const key of evening) {
       await tab.goto(`${origin}/index.html#part=${encodeURIComponent("вечер")}&key=${encodeURIComponent(key)}&scene=0`, { waitUntil: "load", timeout: 30_000 });
       await tab.reload({ waitUntil: "load" });
@@ -727,9 +736,9 @@ try {
         const [scene, logic] = await Promise.all([import("./scene.js"), import("./logic.js")]);
         const look = logic.demoLook(20, { part: "вечер", key: mood, scene: "0" });
         const list = scene.spritesOf({ part: "вечер", her: { pose: look.her.pose, key: mood } });
-        const lids = [];
-        for (const name of list) lids.push(Boolean((await import(`./her/${name}.js`)).default.blink));
-        return { list, lids };
+        const lids = [], grins = [];
+        for (const name of list) { const sprite = (await import(`./her/${name}.js`)).default; lids.push(Boolean(sprite.blink)); grins.push(Boolean(sprite.smile)); }
+        return { list, lids, grins };
       }, key);
       if (!plan.list.length || plan.list.some(name => !name.startsWith("home-"))) { fail(`вечер, «${key}»: на ней должен быть свитер, а рисунок называет ${JSON.stringify(plan.list)}`); continue; }
       if ((key === "сон") !== (plan.list.length === 1)) fail(`вечер, «${key}»: поз в свитере — ${plan.list.length}`);
@@ -754,6 +763,22 @@ try {
         if (worn(dusk).join() !== `#r-her-${name}`) fail(`вечер, «${key}»: на ней не «${name}» — видно ${JSON.stringify(worn(dusk))}, в рисунке ${JSON.stringify(dusk.used)}`);
         const lids = plan.lids[index];
         if (lids !== Boolean(dusk.wink) || (lids && !dusk.winking)) fail(`вечер, «${key}», «${name}»: «веки» — ${dusk.wink}, движется — ${dusk.winking}, а моргать она ${lids ? "должна" : "не должна"}`);
+        // Улыбка (0.50.0): заплатка на лицо есть ровно у тех поз, где она нарисована; в покое её не видно; погладили
+        // по голове — видна, поза та же; через две с половиной секунды — снова скрыта.
+        const grins = plan.grins[index];
+        if (grins !== Boolean(dusk.grin.length)) fail(`вечер, «${key}», «${name}»: заплаток «улыбка» — ${dusk.grin.length}, а быть ей ${grins ? "положено" : "не положено"}`);
+        if (dusk.grin.some(value => value > 0.02)) fail(`вечер, «${key}», «${name}»: улыбка видна в покое — ${JSON.stringify(dusk.grin)}`);
+        if (grins) {
+          if (!await tapHead()) fail(`вечер, «${key}», «${name}»: по голове не погладить — места нажатия нет`);
+          await pause(700);
+          const glad = await shownNow();
+          if (!glad.grin.some(value => value > 0.5)) fail(`вечер, «${key}», «${name}»: её погладили, а улыбки не видно — ${JSON.stringify(glad.grin)}`);
+          if (!glad.used.includes(`#r-her-${name}`)) fail(`вечер, «${key}», «${name}»: её погладили — а поза сменилась: ${JSON.stringify(glad.used)}`);
+          await pause(1800);
+          const calm = await shownNow();
+          if (calm.grin.some(value => value > 0.02)) fail(`вечер, «${key}», «${name}»: улыбка не сошла после поглаживания — ${JSON.stringify(calm.grin)}`);
+          eveningGrins += 1;
+        }
         eveningPoses += 1;
         eveningLids += lids ? 1 : 0;
       }
@@ -809,7 +834,7 @@ try {
     }
     if (snow.things.length !== 3) fail(`праздничные вещи: на рисунке — ${JSON.stringify(snow.things)}, а должны быть торт, свеча и фонарь`);
     if (broken.length) fail(`позы и звук — ошибка на странице: ${broken[0].slice(0, 200)}`);
-    if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний: поз в нём — ${eveningPoses}, сменяются от нажатия, куртка не показывается; моргает на ${eveningLids} из них`);
+    if (failures.length === failed) console.log(`  вечером свитер у всех ${evening.length} состояний: поз в нём — ${eveningPoses}, сменяются от нажатия, куртка не показывается; моргает на ${eveningLids}, улыбается от поглаживания — ${eveningGrins} из них`);
     if (failures.length === failed) console.log(`  позы сменяются от нажатия и сами, прежняя тает; моргает (заплаток — ${start.wink}); звук включается нажатием, запоминается, без касания не начинается; снег — хлопьями в двух слоях; торт, свеча и фонарь на месте`);
     await tab.close();
   }
@@ -826,7 +851,7 @@ try {
     const now = () => tab.evaluate(() => {
       // Второй кадр позы (`.fr.b`, 0.45.0) — не другая картинка: в счёт идёт первый кадр, виден он сейчас или нет.
       const visible = (node) => { for (let at = node; at && at.id !== "inside"; at = at.parentElement) if (!at.classList?.contains("fr") && Number(getComputedStyle(at).opacity) <= 0.02) return false; return true; };
-      const hers = [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !href.endsWith("-blink"));
+      const hers = [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile)$/u.test(href));
       const strides = [...document.querySelectorAll("#inside .stride")];
       return {
         say: document.getElementById("say").textContent, light: document.getElementById("app").dataset.light, hers: [...new Set(hers)],
@@ -973,7 +998,7 @@ try {
       album: !document.getElementById("album").hidden, box: !document.getElementById("albumBox").hidden, rows: [...document.querySelectorAll("#albumBox .album li .what")].map(node => node.textContent),
       gifts: [...document.querySelectorAll("#albumBox [data-gift]")].length, notes: [...document.querySelectorAll("#albumBox .albumNote")].map(node => node.textContent),
       thumbs: [...document.querySelectorAll("#albumBox img")].map(node => [String(node.src).slice(0, 26), node.naturalWidth]),
-      hers: [...new Set([...document.querySelectorAll("#inside > .art use")].map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !href.endsWith("-blink")))],
+      hers: [...new Set([...document.querySelectorAll("#inside > .art use")].map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile)$/u.test(href)))],
       flower: document.getElementById("inside").innerHTML.includes('cx="23" cy="143.4"'), art: document.querySelectorAll("#room .art *").length,
       resting: document.documentElement.classList.contains("resting"), running: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.closest?.("#room")).length,
       oops: document.getElementById("oops").hidden ? null : document.getElementById("oops").textContent, head: document.querySelectorAll("#inside .hd").length, words: document.getElementById("inside").getAttribute("class") ?? "",

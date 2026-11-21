@@ -220,7 +220,7 @@ export function createFun({
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как просьбу о тишине — репетиция, ничего не меняю.");
     if (turn.isPrivate) {
-      return asked.speak ? null : say(turn, "В личке я пишу только в ответ — молчать здесь не от чего. Ночные вести отключает «не пиши ночью», в группе тишину просит админ: «Аи, помолчи час».");
+      return asked.speak ? null : say(turn, "В личке я пишу в ответ, а первой — редко и только о своём дне; не нужно и этого — «не пиши». Ночные вести отключает «не пиши ночью», в группе тишину просит админ: «Аи, помолчи час».");
     }
     const until = await quiet(turn.chatId);
     if (asked.speak) {

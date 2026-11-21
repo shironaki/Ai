@@ -2,7 +2,7 @@
 /**
  * Моргание для спрайта Аи: из той же картинки с закрытыми глазами — маленькая заплатка «веки» в модуль спрайта.
  *
- *   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя спрайта> [win=ШxВ] [at=x,y] [by=head]
+ *   bash scripts/verify.sh blink <картинка с закрытыми глазами.png> <имя спрайта> [win=ШxВ] [at=x,y] [by=head] [as=имя]
  *
  * Откуда вторая картинка. Нейросеть правит уже принятый спрайт (он же на зелёном фоне — `scripts/room-sprite.mjs`,
  * образец для неё делается из модуля): «всё то же, только глаза закрыты». Правка сохраняет фигуру почти точка в
@@ -19,6 +19,12 @@
  * `win` — размер окна глаз в точках спрайта (по умолчанию 100×30: стоящая фигура высотой 900); `at` — середина
  * окна руками, если поиск ошибся (например, изменился ещё и рот). `by=head` — подгонять по голове, а не по телу:
  * так веки берутся с картинки в другом наряде (та же поза и то же лицо — у спрайта в свитере и его же в куртке).
+ *
+ * `as=smile` (0.50.0) — та же заплатка под другим именем: не «веки», а лицо целиком — улыбка с закрытыми глазами
+ * (правка «всё то же, только она улыбается, закрыв глаза»). В модуль дописывается `smile: { x, y, w, h, src }`, веки
+ * остаются. Окно — от бровей до подбородка, и место его берётся не поиском, а по «векам» той же картинки: рот далеко
+ * от глаз, и окно поиска встало бы как придётся. Поэтому улыбка делается после век; с `by=head` — так же, по векам
+ * той картинки, куда она кладётся. Снимок для глаз — `out/<имя заплатки>-<имя спрайта>.png`.
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve, extname } from "node:path";
@@ -29,6 +35,8 @@ const [, , root, input, name, ...more] = process.argv;
 if (!root || !input || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(name ?? "")) { console.error("Нужно: node room-blink.mjs <корень репозитория> <картинка.png> <имя спрайта> [win=ШxВ] [at=x,y]"); process.exit(2); }
 const option = (key) => more.find(word => word.startsWith(`${key}=`))?.slice(key.length + 1) ?? "";
 const win = option("win").split("x").map(Number), at = option("at").split(",").map(Number), byHead = option("by") === "head";
+const as = option("as") || "blink";
+if (!/^[a-z]{3,12}$/u.test(as) || ["src", "w", "h", "cx"].includes(as)) { console.error(`Имя заплатки — латинскими буквами, от трёх до двенадцати: as=smile (получено «${as}»)`); process.exit(2); }
 
 let chromium, puppeteer;
 try {
@@ -43,6 +51,14 @@ try {
 const file = join(resolve(root), "miniapp", "her", `${name}.js`);
 const sprite = (await import(`${pathToFileURL(file).href}?${Date.now()}`)).default;
 const bytes = await readFile(resolve(input));
+// Окно и его середина. Веки — 100×30, место ищется; другая заплатка — лицо по векам этой же картинки.
+let size = [win[0] > 0 ? win[0] : 100, win[1] > 0 ? win[1] : 30], centre = [at[0] > 0 ? at[0] : 0, at[1] > 0 ? at[1] : 0];
+if (as !== "blink") {
+  const lids = sprite.blink;
+  if (!(centre[0] > 0) && !(lids && lids.w > 20 && lids.h > 14)) { console.error(`заплатка «${as}» для «${name}»: у картинки нет век — сначала blink, или место руками (at=x,y win=ШxВ)`); process.exit(1); }
+  if (lids && !(win[0] > 0)) size = [lids.w - 10, Math.round(lids.h - 10 + lids.w * 0.4)];
+  if (lids && !(centre[0] > 0)) centre = [lids.x + lids.w / 2, lids.y + 3 + size[1] / 2];
+}
 const type = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[extname(input).toLowerCase()] ?? "image/png";
 const executablePath = await chromium.executablePath();
 process.env.LD_LIBRARY_PATH = [join(tmpdir(), "al2023/lib"), process.env.LD_LIBRARY_PATH].filter(Boolean).join(":");
@@ -172,21 +188,23 @@ try {
     dctx.putImageData(dimg, 0, 0);
     sctx.drawImage(diff, 0, 0, vw, vh, 30 + vw * zoom * 2, 10, vw * zoom, vh * zoom);
     return { src, box: [x0, y0, patch.width, patch.height], fit: best, near: { dx: near.dx, dy: near.dy, sw: near.sw, sh: near.sh, rim: near.value }, changed, body: head ? 0 : score(pb, Math.round(H * 0.25), H), preview: show.toDataURL("image/png") };
-  }, sprite.src, `data:${type};base64,${bytes.toString("base64")}`, [win[0] > 0 ? win[0] : 100, win[1] > 0 ? win[1] : 30], [at[0] > 0 ? at[0] : 0, at[1] > 0 ? at[1] : 0], byHead);
-  if (made.error) { console.error(`моргание «${name}»: ${made.error}`); process.exit(1); }
+  }, sprite.src, `data:${type};base64,${bytes.toString("base64")}`, size, centre, byHead);
+  if (made.error) { console.error(`заплатка «${as}» для «${name}»: ${made.error}`); process.exit(1); }
   // Кайма заплатки не сошлась — заплатку было бы видно: шов на чёлке или на щеках.
-  if (made.near.rim > 12) { console.error(`моргание «${name}»: вокруг глаз картинки расходятся (в среднем ${made.near.rim.toFixed(1)} из 255) — заплатку было бы видно. Нужна другая картинка или окно руками (at=x,y).`); process.exit(1); }
+  if (made.near.rim > 12) { console.error(`заплатка «${as}» для «${name}»: вокруг неё картинки расходятся (в среднем ${made.near.rim.toFixed(1)} из 255) — заплатку было бы видно. Нужна другая картинка или окно руками (at=x,y).`); process.exit(1); }
   // Картинки разошлись и там, где ничего не менялось, — правка перерисовала фигуру: заплатка не сядет.
-  if (made.body > 14) { console.error(`моргание «${name}»: картинки расходятся и ниже головы (в среднем ${made.body.toFixed(1)} из 255) — правка перерисовала фигуру, заплатка не сядет. Нужна другая картинка.`); process.exit(1); }
+  if (made.body > 14) { console.error(`заплатка «${as}» для «${name}»: картинки расходятся и ниже головы (в среднем ${made.body.toFixed(1)} из 255) — правка перерисовала фигуру, заплатка не сядет. Нужна другая картинка.`); process.exit(1); }
   const text = await readFile(file, "utf8");
   const [x, y, w, h] = made.box;
-  const blink = `blink: { x: ${x}, y: ${y}, w: ${w}, h: ${h}, src: "${made.src}" }, `;
-  const cleared = text.replace(/blink: \{[^}]*\}, /u, "");
-  if (!/, src: "data:image\/webp;base64,/u.test(cleared)) { console.error(`моргание «${name}»: модуль ${file} устроен не так, как пишет room-sprite.mjs`); process.exit(1); }
-  await writeFile(file, cleared.replace(/, src: "data:image\/webp;base64,/u, `, ${blink}src: "data:image/webp;base64,`));
+  const patch = `${as}: { x: ${x}, y: ${y}, w: ${w}, h: ${h}, src: "${made.src}" }, `;
+  const cleared = text.replace(new RegExp(`${as}: \\{[^}]*\\}, `, "u"), "");
+  // Сама картинка — последнее `src` модуля: у каждой заплатки есть своё, и первое по счёту принадлежит ей.
+  const mark = ", src: \"data:image/webp;base64,", spot = cleared.lastIndexOf(mark);
+  if (spot < 0) { console.error(`заплатка «${as}» для «${name}»: модуль ${file} устроен не так, как пишет room-sprite.mjs`); process.exit(1); }
+  await writeFile(file, `${cleared.slice(0, spot)}, ${patch}${cleared.slice(spot + 2)}`);
   await mkdir(join(resolve(root), "out"), { recursive: true });
-  await writeFile(join(resolve(root), "out", `blink-${name}.png`), Buffer.from(made.preview.split(",")[1], "base64"));
-  console.log(`моргание «${name}»: заплатка ${w}×${h} в точке ${x}, ${y}; у глаз сдвинута на ${made.near.dx}, ${made.near.dy}${made.near.sw || made.near.sh ? `, размер ${made.near.sw}, ${made.near.sh}` : ""} (кайма расходится на ${made.near.rim.toFixed(1)} из 255); ${byHead ? `по голове: место ${made.fit.dx}, ${made.fit.dy}, рост ${made.fit.sh >= 0 ? "+" : ""}${made.fit.sh}, голова расходится на ${made.fit.value.toFixed(1)}` : `ниже головы — на ${made.body.toFixed(1)}`}; изменённых точек в заплатке — ${made.changed}; модуль — ${Math.round(Buffer.byteLength(await readFile(file, "utf8")) / 1024)} КБ; снимок — out/blink-${name}.png`);
+  await writeFile(join(resolve(root), "out", `${as}-${name}.png`), Buffer.from(made.preview.split(",")[1], "base64"));
+  console.log(`заплатка «${as}» для «${name}»: ${w}×${h} в точке ${x}, ${y}; сдвинута на ${made.near.dx}, ${made.near.dy}${made.near.sw || made.near.sh ? `, размер ${made.near.sw}, ${made.near.sh}` : ""} (кайма расходится на ${made.near.rim.toFixed(1)} из 255); изменено точек — ${made.changed}; ниже головы — ${made.body.toFixed(1)}. Снимок: out/${as}-${name}.png`);
 } finally {
   await browser.close().catch(() => {});
 }

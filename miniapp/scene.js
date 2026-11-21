@@ -1826,18 +1826,21 @@ const SPRITE_SRC = /^data:image\/(?:webp|png);base64,[A-Za-z0-9+/=]+$/u;
 const fitsSprite = (sprite) => Boolean(sprite) && typeof sprite === "object" && Number.isFinite(sprite.w) && Number.isFinite(sprite.h) && sprite.w > 0 && sprite.h > 0
   && typeof sprite.src === "string" && SPRITE_SRC.test(sprite.src);
 /** «Веки»: заплатка с закрытыми глазами поверх спрайта (`scripts/room-blink.mjs`) — в точках самого спрайта, внутри него. */
-const fitsBlink = (sprite) => { const lids = sprite?.blink; return Boolean(lids) && typeof lids === "object" && [lids.x, lids.y, lids.w, lids.h].every(Number.isFinite) && lids.x >= 0 && lids.y >= 0 && lids.w > 0 && lids.h > 0
+const fitsPatch = (sprite, key) => { const lids = sprite?.[key]; return Boolean(lids) && typeof lids === "object" && [lids.x, lids.y, lids.w, lids.h].every(Number.isFinite) && lids.x >= 0 && lids.y >= 0 && lids.w > 0 && lids.h > 0
   && lids.x + lids.w <= sprite.w && lids.y + lids.h <= sprite.h && typeof lids.src === "string" && SPRITE_SRC.test(lids.src); };
+const fitsBlink = (sprite) => fitsPatch(sprite, "blink");
 /**
  * Сама картинка — её определение. На странице оно кладётся в рисунок один раз и остаётся там, а комната, сколько
  * бы её ни перерисовывали, только ссылается на него по имени (`<use>`): так картинка не грузится заново при каждом
  * нажатии и она не моргает. `drawRoom` кладёт определение сам — листам и тестам хватает одной строки.
- * У спрайта с «веками» определений два: сама картинка и заплатка на глаза.
+ * У спрайта с «веками» определений два: сама картинка и заплатка на глаза; с улыбкой (0.50.0, `smile` — та же
+ * заплатка, но на всё лицо: `scripts/room-blink.mjs … as=smile`) — три.
  */
 export function drawSprite(name, sprite) {
   if (!(Object.hasOwn(HER_SPRITES, name) || FRAME_NAMES.has(name)) || !fitsSprite(sprite)) return "";
   const lids = fitsBlink(sprite) ? `<image id="r-her-${name}-blink" x="${n(sprite.blink.x)}" y="${n(sprite.blink.y)}" width="${n(sprite.blink.w)}" height="${n(sprite.blink.h)}" preserveAspectRatio="none" href="${sprite.blink.src}"/>` : "";
-  return `<image id="r-her-${name}" width="${n(sprite.w)}" height="${n(sprite.h)}" preserveAspectRatio="none" href="${sprite.src}"/>${lids}`;
+  const grin = fitsPatch(sprite, "smile") ? `<image id="r-her-${name}-smile" x="${n(sprite.smile.x)}" y="${n(sprite.smile.y)}" width="${n(sprite.smile.w)}" height="${n(sprite.smile.h)}" preserveAspectRatio="none" href="${sprite.smile.src}"/>` : "";
+  return `<image id="r-her-${name}" width="${n(sprite.w)}" height="${n(sprite.h)}" preserveAspectRatio="none" href="${sprite.src}"/>${lids}${grin}`;
 }
 
 /**
@@ -2056,7 +2059,11 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   const eyes = fitsBlink(sprite) ? sprite.blink : null, blushId = g.id("herBlush"), rosy = HER_SPRITES[name].blush !== false;
   const cheek = (share) => `<ellipse cx="${n(eyes.x + eyes.w * share)}" cy="${n(eyes.y + eyes.h * 1.12)}" rx="${n(eyes.w * 0.1)}" ry="${n(eyes.w * 0.055)}"/>`;
   const blush = eyes && rosy ? `<mask id="${blushId}" style="mask-type:alpha" maskUnits="userSpaceOnUse" ${place.box}><use href="#r-her-${name}" ${place.at}/></mask><g class="blush" opacity="0" mask="url(#${blushId})" style="mix-blend-mode:multiply"><g fill="#ff5f7a" ${place.at}>${cheek(0.27)}${cheek(0.73)}</g></g>` : "";
-  const lids = eyes ? `<use class="wink${face === "drowsy" ? " slow" : ""}" href="#r-her-${name}-blink" ${place.at}/>${blush}` : "";
+  // Улыбка (0.50.0, сообщение 51 — «продолжай генерацию»): заплатка на всё лицо — глаза закрыты дугами, губы
+  // улыбаются. Сама не видна (`opacity="0"`): её показывают стили страницы — пока её гладят, когда налили чай или
+  // что-то подарили и жестом между делами (`.patted`, `.glad`, `.g-smile`). Лежит поверх век: закрытые глаза под ней те же.
+  const grin = eyes && fitsPatch(sprite, "smile") ? `<use class="grin" opacity="0" href="#r-her-${name}-smile" ${place.at}/>` : "";
+  const lids = eyes ? `<use class="wink${face === "drowsy" ? " slow" : ""}" href="#r-her-${name}-blink" ${place.at}/>${grin}${blush}` : "";
   const [mark, mx, my] = HER_SPRITES[name].mark ?? [], px = left + wide * (mx ?? 0), py = top + tall * (my ?? 0);
   const alive = mark === "steam" ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.3" stroke-linecap="round" opacity="0.6"><path d="M${n(px - 2.4)} ${n(py)} q-3 -4 0 -8 q3 -4 0 -7"/><path d="M${n(px + 2.8)} ${n(py - 1)} q3 -4 0 -8"/></g>`
     : mark === "zzz" ? zzz(f, n(px), n(py)) : "";

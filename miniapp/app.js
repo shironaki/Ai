@@ -913,7 +913,7 @@ async function music() {
 // ── Жесты (0.49.0) ───────────────────────────────────────────────────────────
 // Между делами она не замирает: раз в полминуты — жест по занятию и настроению (`logic.gestureOf`), и по событию —
 // взгляд туда, где что-то случилось: Байт подошёл, окно открыли. Жест — слово на рисунке на две-три секунды.
-const GESTURE_MS = Object.freeze({ tilt: 2800, nod: 1600, hair: 2600, bow: 2800, away: 3200, huff: 2200, sigh: 3000, yawn: 3000 });
+const GESTURE_MS = Object.freeze({ tilt: 2800, nod: 1600, hair: 2600, bow: 2800, away: 3200, huff: 2200, sigh: 3000, yawn: 3000, smile: 2600 });
 let gestures = 0;
 /** Посмотреть в сторону: `to` — Байт или окно. Сторона — по тому, где они на рисунке относительно неё. */
 function lookAt(to, ask = false) {
@@ -925,9 +925,11 @@ function lookAt(to, ask = false) {
 }
 function gesture(name = "") {
   if (typeof logic.gestureOf !== "function" || !state.ready || state.busy || acting || document.hidden || Date.now() < drawn.until) return;
-  const what = name || logic.gestureOf(state, gestures);
+  let what = name || logic.gestureOf(state, gestures);
   if (!name) gestures += 1;
   if (!what) return;
+  // Улыбка — картинкой, и есть она не у каждой позы: где её нет, вместо неё наклон головы.
+  if (what === "smile" && !sprites[spriteOf(viewOf(state))]?.smile) what = "tilt";
   if (what === "look-cat" || what === "look-win") { lookAt(what === "look-cat" ? "cat" : "win", gestures % 2 === 0); return; }
   if (what === "peek") { react("peek", 2600); return; }
   react(`g-${what}`, GESTURE_MS[what] ?? 2600);
