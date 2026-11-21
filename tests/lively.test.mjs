@@ -428,3 +428,17 @@ test("подарок и «не пиши» словами: цветок и кни
   // «Не пиши код», «не пиши ему» — не о её письмах.
   for (const text of ["не пиши код", "не пиши ему", "не пиши так длинно"]) assert.notEqual(op(text), "noteoff", text);
 });
+
+test("«удали всё обо мне»: комната, альбом и место в списке «кто бывает в комнате» стираются; чужое остаётся", async () => {
+  reset();
+  const time = clock("2026-11-15T07:00:00Z");
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  for (const id of [41, 42]) await h.onRoom({ do: "look" }, from(id));
+  const recent = () => Object.keys(JSON.parse(sdk().kv.get(room.ROOM_RECENT_KEY) ?? "{}")?.users ?? {}).sort();
+  assert.deepEqual(recent(), ["41", "42"]);
+  assert.ok(roomOf(41) && albumOf(41), "запись комнаты и альбом заведены");
+  await h.onMessage(message("удали всё обо мне", { id: 41 }), KEY);
+  await h.onMessage(message("да, удали всё", { id: 41 }), KEY);
+  assert.deepEqual([roomOf(41), albumOf(41), recent()], [null, null, ["42"]]);
+  assert.ok(roomOf(42) && albumOf(42), "чужое на месте");
+});
