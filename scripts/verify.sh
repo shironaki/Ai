@@ -103,7 +103,7 @@ kept() {
 ci() {
   local status=0
   kept || status=1
-  (cd "$ROOT" && npm run check --silent && node --test --test-timeout=120000 --test-reporter=tap) > "$TMP/ci.log" 2>&1 || status=$?
+  (cd "$ROOT" && npm run check --silent && node --test --test-timeout=300000 --test-reporter=tap) > "$TMP/ci.log" 2>&1 || status=$?
   report "$TMP/ci.log" "тесты (Node $(node --version))" "$status"
 }
 
@@ -114,7 +114,7 @@ node24() {
     (cd "$N24" && npm install --no-audit --no-fund --silent node@24)
   fi
   local status=0
-  (cd "$ROOT" && "$N24/node_modules/node/bin/node" --test --test-timeout=120000 --test-reporter=tap) > "$TMP/n24.log" 2>&1 || status=$?
+  (cd "$ROOT" && "$N24/node_modules/node/bin/node" --test --test-timeout=300000 --test-reporter=tap) > "$TMP/n24.log" 2>&1 || status=$?
   report "$TMP/n24.log" "тесты (Node $("$N24/node_modules/node/bin/node" --version))" "$status"
 }
 

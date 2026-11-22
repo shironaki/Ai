@@ -1130,7 +1130,20 @@ build, side_effects: "none" }` — без чтения и записи.
 | Подключение | `tgcloud/lib/heart.js`: `appDoor` — рядом с `onRoom`; пост канала сначала спрашивает `appDoor.mine(chatId)`; `appDoor.sweep()` — в такте после `abilities.sweep()`; строка «Дверь приложения: …» — в «статус» после строки «Комната:» |
 | Память двери | `heart:door:seen:<id>` — одноразовые номера (сутки); счётчики минуты и суток — там же, под `heart:door:` |
 | Настройки | `DOOR_GUESTS` в `tgcloud/lib/config.js` (по умолчанию `false`); ключ — `AI_EXTRA_KEYS.door` из `KEY_DOOR` (`scripts/inject-secrets.mjs`, `scripts/phone.sh`) |
-| Образец посредника | `scripts/door-client.mjs`: `sealRequest`, `openAnswer` — те же правила, что у сердца, без его кода; команды `setup`, `key`, `where`, `<действие> [json]`, `seal`, `open` |
+| Образец посредника | `scripts/door-client.mjs`: `sealRequest`, `openAnswer` — те же правила, что у сердца, без его кода; команды `setup`, `key`, `where`, `<действие> [json]`, `seal`, `open` (переписан в 0.54.1 — см. ниже) |
 | Третьи кадры (поворот головы) | `miniapp/her/<поза>c.js`, таблица `HER_TURNS` в `miniapp/scene.js`: 14 строк; ось кадра — `bash scripts/verify.sh axis <поза>:<кадр>` (`scripts/room-axis.mjs`) |
 | Лампа с картины | `paintedLamp` в `miniapp/scene.js`: силуэт `PIC.lamp`, абажур `PIC.shade`, тон погашенной `PIC.shadeOff`; свет — `lampLight` |
 | Тень проёма на вещах | `paintedThing` в `miniapp/scene.js`: вещь, чья область пересекает окно (`WIN`), вечером и ночью получает `duskFill` под маской самой себя |
+
+## Что добавила 0.54.1: где что лежит
+
+| Что | Где |
+|---|---|
+| Дверь одной командой | `scripts/phone.sh`, режим `door`: `open_door` (шаги), `door_client` (зовёт посредника с `DOOR_AI_ID`, `DOOR_FLOW=1`, `HEART_ENV`), `door_publish`, `door_fresh` (опыт после публикации: проба, пауза, вторая проба); после шагов — `exec … run`. Номер бота Аи — цифры после `app` в токене публикации (предположение о платформе: на нём ничего не обрывается) |
+| Опубликован ли ключ двери | `~/.heart/published`, четвёртая строка: контрольная сумма `KEY_DOOR` (`door_mark`, `published_door` в `scripts/phone.sh`); «-» — ключа нет |
+| Посредник | `scripts/door-client.mjs`: `settings` (ключи из окружения и файла), `ownerOf` (хозяин — как у сердца: `config.js`, потом ключи; `DOOR_CONFIG` — другой файл настроек, для тестов), `keep` (дописать строку в файл ключей), `telegram` (вызов Bot API; `DOOR_API` — адрес для тестов), `fit` (годится ли бот: `getMe`, не Аи ли, `getWebhookInfo`), команды `bot`, `setup`, `where`, `key`, `seal`, `open`, опыт; коды выхода 0–7 — в шапке файла |
+| Бот двери | строка `DOOR_BOT_TOKEN` в `~/.heart.env`; нет её — пробуется `ALARM_BOT_TOKEN`, и бот с вебхуком отвергается словами |
+| Поддельный Telegram | `tests/fixtures/telegram.mjs`: `telegramStub({ hearts, ahead, deaf, door, ai, nextId })` — сервер Bot API на 127.0.0.1 по исходникам настоящего; посты бота двери отдаёт сердцу со стаба платформы. Тесты с ним на телефоне пропускаются |
+| Проверки | `tests/door.test.mjs` (посредник сам по себе), `tests/phone.test.mjs` (режим `door`: с поддельным посредником — порядок шагов и остановки; с настоящим — от начала до конца) |
+| Посты двери без звука | `createDoor` → `send` в `tgcloud/lib/bridge.js`: `disable_notification: true` |
+| Канал моста — не дверь | сердце: `busy` в `createDoor` (`tgcloud/lib/bridge.js`), в `heart.js` — `busy: [config.ABILITIES_CHANNEL_ID]`; посредник: `busyOf` в `scripts/door-client.mjs` (канал моста из `config.js` и `ALARM_CHAT_ID` из ключей) |

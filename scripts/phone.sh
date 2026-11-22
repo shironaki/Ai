@@ -14,6 +14,9 @@
 #   bash scripts/phone.sh once      один круг цикла — для cron и для тестов
 #   bash scripts/phone.sh events    спросить платформу, какие события она отдаёт
 #                                   (нужно для «секретаря»); ничего не публикует
+#   bash scripts/phone.sh door      дверь отдельного приложения (docs/DOOR.md): по
+#                                   шагам — бот двери, канал, ключ, публикация
+#                                   сердца с ключом, опыт; потом снова работает дом
 #
 # Ключи живут вне репозитория, в файле ~/.heart.env — строки «ИМЯ=значение»,
 # кавычки не нужны. Читаются один раз, при запуске. Подробно — docs/PHONE.md.
@@ -28,6 +31,8 @@
 #   KEY_CLOUDFLARE=ID:токен  рисование и запасной мозг: ID аккаунта, двоеточие, токен
 #   KEY_DOOR=канал:секрет   дверь отдельного приложения (docs/DOOR.md): номер закрытого
 #                           канала двери, двоеточие, секрет от 32 знаков
+#   DOOR_BOT_TOKEN=…        токен бота двери — своего, от @BotFather: не Аи и не бота,
+#                           который живёт на сервере. Обе строки пишет «phone.sh door»
 #   HEART_BRANCH=…          за какой веткой следить (без строки — ветка, с
 #                           которой склонирована папка)
 #   ALARM_BOT_TOKEN=…       токен любого бота, кроме Аи, — минутный будильник
@@ -42,6 +47,8 @@
 #   ALARM_RUN_EVERY=600     период будильника без второго бота, секунд
 #   HEART_RETRY_EVERY=3600  как часто повторять публикацию, не вышедшую трижды
 #   HEART_CALL_LIMIT=420    сколько секунд ждать ответа платформы на один запрос
+#   HEART_DOOR_WAIT=600     сколько секунд «door» ждёт, пока бота двери сделают
+#                           администратором канала
 #
 # В облако уходит не папка с Аи, а копия коммита (~/.heart/stage): в неё
 # вписываются ключи, из неё убираются комментарии (scripts/slim.mjs) — код легче
@@ -53,6 +60,8 @@ set -u
 
 main() {
   local MODE="${1:-run}"
+  # Второе слово режима «door» — токен нового бота двери (можно и без него: спросят).
+  local DOOR_ARG="${2:-}"
   # REPO, LIVE, LIVE_CLEAN, LOCK, LOCKED, NAP — не local: ими пользуется уборка
   # при выходе, а она срабатывает уже после main, когда local-переменных нет.
   local SELF
@@ -255,7 +264,7 @@ main() {
       local name
       for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
         case "$name" in
-          HEART_*|ALARM_*|TGCLOUD_*|KEY_*|AI_PROVIDER_KEY|AI_EXTRA_KEYS|OWNER_TG_ID) unset "$name" ;;
+          HEART_*|ALARM_*|TGCLOUD_*|KEY_*|DOOR_*|AI_PROVIDER_KEY|AI_EXTRA_KEYS|OWNER_TG_ID) unset "$name" ;;
         esac
       done
       npm run ci
@@ -412,6 +421,17 @@ main() {
   local PUBLISHED="$HOME_DIR/published" FAILED="$HOME_DIR/failed"
   published_commit() { sed -n '1p' "$PUBLISHED" 2>/dev/null; }
   published_build() { sed -n '2p' "$PUBLISHED" 2>/dev/null; }
+  # С каким ключом двери сердце опубликовано: не сам ключ, а его контрольная
+  # сумма — четвёртой строкой. По ней «door» видит, нужна ли новая публикация.
+  published_door() { sed -n '4p' "$PUBLISHED" 2>/dev/null; }
+  door_mark() {
+    local mark
+    [ -n "${KEY_DOOR:-}" ] || { echo "-"; return 0; }
+    mark="$(printf '%s' "$KEY_DOOR" | cksum 2>/dev/null | tr -s ' \t' '-')"
+    # Нет cksum — метка ни с чем не совпадёт, и публикация пройдёт заново: лишняя минута, а не закрытая дверь.
+    [ -n "$mark" ] || mark="без-суммы-$$-$(date +%s)"
+    echo "$mark"
+  }
   failed_commit() { sed -n '1p' "$FAILED" 2>/dev/null; }
   failed_count() { local n; n="$(sed -n '2p' "$FAILED" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; echo "$n"; }
   failed_at() { local n; n="$(sed -n '3p' "$FAILED" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; echo "$n"; }
@@ -456,10 +476,12 @@ main() {
     git -C "$REPO" checkout -q --detach "$remote" 2>/dev/null || { log "Не получилось перейти на $(short "$remote")."; return 1; }
     log "Пришёл коммит $(short "$remote"), сборка $(build_of)."
     after="$(git -C "$REPO" rev-parse -q --verify "HEAD:scripts/phone.sh" 2>/dev/null)"
-    if [ "$before" != "$after" ] && [ "$MODE" = "run" ]; then
+    if [ "$before" != "$after" ] && { [ "$MODE" = "run" ] || [ "$MODE" = "door" ]; }; then
       log "Сам скрипт обновился — перезапускаюсь."
       leave
       trap - EXIT INT TERM
+      # Дверь продолжает дверью — с тем же словом после «door», если оно было.
+      [ "$MODE" = "door" ] && exec bash "$SELF" door ${DOOR_ARG:+"$DOOR_ARG"}
       exec bash "$SELF" run
     fi
     return 0
@@ -889,7 +911,7 @@ main() {
       rm -rf "$LIVE" 2>/dev/null
       log "Слепок опубликованного не снялся: будильник через платформу подождёт следующей публикации."
     fi
-    printf '%s\n%s\n%s\n' "$head" "$build" "$(date '+%F %T')" > "$PUBLISHED"
+    printf '%s\n%s\n%s\n%s\n' "$head" "$build" "$(date '+%F %T')" "$(door_mark)" > "$PUBLISHED"
     rm -f "$FAILED"
     if [ -n "$warn" ]; then
       log "Сборка $build опубликована, но $warn. Проверьте «статус» в боте. Подробности: $DEPLOY_LOG"
@@ -1078,7 +1100,9 @@ HEART_BRANCH=$BRANCH
 # Минутный будильник — токен любого бота, кроме Аи, и числовой ID канала «Мост»:
 # ALARM_BOT_TOKEN=
 # ALARM_CHAT_ID=
-# Дверь отдельного приложения (docs/DOOR.md) — номер канала двери, двоеточие, секрет:
+# Дверь отдельного приложения (docs/DOOR.md). Обе строки пишет сама команда
+# «bash scripts/phone.sh door»: токен своего бота двери и «номер канала:секрет».
+# DOOR_BOT_TOKEN=
 # KEY_DOOR=
 EOF
     ) 2>/dev/null
@@ -1139,8 +1163,11 @@ EOF
       if printf '%s' "$KEY_CLOUDFLARE" | grep -Eq '^[0-9a-fA-F]{32}:[!-~]{20,}$'; then echo "✓ рисование: ключ Cloudflare записан верно"
       else echo "• KEY_CLOUDFLARE записан не так: нужен вид «ID аккаунта:токен» — 32 знака ID, двоеточие, токен, без пробелов. Пока так — рисования не будет"; fi
     fi
+    if [ -n "${DOOR_BOT_TOKEN:-}" ] && ! printf '%s' "$DOOR_BOT_TOKEN" | LC_ALL=C grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
+      echo "• DOOR_BOT_TOKEN не похож на токен бота (цифры, двоеточие, буквы) — дверь приложения с ним не открыть: bash scripts/phone.sh door"
+    fi
     if [ -n "${KEY_DOOR:-}" ]; then
-      if printf '%s' "$KEY_DOOR" | grep -Eq '^-100[0-9]{5,15}:[!-~]{32,}$'; then echo "✓ дверь приложения: ключ записан верно"
+      if printf '%s' "$KEY_DOOR" | grep -Eq '^-100[0-9]{5,15}:[!-~]{32,}$'; then echo "✓ дверь приложения: ключ записан верно$([ -n "${DOOR_BOT_TOKEN:-}" ] || echo '; своего бота двери на телефоне нет — проверить её отсюда: bash scripts/phone.sh door')"
       else echo "• KEY_DOOR записан не так: нужен вид «номер канала:секрет» — номер начинается с -100, двоеточие, секрет от 32 знаков, без пробелов. Пока так — дверь приложения закрыта"; fi
     fi
     [ -n "${AI_EXTRA_KEYS:-}" ] && echo "✓ запасные мозги: строка AI_EXTRA_KEYS есть"
@@ -1202,8 +1229,120 @@ EOF
   }
 
   # ── режимы ───────────────────────────────────────────────────────────────
+  # ── дверь приложения ─────────────────────────────────────────────────────
+  # Одной командой и по шагам (docs/DOOR.md, раздел 9): бот двери → канал → ключ →
+  # сердце с ключом → опыт. 22.11.2026 владелец выполнил те же шаги пятью
+  # отдельными строками: первая не вышла (бот будильника живёт на сервере), а
+  # остальные всё равно отработали — сердце опубликовалось второй раз впустую.
+  # Здесь шаг, который не вышел, останавливает остальные.
+  # Номер бота Аи — число после «app» в токене публикации: по нему посредник
+  # называет её права в канале и не даёт взять для двери её же. Что это один и
+  # тот же номер — предположение о платформе (как у будильника выше). Поэтому
+  # посредник на нём ничего не обрывает: не сошлось — скажет «не вижу Аи среди
+  # администраторов» и всё равно сделает опыт.
+  local AI_ID="" DOOR_WAIT="${HEART_DOOR_WAIT:-600}"
+  case "${TOKEN%%:*}" in app[0-9]*) AI_ID="${TOKEN%%:*}"; AI_ID="${AI_ID#app}" ;; esac
+  case "$AI_ID" in ''|*[!0-9]*) AI_ID="" ;; esac
+  door_client() { DOOR_AI_ID="$AI_ID" DOOR_FLOW=1 HEART_ENV="$ENV_FILE" node "$REPO/scripts/door-client.mjs" "$@"; }
+  # Как у «deploy»: 0 — опубликовано; иначе причина уже названа строками публикации.
+  door_publish() {
+    local code
+    publish; code=$?
+    case "$code" in 0) return 0 ;; 2) return 1 ;; esac
+    failed
+    return 1
+  }
+  # Опыт сразу после публикации. Когда именно платформа начинает отвечать новым
+  # кодом, неизвестно: первая проба без ответа — ещё не приговор, через четверть
+  # минуты — вторая, и уже её слова — итог.
+  door_fresh() {
+    local code
+    door_client look --wait=40 --try; code=$?
+    # 5 — ответа нет; 7 — ответило сердце с другим ключом: прежний код ещё на месте.
+    case "$code" in 5|7) ;; *) return "$code" ;; esac
+    echo "Сердце только что опубликовано — возможно, новый код ещё не заработал. Пробую ещё раз…"
+    sleep "${HEART_DOOR_PAUSE:-15}"
+    door_client look --wait=40
+  }
+  open_door() {
+    local given="${1:-}" code line more published=0
+    [ -f "$REPO/scripts/door-client.mjs" ] || { echo "В этой сборке двери приложения ещё нет."; return 1; }
+    command -v node > /dev/null 2>&1 || { echo "Нет node — проверить дверь нечем."; return 1; }
+    echo "Дверь приложения: бот двери → канал → ключ → сердце с ключом → опыт."
+    # 1. Бот двери: свой и без вебхука. Нет такого — спросить токен нового.
+    # Файл ключей перечитывается после каждой записи в него: ключи читались при
+    # запуске, а окружение у посредника главнее файла — без этого он взял бы прежний токен.
+    if [ -n "$given" ]; then
+      door_client bot "$given" || return 1
+      load_env "$ENV_FILE"
+    else
+      door_client bot; code=$?
+      case "$code" in
+        0) ;;
+        3|4|6)
+          # Не терминал (cron, тест) — спросить некого.
+          # HEART_DOOR_ASK=1 — спросить и без терминала: ответ придёт по трубе (тесты).
+          if [ ! -t 0 ] && [ "${HEART_DOOR_ASK:-}" != "1" ]; then echo "Когда токен будет: bash scripts/phone.sh door <токен нового бота>"; return 1; fi
+          # Без показа: токен не должен остаться на экране — экран потом шлют в чат.
+          printf 'Вставьте сюда токен нового бота (на экране он не покажется) и нажмите Enter: '
+          IFS= read -rs line || line=""
+          # Вставили всё сообщение @BotFather, а не одну строку, — дочитать остальное:
+          # токен где-то в нём, а непрочитанные строки достались бы оболочке как команды.
+          more=""
+          while IFS= read -rs -t 1 more; do line="$line $more"; more=""; done
+          # Последняя строка без Enter тоже прочитана — она в «more».
+          [ -n "$more" ] && line="$line $more"
+          echo
+          [ -n "$line" ] || { echo "Токена нет — дверь подождёт. Когда он будет: bash scripts/phone.sh door"; return 1; }
+          door_client bot "$line" || return 1
+          load_env "$ENV_FILE" ;;
+        *) return 1 ;;
+      esac
+    fi
+    # 2. Канал и ключ: посредник ждёт, пока бота добавят в канал, и пишет ключ в файл.
+    door_client setup "--wait=$DOOR_WAIT" || return 1
+    load_env "$ENV_FILE"
+    # 3. Сердце с этим ключом. Опубликовано с ним же — второй раз не нужно.
+    if [ "$(published_door)" != "$(door_mark)" ]; then
+      echo "Публикую сердце с ключом двери — минута-другая…"
+      door_publish || { echo "✗ Сердце с ключом двери не опубликовалось — дверь пока закрыта. Причина — строками выше."; return 1; }
+      published=1
+    fi
+    # 4. Опыт. Метка могла и обмануть (сердце публиковали не отсюда): молчит дверь
+    # или ключи разные — публикация и вторая попытка.
+    if [ "$published" = 1 ]; then door_fresh; code=$?
+    else
+      door_client look "--wait=${HEART_DOOR_TRY:-20}" --try; code=$?
+      case "$code" in
+        5|7)
+          echo "Публикую сердце заново: в опубликованном, похоже, нет этого ключа двери…"
+          door_publish || { echo "✗ Сердце с ключом двери не опубликовалось — дверь пока закрыта. Причина — строками выше."; return 1; }
+          door_fresh; code=$? ;;
+      esac
+    fi
+    return "$code"
+  }
+
   case "$MODE" in
     check) check "$@"; return $? ;;
+    door)
+      # Публикация вписывает ключи в копию кода: вдвоём с работающим домом нельзя.
+      if ! enter; then echo "Остановите дом (Ctrl+C в его окне) и повторите: bash scripts/phone.sh door" >&2; return 1; fi
+      command -v termux-wake-lock > /dev/null 2>&1 && termux-wake-lock
+      # Сначала — свежее из ветки: поправка к двери могла прийти, пока дом стоял.
+      # Не вышло (нет связи, правки в папке) — работать с тем, что есть.
+      sync || true
+      local door_code=0
+      open_door "$DOOR_ARG" || door_code=$?
+      # Что бы ни вышло с дверью, дом должен работать: будильник и публикации не
+      # ждут второй команды. HEART_AFTER_DOOR=stop — только опыт (тесты, cron).
+      if [ "${HEART_AFTER_DOOR:-home}" = "stop" ]; then
+        command -v termux-wake-unlock > /dev/null 2>&1 && termux-wake-unlock
+        return "$door_code"
+      fi
+      leave
+      trap - EXIT INT TERM
+      exec bash "$SELF" run ;;
     tick)
       if [ "$CHANNEL_ALARM" = 1 ]; then tick_channel && echo "Удар ушёл в канал." || { echo "Удар не ушёл."; return 1; }
       else
@@ -1267,7 +1406,7 @@ EOF
       esac
       return 0 ;;
     run) ;;
-    *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once, events." >&2; return 1 ;;
+    *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once, events, door." >&2; return 1 ;;
   esac
 
   if [ -z "$TOKEN" ] && [ "$CHANNEL_ALARM" = 0 ]; then

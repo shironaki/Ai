@@ -294,9 +294,12 @@ export function doorParts(text, room = DOOR_POST_MAX - 260) {
   return parts;
 }
 
-export function createDoor({ key = "", onRoom = null, api = null, store = null, now = () => Date.now(), ownerId = 0, guests = false, allow = DOOR_ALLOW, build = "", report = null, tidy = true } = {}) {
+export function createDoor({ key = "", onRoom = null, api = null, store = null, now = () => Date.now(), ownerId = 0, guests = false, allow = DOOR_ALLOW, build = "", report = null, tidy = true, busy = [] } = {}) {
   const parsed = doorKey(key);
-  const enabled = Boolean(parsed) && typeof onRoom === "function" && typeof api?.sendMessage === "function";
+  // Канал, по которому уже ходит другое (мост с сестрой, а по нему и будильник), дверью быть не может: дверь забирает
+  // себе все посты своего канала, и мост с будильником замолчали бы без единого слова. С таким ключом двери нет.
+  const taken = Boolean(parsed) && (Array.isArray(busy) ? busy : [busy]).some(item => String(item ?? "") === parsed.channel);
+  const enabled = Boolean(parsed) && !taken && typeof onRoom === "function" && typeof api?.sendMessage === "function";
   const channel = parsed?.channel ?? "", secret = parsed?.secret ?? "";
   const permit = new Set((Array.isArray(allow) ? allow : DOOR_ALLOW).map(String));
   const tell = async (item) => { if (typeof report === "function") { try { await report({ component: "door", title: "Дверь приложения", severity: "degraded", ...item }); } catch { /* весть не важнее двери */ } } };
@@ -304,8 +307,9 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
   /** Пост из канала двери — дело двери, каким бы он ни был: будильник такими постами не заводится. */
   const mine = (message) => enabled && String(message?.chat?.id ?? "") === channel;
 
+  // Без звука: владелец — участник своего канала двери, и каждый ответ приложению звенел бы у него в телефоне.
   async function send(envelope) {
-    await api.sendMessage({ chat_id: channel, text: doorWire({ ...envelope, sig: await hmac(secret, doorPayload(envelope)) }), disable_web_page_preview: true });
+    await api.sendMessage({ chat_id: channel, text: doorWire({ ...envelope, sig: await hmac(secret, doorPayload(envelope)) }), disable_web_page_preview: true, disable_notification: true });
   }
 
   /**
@@ -432,6 +436,7 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
   async function line() {
     if (!String(key ?? "").trim()) return "";
     if (!parsed) return "закрыта — ключ записан не так: нужен вид «номер канала:секрет», секрет от 32 знаков";
+    if (taken) return "закрыта — канал двери тот же, что у моста: двери нужен свой канал";
     if (!enabled) return "закрыта — нет комнаты или связи с Telegram";
     const state = store?.available ? await store.get(DOOR_STATE_KEY).catch(() => null) : null;
     const today = Number(state?.day) === Math.floor(now() / 86_400_000);

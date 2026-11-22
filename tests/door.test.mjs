@@ -6,12 +6,12 @@
 import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { heart, sdk, reset, KEY, OWNER, toChat, toOwner, calls } from "./fixtures/kit.mjs";
+import { telegramStub as telegramFixture, AI_ID, AI_NAME, DOOR_BOT, VOICE_BOT, NEW_BOT, idOf } from "./fixtures/telegram.mjs";
 
 const { doorKey, doorPayload, doorWire, doorRead, doorParts, hmac, DOOR_ALLOW, DOOR_NOT_ALLOWED, DOOR_POST_MAX, DOOR_PER_MINUTE, DOOR_PER_PERSON, DOOR_NOTES, DOOR_PREFIX, DOOR_STATE_KEY } = await import("../tgcloud/lib/bridge.js");
 const { sealRequest, openAnswer } = await import("../scripts/door-client.mjs");
@@ -279,11 +279,16 @@ test("ответ, который не влез в один пост, прихо�
   assert.ok(out.parts >= 2);
   const got = await opened(request);
   assert.equal(got.parts, out.parts);
-  assert.deepEqual(got.result, direct);
+  // Её слова к альбому выбираются случайно (одна из трёх строк): сравнивается всё остальное. До 0.54.1 сравнивалось
+  // целиком — и тест падал примерно раз из восьми (26 расхождений на 200 пар ответов); 742 из 742 в 0.54.0 сошлись
+  // по везению.
+  const { line: said, ...album } = got.result, { line: saidDirect, ...albumDirect } = direct;
+  assert.deepEqual(album, albumDirect);
+  assert.ok(said && saidDirect, "слова есть в обоих ответах");
   for (const text of posts()) { assert.ok(text.length <= DOOR_POST_MAX); assert.match(text, /^[\x20-\x7e\u0400-\u04ff«»—–…№]+$/u); }
   // Части в любом порядке и вперемешку с чужими постами — тот же ответ; без одной части ответа нет.
   const mixed = ["слово", ...[...posts()].reverse(), doorWire({ v: 1, t: "a", re: request.id, n: 1, of: 1, ts: 1, body: "{\"ok\":true}", sig: "0".repeat(64) })];
-  assert.deepEqual((await openAnswer({ secret: SECRET, id: request.id, texts: mixed })).result, direct, "часть с чужой подписью не подменяет настоящую");
+  assert.deepEqual((await openAnswer({ secret: SECRET, id: request.id, texts: mixed })).result, got.result, "часть с чужой подписью не подменяет настоящую");
   const partial = await openAnswer({ secret: SECRET, id: request.id, texts: posts().slice(1) });
   assert.equal(partial.ok, false); assert.equal(partial.code, "waiting");
 });
@@ -307,6 +312,26 @@ test("репетиция платформы ничего не шлёт и не �
   assert.match(await status(make({ DOOR_GUESTS: true })), /Дверь приложения: открыта всем, кого назовёт посредник/u);
 });
 
+test("канал моста дверью не становится: с таким ключом двери нет, пост остаётся ударом будильника; статус говорит почему", async () => {
+  // Дверь забирает себе все посты своего канала. Стань им канал моста — будильник и мост с сестрой замолчали бы,
+  // а опыт двери при этом прошёл бы. Сердце такой ключ не принимает.
+  const BRIDGE = "-100444000111";
+  const h = make({ ABILITIES_CHANNEL_ID: BRIDGE, ABILITIES_SECRET: "bridge-secret", DOOR_KEY: `${BRIDGE}:${SECRET}` });
+  const request = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
+  const out = await h.onMessage(post(doorWire(request), { chat: BRIDGE }), KEY);
+  assert.equal(out.code, "clock", "запрос двери в канале моста — обычный пост канала: удар будильника");
+  assert.equal(toChat(BRIDGE).length, 0, "ответа двери нет");
+  assert.equal(sdk().kv.has(DOOR_STATE_KEY), false);
+  await h.onMessage({ message_id: (mid += 1), date: Math.floor(clock / 1000), from: { id: OWNER, first_name: "Хозяин" }, chat: { id: OWNER, type: "private" }, text: "/status" }, KEY);
+  assert.match(toOwner().at(-1).text, /Дверь приложения: закрыта — канал двери тот же, что у моста: двери нужен свой канал/u);
+  // Свой канал при том же мосте — дверь на месте.
+  reset();
+  const fine = make({ ABILITIES_CHANNEL_ID: BRIDGE, ABILITIES_SECRET: "bridge-secret" });
+  const through = await knock(fine);
+  assert.equal(through.out.code, "door_answer");
+  assert.equal((await opened(through.request)).ok, true);
+});
+
 test("ключ двери попадает в сердце тем же путём, что остальные: KEY_DOOR → secrets.js; записан не так — двери нет", () => {
   const dir = mkdtempSync(join(tmpdir(), "door-"));
   try {
@@ -328,97 +353,325 @@ test("ключ двери попадает в сердце тем же путё�
   } catch (error) { rmSync(dir, { recursive: true, force: true }); throw error; }
 });
 
-test("опыт с телефона: scripts/door-client.mjs шлёт запрос через Telegram ботом двери и получает ответ сердца", async () => {
-  let h = make();
-  const TOKEN = "777:door-bot-token";
-  const updates = [];
-  let serial = 0, served = 0;
-  const server = createServer((req, res) => {
-    let body = "";
-    req.on("data", chunk => { body += chunk; });
-    req.on("end", async () => {
-      const reply = (result, ok = true) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(ok ? { ok: true, result } : { ok: false, error_code: 400, description: result })); };
-      const [, token, method] = /^\/bot([^/]+)\/(\w+)$/u.exec(req.url) ?? [];
-      if (token !== TOKEN) return reply("Unauthorized", false);
-      const params = body ? JSON.parse(body) : {};
-      if (method === "getUpdates") {
-        const from = Number(params.offset) || 0;
-        return reply(from < 0 ? updates.slice(from) : updates.filter(item => item.update_id >= from));
-      }
-      if (method === "sendMessage") {
-        if (String(params.chat_id) !== DOOR) return reply("Bad Request: chat not found", false);
-        const sent = post(params.text);
-        reply(sent);
-        // Пост бота двери Telegram отдаёт сердцу; посты сердца — боту двери.
-        await h.onMessage(sent, KEY);
-        for (const item of toChat(DOOR).slice(served)) updates.push({ update_id: (serial += 1), channel_post: post(item.text) });
-        served = toChat(DOOR).length;
-        return undefined;
-      }
-      if (method === "getChatAdministrators") return reply([{ user: { id: 1, is_bot: false, first_name: "Хозяин" } }, { user: { id: 999, is_bot: true, username: "ai_heart_bot" } }, { user: { id: 777, is_bot: true, username: "door_bot" } }]);
-      if (method === "getChatMemberCount") return reply(4);
-      return reply("Not Found", false);
-    });
-  });
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  const env = { PATH: process.env.PATH, HEART_ENV: "/nonexistent/.heart.env", DOOR_API: `http://127.0.0.1:${server.address().port}`, KEY_DOOR: LINE, DOOR_BOT_TOKEN: TOKEN, OWNER_TG_ID: String(OWNER) };
-  const run = (args, extra = {}, input = null) => new Promise((resolve) => {
-    const child = execFile(process.execPath, ["scripts/door-client.mjs", ...args], { cwd: new URL("..", import.meta.url), env: { ...env, ...extra }, timeout: 30_000 }, (error, stdout) => resolve({ code: error ? error.code ?? 1 : 0, out: String(stdout) }));
-    if (input != null) child.stdin.end(input);
-  });
+// ── Посредник: `scripts/door-client.mjs` против поддельного Bot API ─────────────────────────────────────────────────
+//
+// Поддельный Bot API — `tests/fixtures/telegram.mjs`: он ведёт себя так, как написано в исходниках настоящего сервера,
+// а не так, как удобно тесту (в 0.54.0 было наоборот — и первый живой опыт упёрся в то, чего тест не видел).
+const telegramStub = (options = {}) => telegramFixture({ door: DOOR, nextId: () => (mid += 1), ...options });
+// Эти тесты поднимают сервер на 127.0.0.1 и запускают посредника отдельными процессами. Телефон гоняет набор перед
+// публикацией, и там тест порта не открывает и от скорости устройства не зависит (AGENTS.md, «Тесты»): пропуск. В 0.54.0
+// пропуска не было — правило было нарушено; на телефоне тест прошёл, но зависеть от этого публикация не должна.
+const skip = process.platform === "android" ? "поддельный Telegram — сервер и отдельные процессы: на телефоне не запускается" : false;
+const READY = [`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`, `KEY_DOOR=${LINE}`];
+
+test("опыт с телефона: запрос уходит ботом двери, сердце отвечает; прочитанное убрано, посты — без звука", { skip }, async () => {
+  const h = make();
+  const tg = await telegramStub({ hearts: () => h });
   try {
-    // Часы сердца в тесте стоят; пост бота двери получает время «сейчас» по этим же часам, а запрос — настоящее.
     clock = Date.now();
-    updates.push({ update_id: (serial += 1), channel_post: post("слово в канале") });
-    const where = await run(["where"]);
-    assert.equal(where.code, 0); assert.match(where.out, /канал «Дверь»: -100900900/u);
-    const look = await run(["look", "--wait=10", "--poll=0", "--flat"]);
+    tg.keys(READY);
+    tg.push(DOOR_BOT, { channel_post: { message_id: 5, date: 1, chat: { id: Number(DOOR), title: "Дверь", type: "channel" }, text: "слово в канале" } });
+    const where = await tg.run(["where"]);
+    assert.equal(where.code, 0, where.out); assert.match(where.out, /канал «Дверь»: -100900900/u);
+    // Опыт как его видит владелец: итог одной строкой, без простыни JSON.
+    const look = await tg.run(["look", "--wait=10", "--poll=1"]);
     assert.equal(look.code, 0, look.out);
-    assert.match(look.out, /Сердце ответило за \d+\.\d с, постов: 1\./u);
-    const result = JSON.parse(look.out.split("\n")[1]);
-    assert.equal(result.ok, true); assert.equal(result.owner, true); assert.equal(result.first, true);
-    const guest = await run(["look", "--uid=5", "--wait=10", "--poll=0", "--flat"]);
-    assert.equal(guest.code, 2, "отказ комнаты или двери — код 2");
-    assert.equal(JSON.parse(guest.out.split("\n")[1]).code, "door_closed");
-    const wrong = await run(["look", "--wait=10", "--poll=0"], { KEY_DOOR: `${DOOR}:${SECRET}-другой`.replace(/[^\x21-\x7e]/gu, "z") });
-    assert.equal(wrong.code, 1); assert.match(wrong.out, /Дверь не пустила: bad_signature; подпись пометки не сошлась/u);
+    assert.match(look.out, /^✓ Дверь работает: сердце ответило за \d+\.\d с \(постов: 1, знаков: \d+\)\.$/mu);
+    assert.match(look.out, /Комната: сборка \d+\.\d+\.\d+ · хозяин: да · её слова: «.+»/u);
+    assert.ok(look.out.split("\n").length <= 5, "итог опыта помещается на экран телефона");
+    assert.deepEqual(tg.left(), [], "канал — провод: запрос убрало сердце, ответ — посредник");
+    assert.ok(toChat(DOOR).every(item => item.disable_notification === true), "ответы сердца — без звука: владелец состоит в канале двери");
+    // То же — целиком, для машины.
+    const flat = await tg.run(["look", "--wait=10", "--poll=1", "--flat"]);
+    assert.equal(flat.code, 0, flat.out);
+    assert.match(flat.out, /Сердце ответило за \d+\.\d с, постов: 1\./u);
+    const result = JSON.parse(flat.out.split("\n")[1]);
+    assert.equal(result.ok, true); assert.equal(result.owner, true);
+    // Кто хозяин, посредник решает как сердце: сначала настройки (`config.js`), потом строка ключей. На телефоне
+    // строки OWNER_TG_ID может не быть вовсе — а в настройках хозяин записан.
+    tg.setOwner(OWNER);
+    tg.keys(READY.filter(line => !line.startsWith("OWNER_TG_ID=")));
+    const bare = await tg.run(["look", "--wait=10", "--poll=1"]);
+    assert.equal(bare.code, 0, bare.out); assert.match(bare.out, /хозяин: да/u);
+    tg.keys(READY.map(line => (line.startsWith("OWNER_TG_ID=") ? `OWNER_TG_ID=${GUEST}` : line)));
+    const fromConfig = await tg.run(["look", "--wait=10", "--poll=1"]);
+    assert.equal(fromConfig.code, 0, "в ключах другой номер — запрос всё равно идёт от хозяина из настроек, как решит и сердце");
+    tg.setOwner(0);
+    tg.keys(READY.filter(line => !line.startsWith("OWNER_TG_ID=")));
+    const nobody = await tg.run(["look", "--wait=10", "--poll=1"]);
+    assert.equal(nobody.code, 1); assert.match(nobody.out, /От чьего имени войти\? Хозяин не записан ни в tgcloud\/lib\/config\.js, ни строкой OWNER_TG_ID/u);
+    tg.keys(READY);
+    const guest = await tg.run(["look", `--uid=${GUEST}`, "--wait=10", "--poll=1"]);
+    assert.equal(guest.code, 2, "отказ двери или комнаты — код 2");
+    assert.match(guest.out, /✗ Дверь на месте, но не пустила: дверь пускает только хозяина/u);
+    const wrong = await tg.run(["look", "--wait=10", "--poll=1"], { KEY_DOOR: `${DOOR}:${SECRET}-zzzzz` });
+    assert.equal(wrong.code, 7, "ключи разные — свой код: телефон по нему публикует сердце заново");
+    assert.match(wrong.out, /Дверь не пустила: bad_signature; подпись пометки не сошлась — ключи у сердца и здесь разные/u);
     // Без сети: запечатать и проверить.
-    const sealed = await run(["seal", "feed", '{"id":"abc123"}']);
+    const sealed = await tg.run(["seal", "feed", '{"id":"abc123"}']);
     const envelope = doorRead(sealed.out.trim());
     assert.equal(envelope.do, "feed"); assert.equal(envelope.uid, OWNER); assert.equal(envelope.sig, createHmac("sha256", SECRET).update(doorPayload(envelope)).digest("hex"));
-    const checked = await run(["open"], {}, `${posts()[0]}\n`);
-    assert.equal(checked.code, 0); assert.equal(JSON.parse(checked.out).result.owner, true);
-    const key = await run(["key", DOOR]);
+    const kept = await tg.run(["look", "--wait=10", "--poll=1", "--flat", "--keep"]);
+    const answer = tg.left().find(text => text.includes('"t":"a"'));
+    assert.ok(answer, "с --keep ответ остаётся в канале");
+    const checked = await tg.run(["open"], {}, `${answer}\n`);
+    assert.equal(checked.code, 0, kept.out + checked.out); assert.equal(JSON.parse(checked.out).result.owner, true);
+    const key = await tg.run(["key", DOOR]);
     assert.ok(doorKey(key.out.trim().replace(/^KEY_DOOR=/u, "")), "готовая строка для файла ключей");
-    assert.match((await run(["look"], { KEY_DOOR: "", DOOR_BOT_TOKEN: TOKEN })).out, /Нет строки KEY_DOOR/u);
-    assert.match((await run(["look"], { DOOR_BOT_TOKEN: "", ALARM_BOT_TOKEN: "" })).out, /Нет токена бота двери/u);
+    tg.keys(READY.slice(0, 2));
+    assert.match((await tg.run(["look"])).out, /Нет строки KEY_DOOR .+ Её пишет: bash scripts\/phone\.sh door/u);
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `KEY_DOOR=${LINE}`]);
+    const none = await tg.run(["look"]);
+    assert.equal(none.code, 6); assert.match(none.out, /Бота двери ещё нет[\s\S]+@BotFather → \/newbot/u);
+    assert.equal(tg.called("setWebhook") + tg.called("deleteWebhook"), 0);
+  } finally { tg.close(); }
+});
 
-    // Настройка одной командой: канал найден по имени, секрет придуман, строка дописана в файл ключей — и с ней пускает.
-    const dir = mkdtempSync(join(tmpdir(), "door-env-"));
-    try {
-      const file = join(dir, ".heart.env");
-      writeFileSync(file, `OWNER_TG_ID=${OWNER}\nALARM_BOT_TOKEN=${TOKEN}`);
-      const bare = { HEART_ENV: file, KEY_DOOR: "", DOOR_BOT_TOKEN: "", OWNER_TG_ID: "" };
-      const setup = await run(["setup"], bare);
-      assert.equal(setup.code, 0, setup.out);
-      assert.match(setup.out, /Канал «Дверь»: -100900900\. Боты-администраторы: @ai_heart_bot, @door_bot\./u);
-      assert.match(setup.out, /участников: 4, администраторов: 3\. Подписчики читают посты двери/u);
-      assert.match(setup.out, /Готово: строка KEY_DOOR дописана/u);
-      const text = readFileSync(file, "utf8");
-      const written = text.match(/^KEY_DOOR=(.+)$/mu)?.[1];
-      assert.ok(doorKey(written)); assert.equal(doorKey(written).channel, DOOR);
-      assert.ok(text.startsWith(`OWNER_TG_ID=${OWNER}\nALARM_BOT_TOKEN=${TOKEN}\n# Дверь`), "прежние строки целы, новая — с новой строки");
-      assert.ok(text.endsWith("\n"));
-      assert.ok(!setup.out.includes(doorKey(written).secret), "секрет на экран не печатается");
-      assert.equal(toChat(DOOR).length, served, "слово-проверку бота двери сердце оставило без ответа");
-      const twice = await run(["setup"], bare);
-      assert.equal(twice.code, 0); assert.match(twice.out, /Строка KEY_DOOR уже есть/u);
-      assert.equal(readFileSync(file, "utf8"), text, "второй раз файл не меняется");
-      assert.match((await run(["setup", "-100555666777"], bare)).out, /молча менять ключ не буду/u);
-      h = make({ DOOR_KEY: written });
-      const through = await run(["look", "--wait=10", "--poll=0", "--flat"], bare);
-      assert.equal(through.code, 0, through.out);
-      assert.equal(JSON.parse(through.out.split("\n")[1]).owner, true);
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  } finally { server.close(); }
+test("бот с вебхуком (опыт 22.11.2026): сказано, что он живёт на сервере и что делать; вебхук не тронут", { skip }, async () => {
+  const tg = await telegramStub();
+  try {
+    // Как у владельца: своего бота двери нет, есть бот будильника — он живёт на сервере.
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `ALARM_BOT_TOKEN=${VOICE_BOT}`]);
+    for (const command of [["bot"], ["setup"], ["where"], ["look"]]) {
+      const out = await tg.run(command, command[0] === "look" ? { KEY_DOOR: LINE } : {});
+      assert.equal(out.code, 3, `${command[0]}: бот с вебхуком — код 3\n${out.out}`);
+      assert.match(out.out, /Бот будильника @voice_bot живёт на сервере \(hook\.example\): всё, что он слышит, Telegram отдаёт туда/u);
+      assert.match(out.out, /Трогать его не надо/u);
+      assert.match(out.out, /Двери нужен свой бот: в Telegram — @BotFather → \/newbot .+ bash scripts\/phone\.sh door/u);
+      assert.ok(!out.out.includes("secret-path"), "адрес вебхука целиком на экран не идёт — в нём бывает секрет");
+    }
+    assert.equal(tg.called("getUpdates"), 0, "спрашивать «что нового» у бота с вебхуком незачем: сначала — годится ли он");
+    assert.equal(tg.called("setWebhook") + tg.called("deleteWebhook"), 0, "чужой вебхук не трогается никогда");
+    assert.equal(tg.state.bots.get(VOICE_BOT).hook, "https://hook.example/secret-path/7");
+    assert.doesNotMatch(read("scripts/door-client.mjs").replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/.*$/gmu, ""), /deleteWebhook|setWebhook/u, "в коде посредника этих вызовов нет вовсе");
+
+    // Новый бот: токен проверяется и вписывается в файл ключей сам; на экран не печатается.
+    const fresh = await tg.run(["bot", `  ${NEW_BOT}\n`]);
+    assert.equal(fresh.code, 0, fresh.out);
+    assert.match(fresh.out, /✓ Бот двери: @fresh_bot — токен записан в /u);
+    assert.ok(!fresh.out.includes(NEW_BOT.split(":")[1]), "токен на экран не печатается");
+    assert.equal(tg.text(), `OWNER_TG_ID=${OWNER}\nALARM_BOT_TOKEN=${VOICE_BOT}\n# Бот двери приложения (docs/DOOR.md): свой бот от @BotFather — не Аи и не тот, что живёт на сервере\nDOOR_BOT_TOKEN=${NEW_BOT}\n`);
+    assert.match((await tg.run(["bot"])).out, /✓ Бот двери: @fresh_bot\./u);
+    // Второй раз — та же строка заменяется, а не множится.
+    assert.equal((await tg.run(["bot", DOOR_BOT])).code, 0);
+    assert.equal(tg.text().match(/^DOOR_BOT_TOKEN=/gmu).length, 1);
+    assert.ok(tg.text().includes(`DOOR_BOT_TOKEN=${DOOR_BOT}\n`));
+    // Не токен; токен, который Telegram не знает; бот с вебхуком; сама Аи.
+    assert.match((await tg.run(["bot", "bash scripts/phone.sh"])).out, /Это не похоже на токен бота/u);
+    const unknown = await tg.run(["bot", "555000:unknown-token-DDDDDDDDDDDDDDDDDDDDDDDDDDDDD"]);
+    assert.equal(unknown.code, 1); assert.match(unknown.out, /Telegram не принял токен бота двери/u);
+    const hooked = await tg.run(["bot", VOICE_BOT]);
+    assert.equal(hooked.code, 3); assert.match(hooked.out, /Бот @voice_bot живёт на сервере/u);
+    const herself = await tg.run(["bot", DOOR_BOT], { DOOR_AI_ID: String(idOf(DOOR_BOT)) });
+    assert.equal(herself.code, 4); assert.match(herself.out, /@door_bot — это сама Аи: своих постов бот не получает/u);
+    assert.ok(tg.text().includes(`DOOR_BOT_TOKEN=${DOOR_BOT}\n`), "негодный токен в файл не попадает");
+  } finally { tg.close(); }
+});
+
+test("настройка: канал находится по «сделали администратором» — и дожидается его; секрет придуман и вписан; с ним пускает", { skip }, async () => {
+  let h = make();
+  const tg = await telegramStub({ hearts: () => h });
+  try {
+    clock = Date.now();
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]);
+    // Бот двери только что создан: ни в одном канале его ещё нет.
+    tg.state.channel.admins.delete(idOf(DOOR_BOT));
+    const idle = await tg.run(["setup"]);
+    assert.equal(idle.code, 1); assert.match(idle.out, /Бот двери @door_bot пока не администратор ни в одном канале/u);
+    // С ожиданием: человек в это время добавляет бота в канал — настройка идёт дальше сама.
+    const waiting = tg.run(["setup", "--wait=8"], { DOOR_FLOW: "1" });
+    setTimeout(() => {
+      tg.state.channel.admins.set(idOf(DOOR_BOT), { username: "door_bot", post: true, erase: true });
+      tg.push(DOOR_BOT, { my_chat_member: { chat: { id: Number(DOOR), title: "Дверь", type: "channel" }, new_chat_member: { status: "administrator" } } });
+    }, 400);
+    const setup = await waiting;
+    assert.equal(setup.code, 0, setup.out);
+    assert.match(setup.out, /Теперь в Telegram — жду 8 с, здесь ничего нажимать не нужно:\n {2}1\. закрытый канал для двери[^\n]+\n {2}2\. канал → «Администраторы» → добавьте @door_bot и Аи: обоим — публиковать и удалять сообщения;\n {2}3\. напишите в канале любое слово\./u);
+    assert.match(setup.out, /✓ Канал «Дверь»: бот двери @door_bot пишет, Аи \(@ai_heart_bot\) — администратор\./u);
+    assert.match(setup.out, /✓ Ключ двери придуман и записан в /u);
+    assert.doesNotMatch(setup.out, /•|Дальше:/u, "в чистом канале предупреждать не о чем; под phone.sh подсказка «дальше» не нужна");
+    const written = tg.text().match(/^KEY_DOOR=(.+)$/mu)?.[1];
+    assert.ok(doorKey(written)); assert.equal(doorKey(written).channel, DOOR);
+    assert.ok(tg.text().startsWith(`OWNER_TG_ID=${OWNER}\nDOOR_BOT_TOKEN=${DOOR_BOT}\n# Дверь`), "прежние строки целы, новая — с новой строки");
+    assert.ok(tg.text().endsWith("\n"));
+    assert.ok(!setup.out.includes(doorKey(written).secret), "секрет на экран не печатается");
+    assert.deepEqual(tg.left(), [], "слово-проверка убрано за собой");
+    assert.equal(toChat(DOOR).length, 0, "слово-проверку сердце оставило без ответа");
+    const text = tg.text();
+    const twice = await tg.run(["setup"]);
+    assert.equal(twice.code, 0); assert.match(twice.out, /Ключ двери уже записан[\s\S]+Дальше: bash scripts\/phone\.sh door/u);
+    assert.equal(tg.text(), text, "второй раз файл не меняется");
+    assert.match((await tg.run(["setup", "-100555666777"])).out, /молча менять ключ не буду/u);
+    h = make({ DOOR_KEY: written });
+    const through = await tg.run(["look", "--wait=10", "--poll=1"]);
+    assert.equal(through.code, 0, through.out); assert.match(through.out, /✓ Дверь работает/u);
+    // Бота убрали из канала — канал больше не кандидат.
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]);
+    tg.push(DOOR_BOT, { my_chat_member: { chat: { id: Number(DOOR), title: "Дверь", type: "channel" }, new_chat_member: { status: "left" } } });
+    assert.match((await tg.run(["where"])).out, /пока не администратор ни в одном канале/u);
+  } finally { tg.close(); }
+});
+
+test("настройка: «Мост» дверью не становится — бот двери в канале будильника не кандидат, сказано почему; отдельный канал находится", { skip }, async () => {
+  const tg = await telegramStub();
+  try {
+    const BRIDGE = "-100444000111";
+    const lines = [`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`, `ALARM_CHAT_ID=${BRIDGE}`];
+    tg.keys(lines);
+    tg.state.channel.admins.delete(idOf(DOOR_BOT));
+    // Бота двери добавили в «Мост»: там уже есть Аи и второй бот — соблазн понятный.
+    tg.push(DOOR_BOT, { my_chat_member: { chat: { id: Number(BRIDGE), title: "Мост", type: "channel" }, new_chat_member: { status: "administrator" } } });
+    const idle = await tg.run(["setup"]);
+    assert.equal(idle.code, 1, idle.out);
+    assert.match(idle.out, /• Канал «Мост» для двери не годится: по нему ходят будильник и мост — дверь забрала бы их посты себе\. Нужен отдельный закрытый канал; бота двери из «Мост» уберите\./u);
+    assert.match(idle.out, /пока не администратор ни в одном канале/u);
+    assert.ok(!tg.text().includes("KEY_DOOR"), "ключ с каналом моста не пишется");
+    assert.match((await tg.run(["where"])).out, /Канал «Мост» для двери не годится[\s\S]+пока не администратор ни в одном канале/u);
+    // С ожиданием: о «Мосте» сказано один раз, настройка ждёт дальше — и находит отдельный канал.
+    const waiting = tg.run(["setup", "--wait=8"], { DOOR_FLOW: "1" });
+    setTimeout(() => {
+      tg.state.channel.admins.set(idOf(DOOR_BOT), { username: "door_bot", post: true, erase: true });
+      tg.push(DOOR_BOT, { my_chat_member: { chat: { id: Number(DOOR), title: "Дверь", type: "channel" }, new_chat_member: { status: "administrator" } } });
+    }, 400);
+    const setup = await waiting;
+    assert.equal(setup.code, 0, setup.out);
+    assert.equal(setup.out.match(/Канал «Мост» для двери не годится/gu)?.length, 1, setup.out);
+    assert.match(setup.out, /отдельный, не тот, где будильник/u);
+    assert.equal(doorKey(tg.text().match(/^KEY_DOOR=(.+)$/mu)?.[1])?.channel, DOOR);
+    // Канал моста, названный прямо, — отказ словами; записанный в ключе руками — тоже, и опыт в него не идёт.
+    tg.keys(lines);
+    const named = await tg.run(["setup", BRIDGE]);
+    assert.equal(named.code, 1); assert.match(named.out, /Канал -100444000111 занят: по нему ходят будильник и мост/u);
+    assert.ok(!tg.text().includes("KEY_DOOR"));
+    tg.keys([...lines, `KEY_DOOR=${BRIDGE}:${SECRET}`]);
+    for (const args of [["setup"], ["look", "--wait=3"]]) {
+      const done = await tg.run(args);
+      assert.equal(done.code, 1, args[0]); assert.match(done.out, /Канал -100444000111 занят[\s\S]+На него указывает строка KEY_DOOR/u, args[0]);
+    }
+    assert.equal(tg.called("sendMessage"), 1, "в канал моста посредник не написал ни слова: единственный пост — проверка в канале двери");
+    // Тот же канал посредник знает и из настроек сердца — без строки будильника в ключах.
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]);
+    tg.setOwner(0, BRIDGE);
+    assert.match((await tg.run(["setup", BRIDGE])).out, /Канал -100444000111 занят/u);
+  } finally { tg.close(); }
+});
+
+test("настройка называет права как есть: прежний Bot API без return_bots, Аи не в канале, лишний бот, подписчики, открытый канал", { skip }, async () => {
+  const tg = await telegramStub();
+  const fresh = () => { tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]); return tg.run(["setup", DOOR, "--wait=1", "--step=40"]); };
+  try {
+    // Прежний Bot API: чужих ботов в списке администраторов нет — об Аи спрашивается отдельно, ложных тревог нет.
+    tg.state.channel.returnBots = false;
+    const old = await fresh();
+    assert.equal(old.code, 0, old.out);
+    assert.match(old.out, /✓ Канал «Дверь»: бот двери @door_bot пишет, Аи — администратор\./u);
+    assert.doesNotMatch(old.out, /•/u, old.out);
+    // …и даже если о ней не спросить (номер Аи неизвестен) — не пугает «лишним участником», а говорит как есть:
+    // отсюда её не видно. Одна строка — и настройка идёт дальше.
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]);
+    const blind = await tg.run(["setup", DOOR], { DOOR_AI_ID: "" });
+    assert.equal(blind.code, 0);
+    assert.deepEqual(blind.out.split("\n").filter(line => line.startsWith("•")), ["• Есть ли Аи среди администраторов этого канала, отсюда не видно. Проверьте сами: без неё ответа не будет."], blind.out);
+    assert.match(blind.out, /✓ Канал «Дверь»: бот двери @door_bot пишет\./u);
+    // То же, когда о ней спросили, а Telegram ответил отказом: не видно — так и сказано.
+    tg.state.channel.blind = true;
+    const unseen = await fresh();
+    assert.equal(unseen.code, 0, unseen.out); assert.match(unseen.out, /• Есть ли Аи среди администраторов этого канала, отсюда не видно/u);
+    tg.state.channel.blind = false;
+    tg.state.channel.returnBots = true;
+
+    // Аи в канале нет: ждёт, пока добавят, — не дождалась, но настройку не бросает (вдруг её просто не видно).
+    tg.state.channel.admins.delete(AI_ID);
+    const alone = await fresh();
+    assert.equal(alone.code, 0, alone.out);
+    assert.match(alone.out, /• Аи в канале «Дверь» не администратор\. Добавьте её туда же .+ — жду…/u);
+    assert.match(alone.out, /• Не вижу Аи среди администраторов этого канала\. Пробую всё равно/u);
+    // Добавили, пока ждала, — идёт дальше без второго предупреждения.
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]);
+    const adding = tg.run(["setup", DOOR, "--wait=8", "--step=40"]);
+    setTimeout(() => tg.state.channel.admins.set(AI_ID, { username: AI_NAME, post: true, erase: false }), 300);
+    const added = await adding;
+    assert.match(added.out, /жду…/u); assert.doesNotMatch(added.out, /Не вижу Аи/u);
+    assert.match(added.out, /• У Аи нет права удалять сообщения: прочитанные запросы будут копиться/u);
+    tg.state.channel.admins.set(AI_ID, { username: AI_NAME, post: true, erase: true });
+
+    // В канале остался бот будильника: он получает все посты двери — назван по имени, раз Аи опознана.
+    tg.state.channel.admins.set(idOf(VOICE_BOT), { username: "voice_bot", post: true, erase: true });
+    const crowd = await fresh();
+    assert.match(crowd.out, /• В канале ещё бот @voice_bot: он тоже получает все посты двери\. Уберите его из администраторов этого канала — только этого\./u);
+    // Номер Аи не сошёлся (или неизвестен) — никого «убрать» не советует: назвать лишним можно было бы её саму.
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]);
+    const unsure = await tg.run(["setup", DOOR], { DOOR_AI_ID: "424242" });
+    assert.doesNotMatch(unsure.out, /Уберите/u, unsure.out);
+    assert.match(unsure.out, /• В канале, кроме бота двери, боты @ai_heart_bot, @voice_bot\. Нужна только Аи/u);
+    tg.state.channel.admins.delete(idOf(VOICE_BOT));
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`]);
+    const lone = await tg.run(["setup", DOOR], { DOOR_AI_ID: "424242" });
+    assert.doesNotMatch(lone.out, /•/u, "один чужой бот в канале — это Аи, даже если номер не сошёлся");
+    assert.match(lone.out, /Аи \(@ai_heart_bot\) — администратор/u);
+
+    // Подписчики читают посты двери.
+    tg.state.channel.plain = 2;
+    assert.match((await fresh()).out, /• В канале участников: 5, а администраторов — 3\. Остальные читают посты двери/u);
+    tg.state.channel.plain = 0;
+    // Открытый канал читает кто угодно: ключ не пишется.
+    tg.state.channel.username = "door_public";
+    const open = await fresh();
+    assert.equal(open.code, 1); assert.match(open.out, /Канал «Дверь» открытый \(@door_public\)/u);
+    assert.doesNotMatch(tg.text(), /KEY_DOOR/u);
+    tg.state.channel.username = "";
+    // Боту двери нельзя писать.
+    tg.state.channel.admins.set(idOf(DOOR_BOT), { username: "door_bot", post: false, erase: false });
+    const mute = await fresh();
+    assert.equal(mute.code, 1); assert.match(mute.out, /У бота двери @door_bot нет права публиковать в канале «Дверь»/u);
+    assert.equal(tg.called("setWebhook") + tg.called("deleteWebhook"), 0);
+  } finally { tg.close(); }
+});
+
+test("часы телефона спешат на пять минут: время запроса берётся по часам Telegram — дверь открыта", { skip }, async () => {
+  const h = make();
+  // У Telegram сейчас на пять минут меньше, чем на телефоне: по своим часам запрос вышел бы «просроченным».
+  const tg = await telegramStub({ hearts: () => h, ahead: -300_000 });
+  try {
+    clock = Date.now() - 300_000;
+    tg.keys(READY);
+    const look = await tg.run(["look", "--wait=10", "--poll=1"]);
+    assert.equal(look.code, 0, look.out);
+    assert.match(look.out, /Часы телефона спешат на 5 мин — время запроса беру по часам Telegram\./u);
+    assert.match(look.out, /✓ Дверь работает/u);
+  } finally { tg.close(); }
+});
+
+test("ответа нет — улика в канале: запрос лежит на месте — «не прочла»; запроса нет — «прочла, ответ не дошёл»", { skip }, async () => {
+  // Сердце опубликовано без ключа двери: пост для него — обычный пост канала.
+  let h = make({ DOOR_KEY: "" });
+  const tg = await telegramStub({ hearts: () => h });
+  try {
+    clock = Date.now();
+    tg.keys(READY);
+    const closed = await tg.run(["look", "--wait=3", "--poll=1"]);
+    assert.equal(closed.code, 5, closed.out);
+    assert.match(closed.out, /✗ За 3 с ответа нет\. Запрос так и лежал в канале \(убрала его\): Аи его не прочла — или дверь у неё закрыта\./u);
+    assert.match(closed.out, /Скажите Аи «статус»\. Строки «Дверь приложения» нет — сердце опубликовано без ключа: bash scripts\/phone\.sh door/u);
+    assert.deepEqual(tg.left(), [], "несостоявшийся запрос убран из канала");
+    // Проба перед публикацией: та же улика одной строкой, без списка «что проверить».
+    const brief = await tg.run(["look", "--wait=3", "--poll=1", "--try"]);
+    assert.equal(brief.code, 5); assert.equal(brief.out.trim().split("\n").length, 1, brief.out);
+    // Сердце ответило и убрало запрос, но до бота двери его посты не дошли.
+    h = make();
+    tg.state.deaf = true;
+    const lost = await tg.run(["look", "--wait=3", "--poll=1"]);
+    assert.equal(lost.code, 5, lost.out);
+    assert.match(lost.out, /Запроса в канале уже нет — значит, Аи его прочла и убрала, но её ответ до бота двери не дошёл\./u);
+    // Здесь «опубликуйте заново» не поможет: нужна улика — экран и строка статуса.
+    assert.match(lost.out, /Скажите Аи «статус» и пришлите в чат разработки этот экран и её строку «Дверь приложения»/u);
+    assert.doesNotMatch(lost.out, /опубликовано без ключа/u);
+    // Под командой телефона сердце только что опубликовано с ключом — «опубликуйте» тоже не говорится.
+    h = make({ DOOR_KEY: "" });
+    tg.state.deaf = false;
+    const led = await tg.run(["look", "--wait=3", "--poll=1"], { DOOR_FLOW: "1" });
+    assert.equal(led.code, 5, led.out);
+    assert.match(led.out, /Запрос так и лежал в канале[\s\S]+пришлите в чат разработки этот экран/u);
+    assert.doesNotMatch(led.out, /опубликовано без ключа/u);
+  } finally { tg.close(); }
 });
