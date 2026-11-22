@@ -77,11 +77,20 @@ let stale = new Set();
 /** Её картинки (шаг 6): `true` — отдаются; `false` — их нет на сервере; "broken" — файл есть, картинка в нём не читается. */
 let pictures = true;
 const BROKEN = 'export default { w: 318, h: 900, cx: 0.5, src: "data:image/webp;base64,AAAA" };\n';
+/** Картинки комнаты (шаг 6а): те же три случая — отдаются, их нет, файл есть, а картинка в нём не читается. */
+let roomPictures = true;
+const BROKEN_ROOM = (name) => `export default { v: 1, name: "${name}", w: 800, h: 1040, src: "data:image/webp;base64,AAAA", things: { w: 8, h: 8, src: "data:image/webp;base64,AAAA", at: {} }, bulbs: [] };\n`;
 const server = createServer(async (request, response) => {
   const path = normalize(decodeURIComponent(new URL(request.url, "http://x").pathname)).replace(/^(\.\.[/\\])+/u, "");
   const name = path === "/" ? "index.html" : path.replace(/^[/\\]+/u, "");
   const file = join(stale.has(name) ? previous : folder, name);
   try {
+    if (roomPictures !== true && /^room[/\\]/u.test(name)) {
+      if (roomPictures !== "broken") throw new Error("картинок комнаты нет");
+      response.writeHead(200, { "content-type": TYPES[".js"], "cache-control": "no-store" });
+      response.end(BROKEN_ROOM(/([a-z]+)\.js$/u.exec(name)?.[1] ?? "day"));
+      return;
+    }
     if (pictures !== true && /^her[/\\]/u.test(name)) {
       if (pictures !== "broken") throw new Error("картинок нет");
       response.writeHead(200, { "content-type": TYPES[".js"], "cache-control": "no-store" });
@@ -136,13 +145,14 @@ try {
   if (!seen.scene) fail("карточки «Сценка дня» нет");
   // Она — картинкой: определение лежит в кладовой рисунка, комната на него ссылается, а сама картинку не несёт.
   const painted = () => page.evaluate(() => {
-    const kept = [...document.querySelectorAll("#store image")], used = [...document.querySelectorAll("#inside use")].map(node => node.getAttribute("href"));
+    // С 0.53.0 в кладовой лежат и картинки комнаты (`r-room-…`): здесь — только её (`r-her-…`).
+    const kept = [...document.querySelectorAll('#store image[id^="r-her-"]')], used = [...document.querySelectorAll('#inside use[href^="#r-her-"]')].map(node => node.getAttribute("href"));
     return {
       // «Веки» (`…-blink`) — заплатка на глаза, она маленькая; «улыбка» (`…-smile`, 0.50.0) — на лицо; сама картинка — в рост.
       kept: kept.map(node => node.id), sized: kept.every(node => node.namespaceURI === "http://www.w3.org/2000/svg" && node.getBBox().width > (/-(?:blink|look[lr])$/u.test(node.id) ? 20 : node.id.endsWith("-smile") ? 40 : 100) && node.getBBox().height > (/-(?:blink|look[lr])$/u.test(node.id) ? 8 : node.id.endsWith("-smile") ? 30 : 100)),
       used, inline: document.querySelectorAll("#inside image").length, drawn: document.querySelectorAll("#inside .breath").length,
       // Видна ли она на самом деле: у ссылки на картинку есть размер на экране.
-      shown: [...document.querySelectorAll("#inside > .art use")].some(node => node.getBoundingClientRect().height > 200),
+      shown: [...document.querySelectorAll('#inside > .art use[href^="#r-her-"]')].some(node => node.getBoundingClientRect().height > 200),
     };
   });
   const first = await painted();
@@ -341,7 +351,8 @@ try {
     const mark = () => page.evaluate(() => {
       const parts = [...document.querySelectorAll("#inside > .art > g")].filter(node => node.firstElementChild);
       for (const node of parts) node.firstElementChild.dataset.was = "1";
-      const wall = parts.find(node => node.innerHTML.includes("url(#r-wall)") || node.innerHTML.includes("url(#q-wall)"));
+      // Стены: у комнаты кодом — заливка `…-wall`, у комнаты картинкой (0.53.0) — ссылка на саму картинку.
+      const wall = parts.find(node => node.innerHTML.includes("url(#r-wall)") || node.innerHTML.includes("url(#q-wall)") || /href="#r-room-[a-z]+"/u.test(node.innerHTML));
       if (wall) wall.firstElementChild.dataset.was = "wall";
       return { all: document.querySelectorAll("#inside > .art > g").length, marked: parts.length, wall: Boolean(wall) };
     });
@@ -630,7 +641,7 @@ try {
       return { tab, broken };
     };
     const seen = (tab) => tab.evaluate(() => ({
-      state: document.querySelector("#app")?.dataset.state ?? "", use: document.querySelectorAll("#inside use").length, kept: document.querySelectorAll("#store image").length,
+      state: document.querySelector("#app")?.dataset.state ?? "", use: document.querySelectorAll('#inside use[href^="#r-her-"]').length, kept: document.querySelectorAll('#store image[id^="r-her-"]').length,
       her: document.querySelectorAll('#inside .zones [data-act="her"]').length, breath: document.querySelectorAll("#inside .breath").length,
       coming: document.querySelectorAll("#inside .coming").length, foot: document.querySelector("#foot")?.textContent ?? "",
       moving: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.closest?.("#inside .breath, #inside .blink")).length,
@@ -702,6 +713,160 @@ try {
     }
   }
   pictures = true;
+
+  // ── 6а. комната картинкой ──────────────────────────────────────────────────
+  console.log("6а. Комната картинкой");
+  {
+    // 0.53.0 (идея 202): стены, пол, окно и мебель — картинка художника с прозрачным стеклом, вещи — с листа; пока
+    // картинки нет, комната нарисована кодом, а пришла — встаёт на место. Память телефона перед случаем пуста.
+    const enter = async (hash, clear = true) => {
+      const tab = await browser.newPage();
+      const broken = [];
+      tab.on("pageerror", (error) => broken.push(String(error)));
+      tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_|404/u.test(message.text())) broken.push(message.text()); });
+      await tab.goto(`${origin}/index.html#${hash}`, { waitUntil: "load", timeout: 30_000 });
+      if (clear) {
+        await tab.evaluate(() => { try { localStorage.clear(); } catch { /* память закрыта — тем более пусто */ } });
+        await tab.reload({ waitUntil: "load", timeout: 30_000 });
+      }
+      await pause(1300);
+      return { tab, broken };
+    };
+    const look = (tab) => tab.evaluate(() => ({
+      state: document.querySelector("#app")?.dataset.state ?? "",
+      kept: [...document.querySelectorAll('#store image[id^="r-room-"]')].map(node => node.id),
+      // Картинка видна: ссылка на неё занимает весь рисунок; лист вещей — отдельные ссылки, по одной на вещь.
+      shown: [...document.querySelectorAll('#inside > .art use[href^="#r-room-"]')].map(node => [String(node.getAttribute("href")), Math.round(node.getBoundingClientRect().height)]).filter(([href, tall]) => !href.endsWith("-things") && tall > 300).map(([href]) => href),
+      things: document.querySelectorAll('#inside > .art svg > use[href$="-things"]').length,
+      // Комната кодом: обои на стене — узором (`pattern`); у комнаты картинкой стен кодом нет.
+      code: document.querySelectorAll("#inside pattern").length,
+      inline: document.querySelectorAll("#inside image").length,
+      memory: Object.keys(localStorage).filter(key => key.startsWith("ai-room-pic:")).sort(),
+      her: document.querySelectorAll('#inside use[href^="#r-her-"]').length, cat: document.querySelectorAll("#inside .cat").length,
+      zones: document.querySelectorAll("#inside .zones [data-act]").length,
+    }));
+    const feeds = async (tab) => {
+      try {
+        await tab.tap('#actions button[data-act="feed"]');
+        await pause(350);
+        return await tab.$eval('#actions button[data-act="feed"]', (node) => node.classList.contains("done"));
+      } catch { return false; }
+    };
+    const day = `part=${encodeURIComponent("день")}&things=all&scene=0&turn=600000`;
+
+    // а) ясный день: комната — картинка «день», вещи с листа, она и Байт на месте, забота нажимается.
+    {
+      const { tab, broken } = await enter(`${day}&sky=clear`);
+      const got = await look(tab), fed = await feeds(tab);
+      if (got.state !== "ready") fail(`комната картинкой не открылась — состояние «${got.state}»${broken.length ? `, ${broken[0].slice(0, 170)}` : ""}`);
+      else if (broken.length) fail(`комната картинкой: ошибка на странице — ${broken[0].slice(0, 170)}`);
+      else if (got.shown.join() !== "#r-room-day" || !got.kept.includes("r-room-day") || !got.kept.includes("r-room-day-things")) fail(`ясный день, а на рисунке не картинка «день»: видно ${JSON.stringify(got.shown)}, в кладовой ${JSON.stringify(got.kept)}`);
+      else if (got.code) fail(`комната картинкой, а стены нарисованы ещё и кодом (узоров ${got.code})`);
+      else if (got.things < 8) fail(`вещей с листа на рисунке ${got.things} — при всех вещах их не меньше восьми`);
+      else if (got.inline) fail(`картинка вставлена в комнату целиком (${got.inline}) — она должна лежать в кладовой, комната на неё только ссылается`);
+      else if (!got.her || !got.cat || got.zones < 8) fail(`в комнате картинкой нет её, Байта или мест нажатия: она ${got.her}, Байт ${got.cat}, мест ${got.zones}`);
+      else if (!got.memory.some(key => /^ai-room-pic:\d+:day$/u.test(key))) fail(`картинка комнаты не легла в память телефона: ${JSON.stringify(got.memory)}`);
+      else if (!fed) fail("комната картинкой: забота не нажимается");
+      else console.log(`  ясный день: картинка «день», вещей с листа ${got.things}, она и Байт на месте, забота нажимается, картинка в памяти телефона`);
+      await tab.close();
+    }
+    // б) дождь: картинка «пасмурно» — без солнца на полу.
+    {
+      const { tab, broken } = await enter(`${day}&sky=rain`);
+      const got = await look(tab);
+      if (broken.length) fail(`дождь: ошибка на странице — ${broken[0].slice(0, 170)}`);
+      else if (got.shown.join() !== "#r-room-dull" || got.code) fail(`дождь, а на рисунке не картинка «пасмурно»: видно ${JSON.stringify(got.shown)}, узоров кода ${got.code}`);
+      else console.log("  дождь: картинка «пасмурно»");
+      await tab.close();
+    }
+    // в) картинок комнаты на сервере нет: комната открыта и нарисована кодом; появились — страница получила их сама;
+    //    зашли снова без сети — картинка из памяти телефона.
+    roomPictures = false;
+    {
+      const what = "картинок комнаты на сервере нет";
+      const { tab, broken } = await enter(`${day}&sky=clear`);
+      const got = await look(tab), fed = await feeds(tab);
+      if (got.state !== "ready") fail(`${what}: комната не открылась — состояние «${got.state}»${broken.length ? `, ${broken[0].slice(0, 170)}` : ""}`);
+      else if (broken.length) fail(`${what}: ошибка на странице — ${broken[0].slice(0, 170)}`);
+      else if (got.shown.length || got.kept.length || got.things) fail(`${what}, а рисунок на них ссылается: ${JSON.stringify(got.shown)}, в кладовой ${JSON.stringify(got.kept)}`);
+      else if (!got.code) fail(`${what}: комната не нарисована кодом — стен нет вовсе`);
+      else if (!got.her || !fed) fail(`${what}: её картинки нет (${got.her}) или забота не нажимается`);
+      else {
+        roomPictures = true;
+        await pause(3300);
+        const later = await look(tab);
+        if (later.shown.join() !== "#r-room-day" || later.code) fail(`${what}, потом появились — а страница их не получила: видно ${JSON.stringify(later.shown)}, узоров кода ${later.code}`);
+        else {
+          roomPictures = false;
+          await tab.reload({ waitUntil: "load", timeout: 30_000 });
+          await pause(1100);
+          const again = await look(tab);
+          if (again.shown.join() !== "#r-room-day" || again.code) fail(`второй заход без сети: картинка комнаты из памяти телефона не поднялась — видно ${JSON.stringify(again.shown)}, узоров кода ${again.code}`);
+          else console.log(`  ${what}: комната открылась кодом, забота нажимается; картинки появились — страница получила их сама; второй заход без сети — из памяти телефона`);
+        }
+      }
+      await tab.close();
+    }
+    // г) картинка пришла, но не читается — комната остаётся нарисованной кодом.
+    roomPictures = "broken";
+    {
+      const what = "картинка комнаты пришла, но не читается";
+      const { tab, broken } = await enter(`${day}&sky=clear`);
+      const got = await look(tab), fed = await feeds(tab);
+      if (got.state !== "ready" || broken.length) fail(`${what}: комната не открылась или ошибка — «${got.state}»${broken.length ? `, ${broken[0].slice(0, 170)}` : ""}`);
+      else if (got.shown.length || got.kept.length) fail(`${what}, а рисунок на неё ссылается: ${JSON.stringify(got.shown)}, в кладовой ${JSON.stringify(got.kept)}`);
+      else if (!got.code || !fed) fail(`${what}: комната не нарисована кодом (узоров ${got.code}) или забота не нажимается`);
+      else console.log(`  ${what}: комната нарисована кодом, забота нажимается`);
+      await tab.close();
+    }
+    roomPictures = true;
+    // д) погода сменилась при открытой странице: была «день» — стала «пасмурно».
+    {
+      const { tab, broken } = await enter(`${day}&sky=clear&left=1500&thenSky=rain`);
+      const first = await look(tab);
+      await pause(4200);
+      const later = await look(tab);
+      if (broken.length) fail(`смена погоды: ошибка на странице — ${broken[0].slice(0, 170)}`);
+      else if (first.shown.join() !== "#r-room-day") fail(`смена погоды: до неё на рисунке не «день» — ${JSON.stringify(first.shown)}`);
+      else if (later.shown.join() !== "#r-room-dull" || later.code) fail(`небо затянуло, а картинка комнаты прежняя: ${JSON.stringify(later.shown)}, узоров кода ${later.code}`);
+      else console.log("  небо затянуло при открытой странице: «день» сменилась на «пасмурно»");
+      await tab.close();
+    }
+    // ж) поворот головы (0.53.0, идея 185): нажали на окно — она смотрит в окно третьим кадром позы; потом кадр тает.
+    {
+      const { tab, broken } = await enter(`part=${encodeURIComponent("день")}&key=${encodeURIComponent("дело")}&scene=0&turn=600000&sky=clear`);
+      let ready = false;
+      for (let i = 0; i < 40 && !ready; i += 1) { await pause(150); ready = await tab.evaluate(() => Boolean(document.querySelector("#store #r-her-workc") && document.querySelector("#inside .alive.tr .fr.c"))); }
+      const shownNow = () => tab.evaluate(() => {
+        const of = (selector) => { const node = document.querySelector(selector); return node ? Number(getComputedStyle(node).opacity) : -1; };
+        return { turn: of("#inside .alive.tr .fr.c"), first: of("#inside .alive.tr .fr.a"), second: of("#inside .alive.tr .fr.b") };
+      });
+      const calm = await shownNow();
+      const point = await tab.evaluate(() => { const box = document.querySelector('#room .zones [data-act="window"]')?.getBoundingClientRect(); return box ? { x: box.left + 14, y: box.top + 14 } : null; });
+      if (!ready) fail("поворот головы: третий кадр позы «за столом» не пришёл или не встал на рисунок");
+      else if (calm.turn > 0.05) fail(`поворот головы: кадр виден, хотя она никуда не смотрит (${calm.turn})`);
+      else if (!point) fail("поворот головы: места нажатия «окно» нет");
+      else {
+        await tab.touchscreen.tap(point.x, point.y);
+        let turned = null;
+        for (let i = 0; i < 14 && !turned; i += 1) { await pause(120); const seen = await shownNow(); if (seen.turn > 0.9 && seen.first < 0.1 && seen.second < 0.1) turned = seen; }
+        await pause(3700);
+        const after = await shownNow();
+        if (broken.length) fail(`поворот головы: ошибка на странице — ${broken[0].slice(0, 170)}`);
+        else if (!turned) fail(`поворот головы: нажали на окно, а третий кадр не проявился: ${JSON.stringify(await shownNow())}`);
+        else if (after.turn > 0.05) fail(`поворот головы: взгляд кончился, а кадр остался (${after.turn})`);
+        else console.log("  поворот головы: нажали на окно — третий кадр проявился, первые два ушли; взгляд кончился — кадр растаял");
+      }
+      await tab.close();
+    }
+    // е) на своей машине `#room=code` оставляет комнату кодом.
+    {
+      const { tab } = await enter(`${day}&sky=clear&room=code`);
+      const got = await look(tab);
+      if (got.shown.length || !got.code) fail(`«room=code», а комната не кодом: ${JSON.stringify(got.shown)}, узоров ${got.code}`);
+      await tab.close();
+    }
+  }
 
   // ── 7. она живая: позы, веки, звук ─────────────────────────────────────────
   console.log("7. Позы, моргание, звук, снег");
@@ -1065,6 +1230,8 @@ try {
   // получила — так и бывает на плохой связи.
   console.log("9. С сердцем: встреча, альбом, подарок, снимок, повтор запроса, журнал, свёрнутая страница, жесты");
   {
+    // Что услышит программа чтения с экрана (дерево доступности) — одной строкой в итог шага.
+    let access = "";
     const failed = failures.length;
     const kit = await import(pathToFileURL(join(root, "tests/fixtures/kit.mjs")).href);
     kit.reset();
@@ -1184,6 +1351,24 @@ try {
       await tab.keyboard.press("Enter");
       const typed = await wait9(seen => /коробк|Байт/iu.test(seen.say), 4000);
       if (!typed) fail(`доступность: Enter на зоне «коробка» ничего не сказал: «${(await page9()).say.slice(0, 60)}»`);
+      // Дерево доступности (0.53.0, идея 195) — то, что получает программа чтения с экрана: каждая зона рисунка в нём —
+      // кнопка со своей подписью; картинок без подписи и знаков рисунка («!», «?», «z») в нём нет.
+      const labels = await tab.evaluate(() => [...document.querySelectorAll("#room .zones [data-act]")].map(node => node.getAttribute("aria-label") ?? ""));
+      const tree = await tab.accessibility.snapshot({ interestingOnly: true }).catch(() => null);
+      const heard = { buttons: [], texts: [], images: 0 };
+      const hear = (node) => {
+        if (node.role === "button" && node.name) heard.buttons.push(String(node.name));
+        if (node.role === "StaticText") heard.texts.push(String(node.name ?? ""));
+        if (/^(?:image|img|graphics-symbol|graphics-object)$/u.test(String(node.role))) heard.images += 1;
+        for (const child of node.children ?? []) hear(child);
+      };
+      if (tree) hear(tree);
+      const unheard = labels.filter(label => !heard.buttons.includes(label)), signs = heard.texts.filter(text => /^[!?zZ♪♫\s]{1,3}$/u.test(text));
+      if (!tree) fail("доступность: браузер не отдал дерево доступности");
+      else if (unheard.length) fail(`доступность: зоны рисунка, которых программа чтения не назовёт: ${JSON.stringify(unheard.slice(0, 5))}`);
+      else if (heard.images) fail(`доступность: в дереве ${heard.images} картинок без подписи — программа чтения скажет «картинка» и ничего больше`);
+      else if (signs.length) fail(`доступность: знаки рисунка читаются вслух: ${JSON.stringify(signs.slice(0, 5))}`);
+      else access = `дерево доступности: кнопок с подписью ${heard.buttons.length}, зоны рисунка названы все (${labels.length}), картинок без подписи и знаков рисунка нет`;
     }
     await tab.close();
     // Жесты: раз в ход своей жизни — слово жеста на рисунке (сердце ведёт её день, ход уходит на жест).
@@ -1202,7 +1387,7 @@ try {
     if (gestures.size < 2) fail(`жесты: за девять секунд при ходе в 0,7 с ждали хотя бы два разных жеста, были: ${JSON.stringify([...gestures])}`);
     await live.close();
     if (broken.length) fail(`с сердцем — ошибка на странице: ${broken[0].slice(0, 220)}`);
-    if (failures.length === failed) console.log(`  встреча по шагам, альбом с подарком и снимком, повтор с тем же номером, «нет связи» и «ещё раз», журнал без подписи, свёрнутая страница стоит, жесты: ${[...gestures].join(", ")}`);
+    if (failures.length === failed) console.log(`  встреча по шагам, альбом с подарком и снимком, повтор с тем же номером, «нет связи» и «ещё раз», журнал без подписи, свёрнутая страница стоит, жесты: ${[...gestures].join(", ")}${access ? `; ${access}` : ""}`);
   }
 
   if (errors.length) for (const text of errors) fail(`ошибка на странице: ${text}`);

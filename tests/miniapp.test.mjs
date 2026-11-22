@@ -28,6 +28,8 @@ const PAINTED = { sprites: SPRITES };
 /** Вторые кадры поз (0.45.0): не позы — в `HER_SPRITES` их нет, а в папке картинок они лежат рядом. */
 const FRAMES = Object.values(scene.HER_FRAMES).map(([name]) => name);
 const FRAME_SPRITES = Object.fromEntries(await Promise.all(FRAMES.map(async (name) => [name, (await import(`../miniapp/her/${name}.js`)).default])));
+/** Третьи кадры (0.53.0): голова повёрнута — тоже не позы, лежат рядом (`HER_TURNS`; подробно — `tests/painted.test.mjs`). */
+const TURN_SPRITES = Object.fromEntries(await Promise.all(Object.values(scene.HER_TURNS).map(async ([name]) => [name, (await import(`../miniapp/her/${name}.js`)).default])));
 const ROOT = new URL("..", import.meta.url);
 const read = (path) => readFileSync(new URL(path, ROOT), "utf8");
 const ON = { PHRASES: true };
@@ -1416,7 +1418,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "15");
+  assert.equal(logic.PAGE, "16");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1603,7 +1605,8 @@ test("страница: папка уходит на платформу файл
   assert.doesNotMatch(read(".gitignore"), /^\/?miniapp\/?$/mu);
   const folder = new URL("miniapp/", ROOT);
   // 0.49.0: альбом воспоминаний — отдельным модулем (`album.js`): грузится, когда его открыли.
-  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "scene.js", "sound.js"], "в папке — только страница: всё, что в ней лежит, становится публичным");
+  // 0.53.0: комната картинкой — папка `room` (два модуля: «день» и «пасмурно»; `tests/painted.test.mjs`).
+  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "room", "scene.js", "sound.js"], "в папке — только страница: всё, что в ней лежит, становится публичным");
   const page = ["app.js", "index.html", "logic.js", "scene.js"];
   const total = page.reduce((sum, name) => sum + statSync(new URL(name, folder)).size, 0);
   // Мера — о скорости, а не о платформе: эти четыре файла нужны, чтобы комната открылась. С 0.41.0 в них позы,
@@ -1629,12 +1632,13 @@ test("страница: папка уходит на платформу файл
   // поза — заранее), поэтому мера у каждой своя; все вместе — чтобы папка не разбухала незаметно: предел растёт
   // вместе с числом картинок, осознанно.
   const pictures = readdirSync(new URL("her/", folder)).sort();
-  assert.deepEqual(pictures, [...Object.keys(HER_SPRITES), ...FRAMES].map(name => `${name}.js`).sort(), "в папке картинок — по модулю на каждый спрайт и на каждый второй кадр из рисунка, и ничего больше");
+  // 0.53.0: третьи кадры — голова повёрнута (`HER_TURNS`).
+  assert.deepEqual(pictures, [...Object.keys(HER_SPRITES), ...FRAMES, ...Object.values(scene.HER_TURNS).map(([name]) => name)].map(name => `${name}.js`).sort(), "в папке картинок — по модулю на каждый спрайт, на каждый второй и третий кадр из рисунка, и ничего больше");
   const weights = pictures.map(name => statSync(new URL(`her/${name}`, folder)).size);
   for (const [index, name] of pictures.entries()) assert.ok(weights[index] < 76_000, `картинка ${name} весит ${weights[index]} байт`);
   assert.ok(weights.reduce((sum, size) => sum + size, 0) < pictures.length * 56_000, `картинки вместе весят ${weights.reduce((sum, size) => sum + size, 0)} байт`);
   for (const name of pictures) assert.match(read(`miniapp/her/${name}`), /^\/\/ Спрайт Аи «[a-z0-9-]+»: собран командой «bash scripts\/verify\.sh sprite …» \(scripts\/room-sprite\.mjs\)\. Руками не править\.\nexport default \{ w: \d+, h: \d+, cx: [\d.]+, (?:(?:blink|smile|lookl|lookr): \{ x: \d+, y: \d+, w: \d+, h: \d+, src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \}, ){0,4}src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \};\n$/u, name);
-  const files = [...page, ...pictures.map(name => `her/${name}`)];
+  const files = [...page, ...pictures.map(name => `her/${name}`), ...readdirSync(new URL("room/", folder)).map(name => `room/${name}`)];
 
   const html = read("miniapp/index.html");
   assert.match(html, /<script src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"><\/script>/u, "без этого скрипта Telegram не даёт странице ни человека, ни связи");
@@ -1715,6 +1719,12 @@ test("страница: папка уходит на платформу файл
   gather({ part: "день", her: { pose: "dust", key: "дело", beat: true }, things: [] }, withFrames);
   // С 0.48.0 — «lk» и «nl»: на каком кадре она смотрит на зрителя, а на каком нет.
   assert.deepEqual([...classes].filter(name => !framed.has(name)).sort(), ["a", "b", "dance", "fr", "glance", "lk", "nl", "pace", "sip", "sweep"]);
+  // 0.53.0: третий кадр — голова повёрнута: слой `c`; в какую сторону она на нём смотрит — словом на группе (`tl`, `tr`).
+  const turned = new Set(classes);
+  const withTurns = { sprites: { ...SPRITES, ...FRAME_SPRITES, ...TURN_SPRITES } };
+  gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, things: [] }, withTurns);
+  gather({ part: "вечер", her: { pose: "desk", key: "дело", beat: true, wear: "home" }, things: [] }, withTurns);
+  assert.deepEqual([...classes].filter(name => !turned.has(name)).sort(), ["c", "tl", "tr"]);
   // Мимика 0.48.0: встаёт из кресла («rise»), клюёт носом («slow»), Байт замечает, что она подошла («notice», «hop», «mark»).
   const mimed = new Set(classes);
   gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, things: [] }, { ...PAINTED, was: { name: "tea3", x: 196 } });
@@ -1817,7 +1827,7 @@ test("страница: папка уходит на платформу файл
   const markupWrites = [...app.matchAll(/\.innerHTML = ([^;]+);/gu)].map(found => found[1].trim());
   const drawnParts = (value) => /^moving\.(?:parts|inks)\[index\]$/u.test(value) || value === "moving.zones"
     || value === '`<g class="art" pointer-events="none"><defs>${moving.inks.join("")}</defs>${moving.parts.map(piece => `<g>${piece}</g>`).join("")}</g><g class="zones">${moving.zones}</g>`';
-  assert.deepEqual(markupWrites.filter(value => !/^draw(?:Backdrop|Rain|Inside|Sprite)\(/u.test(value) && !value.startsWith("'<svg ") && !drawnParts(value)), []);
+  assert.deepEqual(markupWrites.filter(value => !/^draw(?:Backdrop|Rain|Inside|Sprite|Picture)\(/u.test(value) && !value.startsWith("'<svg ") && !drawnParts(value)), []);
   assert.ok(markupWrites.some(drawnParts), "рисунок по частям на странице есть");
   assert.match(app, /const still = scene\.drawParts\(view, calm\), moving = options \? scene\.drawParts\(view, options\) : still;/u, "части рисунка — только из рисунка");
   // Её картинки (0.40.0): модуль грузится по имени из рисунка и только когда нужен; новые имена рисунка перед
@@ -1845,11 +1855,12 @@ test("страница: папка уходит на платформу файл
   assert.match(read("scripts/room-check.mjs"), /"картинка пришла, но не читается"/u);
   // Рисунку отдаётся, что уже загружено и кто где был на прежнем рисунке (0.44.0: до нового места она и Байт доходят
   // шагом); страница без картинок (рядом прежний `scene.js`) рисует её кодом.
-  assert.match(app, /const options = canPaint \? \{\s+sprites, \.\.\.\(before\?\.her \? \{ was: before\.her \} : \{\}\), \.\.\.\(before\?\.cat \? \{ catWas: before\.cat \} : \{\}\), \.\.\.\(state\.entering \? \{ enter: true \} : \{\}\),\s+\} : undefined;/u);
+  // С 0.53.0 — и картинка комнаты (`room`), если она уже здесь.
+  assert.match(app, /const options = canPaint \? \{\s+sprites, \.\.\.\(picture \? \{ room: picture \} : \{\}\), \.\.\.\(before\?\.her \? \{ was: before\.her \} : \{\}\), \.\.\.\(before\?\.cat \? \{ catWas: before\.cat \} : \{\}\), \.\.\.\(state\.entering \? \{ enter: true \} : \{\}\),\s+\} : undefined;/u);
   // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
-  assert.match(app, /const fresh = putInside\(view, options, fade\);/u);
+  assert.match(app, /const fresh = putInside\(view, options, renew\);/u);
   assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
-  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, звук и альбом (0.49.0)");
+  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", "`./room/${name}.js?again=${attempt}`", "`./room/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, картинки комнаты (0.53.0), звук и альбом (0.49.0)");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).
   assert.match(app, /const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";/u);

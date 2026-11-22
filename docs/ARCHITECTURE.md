@@ -1104,3 +1104,20 @@ build, side_effects: "none" }` — без чтения и записи.
 | «Разбор N» | `tgcloud/lib/taught.js`: `note(text, { before, after })`, `brief`, `beforeOf`, `UNHEARD_ROW`; `heart.js`: `phraseLesson` (ветка `unheardRow`), запись `heart:unheard:shown` → `list` | к записи непонятой фразы — `p` (её реплика «до») и `a` (её ответ): до 110 знаков, цифры и адреса закрыты, у шестидесяти свежих; «разбор 2» — по порядку показанного списка, сутки; автора в записи нет |
 | Проверка в браузере | `scripts/room-check.mjs`, шаг 6 | перед каждым случаем память страницы чистится (`localStorage` общий на вкладки); случаи: нет картинок → силуэт → появились → получила сама → второй заход без сети; девять секунд без картинки; нечитаемая картинка |
 | Номер страницы | `PAGE = "15"` | внизу страницы — «страница 15» |
+
+## Что добавила 0.53.0: где что лежит
+
+| Что | Где |
+|---|---|
+| Картинки комнаты | `miniapp/room/day.js` (ясно), `miniapp/room/dull.js` (пасмурно): `{ v, name, w, h, src, things: { w, h, src, at }, bulbs }`. `src` — комната без вещей 800×1040 с прозрачным стеклом; `things.at[имя]` — где вещь на листе и где в комнате; `bulbs` — лампочки гирлянды. Руками не правятся |
+| Сборка картинки | `scripts/room-paint.mjs <с вещами.png> <без вещей.png> [модуль] [папка для проб]`: зелёное окно — в прозрачность, вещи — разницей двух рисунков (`THINGS` — области вещей в точках исходного рисунка), подгонка окна под `WIN`, лампочки — список `BULBS` |
+| Какая картинка нужна | `roomNameOf(view)` в `miniapp/scene.js`: небо открыто — `day`, иначе `dull` |
+| Рисунок с картинкой | `miniapp/scene.js`, раздел «комната картинкой»: `roomOf(options)` (годная картинка или `null`), `drawPicture(room)` (определения — в кладовую рисунка, имена `r-room-<имя>`, `r-room-<имя>-things`), `paintedRoom`, `paintedThing`, `paintedPlaid`, `paintedGarland`, `paintedShelves`, `paintedLamp`, `paintedCurtains`; подгонка — `PIC`; свет часа — `ROOM_TINT`. В `insideOf` каждая часть: `pic ? написанное : нарисованное кодом` |
+| Загрузка на странице | `miniapp/app.js`, «Комната картинкой»: `canRoom`, `fetchRoom` → `loadRoom` → `settleRoom`, `storeRoom`; память телефона — `keptRoom`, `keepRoom` (`ai-room-pic:<страница>:<имя>`); `roomFor(view)` — картинка для рисунка (нужная или любая готовая); в `paint` — `renew` (прежняя комната тает поверх новой) |
+| Поворот головы | `HER_TURNS`, `turnOf` в `scene.js`; модули `miniapp/her/<поза>c.js`; слой `<g class="fr c">` внутри `.alive.tl` / `.alive.tr` (`herPainted`); стили — `#room .fr.c` в `index.html`; страница заказывает кадр следом за позой (`turnName`) |
+| Проверки | `tests/painted.test.mjs` (модули, рисунок, вещи, свет, негодная картинка, поворот головы); `scripts/room-check.mjs`, шаг «6а» (браузер) и дерево доступности в шаге 9 |
+
+Путь картинки: `paint()` → `fetchRoom(roomNameOf(view))` → модуль пришёл и читается → `storeRoom` кладёт определения
+в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
+`<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
+

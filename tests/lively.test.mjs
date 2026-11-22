@@ -386,7 +386,7 @@ test("жесты: по занятию и настроению, по кругу, 
   const drawn = scene.drawRoom({ part: "день", her: { key: "устала", pose: "desk" } }, { sprites: { tired: sprite } });
   assert.match(drawn, /<g class="mim m-tired"><g class="lean"><g class="alive"><use href="#r-her-tired" [^>]+\/><mask id="r-herHead"/u);
   assert.match(drawn, /<g class="hd" style="transform-origin:[\d.]+px [\d.]+px"><g class="hr" style="transform-origin:[\d.]+px [\d.]+px"><g mask="url\(#r-herHead\)"><use href="#r-her-tired" [^>]+\/><use class="wink"/u, "веки — в слое головы: наклоняются вместе с ней");
-  assert.deepEqual([...drawn.matchAll(/<g class="emo (e-[a-z]+)" opacity="0">/gu)].map(found => found[1]), ["e-bang", "e-ask", "e-huff", "e-drop", "e-zz"]);
+  assert.deepEqual([...drawn.matchAll(/<g class="emo (e-[a-z]+)" opacity="0" aria-hidden="true">/gu)].map(found => found[1]), ["e-bang", "e-ask", "e-huff", "e-drop", "e-zz"]);
   // Спит на полу — слоя головы нет.
   assert.ok(!scene.drawRoom({ part: "ночь", her: { key: "сон", pose: "nap" } }, { sprites: { "home-sleep": { ...sprite, h: 500 } } }).includes('class="hd"'));
   // Страница: жест — раз в ход своей жизни и по событию; у каждого слова жеста есть правило в стилях.

@@ -68,7 +68,11 @@ const how = (off = false) => (painted && !off ? { sprites } : {});
 // Вторые кадры поз (0.45.0): на странице их переключают стили, на листе — слово `"frame": true` у рисунка: тогда
 // показан второй кадр вместо первого (без слова — первый, как и раньше).
 const frames = {};
-for (const [name] of Object.values(scene.HER_FRAMES ?? {})) {
+// Комната картинкой (0.53.0): есть модуль — листы рисуют её так же, как страница.
+const roomPictures = {};
+for (const name of ["day", "dull"]) { try { roomPictures[name] = (await load(`miniapp/room/${name}.js`)).default ?? null; } catch { roomPictures[name] = null; } }
+const roomFor = (described) => (typeof scene.roomNameOf === "function" ? roomPictures[scene.roomNameOf(described)] ?? null : null);
+for (const [name] of [...Object.values(scene.HER_FRAMES ?? {}), ...Object.values(scene.HER_TURNS ?? {})]) {
   try { frames[name] = (await load(`miniapp/her/${name}.js`)).default; } catch { /* кадра нет — рисунок без него */ }
 }
 
@@ -199,7 +203,7 @@ async function motionCells() {
   if (sheet.views.length > letters.length) { console.error("На листе «движение» — не больше 26 рисунков."); process.exit(2); }
   const list = sheet.views.map(({ label = "", view: described, crop, at = 0, was = null, catWas = null, enter = false }, index) => {
     const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
-    const inside = drawInside(described, { sprites: all, prefix: `${letters[index]}-`, ...(was ? { was } : {}), ...(catWas ? { catWas } : {}), ...(enter === true ? { enter: true } : {}) });
+    const inside = drawInside(described, { sprites: all, prefix: `${letters[index]}-`, ...(sheet.room !== false && roomFor(described) ? { room: roomFor(described) } : {}), ...(was ? { was } : {}), ...(catWas ? { catWas } : {}), ...(enter === true ? { enter: true } : {}) });
     for (const found of inside.matchAll(/href="#r-her-([a-z0-9-]+?)(?:-blink)?"/gu)) used.add(found[1]);
     // За окном — небо и город этого часа (неподвижные: стили неба на лист не берутся). Имена красок у каждого рисунка
     // свои: буквы с конца алфавита, чтобы не совпасть с буквами самой комнаты; рисунков больше тринадцати — серый фон.
@@ -208,14 +212,17 @@ async function motionCells() {
       : `<rect width="${WIDTH}" height="${HEIGHT}" fill="#7d8597"/>`;
     return `<figure data-at="${Number(at) || 0}"><svg id="room" xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${back}${inside}</svg><figcaption>${String(label).replace(/</gu, "&lt;")}</figcaption></figure>`;
   });
-  const store = `<svg width="0" height="0" style="position:absolute"><defs>${[...used].map(name => scene.drawSprite(name, all[name])).join("")}</defs></svg>`;
+  const store = `<svg width="0" height="0" style="position:absolute"><defs>${[...used].map(name => scene.drawSprite(name, all[name])).join("")}${sheet.room !== false && typeof scene.drawPicture === "function" && roomFor(sheet.views[0]?.view) ? scene.drawPicture(roomFor(sheet.views[0]?.view)) : ""}</defs></svg>`;
   return { list, extra: `<style>${css}</style>${store}` };
 }
 const moving = motion ? await motionCells() : null;
-const cells = moving ? moving.list : sheet.views.map(({ label = "", view: described, crop, sprites: wanted, frame = false, style = "" }) => {
+const cells = moving ? moving.list : sheet.views.map(({ label = "", view: described, crop, sprites: wanted, frame = false, style = "", room: roomWanted }) => {
   const sprites_off = wanted === false;
   const base = how(sheet.sprites === false || sprites_off);
-  const shown = frame === true && base.sprites ? { sprites: { ...base.sprites, ...frames } } : base;
+  const framed = frame === true && base.sprites ? { sprites: { ...base.sprites, ...frames } } : base;
+  // Комната картинкой (0.53.0) — как на странице; `"room": false` у листа или у рисунка — комната кодом.
+  const roomPicture = sheet.room !== false && roomWanted !== false ? roomFor(described) : null;
+  const shown = roomPicture ? { ...framed, room: roomPicture } : framed;
   const second = frame === true ? "<style>.fr.a{display:none}</style>" : "";
   const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${x} ${y} ${w} ${h}" width="${w * zoom}" height="${h * zoom}">${paint}${lids}${second}${typeof style === "string" && style ? `<style>${style.replace(/</gu, "")}</style>` : ""}${drawRoom(described, shown)}</svg>`;

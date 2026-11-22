@@ -647,6 +647,8 @@ function speakerNotes(c) {
   const one = ([dx, dy, delay]) => `<g transform="translate(${dx} ${dy})"><g class="note" style="animation-delay:${delay}s" fill="${c.paper}" opacity="0.9"><path d="M58 326 v-9 l5 -1.6 v8.6" fill="none" stroke="${c.paper}" stroke-width="1"/><ellipse cx="56.6" cy="326" rx="1.9" ry="1.4"/><ellipse cx="61.6" cy="324" rx="1.9" ry="1.4"/></g></g>`;
   return `<circle cx="48.6" cy="330.6" r="1.5" fill="#7de0c8"/><circle cx="48.6" cy="330.6" r="3" fill="#7de0c8" opacity="0.3"/>${[[0, 2, 0], [15, 6, -1.2], [29, 3, -2.3]].map(one).join("")}`;
 }
+/** Колонка: играет — ноты; вечером сама тихо играет lo-fi — огонёк и одна нота. */
+const speakerTune = (c, part, music) => (music ? speakerNotes(c) : part === "вечер" ? `<circle cx="48.6" cy="330.6" r="1.2" fill="#7de0c8"/><g class="note" fill="${c.paper}" opacity="0.8"><path d="M58 326 v-9 l5 -1.6 v8.6" fill="none" stroke="${c.paper}" stroke-width="1"/><ellipse cx="56.6" cy="326" rx="1.9" ry="1.4"/><ellipse cx="61.6" cy="324" rx="1.9" ry="1.4"/></g>` : "");
 function bookcase(g, c, has, part, music = false) {
   const x = 8, y = 170, w = 98, h = 202;
   const shelves = [218, 266, 314];
@@ -685,7 +687,7 @@ function bookcase(g, c, has, part, music = false) {
     // Колонка: вечером из неё тихо играет lo-fi.
     `<rect x="16" y="326" width="37" height="40" rx="3" fill="${c.jacket}"/><rect x="16" y="326" width="37" height="2" rx="1" fill="${c.jacketLight}"/>`,
     `<circle cx="34.5" cy="339" r="8" fill="${dk(c.jacket, 0.35)}"/><circle cx="34.5" cy="339" r="5.4" fill="${c.jacketLight}"/><circle cx="34.5" cy="339" r="2.2" fill="${dk(c.jacket, 0.3)}"/><circle cx="34.5" cy="356" r="5.2" fill="${dk(c.jacket, 0.35)}"/><circle cx="34.5" cy="356" r="3.2" fill="${c.jacketLight}"/><circle cx="34.5" cy="356" r="1.3" fill="${dk(c.jacket, 0.3)}"/>`,
-    music ? speakerNotes(c) : part === "вечер" ? `<circle cx="48.6" cy="330.6" r="1.2" fill="#7de0c8"/><g class="note" fill="${c.paper}" opacity="0.8"><path d="M58 326 v-9 l5 -1.6 v8.6" fill="none" stroke="${c.paper}" stroke-width="1"/><ellipse cx="56.6" cy="326" rx="1.9" ry="1.4"/><ellipse cx="61.6" cy="324" rx="1.9" ry="1.4"/></g>` : `<circle cx="48.6" cy="330.6" r="1.2" fill="${dk(c.jacket, 0.3)}"/>`,
+    speakerTune(c, part, music) || `<circle cx="48.6" cy="330.6" r="1.2" fill="${dk(c.jacket, 0.3)}"/>`,
     // Плетёная корзина.
     `<rect x="59" y="338" width="40" height="28" rx="3" fill="${c.box}"/><path d="M59 345 h40 M59 352 h40 M59 359 h40" stroke="${c.boxDark}" stroke-width="1" opacity="0.6"/><path d="M66 338 v28 M74 338 v28 M82 338 v28 M90 338 v28" stroke="${c.boxDark}" stroke-width="0.7" opacity="0.35"/><rect x="72" y="342.6" width="14" height="5" rx="2.5" fill="${dk(c.boxDark, 0.25)}"/><rect x="59" y="338" width="40" height="2" rx="1" fill="${lt(c.box, 0.35)}"/>`,
   ].join("");
@@ -804,6 +806,8 @@ function desk(g, c) {
   ].join("");
 }
 /** Чайник с жасминовым чаем и чашка рядом. `steam` — только что наливали: над носиком пар. */
+/** Пар над носиком чайника и над чашкой. */
+const teaSteam = () => `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" opacity="0.65"><path d="M350.6 292 q-3 -5 0 -9 q3 -4 0 -8"/><path d="M355 293.4 q3 -5 0 -10"/><path d="M361.4 304 q-2.4 -4 0 -7"/></g>`;
 function teapot(g, c, { steam = false } = {}) {
   const body = g.lin("teapot", [[0, lt(c.teapot, 0.5)], [1, c.teapotDark]]);
   return [
@@ -816,7 +820,7 @@ function teapot(g, c, { steam = false } = {}) {
     `<ellipse cx="322.6" cy="305" rx="2" ry="3.4" fill="#ffffff" opacity="0.55" transform="rotate(18 322.6 305)"/>`,
     // Чашка.
     `<path d="M366.4 310 q5 0 5 3 q0 3 -5 3" fill="none" stroke="${c.teapotDark}" stroke-width="1.6"/><path d="M356 308 h11 v4.4 q0 3.6 -3.6 3.6 h-3.8 q-3.6 0 -3.6 -3.6z" fill="${body}"/><ellipse cx="361.5" cy="308.2" rx="5.5" ry="1.3" fill="${steam ? dk(c.gold, 0.1) : c.teapotDark}"/>`,
-    steam ? `<g class="steam" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" opacity="0.65"><path d="M350.6 292 q-3 -5 0 -9 q3 -4 0 -8"/><path d="M355 293.4 q3 -5 0 -10"/><path d="M361.4 304 q-2.4 -4 0 -7"/></g>` : "",
+    steam ? teaSteam() : "",
   ].join("");
 }
 /** Блокнот с напоминаниями и карандаш. */
@@ -861,13 +865,15 @@ function rug(g, c) {
 const paw = (x, y, colour, k = 1) => `<g transform="translate(${x} ${y}) scale(${k})" fill="${colour}"><ellipse cx="0" cy="1.4" rx="2.6" ry="2"/><circle cx="-2.8" cy="-1.4" r="1.1"/><circle cx="0" cy="-2.6" r="1.2"/><circle cx="2.8" cy="-1.4" r="1.1"/></g>`;
 /** Миска нарисована у точки (41, 404) и сдвинута к углу, ближе к зрителю: рядом с ней садится Байт. */
 const BOWL = Object.freeze({ dx: -3, dy: 5 });
+/** Корм в миске. */
+const bowlFood = (c) => `<ellipse cx="41" cy="397.4" rx="16.4" ry="3.5" fill="${c.food}"/><g fill="${lt(c.food, 0.22)}"><circle cx="34" cy="396.4" r="1.9"/><circle cx="40" cy="395.6" r="2"/><circle cx="46.4" cy="396.6" r="1.9"/><circle cx="43" cy="398.4" r="1.7"/><circle cx="37" cy="398.6" r="1.7"/></g><g fill="${dk(c.food, 0.2)}"><circle cx="50" cy="398" r="1.5"/><circle cx="31.6" cy="398.2" r="1.4"/></g>`;
 function bowl(g, c, full) {
   return [
     shadow(g, 41, 409, 25, 4.4, 0.34),
     `<path d="M21 397 Q22 411 31 411 H51 Q60 411 61 397 Z" fill="${g.lin("bowl", [[0, c.bowl], [1, c.bowlDark]])}"/>`,
     `<ellipse cx="41" cy="397" rx="20" ry="4.8" fill="${c.bowlDark}"/><ellipse cx="41" cy="397" rx="20" ry="4.8" fill="none" stroke="${lt(c.bowl, 0.4)}" stroke-width="1"/>`,
     full
-      ? `<ellipse cx="41" cy="397.4" rx="16.4" ry="3.5" fill="${c.food}"/><g fill="${lt(c.food, 0.22)}"><circle cx="34" cy="396.4" r="1.9"/><circle cx="40" cy="395.6" r="2"/><circle cx="46.4" cy="396.6" r="1.9"/><circle cx="43" cy="398.4" r="1.7"/><circle cx="37" cy="398.6" r="1.7"/></g><g fill="${dk(c.food, 0.2)}"><circle cx="50" cy="398" r="1.5"/><circle cx="31.6" cy="398.2" r="1.4"/></g>`
+      ? bowlFood(c)
       : `<ellipse cx="41" cy="397.6" rx="16.4" ry="3.4" fill="${dk(c.bowlDark, 0.3)}"/><ellipse cx="38" cy="398.4" rx="8" ry="1.3" fill="#ffffff" opacity="0.14"/>`,
     paw(41, 405, lt(c.bowl, 0.75), 0.9),
     `<path d="M24.6 400 q1 6 4.4 8.4" fill="none" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" opacity="0.4"/>`,
@@ -1077,7 +1083,10 @@ const airOnWalker = (g, part, off, shape) => (lit(part) && shape
  * Свет на полу: днём — от окна, вечером и ночью — тёплое пятно под лампой и синева от окна. Ложится на пол до
  * мебели и фигур: поверх них у света был бы край, и ноги ниже плинтуса выглядели бы выцветшими.
  */
-function floorLight(g, part, shade, sky = "rain", off = false) {
+function floorLight(g, part, shade, sky = "rain", off = false, painted = false) {
+  // Комната картинкой (0.53.0): свет на полу написан художником, а мебель стоит на той же картинке — пятно света
+  // кодом легло бы и на кресло со столом, ровным краем по линии плинтуса.
+  if (painted) return "";
   if (!lit(part)) {
     // В ясный день на полу лежит солнце — три полосы по створкам окна; под тучами — ровный серый свет.
     const sunny = open(sky), sun = part === "утро" ? (sunny ? "#ffe6c0" : "#fff0dc") : sunny ? "#fff6dc" : "#ffffff";
@@ -1091,6 +1100,144 @@ function floorLight(g, part, shade, sky = "rain", off = false) {
     off ? "" : `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.2], [1, warm, 0]])}"/>`,
     `<path d="M132 372 H400 L352 520 H30 Z" fill="${g.lin("nightFloor", [[0, "#9fb4ff", blue], [1, "#9fb4ff", 0]])}"/>`,
   ].join("");
+}
+
+// ── комната картинкой (0.53.0, идея 202) ─────────────────────────────────────
+/**
+ * Комната, написанная художником по эскизу, который выбрал владелец (`miniapp/room/day.js`, собирает
+ * `scripts/room-paint.mjs`): стены, пол, окно с рамой и шторами, мебель — одной картинкой с прозрачным стеклом;
+ * вещи, которые в комнате бывают и не бывают, вырезаны отдельно и встают на свои места. Всё живое — небо и погода
+ * за стеклом, свет часа, она, Байт, пар над чайником, огни гирлянды — остаётся кодом, в прежнем порядке слоёв.
+ * Картинки нет (ещё в пути, телефон её не показывает) — комната рисуется кодом, как до 0.53.0.
+ */
+const ROOM_THINGS = Object.freeze(["рисунок", "календарь", "снимок", "подушка", "кружка", "место", "кресло", "плед", "plant", "кактус", "lamp", "stool", "тапочки", "bed", "boxFront"]);
+const roomChecked = new WeakMap();
+function fitsRoom(room) {
+  if (!room || typeof room !== "object") return false;
+  if (roomChecked.has(room)) return roomChecked.get(room);
+  const things = room.things, cells = things?.at;
+  const fine = room.v === 1 && typeof room.name === "string" && /^[a-z]+$/u.test(room.name) && typeof room.src === "string" && SPRITE_SRC.test(room.src)
+    && Boolean(things) && typeof things === "object" && [things.w, things.h].every(size => Number.isFinite(size) && size > 0) && typeof things.src === "string" && SPRITE_SRC.test(things.src)
+    && Boolean(cells) && typeof cells === "object" && ROOM_THINGS.every(name => Array.isArray(cells[name]) && cells[name].length === 8 && cells[name].every(Number.isFinite) && [2, 3, 6, 7].every(index => cells[name][index] > 0))
+    && Array.isArray(room.bulbs) && room.bulbs.every(bulb => Array.isArray(bulb) && Number.isFinite(bulb[0]) && Number.isFinite(bulb[1]) && /^#[0-9a-f]{6}$/iu.test(String(bulb[2])));
+  roomChecked.set(room, fine);
+  return fine;
+}
+/**
+ * Картинок комнаты две: «день» — с солнцем на полу, «пасмурно» — с ровным светом. Под тучами, в дождь, снег и туман
+ * солнечные полосы на полу были бы неправдой: слова о погоде и рисунок — одно. Ясной ночью полосы от окна — лунные.
+ */
+export const roomNameOf = (view) => (open(skyIn(view?.sky)) ? "day" : "dull");
+/** Картинка комнаты из настроек рисунка (`options.room`) — или `null`: негодную рисунок не примет. */
+export const roomOf = (options) => (fitsRoom(options?.room) ? options.room : null);
+/**
+ * Определения картинок комнаты: сама комната и лист вещей. Как и её картинка (`drawSprite`), на странице они
+ * кладутся в рисунок один раз, а комната только ссылается на них по имени.
+ */
+export function drawPicture(room) {
+  if (!fitsRoom(room)) return "";
+  return `<image id="r-room-${room.name}" width="${WIDTH}" height="${HEIGHT}" preserveAspectRatio="none" href="${room.src}"/><image id="r-room-${room.name}-things" width="${n(room.things.w)}" height="${n(room.things.h)}" preserveAspectRatio="none" href="${room.things.src}"/>`;
+}
+/**
+ * Свет часа на картинке: заливка поверх неё, маской служит она сама (как у её картинки — `spriteLit`). Цвет и
+ * плотность подобраны так, чтобы стена выходила того же тона, что у комнаты кодом (`LIGHT`). Днём — без заливки.
+ */
+const ROOM_TINT = Object.freeze({ "утро": ["#b57e71", 0.1], "вечер": ["#280046", 0.36], "ночь": ["#000046", 0.47] });
+const roomTint = (part) => ROOM_TINT[part] ?? null;
+/**
+ * Подгонка под картинку: то, что код рисует поверх неё, стоит на её полках и в её миске. `top` — верх шкафа (Байт
+ * и подарки), `candle` — вторая полка, `speaker` — колонка, `bowl` — миска, `plaid` — малый плед (у кого нет
+ * «пледа на двоих»), `shade` — абажур лампы (для «абажура любимого цвета»).
+ */
+const PIC = Object.freeze({
+  top: -6, candle: -8, speaker: [1, -7], bowl: [-3.5, 2], shade: "M376.5 260 L395.5 260 L400 288.5 L369 288.5 Z",
+  // Малый плед: тот же, но обрезан выше — по линии, вдоль которой у большого идёт бахрома; бахрому дорисовывает код.
+  plaid: { clip: "M220 240 H312 V330 L256 349 H220 Z", fringe: [[258, 348], [264, 346], [270, 344], [276, 342], [282, 340], [288, 338], [294, 336], [300, 334], [306, 332]] },
+});
+/** Сама комната: картинка, свет часа на ней и — вечером и ночью — тень в проёме окна (рама и шторы; стекло чистое). */
+function paintedRoom(g, room, part, off = false) {
+  const picture = `<use href="#r-room-${room.name}"/>`, tint = roomTint(part);
+  if (!tint && !lit(part)) return picture;
+  const mask = g.raw(`roomMask-${room.name}`, id => `<mask id="${id}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="${WIDTH}" height="${HEIGHT}">${picture}</mask>`);
+  return [
+    picture,
+    tint ? `<rect width="${WIDTH}" height="${HEIGHT}" fill="${tint[0]}" opacity="${tint[1]}" mask="${mask}"/>` : "",
+    // Общая тень комнаты (`airLight`) окно обходит прямоугольником — а рама и шторы внутри него тоже в комнате.
+    lit(part) ? `<path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="${mask}"/>` : "",
+  ].join("");
+}
+/**
+ * Вещь с листа — на своём месте. `dx`, `dy` — сдвиг (лежанка Байта отодвинута), `k` — мельче, от верхнего края
+ * (малый плед), `glow` — свет часа на неё не ложится (лампа горит).
+ */
+function paintedThing(g, room, name, part, { dx = 0, dy = 0, k = 1, glow = false } = {}) {
+  const [ax, ay, aw, ah, x, y, w, h] = room.things.at[name];
+  const box = `x="${n(x + dx + (w - w * k) / 2)}" y="${n(y + dy)}" width="${n(w * k)}" height="${n(h * k)}"`;
+  const picture = `<svg ${box} viewBox="${ax} ${ay} ${aw} ${ah}" preserveAspectRatio="none"><use href="#r-room-${room.name}-things"/></svg>`;
+  const tint = glow ? null : roomTint(part);
+  if (!tint) return picture;
+  const mask = g.raw(`thing-${room.name}-${ROOM_THINGS.indexOf(name)}`, id => `<mask id="${id}" style="mask-type:alpha" maskUnits="userSpaceOnUse" ${box}>${picture}</mask>`);
+  return `${picture}<rect ${box} fill="${tint[0]}" opacity="${tint[1]}" mask="${mask}"/>`;
+}
+/**
+ * Шторы у открытого окна ходят от сквозняка (0.49.0), а на картинке они написаны неподвижными. Поэтому поверх каждой
+ * ходит её же копия — кусок той же картинки (`.breeze`, стили страницы): край шторы дышит, складки и гирлянда на ней
+ * чуть скользят. Свет часа и тень проёма ложатся на копию так же, как на саму комнату. Окно закрыто — копий нет.
+ */
+const PIC_CURTAINS = Object.freeze([[110, 46, 62, 226], [350, 46, 50, 226]]);
+function paintedCurtains(g, room, part, off = false) {
+  const tint = roomTint(part);
+  return PIC_CURTAINS.map(([x, y, w, h], index) => {
+    const box = `x="${x}" y="${y}" width="${w}" height="${h}"`;
+    const picture = `<svg ${box} viewBox="${x} ${y} ${w} ${h}"><use href="#r-room-${room.name}"/></svg>`;
+    const mask = tint || lit(part) ? g.raw(`curtain-${room.name}-${index}`, id => `<mask id="${id}" style="mask-type:alpha" maskUnits="userSpaceOnUse" ${box}>${picture}</mask>`) : "";
+    // Низ копии тает (последние двадцать точек): штора кончается у подоконника, а ниже — стена с панелями, и ровный
+    // срез ходил бы по ней заметной полосой.
+    const fade = g.raw(`curtainFade${index}`, id => `<mask id="${id}" maskUnits="userSpaceOnUse" ${box}><rect ${box} fill="${g.lin("curtainEnd", [[0, "#ffffff"], [0.91, "#ffffff"], [1, "#000000"]])}"/></mask>`);
+    return [
+      `<g class="breeze${index ? " b1" : ""}" mask="${fade}">`, picture,
+      tint ? `<rect ${box} fill="${tint[0]}" opacity="${tint[1]}" mask="${mask}"/>` : "",
+      lit(part) ? `<path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="${mask}"/>` : "",
+      `</g>`,
+    ].join("");
+  }).join("");
+}
+/**
+ * Плед на кресле. «Плед на двоих» (вещь человека) — как написан; без него на кресле малый плед: тот же, но короче
+ * (по масштабу его не уменьшить — он лежит по контуру кресла и «отклеился» бы от него).
+ */
+function paintedPlaid(g, room, part, big) {
+  const picture = paintedThing(g, room, "плед", part);
+  if (big) return picture;
+  const clip = g.raw("plaidCut", id => `<clipPath id="${id}"><path d="${PIC.plaid.clip}"/></clipPath>`);
+  return `<g clip-path="${clip}">${picture}</g><path d="${PIC.plaid.fringe.map(([x, y]) => `M${x} ${y} l-0.8 6`).join(" ")}" fill="none" stroke="${tint("#f3e7d3", part)}" stroke-width="1.3" stroke-linecap="round" opacity="0.92"/>`;
+}
+/**
+ * Огни гирлянды: лампочки на картинке написаны, код зажигает над ними свет — вечером и ночью, в лад со стилями
+ * страницы (`.bulb`). Сценка «гирлянда замигала» — одна лампочка горит и днём (`.rogue`).
+ */
+function paintedGarland(g, room, part, rogue = false) {
+  return room.bulbs.map(([x, y, colour], index) => {
+    if (rogue && index === ROGUE_BULB) return `<g class="bulb rogue"><circle cx="${n(x)}" cy="${n(y)}" r="15" fill="${g.rad("bulbRogue", [[0, "#fff3c4", 0.95], [0.3, "#ffd97a", 0.5], [1, "#ffd97a", 0]])}"/><ellipse cx="${n(x)}" cy="${n(y)}" rx="1.9" ry="2.8" fill="#fff6d8"/><circle cx="${n(x)}" cy="${n(y)}" r="1.2" fill="#ffffff"/></g>`;
+    if (!lit(part)) return "";
+    return `<g class="bulb b${index % 4}"><circle cx="${n(x)}" cy="${n(y)}" r="12" fill="${g.rad(`glow${colour.slice(1)}`, [[0, colour, 0.8], [0.3, colour, 0.34], [1, colour, 0]])}"/><ellipse cx="${n(x)}" cy="${n(y)}" rx="1.7" ry="2.6" fill="${lt(colour, 0.45)}"/><circle cx="${n(x)}" cy="${n(y)}" r="1" fill="#ffffff"/></g>`;
+  }).join("");
+}
+/** На полках: рамка с первым разговором и вторая кружка — если они у человека есть; колонка играет — ноты. */
+function paintedShelves(g, c, room, has, part, music = false) {
+  return [
+    has("снимок") ? paintedThing(g, room, "снимок", part) : "",
+    has("кружка") ? paintedThing(g, room, "кружка", part) : "",
+    at(PIC.speaker[0], PIC.speaker[1], speakerTune(c, part, music)),
+  ].join("");
+}
+/**
+ * Лампа с листа: горит — свет часа на неё не ложится. «Абажур любимого цвета» — его цвет поверх написанного абажура
+ * (`own`); лампу погасили нажатием — она темнеет вместе с комнатой.
+ */
+function paintedLamp(g, room, part, shade, off = false, own = false) {
+  const on = lit(part) && !off;
+  return paintedThing(g, room, "lamp", part, { glow: on }) + (own ? `<path d="${PIC.shade}" fill="${on ? shade : tint(shade, part)}" opacity="0.6"/>` : "");
 }
 
 // ── что сценка дня изменила в комнате ────────────────────────────────────────
@@ -1451,7 +1598,7 @@ function standing(g, f, { face = "calm", look = 0, up = 0, arms = "down", step =
 function openBook(f) {
   return `<path d="M-14.6 -9.4 L0 -7.2 L14.6 -9.4 V8.4 L0 10.6 L-14.6 8.4Z" fill="${f.gold}"/><path d="M-14.6 8.4 L0 10.6 L14.6 8.4" fill="none" stroke="${f.paper}" stroke-width="1.6"/><path d="M0 -7.2 V10.6" stroke="${dk(f.gold, 0.3)}" stroke-width="1.8"/><g fill="${f.paper}">${sparkle(7.4, -0.6, 1.5)}</g><path d="M-11 -3.6 l7 1 M-11 0 l7 1" stroke="${dk(f.gold, 0.25)}" stroke-width="1" stroke-linecap="round"/>`;
 }
-const zzz = (f, x, y) => `<g class="zzz" fill="${f.paper}" stroke="${f.ink}" stroke-width="0.5" font-family="system-ui, sans-serif" font-weight="700"><text x="${x}" y="${y}" font-size="11">z</text><text x="${x + 9}" y="${y - 11}" font-size="14">z</text><text x="${x + 20}" y="${y - 25}" font-size="17">Z</text></g>`;
+const zzz = (f, x, y) => `<g class="zzz" aria-hidden="true" fill="${f.paper}" stroke="${f.ink}" stroke-width="0.5" font-family="system-ui, sans-serif" font-weight="700"><text x="${x}" y="${y}" font-size="11">z</text><text x="${x + 9}" y="${y - 11}" font-size="14">z</text><text x="${x + 20}" y="${y - 25}" font-size="17">Z</text></g>`;
 
 /**
  * В кресле, лицом к зрителю: ноги под пледом, из-под него видны носки. Точка отсчёта — середина сиденья.
@@ -1732,7 +1879,15 @@ export const HER_FRAMES = Object.freeze({
   books: ["booksb", "sip", "b"], "home-books": ["home-booksb", "sip", "b"],
   play3: ["play3b", "sweep", ""], "home-play3": ["home-play3b", "sweep", "", 1.0714],
 });
-const FRAME_NAMES = new Set(Object.values(HER_FRAMES).map(([name]) => name));
+/**
+ * Поворот головы (0.53.0, идея 185: «больше движений»): третий кадр позы — та же фигура точка в точку, но голова
+ * повёрнута в сторону; `l` и `r` — куда она на картинке смотрит (сторону художник выбирает сам: слова в просьбе ею не
+ * управляют). Кадр виден, пока она смотрит в эту сторону — на Байта или в окно (слова страницы `.look-l`, `.look-r`):
+ * первые два кадра на это время уходят. Заплаткой на лицо поворот не выходит (шов по волосам) — только целым кадром.
+ */
+export const HER_TURNS = Object.freeze({ work: ["workc", "r"], "home-work": ["home-workc", "l"], tea: ["teac", "r"], "home-tea": ["home-teac", "l"] });
+export const turnOf = (name) => (typeof name === "string" && Object.hasOwn(HER_TURNS, name) ? HER_TURNS[name][0] : null);
+const FRAME_NAMES = new Set([...Object.values(HER_FRAMES), ...Object.values(HER_TURNS)].map(([name]) => name));
 /** Имя второго кадра этой картинки; `null` — кадра у неё нет. */
 export const frameOf = (name) => (typeof name === "string" && Object.hasOwn(HER_FRAMES, name) ? HER_FRAMES[name][0] : null);
 /**
@@ -2036,7 +2191,8 @@ function headLayer(g, name, place, x, y, inside) {
  */
 function emoMarks(x, y) {
   const font = `text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="700" stroke="#3a2412" stroke-width="0.7" paint-order="stroke"`;
-  const mark = (name, body) => `<g class="emo e-${name}" opacity="0">${body}</g>`;
+  // Знаки — украшение рисунка: программе чтения с экрана их называть не нужно («восклицательный знак», «z»).
+  const mark = (name, body) => `<g class="emo e-${name}" opacity="0" aria-hidden="true">${body}</g>`;
   return [
     mark("bang", `<text x="${n(x + 27)}" y="${n(y - 20)}" font-size="17" fill="#ffd166" ${font}>!</text>`),
     mark("ask", `<text x="${n(x + 27)}" y="${n(y - 20)}" font-size="16" fill="#9ad7ff" ${font}>?</text>`),
@@ -2050,7 +2206,7 @@ function emoMarks(x, y) {
  * место, где её гладят (голова). `ghost` — её прежняя поза `{ name, sprite, x }`: она тает, пока новая проявляется;
  * стояла в другом месте и есть картинка «идёт» (`walker`) — доходит до нового места шагом.
  */
-function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null, frame = null, face = "") {
+function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null, frame = null, face = "", turn = null) {
   const place = spritePlace(name, sprite, x), { tall, kind, wide, feet, top, left } = place, low = kind === "floor";
   // Веки — заплатка с закрытыми глазами: моргает; клюёт носом (`face: "drowsy"`) — моргает медленно (`.slow`).
   // Румянец (0.48.0) — два пятна под глазами, по месту той же заплатки; не виден, пока её не погладят или не нальют
@@ -2083,9 +2239,13 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   // Кадр, на котором она смотрит на зрителя, помечен `lk`, второй — `nl`: нажали на неё — страница показывает первый
   // (`.poked`): подняла глаза. У танца пометок нет — он не прерывается.
   const looks = frame ? HER_FRAMES[name]?.[2] ?? "a" : "", seen = (which) => (looks ? (looks === which ? " lk" : " nl") : "");
+  // Третий кадр — голова повёрнута (0.53.0, `HER_TURNS`): лежит поверх первых двух и не виден, пока она не посмотрит
+  // в его сторону; сторона — словом на группе (`tl`, `tr`), чтобы стили страницы знали, какой взгляд его открывает.
+  const turned = turn ? `<g class="fr c">${spriteLit(part, turn.name, spritePlace(name, turn.sprite, x), g.id("herMaskC"))}</g>` : "";
+  const group = turn ? `alive t${turn.side}` : "alive";
   const core = frame
-    ? `<g class="alive"><g class="fr a ${frame.how}${seen("a")}">${lit}${alive}</g><g class="fr b ${frame.how}${seen("b")}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x, frame.grow), g.id("herMaskB"))}</g></g>`
-    : `<g class="alive">${lit}</g>${alive}`;
+    ? `<g class="${group}"><g class="fr a ${frame.how}${seen("a")}">${lit}${alive}</g><g class="fr b ${frame.how}${seen("b")}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x, frame.grow), g.id("herMaskB"))}</g>${turned}</g>`
+    : turn ? `<g class="${group}"><g class="fr a">${lit}</g>${turned}</g>${alive}` : `<g class="alive">${lit}</g>${alive}`;
   // Стоя она ещё и чуть покачивается (0.48.0, «небольшие движения головы»): вся фигура, от ступней; голова идёт дальше всех.
   // Три слоя движения (0.49.0, «разделить переходы, мимику и постоянное состояние»): переход — снаружи (`.arrive`,
   // `.leave`, `.lower`, `.rise`); мимика — `.mim` (вздрогнула, вздохнула, наклонилась) и слой головы; постоянное —
@@ -2509,7 +2669,9 @@ function insideOf(view = {}, options = {}) {
   // Второй кадр её позы: загружен — она движется внутри позы; нет — стоит одной картинкой, как раньше.
   const alt = sprite && Object.hasOwn(HER_FRAMES, name) ? HER_FRAMES[name] : null;
   const frame = alt && loaded && fitsSprite(loaded[alt[0]]) ? { name: alt[0], sprite: loaded[alt[0]], how: alt[1], grow: Number(alt[3]) > 0 ? Number(alt[3]) : 1 } : null;
-  const she = sprite ? herPainted(g, c, f, part, name, sprite, stand.x, door ?? was, walker, frame, view.her?.face)
+  const side = sprite && Object.hasOwn(HER_TURNS, name) ? HER_TURNS[name] : null;
+  const turn = side && loaded && fitsSprite(loaded[side[0]]) ? { name: side[0], sprite: loaded[side[0]], side: side[1] } : null;
+  const she = sprite ? herPainted(g, c, f, part, name, sprite, stand.x, door ?? was, walker, frame, view.her?.face, turn)
     // Её на рисунке нет, а только что была: уходит к шкафу, за левый край.
     : view.her?.away === true ? (before ? herLeaving(g, part, before, walker) : { note: changingNote() })
       // Картинка заказана и ещё не пришла — силуэт с точками (0.49.0); иначе она нарисована кодом.
@@ -2521,7 +2683,7 @@ function insideOf(view = {}, options = {}) {
   const noticed = Boolean(pet) && !pet.walk && she.walk > 0 && Boolean(stand) && Boolean(spot) && Math.abs(spot.x - stand.x) < 130 && ["sit", "lie", "belly", "claw", "eat"].includes(petShape);
   const [markX, markY] = noticed ? (([bx, by, bw]) => [bx + bw / 2, by - 5])(catBoxAt(spot, petShape)) : [0, 0];
   const petSvg = !pet ? "" : !noticed ? pet.svg
-    : `<g class="notice" style="--t:${she.walk}s"><g class="hop">${pet.svg}</g><text class="mark" x="${n(markX)}" y="${n(markY)}" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="700" fill="#ffd166" stroke="#3a2412" stroke-width="0.7" paint-order="stroke" opacity="0">!</text></g>`;
+    : `<g class="notice" style="--t:${she.walk}s"><g class="hop">${pet.svg}</g><text class="mark" aria-hidden="true" x="${n(markX)}" y="${n(markY)}" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="700" fill="#ffd166" stroke="#3a2412" stroke-width="0.7" paint-order="stroke" opacity="0">!</text></g>`;
   const on = (layer) => (pet?.layer === layer ? petSvg : "");
   // На полу — по глубине: кто ниже на рисунке, тот ближе к зрителю и закрывает дальнего.
   const herDepth = she.y ?? 400;
@@ -2546,48 +2708,53 @@ function insideOf(view = {}, options = {}) {
   const shown = (key) => has(key) && !(key === "плед" && noPlaid);
   // Носок — у Байта под носом, если он на полу; иначе — посреди ковра.
   const sockAt = spot && pet?.layer === "front" ? [spot.x + (spot.mirror ? 34 : -34) * (spot.k ?? 1), spot.y - 1] : [214, 470];
-  const box = boxBack(c) + on("box") + boxFront(g, c);
+  // Комната картинкой (0.53.0): мебель и стены — одна картинка, вещи — с листа; чего на картинке нет, рисует код.
+  const pic = roomOf(options);
+  const painted = (name, how) => paintedThing(g, pic, name, part, how);
+  const lift = (dy, body) => (pic && body ? at(0, dy, body) : body);
+  // Коробка на картинке написана целиком; Байт в ней — и её передняя стенка встаёт поверх него.
+  const box = pic ? on("box") + (pet?.layer === "box" ? painted("boxFront") : "") : boxBack(c) + on("box") + boxFront(g, c);
 
   const parts = [
-    glass(g, part, sky, ajar, view.glow), walls(g, c), windowFrame(g, c),
-    curtains(g, c, ajar && !fx.has("curtains")), fxShown("curtains", () => curtainsShut(c)), garland(g, c, part, { rogue: fx.has("blink") }),
+    glass(g, part, sky, ajar, view.glow), pic ? paintedRoom(g, pic, part, dark) : walls(g, c), pic ? "" : windowFrame(g, c),
+    pic ? (ajar && !fx.has("curtains") ? paintedCurtains(g, pic, part, dark) : "") : curtains(g, c, ajar && !fx.has("curtains")), fxShown("curtains", () => curtainsShut(c)), pic ? paintedGarland(g, pic, part, fx.has("blink")) : garland(g, c, part, { rogue: fx.has("blink") }),
     thing("фонарь", () => lantern(g, c, part)),
-    starMap(g, c),
-    thing("рисунок", () => drawing(c)),
-    thing("календарь", () => calendar(c)),
+    pic ? "" : starMap(g, c),
+    thing("рисунок", () => (pic ? painted("рисунок") : drawing(c))),
+    thing("календарь", () => (pic ? painted("календарь") : calendar(c))),
     // 0.49.0: её наброски на стекле и открытка на подоконнике — за ней и за Байтом, перед окном.
-    sill(g, c) + (own.sketches ? sketches(c, own.sketches) : "") + (own.card ? skyCard(c) : ""), fxShown("window", () => sashOpen(c), ajar && !fx.has("curtains")),
+    (pic ? "" : sill(g, c)) + (own.sketches ? sketches(c, own.sketches) : "") + (own.card ? skyCard(c) : ""), fxShown("window", () => sashOpen(c), ajar && !fx.has("curtains")),
     fxShown("puddle", () => puddle()), fxShown("boat", () => boat(c)),
     // 0.49.0: подарки на шкафу — цветок в вазе и книга; Байт на шкафу сидит перед ними.
-    bookcase(g, c, has, part, music) + (gifted.has("flower") ? giftFlower(c) : "") + (gifted.has("book") ? giftBook(c) : ""), on("top"),
-    thing("свеча", () => candle(c)),
-    thing("подушка", () => sillPillow(g, c)),
-    thing("место", () => sillSeat(g, c)),
+    (pic ? paintedShelves(g, c, pic, has, part, music) : bookcase(g, c, has, part, music)) + lift(PIC.top, (gifted.has("flower") ? giftFlower(c) : "") + (gifted.has("book") ? giftBook(c) : "")), lift(PIC.top, on("top")),
+    thing("свеча", () => lift(PIC.candle, candle(c))),
+    thing("подушка", () => (pic ? painted("подушка") : sillPillow(g, c))),
+    thing("место", () => (pic ? painted("место") : sillSeat(g, c))),
     she.sillSeat ?? "", on("sill"),
-    fx.has("cactus") ? "" : cactus(g, c, PLANT.x, 262, view.plant !== "dry"),
-    thing("кактус", () => cactus(g, c, 368, 262, true, true)),
+    fx.has("cactus") ? "" : pic && view.plant !== "dry" ? painted("plant") : cactus(g, c, PLANT.x, 262, view.plant !== "dry"),
+    thing("кактус", () => (pic ? painted("кактус") : cactus(g, c, 368, 262, true, true))),
     // Свет лампы на стене — под мебелью и фигурами.
-    lampLight(g, part, shade, dark), floorLight(g, part, shade, sky, dark),
+    lampLight(g, part, shade, dark), floorLight(g, part, shade, sky, dark, Boolean(pic)),
     // Ковёр — до кресла: большое кресло (0.44.0) стоит на его дальнем краю ножками, а не тонет за ним.
-    rug(g, c),
+    pic ? "" : rug(g, c),
     // Кресла, плед, стол.
-    thing("кресло", () => armchair(g, c, CHAIR2.x, CHAIR2.y, { second: true, k: CHAIR2.k })),
-    armchair(g, c, CHAIR.x, CHAIR.y, { k: CHAIR.k }), on("under"), noPlaid ? "" : plaidOnChair(g, c, has("плед")),
+    thing("кресло", () => (pic ? painted("кресло") : armchair(g, c, CHAIR2.x, CHAIR2.y, { second: true, k: CHAIR2.k }))),
+    pic ? "" : armchair(g, c, CHAIR.x, CHAIR.y, { k: CHAIR.k }), on("under"), noPlaid ? "" : pic ? paintedPlaid(g, pic, part, has("плед")) : plaidOnChair(g, c, has("плед")),
     she.seat ?? "", on("lap"),
-    stoolFree ? stool(g, c, STOOL.rest, STOOL.y) + (own.book ? foundBook(c) : "") : "",
-    desk(g, c),
-    notebook(c), teapot(g, c, { steam: Boolean(view.tea) }), on("desk"), lamp(g, c, part, shade, dark),
+    stoolFree ? (pic ? painted("stool") : stool(g, c, STOOL.rest, STOOL.y)) + (own.book ? foundBook(c) : "") : "",
+    pic ? "" : desk(g, c),
+    pic ? "" : notebook(c), pic ? (view.tea ? teaSteam() : "") : teapot(g, c, { steam: Boolean(view.tea) }), on("desk"), pic ? paintedLamp(g, pic, part, shade, dark, shade !== DAY.lamp) : lamp(g, c, part, shade, dark),
     // В день рождения на столе — торт: после стола и лампы, иначе его закрывает мебель (так было до 0.45.0).
     thing("торт", () => cake(g, c)),
     // Пол.
     motes(part, sky),
-    at(BOWL.dx, BOWL.dy, bowl(g, c, Boolean(view.fed))),
-    yarn(g, c) + (gifted.has("toy") ? giftToy(f) : ""),
+    pic ? (view.fed ? at(PIC.bowl[0], PIC.bowl[1], bowlFood(c)) : "") : at(BOWL.dx, BOWL.dy, bowl(g, c, Boolean(view.fed))),
+    (pic ? "" : yarn(g, c)) + (gifted.has("toy") ? giftToy(f) : ""),
     boxNear ? "" : box,
     fxShown("cactus", () => cactusFallen(g, c, view.plant !== "dry")),
     fxShown("sock", () => sock(c, ...sockAt)),
-    ahead ? at(PILLOW_ASIDE, 0, catPillow(g, c)) : catPillow(g, c),
-    thing("тапочки", () => slippers(g, c)),
+    pic ? painted("bed", { dx: ahead ? PILLOW_ASIDE : 0 }) : ahead ? at(PILLOW_ASIDE, 0, catPillow(g, c)) : catPillow(g, c),
+    thing("тапочки", () => (pic ? painted("тапочки") : slippers(g, c))),
     petBehind ? petOnFloor : "", she.front ?? "", petBehind ? "" : petOnFloor,
     boxNear ? box : "",
     // Байт идёт на новое место: по полу, перед мебелью.
@@ -2657,7 +2824,7 @@ export function drawRoom(view = {}, options = {}) {
   const part = lightIn(view), name = spriteOf(view), sky = skyIn(view?.sky);
   // В кладовую — всё, на что рисунок ссылается: нынешняя поза, прежняя (она тает) и, если она идёт, картинка «идёт».
   const moving = options?.was || options?.enter === true;
-  const wanted = [name, frameOf(name), options?.was?.name, moving ? walkOf(view) : null, moving ? frameOf(walkOf(view)) : null].filter((item, index, all) => item && options?.sprites?.[item] && all.indexOf(item) === index);
-  const store = wanted.map(item => drawSprite(item, options.sprites[item])).join("");
+  const wanted = [name, frameOf(name), turnOf(name), options?.was?.name, moving ? walkOf(view) : null, moving ? frameOf(walkOf(view)) : null].filter((item, index, all) => item && options?.sprites?.[item] && all.indexOf(item) === index);
+  const store = wanted.map(item => drawSprite(item, options.sprites[item])).join("") + drawPicture(options?.room);
   return `${drawBackdrop(part, sky, { phase: Number.isFinite(view?.moon) ? view.moon : 0.3 })}<g clip-path="url(#s-glass)" pointer-events="none"><g transform="translate(${WIN.x} ${WIN.y})">${drawRain(part, undefined, sky)}</g></g>${store ? `<defs>${store}</defs>` : ""}${drawInside(view, options)}`;
 }

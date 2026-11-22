@@ -263,6 +263,12 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
    на Байта или в окно в эту сторону (.look-l, .look-r); лежит под веками — моргать не мешает. */
 #room .eyl, #room .eyr { opacity: 0; transition: opacity 0.2s ease-in-out; }
 #room .look-l .eyl, #room .look-r .eyr { opacity: 1; }
+/* 0.53.0 — поворот головы картинкой (.fr.c): третий кадр позы — та же фигура, голова повёрнута влево (.tl) или вправо
+   (.tr). Проявляется, пока она смотрит в эту сторону; первые два кадра уходят, когда он уже проявился, — иначе на миг
+   сквозь неё была бы видна комната. Взгляд кончился — кадр тает, под ним снова обычная поза. */
+#room .fr.c { opacity: 0; transition: opacity 0.28s ease-in-out; }
+#room .look-l .alive.tl .fr.c, #room .look-r .alive.tr .fr.c { opacity: 1; }
+#room .look-l .alive.tl .fr.a, #room .look-l .alive.tl .fr.b, #room .look-r .alive.tr .fr.a, #room .look-r .alive.tr .fr.b { opacity: 0; animation: none; transition: opacity 0.05s linear 0.27s; }
 @keyframes blush { 0% { opacity: 0; } 20%, 70% { opacity: 0.55; } 100% { opacity: 0; } }
 #room .notice .hop { animation: hop 0.45s ease-out both; animation-delay: calc(var(--t, 1s) - 0.4s); }
 @keyframes hop { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-3.5px); } }

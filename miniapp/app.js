@@ -30,7 +30,7 @@ import * as logic from "./logic.js";
 // после первой публикации (`drawRain`, `spriteOf`, `drawSprite`, `spritesOf`, `spriteStand`, `applyPat`, `nextTurn`,
 // а с 0.44.0 — `castOf`, `walkOf`, `walkSeconds`, `DOOR_X`, `applyTick`, `changeOf`, `nextBeat`, `leftOf`, с 0.45.0 —
 // `frameOf`, `applyBook`, `demoBook`, с 0.48.0 — `applyWindow`, `demoWindow`), перед вызовом проверяется.
-const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf } = scene;
+const { drawBackdrop, drawRain, drawInside, spriteOf, drawSprite, spritesOf, spriteStand, castOf, walkOf, walkSeconds, DOOR_X, frameOf, drawPicture } = scene;
 const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyPick, applyTap, applyPat, nextTurn, refused, explain, unwrap, demoLook, demoCare, demoPick, demoPat, applyTick, changeOf, nextBeat, leftOf, applyBook, demoBook, applyLamp, demoLamp, applyMusic, demoMusic, applyCall, demoCall, applyWear, demoWear, applyBrew, demoBrew, wearAt, applyQuiet, demoQuiet, applyWindow, demoWindow, demoKept } = logic;
 /**
  * Каким светом красить небо и страницу (0.47.0): по солнцу города, если его знают и рисунок (`scene.lightIn`), и
@@ -39,6 +39,8 @@ const { PAGE, CARE, LIGHTS, HEADERS, blank, viewOf, applyLook, applyCare, applyP
 const lightIn = (view) => (typeof scene.lightIn === "function" ? scene.lightIn(view) : view.part);
 /** Второй кадр картинки (движение внутри позы, 0.45.0); прежний `scene.js` кадров не знает. */
 const frameName = (name) => (typeof frameOf === "function" ? frameOf(name) : null);
+/** Третий кадр позы — голова повёрнута (0.53.0); прежний `scene.js` его не знает. */
+const turnName = (name) => (typeof scene.turnOf === "function" ? scene.turnOf(name) : null);
 // Что бывает за окном: с 0.44.0 — семь видов неба (погода города человека); прежняя логика знает два.
 const SKY_NAMES = Array.isArray(logic.SKIES) ? logic.SKIES : ["rain", "snow"];
 const skyName = (value) => (SKY_NAMES.includes(value) ? value : "rain");
@@ -67,7 +69,7 @@ let header = "";
 // её картинка и место, где она стоит, место и фигура Байта — по ним прежняя поза тает, а до нового места они
 // доходят шагом. `back` и `inside` — приставки имён слоёв: когда час сменяется при открытой странице, прежний слой
 // тает поверх нового, и имена у них должны быть разными.
-const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-", until: 0, still: null, shown: null, inks: null, zones: "" };
+const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-", until: 0, still: null, shown: null, inks: null, zones: "", room: "" };
 // Сколько прежний слой тает поверх нового (то же число — в стилях: `.fading`).
 const FADE_MS = 1600;
 // Сколько её нет, пока она переодевается.
@@ -140,7 +142,7 @@ function settle(name, sprite) {
   const shown = spriteOf(viewOf(state));
   if (shown === name) { drawn.view = ""; paint(); return; }
   // Второй кадр позы, что сейчас на рисунке, пришёл позже неё самой: показать — но не посреди перехода.
-  if (sprite && frameName(shown) === name) frameLater();
+  if (sprite && (frameName(shown) === name || turnName(shown) === name)) frameLater();
 }
 /**
  * Второй кадр пришёл, когда поза уже на рисунке: перерисовка покажет его, но она же оборвала бы переход — прежняя
@@ -425,6 +427,97 @@ function loadSprite(name, attempt, kept) {
 /** Связь вернулась — картинки, которых ждём, спрашиваются сразу, а не по отсчёту. */
 function hurrySprites() {
   for (const [name, [timer, attempt]] of [...sooner]) { clearTimeout(timer); loadSprite(name, attempt, ""); }
+  for (const [name, [timer, attempt]] of [...roomSooner]) { clearTimeout(timer); loadRoom(name, attempt, ""); }
+}
+
+// ── Комната картинкой (0.53.0, идея 202) ─────────────────────────────────────
+// Сообщение 53: «Как мы можешь обновить комнату? Именно саму комнату» — владелец выбрал эскиз, и комната теперь
+// написана художником: стены, пол, окно и мебель — картинка (`./room/day.js` — с солнцем на полу, `./room/dull.js` —
+// пасмурная), вещи встают на неё с листа, а небо, свет часа, она и Байт остаются живыми (`scene.js`). Картинка
+// грузится по ходу дела и остаётся в памяти телефона: пока её нет, комната нарисована кодом — тем, что доступно, —
+// а пришла — проступает поверх. Не пришла — страница просит снова, как её картинки; не читается — комната кодом.
+// На своей машине `#room=code` оставляет комнату кодом — для проверки в браузере.
+const ROOM_KEY = `ai-room-pic:${PAGE}:`, ROOM_NAMES = Object.freeze(["day", "dull"]);
+const rooms = {}, roomAsked = new Set(), roomSooner = new Map();
+const canRoom = canPaint && typeof scene.roomNameOf === "function" && typeof drawPicture === "function" && typeof scene.drawParts === "function" && !(local && params.room === "code");
+/**
+ * Какая картинка комнаты нужна этому рисунку (по погоде) — и она сама, если уже здесь. Нужная ещё в пути (или не
+ * читается), а другая на месте — комната остаётся картинкой: солнце на полу под дождём на несколько секунд — меньшая
+ * неправда, чем комната, которая на глазах становится рисунком кодом и обратно.
+ */
+const roomNameOf = (view) => (canRoom ? scene.roomNameOf(view) : "");
+const roomFor = (view) => rooms[roomNameOf(view)] || ROOM_NAMES.map(name => rooms[name]).find(Boolean) || null;
+function keptRoom(name) {
+  try {
+    const text = localStorage.getItem(ROOM_KEY + name), room = text ? JSON.parse(text) : null;
+    return room && typeof room.src === "string" ? { room, text } : null;
+  } catch { return null; }
+}
+function keepRoom(name, room) {
+  try {
+    // Номер страницы — в имени записи: картинки прежних страниц стираются.
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (key && key.startsWith("ai-room-pic:") && !key.startsWith(ROOM_KEY)) localStorage.removeItem(key);
+    }
+    localStorage.setItem(ROOM_KEY + name, JSON.stringify(room));
+  } catch {
+    try { localStorage.removeItem(ROOM_KEY + name); } catch { /* память телефона закрыта: картинка придёт из сети */ }
+  }
+}
+/** Обе картинки (сама комната и лист вещей) читаются — и разобраны заранее. */
+const roomDecoded = (room) => (room?.things ? Promise.all([decoded(room), decoded(room.things)]).then(([one, two]) => one && two) : Promise.resolve(false));
+/** Определения картинок комнаты — в кладовую рисунка; негодные рисунок не примет — вернёт пустую строку. */
+function storeRoom(room) {
+  const shelf = $("store");
+  if (!shelf) return false;
+  const holder = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  holder.innerHTML = drawPicture(room);
+  if (!holder.firstChild) return false;
+  shelf.append(holder);
+  return true;
+}
+function settleRoom(name, room) {
+  if (rooms[name] !== undefined) return;
+  rooms[name] = room;
+  if (!room) return;
+  // На рисунке нужна именно она — перерисовать: комната кодом тает, картинка проступает (`paint`).
+  if (state.ready && roomFor(viewOf(state)) === room) { drawn.view = ""; paint(); }
+  // Вторая картинка — заранее, но не сразу: погода сменится — комната не вернётся к рисунку кодом.
+  setTimeout(() => { for (const other of ROOM_NAMES) if (other !== name) fetchRoom(other); }, 20_000);
+}
+function fetchRoom(name) {
+  if (!canRoom || !ROOM_NAMES.includes(name) || roomAsked.has(name)) return;
+  roomAsked.add(name);
+  const kept = keptRoom(name);
+  if (!kept) { loadRoom(name, 0, ""); return; }
+  // Из памяти телефона — сразу на рисунок; из сети — следом, только сверить.
+  roomDecoded(kept.room).then((fine) => {
+    const shown = fine && rooms[name] === undefined && storeRoom(kept.room);
+    if (shown) settleRoom(name, kept.room);
+    loadRoom(name, 0, shown ? kept.text : "");
+  });
+}
+function loadRoom(name, attempt, kept) {
+  roomSooner.delete(name);
+  (attempt ? import(`./room/${name}.js?again=${attempt}`) : import(`./room/${name}.js`))
+    .then(async (module) => {
+      const room = module?.default;
+      if (!room || typeof room.src !== "string") throw new Error("empty");
+      // На рисунке уже картинка из памяти телефона: из сети пришла другая — она покажется в следующий заход.
+      if (kept) { if (JSON.stringify(room) !== kept && await roomDecoded(room)) keepRoom(name, room); return; }
+      if (!(await roomDecoded(room))) throw new Error("unreadable");
+      settleRoom(name, storeRoom(room) ? room : false);
+      keepRoom(name, room);
+    })
+    .catch((error) => {
+      if (kept) return;
+      // Пришла, но показать её этот телефон не может — комната остаётся нарисованной кодом. Не пришла — просим снова.
+      if (error?.message === "empty" || error?.message === "unreadable") { settleRoom(name, false); return; }
+      const wait = SPRITE_AGAIN_MS[attempt];
+      if (wait === undefined) { note("картинка", "late", `room/${name}`); roomAsked.delete(name); return; }
+      roomSooner.set(name, [setTimeout(() => loadRoom(name, attempt + 1, ""), wait), attempt + 1]);
+    });
 }
 
 const plural = (count, one, few, many) => {
@@ -481,7 +574,7 @@ function putInside(view, options, whole = false) {
   }
   // «Как есть» — рисунок, на котором все уже дошли и никто не тает: по нему видно, какая часть на самом деле стала
   // другой. «В движении» — тот же рисунок с переходами от прежнего (она идёт, прежняя поза тает, Байт перебегает).
-  const calm = options ? { sprites: options.sprites, ...(options.prefix ? { prefix: options.prefix } : {}) } : undefined;
+  const calm = options ? { sprites: options.sprites, ...(options.room ? { room: options.room } : {}), ...(options.prefix ? { prefix: options.prefix } : {}) } : undefined;
   const still = scene.drawParts(view, calm), moving = options ? scene.drawParts(view, options) : still;
   const art = inside.firstElementChild, zones = inside.lastElementChild, store = art?.firstElementChild ?? null;
   const fits = !whole && drawn.still && drawn.shown && drawn.inks && art && zones && art !== zones && store?.localName === "defs"
@@ -590,22 +683,31 @@ function paint() {
     if (sprites[name] && typeof walkOf === "function") fetchSprite(walkOf(view));
     // Второй кадр её нынешней позы — после самой позы: без него она стоит одной картинкой, с ним — движется.
     if (sprites[name]) fetchSprite(frameName(name));
+    // И третий — голова повёрнута (0.53.0): когда она посмотрит в окно или на Байта, кадр уже будет здесь.
+    if (sprites[name]) fetchSprite(turnName(name));
+    // Комната картинкой (0.53.0): та, что нужна при этой погоде.
+    fetchRoom(roomNameOf(view));
   }
+  const picture = roomFor(view), pictureName = picture?.name ?? "";
   if (drawn.view !== key || state.entering) {
     // Где она и Байт были на прежнем рисунке: прежняя поза тает, пока новая проявляется, а до другого места они
     // доходят шагом. Свет сменился — прежняя комната тает целиком, и ходить в ней некому.
-    const before = fade ? null : drawn.cast;
+    // Картинка комнаты пришла при открытой странице (или сменилась вместе с погодой) — прежняя комната тает поверх
+    // новой, как при смене света: резкой подмены нет.
+    const renew = fade || (drawn.shown !== null && drawn.room !== pictureName);
+    const before = renew ? null : drawn.cast;
     const options = canPaint ? {
-      sprites, ...(before?.her ? { was: before.her } : {}), ...(before?.cat ? { catWas: before.cat } : {}), ...(state.entering ? { enter: true } : {}),
+      sprites, ...(picture ? { room: picture } : {}), ...(before?.her ? { was: before.her } : {}), ...(before?.cat ? { catWas: before.cat } : {}), ...(state.entering ? { enter: true } : {}),
     } : undefined;
-    if (fade) {
+    if (renew) {
       drawn.inside = drawn.inside === "r-" ? "q-" : "r-";
       ghostOf($("inside"));
     }
     if (options && drawn.inside !== "r-") options.prefix = drawn.inside;
     // Свет сменился — комната рисуется заново целиком (прежняя тает поверх); иначе — только то, что стало другим.
-    const fresh = putInside(view, options, fade);
+    const fresh = putInside(view, options, renew);
     drawn.view = key;
+    drawn.room = pictureName;
     drawn.cast = castNow(view);
     // Картинка, которая сейчас на рисунке, в памяти телефона — последняя: её и ждать в следующий заход.
     if (drawn.cast?.her?.name) keepSprite(drawn.cast.her.name);
@@ -781,6 +883,8 @@ async function enter() {
   // Пока сердце отвечает, из памяти телефона поднимается картинка, что была на рисунке в прошлый раз (0.52.0):
   // чаще всего она же и нужна — и тогда она на месте с первой секунды.
   if (canPaint) { const last = keptList().filter(item => item.startsWith(HER_KEY)).pop(); if (last) fetchSprite(last.slice(HER_KEY.length)); }
+  // И картинка комнаты (0.53.0): лежит в памяти телефона — комната с первой секунды такая же, как в прошлый раз.
+  for (const name of ROOM_NAMES) if (canRoom && keptRoom(name)) fetchRoom(name);
   const result = await call({ do: "look" });
   state = applyLook(state, result, at);
   tuneFor(state.music);
@@ -1070,7 +1174,7 @@ const canAlbum = typeof logic.applyGift === "function" && typeof logic.demoAlbum
 async function thumbOf(view) {
   const name = canPaint ? spriteOf(view) : null;
   if (name) await settled([name], 4000);
-  const body = scene.drawRoom(view, canPaint ? { sprites } : undefined);
+  const body = scene.drawRoom(view, canPaint ? { sprites, ...(roomFor(view) ? { room: roomFor(view) } : {}) } : undefined);
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${scene.WIDTH ?? 400} ${scene.HEIGHT ?? 520}"><style>.wink,.fr.b,.mark,.emo,.coming{display:none}</style>${body}</svg>`)}`;
 }
 function closeAlbum() {
