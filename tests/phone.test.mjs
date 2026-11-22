@@ -633,6 +633,20 @@ test("несохранённые правки в папке не стирают�
     assert.match(check.out, /от имени @voice_bot, канал «Мост "дом"»/u, "название канала — словом, а не \\u041c…, и с кавычками внутри");
     for (const secret of [TOKEN, ...Object.values(KEYS)]) assert.ok(!check.out.includes(secret), "ключи не печатаются");
     assert.ok(!box.cli().slice(-1)[0].args.includes("push"), "проверка ничего не публикует");
+    assert.doesNotMatch(check.out, /дверь приложения|KEY_DOOR/u, "ключа двери нет — о двери ни слова");
+
+    // Ключ двери приложения (0.54.0, docs/DOOR.md) — не «запасной мозг»: о нём своя строка, и вид у него свой.
+    const base = ["# ключи", `TGCLOUD_HEART_TOKEN=${TOKEN}`, `AI_PROVIDER_KEY=${KEYS.model}`, "OWNER_TG_ID=42", `KEY_GIGACHAT=${KEYS.giga}`, "HEART_BRANCH=work", `ALARM_BOT_TOKEN=${KEYS.voice}`, "ALARM_CHAT_ID=-100"];
+    const DOOR_SECRET = "door-SECRET-0123456789abcdefghijklmnop";
+    box.keys([...base, `KEY_DOOR=-1001234567890:${DOOR_SECRET}`]);
+    const withDoor = box.run("check");
+    assert.match(withDoor.out, /✓ дверь приложения: ключ записан верно/u);
+    assert.match(withDoor.out, /запасные мозги: gigachat\s*\n/u, "среди мозгов двери нет");
+    assert.ok(!withDoor.out.includes(DOOR_SECRET) && !withDoor.out.includes("-1001234567890"), "ни секрет, ни номер канала не печатаются");
+    box.keys([...base, `KEY_DOOR=${DOOR_SECRET}`]);
+    const wrongDoor = box.run("check");
+    assert.match(wrongDoor.out, /KEY_DOOR записан не так: нужен вид «номер канала:секрет»/u);
+    assert.ok(!wrongDoor.out.includes(DOOR_SECRET));
   } finally { box.clean(); }
 });
 

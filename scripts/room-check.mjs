@@ -881,19 +881,20 @@ try {
     await tab.goto(day, { waitUntil: "load", timeout: 30_000 });
     await pause(900);
     const shownNow = () => tab.evaluate(() => ({
-      // Второй кадр позы (`.fr.b`, 0.45.0) — не другая поза: ни в «нарисовано», ни в «видно» он не идёт.
-      used: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile|look[lr])$/u.test(String(href))),
+      // Второй кадр позы (`.fr.b`, 0.45.0) — не другая поза: ни в «нарисовано», ни в «видно» он не идёт. Третий
+      // (`.fr.c`, поворот головы) — тоже: с 0.54.0 он есть у поз в кресле, а вечером в свитере она в них и сидит.
+      used: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b, .fr.c")).map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile|look[lr])$/u.test(String(href))),
       // Прежняя поза остаётся в рисунке до следующей перерисовки, но уже растаявшей: что на ней сейчас ВИДНО —
       // это ссылки без тех, чья группа «тает» дошла до прозрачности.
-      seen: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(node => { const gone = node.closest(".leave, .stride"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
+      seen: [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b, .fr.c")).filter(node => { const gone = node.closest(".leave, .stride"); return !gone || Number(getComputedStyle(gone).opacity) > 0.02; })
         .map(node => node.getAttribute("href")).filter(href => /^#r-her-[a-z0-9-]+$/u.test(String(href)) && !/-(?:blink|smile|look[lr])$/u.test(String(href))),
       kept: [...document.querySelectorAll("#store image")].map(node => node.id),
       leave: document.querySelectorAll("#inside .leave").length, arrive: document.querySelectorAll("#inside .arrive").length,
       wink: document.querySelectorAll("#inside use.wink").length,
       // Улыбка (0.50.0): насколько видна заплатка на лицо (0 — скрыта, 1 — видна); второй кадр позы не в счёт.
-      grin: [...document.querySelectorAll("#inside use.grin")].filter(node => !node.closest(".fr.b")).map(node => Number(getComputedStyle(node).opacity)),
+      grin: [...document.querySelectorAll("#inside use.grin")].filter(node => !node.closest(".fr.b, .fr.c")).map(node => Number(getComputedStyle(node).opacity)),
       // Взгляд в сторону (0.51.0): насколько видна заплатка на глаза со зрачками вбок.
-      gaze: [...document.querySelectorAll("#inside use.eyl, #inside use.eyr")].filter(node => !node.closest(".fr.b")).map(node => Number(getComputedStyle(node).opacity)),
+      gaze: [...document.querySelectorAll("#inside use.eyl, #inside use.eyr")].filter(node => !node.closest(".fr.b, .fr.c")).map(node => Number(getComputedStyle(node).opacity)),
       winking: document.getAnimations().filter(animation => animation.playState === "running" && animation.effect?.target?.matches?.("#inside use.wink")).length,
       pouf: document.querySelectorAll('#inside [fill*="r-pouf"]').length,
     }));
@@ -1094,9 +1095,10 @@ try {
     tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
     const open = async (hash) => { await tab.goto(`${origin}/index.html#${hash}`, { waitUntil: "load", timeout: 30_000 }); await tab.reload({ waitUntil: "load" }); await pause(700); };
     const now = () => tab.evaluate(() => {
-      // Второй кадр позы (`.fr.b`, 0.45.0) — не другая картинка: в счёт идёт первый кадр, виден он сейчас или нет.
+      // Второй кадр позы (`.fr.b`, 0.45.0) и третий (`.fr.c`, поворот головы) — не другая картинка: в счёт идёт
+      // первый кадр, виден он сейчас или нет.
       const visible = (node) => { for (let at = node; at && at.id !== "inside"; at = at.parentElement) if (!at.classList?.contains("fr") && Number(getComputedStyle(at).opacity) <= 0.02) return false; return true; };
-      const hers = [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b")).filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile|look[lr])$/u.test(href));
+      const hers = [...document.querySelectorAll("#inside > .art use")].filter(node => !node.closest(".fr.b, .fr.c")).filter(visible).map(node => String(node.getAttribute("href"))).filter(href => /^#r-her-[a-z0-9-]+$/u.test(href) && !/-(?:blink|smile|look[lr])$/u.test(href));
       const strides = [...document.querySelectorAll("#inside .stride")];
       return {
         say: document.getElementById("say").textContent, light: document.getElementById("app").dataset.light, hers: [...new Set(hers)],

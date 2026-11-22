@@ -116,6 +116,23 @@ test("комната картинкой: живое остаётся кодом 
   const lampMask = `thing-day-${["рисунок", "календарь", "снимок", "подушка", "кружка", "место", "кресло", "плед", "plant", "кактус", "lamp"].indexOf("lamp")}`;
   assert.ok(!art(view({ part: "вечер" }), { room: day }).inks.includes(lampMask), "лампа горит");
   assert.ok(art(view({ part: "вечер", dark: true }), { room: day }).inks.includes(lampMask), "лампа погашена");
+  // Написанный свет вокруг лампы не рисуется никогда (0.54.0): от вещи берётся силуэт, свет даёт код.
+  for (const how of [{}, { part: "вечер" }, { part: "вечер", dark: true }, { part: "ночь" }]) {
+    const made = art(view(how), { room: day });
+    assert.match(made.text, /<g clip-path="url\(#r-lampCut\)"><svg /u, JSON.stringify(how));
+    assert.match(made.inks, /<clipPath id="r-lampCut"><path d="M[^"]+Z"\/><\/clipPath>/u, JSON.stringify(how));
+  }
+  // Днём и погашенная лампа не горит: абажур приглушён тоном ткани. Вечером и ночью — горит, как написана.
+  for (const how of [{}, { part: "утро" }, { part: "вечер", dark: true }]) assert.match(art(view(how), { room: day }).text, /<path class="unlit" /u, JSON.stringify(how));
+  for (const part of ["вечер", "ночь"]) assert.doesNotMatch(art(view({ part }), { room: day }).text, /class="unlit"/u, part);
+  // Верх абажура виден на фоне окна: у погашенной лампы тень проёма ложится и на него, последним слоем.
+  assert.match(art(view({ part: "вечер", dark: true }), { room: day }).text, /<path fill="url\(#r-dusk\)" d="[^"]+" mask="url\(#r-lampAir\)"\/><\/g>/u);
+  // Вещи на подоконнике тоже видны на фоне окна: вечером и ночью тень проёма ложится на Колючку, днём её нет.
+  const plantMask = `thing-day-${["рисунок", "календарь", "снимок", "подушка", "кружка", "место", "кресло", "плед", "plant"].indexOf("plant")}`;
+  for (const part of ["вечер", "ночь"]) assert.ok(art(view({ part }), { room: day }).text.includes(`<path fill="url(#r-dusk)" d="M124 44V262H388V44Z" mask="url(#r-${plantMask})"/>`), part);
+  assert.ok(!art(view(), { room: day }).text.includes(`mask="url(#r-${plantMask})"`), "днём тени нет");
+  // А вещь в глубине комнаты (табурет у стола) в проём окна не попадает — отдельной тени на ней нет.
+  assert.ok(!art(view({ part: "вечер" }), { room: day }).text.includes(`d="M124 44V262H388V44Z" mask="url(#r-thing-day-11)"`));
   // «Абажур любимого цвета» — его цвет поверх написанного абажура.
   assert.ok(art(view({ lamp: "#7fc8f0" }), { room: day }).text.includes('fill="#7fc8f0" opacity="0.6"'));
   assert.ok(!art(view({ lamp: "#7fc8f0", things: [] }), { room: day }).text.includes("#7fc8f0"), "без вещи «абажур» цвет лампы — как написан");
@@ -166,20 +183,33 @@ test("комната картинкой: страница грузит её по
 
 test("поворот головы: третий кадр позы лежит рядом с ней, встаёт на рисунок и виден только по слову страницы", async () => {
   // Идея 185 («больше движений»): заплаткой на лицо поворот не выходит — только целым кадром той же позы.
-  assert.deepEqual(scene.HER_TURNS, { work: ["workc", "r"], "home-work": ["home-workc", "l"], tea: ["teac", "r"], "home-tea": ["home-teac", "l"] });
+  assert.deepEqual(scene.HER_TURNS, {
+    work: ["workc", "r"], "home-work": ["home-workc", "l"], tea: ["teac", "r"], "home-tea": ["home-teac", "l"],
+    // 0.54.0: сидя в кресле — с блокнотом, с кружкой, с книгой.
+    work3: ["work3c", "r"], "home-work3": ["home-work3c", "l"], tea3: ["tea3c", "r"], "home-tea3": ["home-tea3c", "l"],
+    read: ["readc", "r"], "home-read": ["home-readc", "l"],
+    // Стоя: у подоконника с блокнотом, с метёлкой — влево в обоих нарядах (сторону выбирает художник).
+    work2: ["work2c", "l"], "home-work2": ["home-work2c", "l"], tidy: ["tidyc", "l"], "home-tidy": ["home-tidyc", "l"],
+  });
+  // Каким рисунком страница приходит к этой позе: состояние и место.
+  const HOW = { work: ["дело", "desk"], tea: ["уют", "sill"], work3: ["дело", "chair"], tea3: ["уют", "chair"], read: ["уют", "read"], work2: ["дело", "sill"], tidy: ["дело", "dust"] };
   assert.equal(scene.turnOf("work"), "workc");
   assert.equal(scene.turnOf("tea"), "teac");
-  assert.equal(scene.turnOf("read"), null);
+  assert.equal(scene.turnOf("read"), "readc");
+  assert.equal(scene.turnOf("sleep"), null);
   assert.equal(scene.turnOf(null), null);
   const load = async (name) => (await import(`../miniapp/her/${name}.js`)).default;
   for (const [pose, [turnName, side]] of Object.entries(scene.HER_TURNS)) {
     const base = await load(pose), frame = await load(scene.frameOf(pose)), turn = await load(turnName);
     // Та же фигура того же роста; ось тела — там же, с поправкой на то, как легли волосы (ширина меняется).
     assert.equal(turn.h, base.h, turnName);
-    assert.ok(Math.abs(turn.w - base.w) <= base.w * 0.06, `${turnName}: ширина ${turn.w} против ${base.w}`);
-    assert.ok(turn.cx > 0.4 && turn.cx < 0.6, `${turnName}: ось ${turn.cx}`);
+    // Ширина — по волосам: у повёрнутой головы они ложатся шире (сидя — до пятой части), ось от этого не зависит.
+    assert.ok(Math.abs(turn.w - base.w) <= base.w * 0.2, `${turnName}: ширина ${turn.w} против ${base.w}`);
+    // Ось кадра — там же, где у позы, с поправкой на волосы (`bash scripts/verify.sh axis` ставит её по ногам).
+    assert.ok(Math.abs(turn.cx * turn.w - base.cx * base.w) <= base.w * 0.12, `${turnName}: ось ${turn.cx} против ${base.cx}`);
     assert.match(scene.drawSprite(turnName, turn), new RegExp(`^<image id="r-her-${turnName}" width="${turn.w}" height="${turn.h}"`, "u"));
-    const described = { part: pose.startsWith("home-") ? "вечер" : "день", sky: "clear", plant: "wet", her: { key: pose.endsWith("tea") ? "уют" : "дело", pose: "desk", beat: true, ...(pose.startsWith("home-") ? { wear: "home" } : {}) }, cat: null, things: [] };
+    const [key, where] = HOW[pose.replace(/^home-/u, "")];
+    const described = { part: pose.startsWith("home-") ? "вечер" : "день", sky: "clear", plant: "wet", her: { key, pose: where, beat: true, ...(pose.startsWith("home-") ? { wear: "home" } : {}) }, cat: null, things: [] };
     assert.equal(scene.spriteOf(described), pose);
     const sprites = { [pose]: base, [scene.frameOf(pose)]: frame, [turnName]: turn };
     const withTurn = scene.drawParts(described, { sprites }).parts.join("");

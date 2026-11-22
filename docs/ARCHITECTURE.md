@@ -1121,3 +1121,16 @@ build, side_effects: "none" }` — без чтения и записи.
 в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
 `<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
 
+## Что добавила 0.54.0: где что лежит
+
+| Что | Где |
+|---|---|
+| Договор двери приложения | [DOOR.md](DOOR.md): транспорт, конверт, подпись, двенадцать проверок, ответ кусками, действия, пометки, что должен посредник, как открыть, пример с числами (сверяет `tests/door.test.mjs`) |
+| Дверь в сердце | `tgcloud/lib/bridge.js`: постоянные `DOOR_*`, `doorKey` (разбор `KEY_DOOR`), `doorPayload` и `doorWire` (подпись и текст поста), `doorRead`, `doorParts` (ответ кусками), `createDoor(deps)` → `{ enabled, channel, mine, onPost, sweep, line }` |
+| Подключение | `tgcloud/lib/heart.js`: `appDoor` — рядом с `onRoom`; пост канала сначала спрашивает `appDoor.mine(chatId)`; `appDoor.sweep()` — в такте после `abilities.sweep()`; строка «Дверь приложения: …» — в «статус» после строки «Комната:» |
+| Память двери | `heart:door:seen:<id>` — одноразовые номера (сутки); счётчики минуты и суток — там же, под `heart:door:` |
+| Настройки | `DOOR_GUESTS` в `tgcloud/lib/config.js` (по умолчанию `false`); ключ — `AI_EXTRA_KEYS.door` из `KEY_DOOR` (`scripts/inject-secrets.mjs`, `scripts/phone.sh`) |
+| Образец посредника | `scripts/door-client.mjs`: `sealRequest`, `openAnswer` — те же правила, что у сердца, без его кода; команды `setup`, `key`, `where`, `<действие> [json]`, `seal`, `open` |
+| Третьи кадры (поворот головы) | `miniapp/her/<поза>c.js`, таблица `HER_TURNS` в `miniapp/scene.js`: 14 строк; ось кадра — `bash scripts/verify.sh axis <поза>:<кадр>` (`scripts/room-axis.mjs`) |
+| Лампа с картины | `paintedLamp` в `miniapp/scene.js`: силуэт `PIC.lamp`, абажур `PIC.shade`, тон погашенной `PIC.shadeOff`; свет — `lampLight` |
+| Тень проёма на вещах | `paintedThing` в `miniapp/scene.js`: вещь, чья область пересекает окно (`WIN`), вечером и ночью получает `duskFill` под маской самой себя |

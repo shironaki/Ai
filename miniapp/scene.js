@@ -1150,7 +1150,10 @@ const roomTint = (part) => ROOM_TINT[part] ?? null;
  * «пледа на двоих»), `shade` — абажур лампы (для «абажура любимого цвета»).
  */
 const PIC = Object.freeze({
-  top: -6, candle: -8, speaker: [1, -7], bowl: [-3.5, 2], shade: "M376.5 260 L395.5 260 L400 288.5 L369 288.5 Z",
+  top: -6, candle: -8, speaker: [1, -7], bowl: [-3.5, 2], shade: "M376.3 260.2 L398.2 260.2 L400.5 277 V288.4 H369.6 Z",
+  // Сама лампа без света вокруг: абажур, ножка, подставка со шнуром — по этому силуэту она вырезается, когда не горит.
+  lamp: "M376.3 260.2 H386 V257.6 H389 V260.2 H398.2 L400.5 277 V288.6 H388.6 V303.8 H391.2 V307.2 L394.3 309.2 L397.9 314.5 V316.4 H376.5 L372.2 315.2 L372.6 312.2 L375.5 309.8 L380 308.2 L383 306.6 V304.2 H385.7 V288.6 H369.6 Z",
+  shadeOff: "#d8ccb4",
   // Малый плед: тот же, но обрезан выше — по линии, вдоль которой у большого идёт бахрома; бахрому дорисовывает код.
   plaid: { clip: "M220 240 H312 V330 L256 349 H220 Z", fringe: [[258, 348], [264, 346], [270, 344], [276, 342], [282, 340], [288, 338], [294, 336], [300, 334], [306, 332]] },
 });
@@ -1168,16 +1171,23 @@ function paintedRoom(g, room, part, off = false) {
 }
 /**
  * Вещь с листа — на своём месте. `dx`, `dy` — сдвиг (лежанка Байта отодвинута), `k` — мельче, от верхнего края
- * (малый плед), `glow` — свет часа на неё не ложится (лампа горит).
+ * (малый плед), `glow` — свет часа на неё не ложится (лампа горит), `off` — лампу погасили, `air: false` — тень
+ * проёма окна положит тот, кто вещь рисует (погашенная лампа: поверх неё ещё тон абажура).
+ *
+ * Вещь на подоконнике видна на фоне окна, а общая тень комнаты окно обходит (`airLight`): вечером и ночью тень
+ * ложится на такую вещь отдельно (0.54.0) — как на неё саму и на шторы. Без этого по горшку Колючки шла ровная
+ * полоса по линии подоконника: выше неё тени не было. Заметнее всего это было при погашенной лампе.
  */
-function paintedThing(g, room, name, part, { dx = 0, dy = 0, k = 1, glow = false } = {}) {
+function paintedThing(g, room, name, part, { dx = 0, dy = 0, k = 1, glow = false, off = false, air = true } = {}) {
   const [ax, ay, aw, ah, x, y, w, h] = room.things.at[name];
-  const box = `x="${n(x + dx + (w - w * k) / 2)}" y="${n(y + dy)}" width="${n(w * k)}" height="${n(h * k)}"`;
+  const left = x + dx + (w - w * k) / 2, top = y + dy;
+  const box = `x="${n(left)}" y="${n(top)}" width="${n(w * k)}" height="${n(h * k)}"`;
   const picture = `<svg ${box} viewBox="${ax} ${ay} ${aw} ${ah}" preserveAspectRatio="none"><use href="#r-room-${room.name}-things"/></svg>`;
   const tint = glow ? null : roomTint(part);
-  if (!tint) return picture;
+  const dusk = air && !glow && lit(part) && left < WIN.x + WIN.w && left + w * k > WIN.x && top < WIN.y + WIN.h && top + h * k > WIN.y;
+  if (!tint && !dusk) return picture;
   const mask = g.raw(`thing-${room.name}-${ROOM_THINGS.indexOf(name)}`, id => `<mask id="${id}" style="mask-type:alpha" maskUnits="userSpaceOnUse" ${box}>${picture}</mask>`);
-  return `${picture}<rect ${box} fill="${tint[0]}" opacity="${tint[1]}" mask="${mask}"/>`;
+  return `${picture}${tint ? `<rect ${box} fill="${tint[0]}" opacity="${tint[1]}" mask="${mask}"/>` : ""}${dusk ? `<path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="${mask}"/>` : ""}`;
 }
 /**
  * Шторы у открытого окна ходят от сквозняка (0.49.0), а на картинке они написаны неподвижными. Поэтому поверх каждой
@@ -1234,10 +1244,23 @@ function paintedShelves(g, c, room, has, part, music = false) {
 /**
  * Лампа с листа: горит — свет часа на неё не ложится. «Абажур любимого цвета» — его цвет поверх написанного абажура
  * (`own`); лампу погасили нажатием — она темнеет вместе с комнатой.
+ *
+ * Художник написал лампу горящей, со светом на стене вокруг. Этот написанный свет не рисуется никогда (0.54.0):
+ * от вещи берётся сам силуэт (`PIC.lamp`), а свет вокруг даёт код (`lampLight`) — у написанного был виден ровный
+ * край, и днём он оставался на стене. Горит лампа вечером и ночью; днём и погашенная — абажур приглушён ровным
+ * тоном ткани.
  */
 function paintedLamp(g, room, part, shade, off = false, own = false) {
-  const on = lit(part) && !off;
-  return paintedThing(g, room, "lamp", part, { glow: on }) + (own ? `<path d="${PIC.shade}" fill="${on ? shade : tint(shade, part)}" opacity="0.6"/>` : "");
+  const on = lit(part) && !off, picture = paintedThing(g, room, "lamp", part, { glow: on, air: false });
+  const cover = own ? `<path d="${PIC.shade}" fill="${on ? shade : tint(shade, part)}" opacity="0.6"/>` : "";
+  const cut = g.raw("lampCut", id => `<clipPath id="${id}"><path d="${PIC.lamp}"/></clipPath>`);
+  if (on) return `<g clip-path="${cut}">${picture}</g>${cover}`;
+  // Верх абажура виден на фоне окна: вечерняя тень проёма ложится и на него — последним слоем, поверх тона ткани.
+  // Маска — сама лампа и её абажур: вокруг шишечки наверху картинка прозрачна, и тень туда не ложится.
+  const bare = paintedThing(g, room, "lamp", part, { glow: true });
+  const veil = lit(part) ? g.raw("lampAir", id => `<mask id="${id}" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="${WIN.x}" y="${WIN.y}" width="${WIN.w}" height="${WIN.h}">${bare}<path d="${PIC.shade}"/></mask>`) : "";
+  const air = veil ? `<path fill="${duskFill(g, part, off)}" d="${AIR_HOLE}" mask="${veil}"/>` : "";
+  return `<g clip-path="${cut}">${picture}<path class="unlit" d="${PIC.shade}" fill="${tint(PIC.shadeOff, part)}" opacity="0.62"/>${cover}${air}</g>`;
 }
 
 // ── что сценка дня изменила в комнате ────────────────────────────────────────
@@ -1885,7 +1908,14 @@ export const HER_FRAMES = Object.freeze({
  * управляют). Кадр виден, пока она смотрит в эту сторону — на Байта или в окно (слова страницы `.look-l`, `.look-r`):
  * первые два кадра на это время уходят. Заплаткой на лицо поворот не выходит (шов по волосам) — только целым кадром.
  */
-export const HER_TURNS = Object.freeze({ work: ["workc", "r"], "home-work": ["home-workc", "l"], tea: ["teac", "r"], "home-tea": ["home-teac", "l"] });
+export const HER_TURNS = Object.freeze({
+  work: ["workc", "r"], "home-work": ["home-workc", "l"], tea: ["teac", "r"], "home-tea": ["home-teac", "l"],
+  // 0.54.0 — сидя в кресле: с блокнотом, с кружкой, с книгой. В куртке — вправо (к окну), в свитере — влево.
+  work3: ["work3c", "r"], "home-work3": ["home-work3c", "l"], tea3: ["tea3c", "r"], "home-tea3": ["home-tea3c", "l"],
+  read: ["readc", "r"], "home-read": ["home-readc", "l"],
+  // Стоя у подоконника с блокнотом и с метёлкой: сторону художник выбрал сам — влево в обоих нарядах.
+  work2: ["work2c", "l"], "home-work2": ["home-work2c", "l"], tidy: ["tidyc", "l"], "home-tidy": ["home-tidyc", "l"],
+});
 export const turnOf = (name) => (typeof name === "string" && Object.hasOwn(HER_TURNS, name) ? HER_TURNS[name][0] : null);
 const FRAME_NAMES = new Set([...Object.values(HER_FRAMES), ...Object.values(HER_TURNS)].map(([name]) => name));
 /** Имя второго кадра этой картинки; `null` — кадра у неё нет. */
@@ -2241,7 +2271,9 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   const looks = frame ? HER_FRAMES[name]?.[2] ?? "a" : "", seen = (which) => (looks ? (looks === which ? " lk" : " nl") : "");
   // Третий кадр — голова повёрнута (0.53.0, `HER_TURNS`): лежит поверх первых двух и не виден, пока она не посмотрит
   // в его сторону; сторона — словом на группе (`tl`, `tr`), чтобы стили страницы знали, какой взгляд его открывает.
-  const turned = turn ? `<g class="fr c">${spriteLit(part, turn.name, spritePlace(name, turn.sprite, x), g.id("herMaskC"))}</g>` : "";
+  // Пар над кружкой у позы со вторым кадром живёт внутри первого — а первый на время поворота уходит; кружка на
+  // третьем кадре там же, поэтому пар кладётся и в него (0.54.0): повернула голову — чай не остыл.
+  const turned = turn ? `<g class="fr c">${spriteLit(part, turn.name, spritePlace(name, turn.sprite, x), g.id("herMaskC"))}${frame && mark === "steam" ? alive : ""}</g>` : "";
   const group = turn ? `alive t${turn.side}` : "alive";
   const core = frame
     ? `<g class="${group}"><g class="fr a ${frame.how}${seen("a")}">${lit}${alive}</g><g class="fr b ${frame.how}${seen("b")}">${spriteLit(part, frame.name, spritePlace(name, frame.sprite, x, frame.grow), g.id("herMaskB"))}</g>${turned}</g>`
@@ -2710,7 +2742,7 @@ function insideOf(view = {}, options = {}) {
   const sockAt = spot && pet?.layer === "front" ? [spot.x + (spot.mirror ? 34 : -34) * (spot.k ?? 1), spot.y - 1] : [214, 470];
   // Комната картинкой (0.53.0): мебель и стены — одна картинка, вещи — с листа; чего на картинке нет, рисует код.
   const pic = roomOf(options);
-  const painted = (name, how) => paintedThing(g, pic, name, part, how);
+  const painted = (name, how) => paintedThing(g, pic, name, part, { ...how, off: dark });
   const lift = (dy, body) => (pic && body ? at(0, dy, body) : body);
   // Коробка на картинке написана целиком; Байт в ней — и её передняя стенка встаёт поверх него.
   const box = pic ? on("box") + (pet?.layer === "box" ? painted("boxFront") : "") : boxBack(c) + on("box") + boxFront(g, c);

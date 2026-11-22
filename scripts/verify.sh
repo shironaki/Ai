@@ -19,6 +19,8 @@
 #   bash scripts/verify.sh ref <имя>[,<имя>…] <куда.png> [высота] [closed]
 #                                   образец для средства рисования: её картинка из модуля — на зелёном фоне
 #                                   (closed — с закрытыми глазами: перенести веки на ту же позу в другом наряде)
+#   bash scripts/verify.sh axis <поза>:<кадр> [<поза>:<кадр> …]
+#                                   ось третьего кадра (поворот головы): по ногам, которые на кадре не менялись
 #
 #   bash scripts/verify.sh contact <лист.png> <высота> <картинка.png>…
 #                                   сырые картинки в ряд: что вернула нейросеть
@@ -220,6 +222,12 @@ squeeze() {
   (cd "$PAGE" && node room-squeeze.mjs "$input" "$out" "$@")
 }
 
+# Ось третьего кадра (поворот головы): по ногам, которые на кадре не менялись, — сценарий scripts/room-axis.mjs.
+axis() {
+  if [ -z "${1:-}" ]; then echo "Нужно: bash scripts/verify.sh axis <поза>:<кадр> [<поза>:<кадр> …]"; return 1; fi
+  node "$ROOT/scripts/room-axis.mjs" "$@"
+}
+
 # Образец для средства рисования: её картинка из модуля на зелёном фоне — сценарий scripts/room-ref.mjs.
 ref() {
   if [ -z "${2:-}" ]; then echo "Нужно: bash scripts/verify.sh ref <имя>[,<имя>…] <куда.png> [высота] [closed]"; return 1; fi
@@ -257,6 +265,7 @@ case "${1:-quick}" in
   sprite) shift; sprite "$@" ;;
   blink) shift; blink "$@" ;;
   ref) shift; ref "$@" ;;
+  axis) shift; axis "$@" ;;
   squeeze) shift; squeeze "$@" ;;
   seen) seen ;;
   contact) shift; pairs contact "$@" ;;

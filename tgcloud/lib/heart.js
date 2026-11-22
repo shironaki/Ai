@@ -5,6 +5,7 @@ import { buildCharacterProfile, promptTier } from "./ai-character.js";
 import { createDialoguePolicy, stageOf, STAGES } from "./dialogue-policy.js";
 import { createHeartStore } from "./store.js";
 import { createAbilities, matchPhrase, BUS_PREFIX } from "./abilities.js";
+import { createDoor } from "./bridge.js";
 import { createEvents } from "./events.js";
 import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
@@ -144,23 +145,19 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.53.0";
+export const BUILD = "0.54.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.53.0 — комната написана художником по эскизу, который вы выбрали; я по-настоящему поворачиваю голову — к окну и к Байту",
-  "комната: стены, пол, окно и мебель — картина; небо, погода, свет часа, я и Байт остались живыми; вещи на ней — только те, что у вас есть",
-  "погода: картин две — с солнцем на полу и пасмурная; в дождь, снег и туман солнечных полос на полу нет",
-  "загрузка: пока картина в пути, комната нарисована по-старому, потом картина проступает; телефон её помнит — во второй заход она на месте сразу",
-  "поворот головы: когда стою с блокнотом или с кружкой — в куртке поворачиваюсь к окну, в свитере — к Байту слева от меня",
-  "слова: «что с комнатой», «кто нарисовал комнату», «почему комната сначала старая», «ты повернула голову» — отвечаю сама",
-  "картинка: меня не подменяет фигурка из кода — пока я в пути, на моём месте силуэт; Байт без хмурой морды",
-  "портрет: «нарисуй меня» — опишите себя словами или пришлите фото; жду две минуты",
-  "разбор: после «что не поняла?» скажите «разбор 2» — покажу, что я сказала перед этой фразой и что ответила; кто её написал, я не записываю",
-  "ветер: дует в вашем городе от 4 м/с — облака плывут быстрее, шторы у открытого окна ходят чаще",
-  "надёжность: сбой базы не выглядит пустой комнатой; не дошёл запрос — страница повторит его сама; ошибки комнаты — в журнале под строкой «страница…»",
-  "альбом: первые разы, памятные дни, мои события, подарки и снимки — кнопка «Альбом» под рисунком или «покажи альбом»",
-  "внизу комнаты должно быть «страница 16»; нажмите на эту строку — откроется журнал ошибок страницы",
+  "0.54.0 — готова дверь для приложения: оно сможет приходить ко мне без Telegram и без сильного ключа публикации; я поворачиваю голову и в кресле; лампа днём не горит",
+  "дверь приложения: закрытый канал, куда приложение пишет запрос за подписью, — отвечаю той же комнатой, память одна; пока вы не задали ключ, двери нет и всё работает как раньше",
+  "дверь приложения: пускает только вас; подпись, свежесть по часам Telegram, один запрос — один раз, не чаще десяти в минуту; договор для чата приложения — docs/DOOR.md",
+  "как открыть дверь: закрытый канал, в нём я и второй бот админами, затем на телефоне node scripts/door-client.mjs setup и публикация; в «статус» появится строка «Дверь приложения»",
+  "поворот головы: теперь и в кресле — за работой, с чаем, с книгой, — и у подоконника с блокнотом, и с метёлкой; всего семь поз в обоих нарядах",
+  "лампа: днём и погашенная она без света — раньше на картине горела всегда; вечером горит без светлого прямоугольника на стене слева от неё",
+  "подоконник: вечером тень комнаты ложится и на Колючку с кактусом — по горшку больше нет полосы; под блюдцем нет светлого пятна",
+  "слова: «что с дверью приложения», «почему лампа не горит днём», «ты повернула голову» — отвечаю сама",
+  "внизу комнаты должно быть «страница 17»; нажмите на эту строку — откроется журнал ошибок страницы",
 ]);
 
 const DAY = 86_400_000;
@@ -1163,6 +1160,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Словарь: ${PHRASES ? (({ sections, lines }) => `${sections} ${plural(sections, "тема", "темы", "тем")}, ${lines} ${plural(lines, "фраза", "фразы", "фраз")} — на них модель не трачу`)(book.stats()) : "выключен настройкой"}${taughtCount ? ` · выучено от хозяина: ${taughtCount}` : ""} · манеры — ${MANNERS ? "включены" : "выключены"} · память чата — ${CHAT_MEMORY ? "двое суток" : "выключена"}`,
       `Рисование: ${await drawLine(today)}`,
       `Комната: ${await roomStatus()}`,
+      (await appDoor.line().then(line => (line ? `Дверь приложения: ${line}` : ""))),
       `Будильник: ${await clockLine()}`,
       `Чаты и намазы: ${await roundsLine()}`,
       `Праздники: ${await feastStatus()}`,
@@ -2299,6 +2297,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, tidyNote, voiceCtx, voiced,
     WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
   }))(input, ctx);
+  /**
+   * Дверь приложения (0.54.0, `docs/DOOR.md`): второй вход в ту же `onRoom` — подписанным постом в закрытый канал, от
+   * доверенного посредника отдельного приложения. Ключ («номер канала:секрет») — строка `KEY_DOOR` на телефоне;
+   * без ключа двери нет. Вся проверка — в `bridge.js` (`createDoor`), здесь только сборка.
+   */
+  const appDoor = createDoor({ key: config.DOOR_KEY ?? extraKeys.door ?? "", onRoom, api, store, now, ownerId: OWNER, guests: config.DOOR_GUESTS === true, allow: config.DOOR_ALLOW, build: BUILD, report: (item) => notices.report(item) });
 
   /** Привычки: завести, отметить, посмотреть, убрать. `null` — речь не о них. */
   async function habitThings(turn, prompt) {
@@ -8402,6 +8406,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (await queue.size().catch(() => before) >= before) break;
     }
     try { await abilities.sweep(); } catch { /* уборка подождёт */ }
+    try { await appDoor.sweep(); } catch { /* уборка подождёт */ }
     try {
       await store.sweep("heart:src:", 30 * DAY);
       await store.sweep("heart:game:", 30 * DAY);
@@ -9096,6 +9101,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           });
         } catch { /* отчёт не важнее ответа */ }
       };
+      // Канал двери приложения — отдельный провод: ни мосту, ни будильнику его посты не достаются.
+      if (appDoor.mine(message)) return appDoor.onPost(message, { dry });
       if (await events.onPost(text)) { await tidyUp(); return { ok: true, code: "event_handled" }; }
       const handled = await abilities.onPost(text);
       if (handled) { await tidyUp(); return { ok: true, code: "bridge_answer" }; }

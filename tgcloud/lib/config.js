@@ -111,6 +111,12 @@ export const CONFIG = Object.freeze({
   ABILITIES_CHANNEL_ID: "-1004294683725",
   ABILITIES_SECRET: "most-chanel-yui-ai-2026-02-07-2503",
 
+  // Дверь приложения (0.54.0, docs/DOOR.md): второй вход в комнату — для отдельного приложения, подписанными
+  // постами в закрытый канал. Ключ двери здесь не пишется: хранилище открытое. Он живёт на телефоне строкой
+  // KEY_DOOR=«номер канала:секрет» и попадает в сердце на время публикации (lib/secrets.js). Без ключа двери нет.
+  // false — дверь пускает только хозяина; true — любого, чей Telegram ID назвал посредник.
+  DOOR_GUESTS: false,
+
   // What the heart says about itself when asked who it is.
   NAME: "Аи",
 
