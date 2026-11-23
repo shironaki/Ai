@@ -213,6 +213,16 @@ export function createBridge({ secret = "", store = null, capabilities, now = ()
  *   5. частота — на дверь целиком и на человека;
  *   6. кого пускать (пока — только хозяина) и что разрешено делать (`DOOR_ALLOW`).
  * Модуль не выбирает ключ и не читает его из чата: его собирают с ключом, без ключа двери нет.
+ *
+ * Пути (0.54.2). Первый живой опыт (22.11.2026) не прошёл: новый пост бота двери до двери не дошёл. Чей это отказ —
+ * Telegram, платформы или наш, — из опыта не видно, поэтому запрос принимается тремя путями, а ответ уходит тем же:
+ *   • `direct` — личное сообщение бота (Bot API 10.0, «Bot-to-Bot Communication»): бот приложения пишет Аи по имени,
+ *     она отвечает ему лично; режим должен быть включён у обоих ботов (`ready` включает его у Аи);
+ *   • `edit` — правка поста в канале двери: правку чужого бота сердце слышит вживую (так бьёт будильник); ответ —
+ *     пост-заготовка и тут же его правка: если слышны только правки, до бота двери дойдёт она;
+ *   • `post` — новый пост в канале двери, как в 0.54.0.
+ * Конверт и подпись у всех путей одни. Что дверь услышала (путь, время, итог), она записывает: `line` — для
+ * статуса, `says` — для телефона после опыта.
  * ─────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 export const DOOR_PREFIX = "AI-DOOR1 ";
 export const DOOR_SEEN_PREFIX = "heart:door:seen:";
@@ -230,6 +240,18 @@ export const DOOR_PER_PERSON = 10;
 /** Пометок «дверь не пустила» (неверная подпись, просрочено, не разобрать) — за десять минут. */
 export const DOOR_NOTES = 3;
 export const DOOR_NOTES_MS = 600_000;
+/** Пути запроса — в том порядке, в каком их пробует опыт: от описанного Telegram к обходам. */
+export const DOOR_WAYS = Object.freeze(["direct", "edit", "post"]);
+/**
+ * Сколько последних событий двери помнит сердце (два круга опыта — девять событий) и за какое время показывает их,
+ * когда телефон не назвал, с какого события считать.
+ */
+export const DOOR_HEARD_MAX = 16;
+export const DOOR_HEARD_MS = 900_000;
+/** Заготовка ответа в канале: пост с этим знаком сердце тут же правит в ответ (путь `edit`). */
+export const DOOR_SLOT_TEXT = "⏳";
+/** С этого слова начинается строка, которую сердце отдаёт телефону на вопрос «что с дверью» (`says`). */
+export const DOOR_SAYS = "DOOR-SAYS";
 /**
  * Что можно делать через дверь: всё, что делает страница комнаты, кроме `oops` — это журнал ошибок самой страницы.
  * Новое действие комнаты сюда само не попадает: `tests/door.test.mjs` назовёт его и попросит решить.
@@ -304,12 +326,60 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
   const permit = new Set((Array.isArray(allow) ? allow : DOOR_ALLOW).map(String));
   const tell = async (item) => { if (typeof report === "function") { try { await report({ component: "door", title: "Дверь приложения", severity: "degraded", ...item }); } catch { /* весть не важнее двери */ } } };
 
+  const plain = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
+
+  /**
+   * Каким путём пришло: пост канала двери — `post`, его правка — `edit`, личное сообщение бота с конвертом двери —
+   * `direct`. Пусто — не к двери. От ботов сердце не слушает ничего, кроме этого конверта.
+   */
+  const wayOf = (message) => {
+    if (!enabled) return "";
+    const type = message?.chat?.type;
+    if (type === "channel") return String(message?.chat?.id ?? "") === channel ? (message?.edit_date ? "edit" : "post") : "";
+    // Личный чат с ботом: тип «private»; как именно Telegram назовёт чат бота с ботом, вживую не видели, поэтому
+    // годится и чат, чей номер — номер самого отправителя (у групп и каналов номера отрицательные).
+    const own = type === "private" || (message?.from?.id != null && String(message?.chat?.id) === String(message.from.id));
+    if (own && message?.from?.is_bot === true && doorRead(message?.text) !== null) return "direct";
+    return "";
+  };
+
   /** Пост из канала двери — дело двери, каким бы он ни был: будильник такими постами не заводится. */
-  const mine = (message) => enabled && String(message?.chat?.id ?? "") === channel;
+  const mine = (message) => wayOf(message) !== "";
 
   // Без звука: владелец — участник своего канала двери, и каждый ответ приложению звенел бы у него в телефоне.
-  async function send(envelope) {
-    await api.sendMessage({ chat_id: channel, text: doorWire({ ...envelope, sig: await hmac(secret, doorPayload(envelope)) }), disable_web_page_preview: true, disable_notification: true });
+  const QUIET = { disable_web_page_preview: true, disable_notification: true };
+  async function send(envelope, to = {}) {
+    const text = doorWire({ ...envelope, sig: await hmac(secret, doorPayload(envelope)) });
+    if (to.way === "direct") {
+      // Боту пишут по имени (Bot API 10.0: «by passing their @username»); по номеру чата — запасной путь.
+      let failure = null;
+      for (const chat_id of [to.name ? `@${to.name}` : null, to.chat].filter(item => item != null)) {
+        try { await api.sendMessage({ chat_id, text, ...QUIET }); return; } catch (error) { failure = error; }
+      }
+      throw failure ?? new Error("door: no chat");
+    }
+    // Запрос пришёл правкой — и ответ уходит правкой: заготовка, затем её текст. Слышны боту двери и новые посты —
+    // он увидит заготовку и пропустит её; слышны только правки — увидит ответ.
+    if (to.way === "edit" && typeof api.editMessageText === "function") {
+      const slot = await api.sendMessage({ chat_id: channel, text: DOOR_SLOT_TEXT, ...QUIET });
+      if (slot?.message_id != null) {
+        try { await api.editMessageText({ chat_id: channel, message_id: slot.message_id, text, disable_web_page_preview: true }); return; } catch { /* правка не вышла — обычным постом */ }
+      }
+    }
+    await api.sendMessage({ chat_id: channel, text, ...QUIET });
+  }
+
+  /**
+   * Что дверь услышала: путь, время, чем кончилось. Последние события — для строки статуса и для телефона. У каждого
+   * свой номер по порядку: «что было после такого-то» по номеру считается точно, а по времени — нет: часы у разных
+   * запусков платформы расходятся на минуты (журнал, 15.11.2026).
+   */
+  async function hear(way, code) {
+    if (!store?.available) return false;
+    return store.update(DOOR_STATE_KEY, (before) => {
+      const state = plain(before), seq = (Number(state.seq) || 0) + 1;
+      return { ...state, seq, heard: [{ n: seq, at: now(), way, code: String(code ?? "") }, ...(Array.isArray(state.heard) ? state.heard : [])].slice(0, DOOR_HEARD_MAX) };
+    }).catch(() => false);
   }
 
   /**
@@ -324,6 +394,7 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
       const min = Math.floor(at / 60_000), day = Math.floor(at / 86_400_000);
       const sameMin = Number(state.min) === min, sameDay = Number(state.day) === day;
       const fresh = {
+        ...(Array.isArray(state.heard) ? { heard: state.heard, seq: Number(state.seq) || 0 } : {}), ...(state.b2b && typeof state.b2b === "object" ? { b2b: state.b2b } : {}),
         min, posts: sameMin ? Number(state.posts) || 0 : 0, by: sameMin && state.by && typeof state.by === "object" ? state.by : {},
         notes: (Array.isArray(state.notes) ? state.notes : []).filter(item => at - Number(item) < DOOR_NOTES_MS && Number(item) <= at),
         day, asked: sameDay ? Number(state.asked) || 0 : 0, refused: sameDay ? Number(state.refused) || 0 : 0,
@@ -339,32 +410,40 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
   }
 
   /** Пометка «дверь не пустила»: подписана, как всё, что пишет сердце, но это не ответ — запрос не исполнялся. */
-  async function note(at, code, re = "") {
+  async function note(at, code, re = "", to = {}) {
     const allowed = await account(at, (state) => (state.notes.length >= DOOR_NOTES || state.posts >= DOOR_PER_MINUTE ? null
       : { notes: [...state.notes, at], posts: state.posts + 1, refused: state.refused + 1, last: at, code }));
     if (allowed !== "go") return { ok: false, code: `door_${code}`, noted: false };
-    try { await send({ v: 1, t: "e", re: /^[A-Za-z0-9_-]{8,40}$/u.test(String(re)) ? String(re) : "", code, ts: now(), build }); } catch { /* пометка не важнее двери */ }
+    try { await send({ v: 1, t: "e", re: /^[A-Za-z0-9_-]{8,40}$/u.test(String(re)) ? String(re) : "", code, ts: now(), build }, to); } catch { /* пометка не важнее двери */ }
     return { ok: false, code: `door_${code}`, noted: true };
   }
 
-  async function answer(id, result) {
+  async function answer(id, result, to = {}) {
     let parts = doorParts(JSON.stringify(result));
     if (parts.length > DOOR_PARTS_MAX) parts = doorParts(JSON.stringify({ ok: false, code: "too_big", text: "Ответ не помещается в дверь.", build }));
-    for (let index = 0; index < parts.length; index += 1) await send({ v: 1, t: "a", re: id, n: index + 1, of: parts.length, ts: now(), body: parts[index] });
+    for (let index = 0; index < parts.length; index += 1) await send({ v: 1, t: "a", re: id, n: index + 1, of: parts.length, ts: now(), body: parts[index] }, to);
     return parts.length;
   }
 
   async function onPost(message, { dry = false } = {}) {
-    if (!enabled) return { ok: false, code: "door_off" };
-    // Правка поста — не запрос: у неё прежнее время, а запрос живёт две минуты.
-    if (message?.edit_date) return { ok: true, code: "door_ignored" };
+    const way = wayOf(message);
+    if (!way) return { ok: false, code: "door_off" };
+    const out = await serve(message, way, dry);
+    // Репетиция ничего не пишет; нет базы — писать некуда.
+    if (!dry && out?.code !== "door_storage") await hear(way, out?.code);
+    return out;
+  }
+
+  async function serve(message, way, dry) {
     const envelope = doorRead(message?.text);
     if (envelope === null) return { ok: true, code: "door_ignored" };
-    const posted = Number(message?.date) * 1000;
+    // Время запроса сверяется с временем Telegram: у поста это время поста, у правки — время правки.
+    const posted = Number(way === "edit" ? message?.edit_date : message?.date) * 1000;
+    const to = { way, chat: message?.chat?.id, name: String(message?.from?.username ?? "") };
     const at = Number.isFinite(posted) && posted > 0 ? posted : now();
     if (dry) return { ok: true, code: "door_request", side_effects: "none" };
     if (!store?.available) return { ok: false, code: "door_storage" };
-    if (envelope === false) return note(at, "bad_envelope");
+    if (envelope === false) return note(at, "bad_envelope", "", to);
     // Ответы и пометки в канале — не ей: свои посты к боту не возвращаются, чужие ответы она не читает.
     if (envelope.t !== "q") return { ok: true, code: "door_ignored" };
     const { id, ts, uid, sig } = envelope, op = envelope.do, input = envelope.in ?? "";
@@ -372,14 +451,14 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
       && Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(uid) && uid > 0
       && typeof op === "string" && /^[a-z]{1,16}$/u.test(op) && typeof input === "string" && input.length <= 1024
       && typeof sig === "string" && /^[0-9a-f]{64}$/u.test(sig);
-    if (!shaped) return note(at, "bad_envelope", id);
+    if (!shaped) return note(at, "bad_envelope", id, to);
     let expected;
     try { expected = await hmac(secret, doorPayload({ ...envelope, in: input })); } catch { return { ok: false, code: "door_crypto" }; }
     if (!sameBytes(expected, sig)) {
-      await tell({ code: "bad_signature", detail: "в канал двери пришёл запрос с неверной подписью — не пустила", hint: "Ключ в строке KEY_DOOR на телефоне и ключ у посредника должны совпадать знак в знак. Запросы не ваши — смените ключ и опубликуйте заново." });
-      return note(at, "bad_signature", id);
+      await tell({ code: "bad_signature", detail: "к двери пришёл запрос с неверной подписью — не пустила", hint: "Ключ в строке KEY_DOOR на телефоне и ключ у посредника должны совпадать знак в знак. Запросы не ваши — смените ключ и опубликуйте заново." });
+      return note(at, "bad_signature", id, to);
     }
-    if (!Number.isFinite(posted) || Math.abs(ts - posted) > DOOR_SKEW_MS) return note(at, "stale", id);
+    if (!Number.isFinite(posted) || Math.abs(ts - posted) > DOOR_SKEW_MS) return note(at, "stale", id, to);
     if (now() - posted > DOOR_LATE_MS) return { ok: false, code: "door_late" };
 
     // Частота: дверь целиком — молча (ответ тоже пост, а постов больше не дают); человек — отказом словами.
@@ -410,9 +489,11 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
       else result = await onRoom({ ...fields, do: op }, { initData: { user: { id: uid } }, door: true });
     }
     let posts = 0;
-    try { posts = await answer(id, result); }
+    try { posts = await answer(id, result, to); }
     catch {
-      await tell({ code: "send_failed", detail: "не могу написать ответ в канал двери", hint: "Дайте мне в канале двери право публиковать сообщения." });
+      await tell(way === "direct"
+        ? { code: "send_failed", detail: "не могу ответить боту приложения лично", hint: "У меня и у бота приложения должен быть включён режим общения ботов: @BotFather → бот → Bot Settings → Bot-to-Bot Communication Mode." }
+        : { code: "send_failed", detail: "не могу написать ответ в канал двери", hint: "Дайте мне в канале двери право публиковать сообщения." });
       return { ok: false, code: "door_send_failed" };
     }
     // Длинный ответ занял несколько постов — досчитать; отказ двери — в итоги.
@@ -420,7 +501,7 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
       await account(at, (state) => ({ posts: state.posts + Math.max(0, posts - 1), refused: state.refused + (result?.ok !== true && gate === "go" ? 1 : 0), code: result?.ok === true ? op : String(result?.code ?? "refused") }));
     }
     // Канал — провод, а не журнал: прочитанный запрос убирается. Нет права — не беда.
-    if (tidy && message?.message_id != null && typeof api.deleteMessage === "function") {
+    if (tidy && way !== "direct" && message?.message_id != null && typeof api.deleteMessage === "function") {
       try { await api.deleteMessage({ chat_id: channel, message_id: message.message_id }); } catch { /* останется в канале */ }
     }
     return { ok: true, code: "door_answer", do: op, parts: posts, answered: result?.ok === true };
@@ -432,6 +513,42 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
     return store.sweep(DOOR_SEEN_PREFIX, 24 * 3600_000);
   }
 
+  /**
+   * Конверт двери пришёл не туда: из другого канала, из группы, не от бота. Запомнить, откуда и какой: по этой записи
+   * видно, что ключ записан на один канал, а посредник пишет в другой, — или что Telegram отдаёт сообщение бота не в
+   * том виде, какого ждёт `wayOf` (вживую этот вид до опыта никто не видел).
+   */
+  async function stray(message) {
+    if (!enabled || wayOf(message) || doorRead(message?.text) === null) return false;
+    const from = message?.from;
+    await hear("stray", `${message?.chat?.type ?? "чат"} ${message?.chat?.id ?? "?"}${from ? (from.is_bot === true ? ", от бота" : ", не от бота") : ""}`);
+    return true;
+  }
+
+  /**
+   * Режим общения ботов (Bot API 10.0): без него бот приложения не может написать Аи лично, а она — ответить ему.
+   * С Bot API 10.5 бот включает режим себе сам (`setMySettings`); не вышло — причина ложится в статус, и режим
+   * включают руками в @BotFather. Зовётся после публикации и по вопросу телефона.
+   */
+  async function ready() {
+    if (!enabled || !store?.available || typeof api?.setMySettings !== "function") return null;
+    let b2b;
+    try { await api.setMySettings({ can_communicate_with_bots: true }); b2b = { ok: true, at: now() }; }
+    catch (error) { b2b = { ok: false, at: now(), why: String(error?.description ?? error?.message ?? error).replace(/\s+/gu, " ").slice(0, 120) }; }
+    await store.update(DOOR_STATE_KEY, (before) => ({ ...plain(before), b2b })).catch(() => false);
+    return b2b;
+  }
+
+  const WAY_WORD = { direct: "личное сообщение бота", edit: "правка поста", post: "новый пост" };
+  const CODE_WORD = {
+    door_answer: "запрос, ответила", door_ignored: "не запрос, просто слово", door_replay: "повтор прежнего запроса",
+    door_bad_signature: "запрос с чужой подписью: ключи у сторон разные", door_stale: "запрос, время в нём разошлось со временем Telegram",
+    door_bad_envelope: "запрос не разобрала", door_late: "запрос опоздал больше чем на десять минут", door_full: "запросов слишком много",
+    door_send_failed: "запрос был, ответить не смогла", door_crypto: "подпись проверить нечем",
+  };
+  const ago = (at) => { const s = Math.max(0, Math.round((now() - Number(at)) / 1000)); return s < 90 ? `${s} с назад` : s < 5400 ? `${Math.round(s / 60)} мин назад` : `${Math.round(s / 3600)} ч назад`; };
+  const B2B_HINT = "включите сами: @BotFather → /mybots → бот Аи → Bot Settings → Bot-to-Bot Communication Mode";
+
   /** Строка для статуса хозяина. Пусто — ключа двери нет вовсе: о двери, которой нет, она не говорит. */
   async function line() {
     if (!String(key ?? "").trim()) return "";
@@ -441,8 +558,39 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
     const state = store?.available ? await store.get(DOOR_STATE_KEY).catch(() => null) : null;
     const today = Number(state?.day) === Math.floor(now() / 86_400_000);
     const asked = today ? Number(state?.asked) || 0 : 0, refused = today ? Number(state?.refused) || 0 : 0;
-    return `открыта ${guests === true ? "всем, кого назовёт посредник" : "только вам"} · за сутки запросов: ${asked}${refused ? `, отказов: ${refused}${state?.code ? ` (последний — ${state.code})` : ""}` : ""}`;
+    const heard = Array.isArray(state?.heard) ? state.heard : [], served = heard.find(item => item?.code === "door_answer"), latest = heard[0];
+    // Каким путём дверь слышит: последний исполненный запрос; не было такого — последнее, что вообще пришло.
+    const path = served ? `путь: ${WAY_WORD[served.way] ?? served.way}`
+      : !latest ? "от бота двери пока ничего не приходило"
+      : latest.way === "stray" ? `запрос двери пришёл не туда (${latest.code})`
+      : `слышала: ${WAY_WORD[latest.way] ?? latest.way} ${ago(latest.at)} — ${CODE_WORD[latest.code] ?? latest.code}`;
+    const mode = state?.b2b && state.b2b.ok === false ? ` · общение ботов не включилось (${state.b2b.why || "причина неизвестна"})` : "";
+    return `открыта ${guests === true ? "всем, кого назовёт посредник" : "только вам"} · за сутки запросов: ${asked}${refused ? `, отказов: ${refused}${state?.code ? ` (последний — ${state.code})` : ""}` : ""} · ${path}${mode}`;
   }
 
-  return Object.freeze({ enabled, channel, mine, onPost, sweep, line });
+  /**
+   * То же для телефона — до и после опыта (`bash scripts/phone.sh door`): что дверь слышала по каждому пути.
+   * Строки разделены знаком «|». В первой — имя бота Аи (по нему ей пишут лично) и номер последнего услышанного:
+   * телефон берёт его до опыта и называет после (`after`) — тогда в ответе только то, что пришло за сам опыт.
+   * Без номера — всё за последние четверть часа, со временем «столько-то назад» по часам этого запуска.
+   */
+  async function says({ name = "", after = null } = {}) {
+    const state = store?.available ? await store.get(DOOR_STATE_KEY).catch(() => null) : null;
+    const head = `${DOOR_SAYS} name=${/^[A-Za-z0-9_]{3,40}$/u.test(String(name)) ? name : "-"} seq=${Number(state?.seq) || 0}`;
+    if (!String(key ?? "").trim()) return `${head} | У сердца нет ключа двери: оно опубликовано без строки KEY_DOOR.`;
+    if (!enabled) return `${head} | Дверь у сердца ${await line()}.`;
+    const since = Number.isSafeInteger(Number(after)) && after !== null && after !== "" ? Number(after) : null;
+    const heard = (Array.isArray(state?.heard) ? state.heard : []).filter(item => (since === null ? now() - Number(item?.at) < DOOR_HEARD_MS : Number(item?.n) > since));
+    const when = (item) => (since === null ? `${ago(item.at)}: ` : "");
+    const rows = DOOR_WAYS.map((way) => {
+      const item = heard.find(entry => entry.way === way);
+      return `• ${WAY_WORD[way]} — ${item ? `${when(item)}${CODE_WORD[item.code] ?? item.code}` : "не слышала"}`;
+    });
+    const lost = heard.find(entry => entry.way === "stray");
+    if (lost) rows.push(`• запрос двери пришёл не туда — ${when(lost)}${lost.code}; если это канал — ключ записан на другой`);
+    const mode = !state?.b2b ? "Общение ботов у Аи: ещё не включала." : state.b2b.ok ? "Общение ботов у Аи: включено." : `Общение ботов у Аи не включилось (${state.b2b.why || "причина неизвестна"}) — ${B2B_HINT}.`;
+    return [head, since === null ? "Что слышала Аи от бота двери за последние четверть часа:" : "Что слышала Аи от бота двери за этот опыт:", ...rows, mode].join(" | ");
+  }
+
+  return Object.freeze({ enabled, channel, mine, onPost, stray, ready, says, sweep, line });
 }

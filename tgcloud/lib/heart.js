@@ -145,18 +145,18 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.54.1";
+export const BUILD = "0.54.2";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.54.1 — дверь приложения открывается одной командой на телефоне: bash scripts/phone.sh door; в прошлой подсказке была ошибка — бот будильника для двери не годится",
-  "что случилось 22.11: бот будильника живёт на сервере, с телефона его не спросить — настройка двери встала на первой же строке; я сама и публикация при этом работали",
-  "двери нужен свой бот (@BotFather → /newbot): команда спросит его токен, дождётся, пока вы добавите его и меня в закрытый канал, придумает ключ, опубликует меня с ним и проверит дверь",
-  "шаг, который не вышел, останавливает остальные — лишней публикации больше не будет; после двери дом запускается сам; посты двери идут без звука, прочитанное убирается",
-  "дверь приложения: пускает только вас; подпись, свежесть по часам Telegram, один запрос — один раз, не чаще десяти в минуту; договор для чата приложения — docs/DOOR.md",
-  "с 0.54.0: поворот головы и в кресле — за работой, с чаем, с книгой, — и у подоконника с блокнотом, и с метёлкой; всего семь поз в обоих нарядах",
-  "с 0.54.0: лампа днём и погашенная — без света; вечером тень комнаты ложится и на Колючку с кактусом",
-  "слова: «как открыть дверь приложения», «что с дверью приложения», «почему лампа не горит днём» — отвечаю сама",
+  "0.54.2 — дверь приложения: первый живой опыт не прошёл — запрос бота приложения до меня не дошёл; теперь слушаю тремя путями и записываю, что услышала",
+  "что случилось 22.11: бот двери написал запрос новым постом в канал, а я его не получила; чей это отказ, по одному опыту не видно — поэтому пробуем все пути разом",
+  "нашлась и моя возможная вина: пост канала, под которым Telegram называет автора-бота, я отбрасывала с порога, не глядя, что это канал двери; теперь пост канала читаю, кто бы его ни написал",
+  "пути: личное сообщение бота (так Telegram разрешил ботам говорить друг с другом с мая 2026), правка поста в канале (так бьёт мой будильник) и новый пост, как было; отвечаю тем же путём",
+  "на телефоне та же команда — bash scripts/phone.sh door: проверяет, подписана ли я на нужные события, пробует три пути, говорит, какой прошёл в обе стороны, и спрашивает меня, что я слышала",
+  "с ключом двери включаю у себя режим общения ботов: без него бот приложения не может написать мне лично; чужих ботов я по-прежнему не слушаю",
+  "в «статус» строка «Дверь приложения» теперь говорит, каким путём пришёл последний запрос, — или что от бота двери ничего не приходило",
+  "слова: «что слышала дверь приложения», «какими путями стучится приложение» — отвечаю сама",
   "внизу комнаты по-прежнему «страница 17»: сама комната в этой сборке не менялась",
 ]);
 
@@ -8407,6 +8407,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     try { await abilities.sweep(); } catch { /* уборка подождёт */ }
     try { await appDoor.sweep(); } catch { /* уборка подождёт */ }
+    // Сразу после публикации — режим общения ботов: без него бот приложения не напишет ей лично.
+    if (deployed) { try { await appDoor.ready(); } catch { /* причина ляжет в статус со следующим разом */ } }
     try {
       await store.sweep("heart:src:", 30 * DAY);
       await store.sweep("heart:game:", 30 * DAY);
@@ -9073,7 +9075,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (!dry) { try { await pulse.commit(); } catch { /* счётчики не важнее приветствия */ } }
       }
     }
-    if (!chatId || message?.from?.is_bot) return { ignored: true };
+    if (!chatId) return { ignored: true };
+    // Ботов она не слушает — с двумя оговорками (0.54.2). Пост канала — не разговор, а провод (мост, будильник,
+    // дверь): его и пишут боты, а в канале, где под постом назван автор, Telegram кладёт этого бота в `from` («may be
+    // empty for messages sent to channels» — может и не быть пустым). До 0.54.2 такой пост отбрасывался здесь же,
+    // не дойдя ни до двери, ни до будильника. Вторая оговорка — конверт двери приложения в личном сообщении бота
+    // (docs/DOOR.md, «Пути»).
+    if (message?.from?.is_bot && message?.chat?.type !== "channel") {
+      if (appDoor.mine(message)) { if (!dry) await wake(ctx); return appDoor.onPost(message, { dry }); }
+      if (!dry) await appDoor.stray(message);
+      return { ignored: true };
+    }
+    // Конверт двери не от бота — не разговор: запомнить, что пришёл не тем путём, и промолчать.
+    if (!dry && message?.chat?.type !== "channel" && await appDoor.stray(message)) return { ignored: true, reason: "door" };
     // Письмо из личного чата хозяина сюда прийти не должно; пришло — это не разговор с ней.
     if (message?.business_connection_id) return { ignored: true, reason: "business" };
     const kind = senseOf(message);
@@ -9103,6 +9117,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       };
       // Канал двери приложения — отдельный провод: ни мосту, ни будильнику его посты не достаются.
       if (appDoor.mine(message)) return appDoor.onPost(message, { dry });
+      if (!dry) await appDoor.stray(message);
       if (await events.onPost(text)) { await tidyUp(); return { ok: true, code: "event_handled" }; }
       const handled = await abilities.onPost(text);
       if (handled) { await tidyUp(); return { ok: true, code: "bridge_answer" }; }
@@ -9402,6 +9417,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `Я в ${items.length} ${plural(items.length, "чате", "чатах", "чатах")}:\n${lines.join("\n")}${items.length > 40 ? `\n…и ещё ${items.length - 40}.` : ""}`);
   }
 
+  /**
+   * Что с дверью приложения — на вопрос телефона после опыта (`bash scripts/phone.sh door` спрашивает само сердце
+   * через платформу; обновление из Telegram такого контекста не несёт). Заодно включает режим общения ботов.
+   */
+  async function doorState(ctx = {}) {
+    try { await appDoor.ready(); } catch { /* причина — в самой строке */ }
+    const self = await whoAmI().catch(() => null);
+    return appDoor.says({ name: self?.username ?? "", after: ctx?.after ?? null });
+  }
+
   return Object.freeze({
     onMessage,
     onCallback,
@@ -9410,6 +9435,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     onBusinessMessage,
     onMyChatMember,
     tick,
+    doorState,
     status,
     reportCrash,
     reminders,

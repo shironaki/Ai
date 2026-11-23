@@ -1135,6 +1135,22 @@ build, side_effects: "none" }` — без чтения и записи.
 | Лампа с картины | `paintedLamp` в `miniapp/scene.js`: силуэт `PIC.lamp`, абажур `PIC.shade`, тон погашенной `PIC.shadeOff`; свет — `lampLight` |
 | Тень проёма на вещах | `paintedThing` в `miniapp/scene.js`: вещь, чья область пересекает окно (`WIN`), вечером и ночью получает `duskFill` под маской самой себя |
 
+## Что добавила 0.54.2: где что лежит
+
+| Что | Где |
+|---|---|
+| Три пути запроса двери | `createDoor` в `tgcloud/lib/bridge.js`: `wayOf` (`post` / `edit` / `direct`), `serve` (проверки — прежние), `send` (ответ тем же путём: лично по имени, заготовкой с правкой, постом); `DOOR_WAYS`, `DOOR_SLOT_TEXT` |
+| Вход личного сообщения бота | `onMessage` в `tgcloud/lib/heart.js`: от ботов она не слушает ничего, кроме конверта двери (`appDoor.mine`) |
+| Пост канала с названным автором | там же: фильтр «от бота — молчу» не касается постов канала (`chat.type === "channel"`) — в канале с подписями Telegram кладёт бота-автора в `from`; до 0.54.2 такой пост отбрасывался до двери и до будильника |
+| Подписка и доставка | `scripts/phone.sh`: `door_hook` (слова `tgcloud webhook` без адреса), `door_lacks`, `door_events` (до опыта: есть ли в подписке `message`, `channel_post`, `edited_channel_post`; нет — `webhook sync`), `door_delivery` (после неудачи: очередь и последняя ошибка доставки) |
+| Вторая публикация — только по делу | `open_door` в `scripts/phone.sh`: сердце перед опытом само сказало, что дверь открыта (`DOOR_OPEN`), а ответа нет — заново не публикует; ключи разные, сердце о двери молчит или запрос пришёл «не туда» — публикует |
+| Что слышала дверь | `hear` → `heard` в записи `heart:door:state` (путь, итог, номер по порядку `seq`, не больше `DOOR_HEARD_MAX`); `stray` — конверт двери из чужого чата; `line` — строка статуса; `says` — слова для телефона (`DOOR_SAYS`) |
+| Режим общения ботов | `ready` в `createDoor`: `api.setMySettings({ can_communicate_with_bots: true })`, итог — в `b2b` той же записи; зовётся из `tick` после публикации (`deployed`) и из `doorState` |
+| Вопрос телефона сердцу | `tgcloud/handlers/message.js`: `ctx.door === "state"` → `heart.doorState(ctx)` (`after` — номер, после которого считать); в `scripts/phone.sh` — `door_state`, `door_heard` |
+| Опыт трёх путей | `scripts/door-client.mjs`: `attempt` (один запрос одним путём), команда `ways`, `--way=`, строки `DOOR_WAY` и `DOOR_AI_NAME`; в `scripts/phone.sh` — `door_fresh`, `open_door` |
+| Поддельный Telegram | `tests/fixtures/telegram.mjs`: правки постов, личные сообщения ботов, `setMySettings`, выключатели `botPosts` («новые посты ботов не доходят») и `botEdits` («не доходят и правки»), поддельная платформа `/platform/run` — удар после публикации и вопрос о двери исполняет сердце теста |
+| Тесты дома на телефоне | `tests/phone.test.mjs` (публикация, будильник, страница), `tests/phone-door.test.mjs` (режим `door`), общее — `tests/fixtures/phone-kit.mjs` (`sandbox`, подставные инструмент публикации, curl и посредник) |
+
 ## Что добавила 0.54.1: где что лежит
 
 | Что | Где |

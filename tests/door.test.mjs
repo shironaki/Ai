@@ -11,9 +11,10 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { heart, sdk, reset, KEY, OWNER, toChat, toOwner, calls } from "./fixtures/kit.mjs";
+import { api as sdkApi } from "./fixtures/sdk-stub.mjs";
 import { telegramStub as telegramFixture, AI_ID, AI_NAME, DOOR_BOT, VOICE_BOT, NEW_BOT, idOf } from "./fixtures/telegram.mjs";
 
-const { doorKey, doorPayload, doorWire, doorRead, doorParts, hmac, DOOR_ALLOW, DOOR_NOT_ALLOWED, DOOR_POST_MAX, DOOR_PER_MINUTE, DOOR_PER_PERSON, DOOR_NOTES, DOOR_PREFIX, DOOR_STATE_KEY } = await import("../tgcloud/lib/bridge.js");
+const { doorKey, doorPayload, doorWire, doorRead, doorParts, hmac, DOOR_ALLOW, DOOR_NOT_ALLOWED, DOOR_POST_MAX, DOOR_PER_MINUTE, DOOR_PER_PERSON, DOOR_NOTES, DOOR_PREFIX, DOOR_STATE_KEY, DOOR_WAYS, DOOR_SLOT_TEXT, DOOR_SAYS } = await import("../tgcloud/lib/bridge.js");
 const { sealRequest, openAnswer } = await import("../scripts/door-client.mjs");
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -147,15 +148,19 @@ test("без ключа двери нет: тот же пост — обычны
   assert.equal(posts().length + posts("-100777").length, 0);
 });
 
-test("в канале двери не запрос — молчит и будильник не заводит: слово человека, правка поста, чужой ответ", async () => {
+test("в канале двери не запрос — молчит и будильник не заводит: слово человека, чужой ответ; что слышала — помнит", async () => {
   const h = make();
   assert.deepEqual(await h.onMessage(post("проверка связи"), KEY), { ok: true, code: "door_ignored" });
-  const request = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
-  assert.deepEqual(await h.onMessage(post(doorWire(request), { extra: { edit_date: Math.floor(clock / 1000) } }), KEY), { ok: true, code: "door_ignored" });
   const answer = { v: 1, t: "a", re: "abcdefgh", n: 1, of: 1, ts: clock, body: "{}" };
   assert.deepEqual(await h.onMessage(post(doorWire({ ...answer, sig: await hmac(SECRET, doorPayload(answer)) })), KEY), { ok: true, code: "door_ignored" });
+  // Правка поста без запроса — тоже просто слово (сама правка с 0.54.2 — путь запроса, см. тест путей).
+  assert.deepEqual(await h.onMessage(post("поправила слово", { extra: { edit_date: Math.floor(clock / 1000) } }), KEY), { ok: true, code: "door_ignored" });
   assert.equal(posts().length, 0);
-  assert.equal(sdk().kv.has(DOOR_STATE_KEY), false, "и в базу ничего не пишет");
+  assert.equal(calls("deleteMessage").length, 0, "чужое слово из канала не убирается");
+  // По этой записи после неудачного опыта видно, доходят ли до сердца посты канала двери вообще.
+  const state = JSON.parse(sdk().kv.get(DOOR_STATE_KEY));
+  assert.deepEqual(state.heard.map(item => [item.way, item.code]), [["edit", "door_ignored"], ["post", "door_ignored"], ["post", "door_ignored"]]);
+  assert.equal(state.asked, undefined, "запросом это не считается");
 });
 
 test("неверная подпись: запрос не исполняется, в канале — подписанная пометка, хозяину — одно слово; пометок не больше трёх за десять минут", async () => {
@@ -300,10 +305,10 @@ test("репетиция платформы ничего не шлёт и не �
   assert.equal(sdk().sent.length, 0);
   assert.equal(sdk().kv.has(DOOR_STATE_KEY), false);
   const status = async (heartOf) => { await heartOf.onMessage({ message_id: (mid += 1), date: Math.floor(clock / 1000), from: { id: OWNER, first_name: "Хозяин" }, chat: { id: OWNER, type: "private" }, text: "/status" }, KEY); return toOwner().at(-1).text; };
-  assert.match(await status(h), /Дверь приложения: открыта только вам · за сутки запросов: 0\n/u);
+  assert.match(await status(h), /Дверь приложения: открыта только вам · за сутки запросов: 0 · от бота двери пока ничего не приходило\n/u);
   await knock(h, { do: "look" });
   await knock(h, { do: "oops" });
-  assert.match(await status(h), /Дверь приложения: открыта только вам · за сутки запросов: 2, отказов: 1 \(последний — forbidden\)\n/u);
+  assert.match(await status(h), /Дверь приложения: открыта только вам · за сутки запросов: 2, отказов: 1 \(последний — forbidden\) · путь: новый пост\n/u);
   reset();
   assert.ok(!/Дверь приложения/u.test(await status(make({ DOOR_KEY: "" }))), "ключа нет — о двери ни слова");
   reset();
@@ -332,6 +337,176 @@ test("канал моста дверью не становится: с таки�
   assert.equal((await opened(through.request)).ok, true);
 });
 
+const edits = (chat = DOOR) => calls("editMessageText").filter(item => String(item.chat_id) === String(chat));
+/** Личное сообщение бота двери: так его отдаёт Telegram с Bot API 10.0 — чат личный, отправитель — бот. */
+const BOT = { id: 777001, is_bot: true, first_name: "door_bot", username: "door_bot" };
+const letter = (text, { from = BOT, type = "private", chat = from.id } = {}) => ({ message_id: (mid += 1), date: Math.floor(clock / 1000), from, chat: { id: chat, type }, text });
+
+test("канал называет автора поста — в посте бота есть from: запрос двери исполняется и постом, и правкой, будильник в другом канале бьёт (до 0.54.2 такой пост отбрасывался с порога)", async () => {
+  // «from … may be empty for messages sent to channels» — может и не быть пустым: в канале с подписями-профилями
+  // сервер Bot API называет автора (Client.cpp: `from` пишется при любом sender_user_id). Сердце 0.54.0–0.54.1
+  // первой строкой бросало всё, что от бота, — и до двери такой пост не доходил: «за сутки запросов: 0».
+  const h = make();
+  const status = async (heartOf) => { await heartOf.onMessage({ message_id: (mid += 1), date: Math.floor(clock / 1000), from: { id: OWNER, first_name: "Хозяин" }, chat: { id: OWNER, type: "private" }, text: "/status" }, KEY); return toOwner().at(-1).text; };
+  const named = { from: BOT, author_signature: "door_bot" };
+  const request = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
+  const posted = post(doorWire(request), { extra: named });
+  assert.deepEqual(await h.onMessage(posted, KEY), { ok: true, code: "door_answer", do: "look", parts: 1, answered: true });
+  assert.equal((await opened(request)).result.owner, true);
+  const second = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
+  const edited = post(doorWire(second), { date: clock - 300_000, extra: { ...named, edit_date: Math.floor(clock / 1000) } });
+  assert.deepEqual(await h.onMessage(edited, KEY), { ok: true, code: "door_answer", do: "look", parts: 1, answered: true });
+  assert.match(await status(h), /за сутки запросов: 2 · путь: правка поста\n/u);
+  // Не запрос в канале двери от названного бота — молчание, как и без имени: будильник им не заводится.
+  assert.deepEqual(await h.onMessage(post("тик", { extra: named }), KEY), { ok: true, code: "door_ignored" });
+  // Другой канал (мост, будильник): пост названного бота — удар будильника, как и пост без автора.
+  assert.equal((await h.onMessage(post("тик", { chat: "-100777", extra: named }), KEY)).code, "clock");
+  // А в группе и в личке бот по-прежнему не собеседник.
+  assert.deepEqual(await h.onMessage(letter("Аи, привет", { type: "supergroup", chat: -10 }), KEY), { ignored: true });
+  assert.deepEqual(await h.onMessage(letter("привет"), KEY), { ignored: true });
+});
+
+test("пути (0.54.2): запрос правкой поста — ответ заготовкой и её правкой; личное сообщение бота — ответ лично, по имени; повтор другим путём не исполняется", async () => {
+  assert.deepEqual([...DOOR_WAYS], ["direct", "edit", "post"], "порядок опыта: от описанного Telegram к обходам");
+  const h = make();
+  // Правка: пост старый (заготовка), время запроса сверяется с временем правки.
+  const request = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
+  const edited = post(doorWire(request), { date: clock - 300_000, extra: { edit_date: Math.floor(clock / 1000) } });
+  assert.deepEqual(await h.onMessage(edited, KEY), { ok: true, code: "door_answer", do: "look", parts: 1, answered: true });
+  assert.deepEqual(posts(), [DOOR_SLOT_TEXT], "в канал ушла заготовка…");
+  assert.equal(edits().length, 1);
+  assert.equal(edits()[0].message_id, sdk().sent.length, "…и тут же её правка — тем же сообщением");
+  const viaEdit = await openAnswer({ secret: SECRET, id: request.id, texts: edits().map(item => item.text) });
+  assert.equal(viaEdit.ok, true); assert.equal(viaEdit.result.owner, true);
+  assert.deepEqual(calls("deleteMessage").at(-1), { chat_id: DOOR, message_id: edited.message_id }, "прочитанный запрос убран");
+  // Та же правка пришла ещё раз (Telegram шлёт её и по мелочам) — повтор, без второго ответа.
+  assert.equal((await h.onMessage({ ...edited, edit_date: edited.edit_date + 1 }, KEY)).code, "door_replay");
+  assert.equal(edits().length, 1);
+  // Правка с запросом, чьё время разошлось с временем правки, — пометка «stale», тем же путём.
+  const late = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock - 600_000 });
+  assert.equal((await h.onMessage(post(doorWire(late), { extra: { edit_date: Math.floor(clock / 1000) } }), KEY)).code, "door_stale");
+  assert.equal(doorRead(edits().at(-1).text).code, "stale");
+
+  // Личное сообщение бота: ответ — ему же, по имени; из лички ничего не удаляется.
+  const sentBefore = sdk().sent.length, erasedBefore = calls("deleteMessage").length;
+  const direct = await sealRequest({ secret: SECRET, uid: OWNER, do: "look", ts: clock });
+  assert.deepEqual(await h.onMessage(letter(doorWire(direct)), KEY), { ok: true, code: "door_answer", do: "look", parts: 1, answered: true });
+  const mail = sdk().sent.slice(sentBefore);
+  assert.deepEqual(mail.map(item => item.chat_id), ["@door_bot"]);
+  assert.equal(mail[0].disable_notification, true);
+  assert.equal((await openAnswer({ secret: SECRET, id: direct.id, texts: mail.map(item => item.text) })).ok, true);
+  assert.equal(calls("deleteMessage").length, erasedBefore);
+  // Тот же запрос вторым путём — повтор: номер запроса один на все пути.
+  assert.equal((await h.onMessage(post(doorWire(direct)), KEY)).code, "door_replay");
+  // Чужая подпись в личном сообщении — пометка лично, запрос не исполнен.
+  const forged = await sealRequest({ secret: "x".repeat(40), uid: OWNER, ts: clock });
+  assert.equal((await h.onMessage(letter(doorWire(forged)), KEY)).code, "door_bad_signature");
+  assert.equal(doorRead(sdk().sent.at(-1).text).code, "bad_signature"); assert.equal(sdk().sent.at(-1).chat_id, "@door_bot");
+
+  // От ботов она по-прежнему не слушает ничего другого: слово бота в личке и в группе — мимо; конверт двери в группе —
+  // мимо, но запомнен («пришёл не туда»).
+  const quiet = sdk().sent.length;
+  assert.deepEqual(await h.onMessage(letter("привет, я бот"), KEY), { ignored: true });
+  assert.deepEqual(await h.onMessage(letter("привет", { type: "supergroup", chat: -10 }), KEY), { ignored: true });
+  const lost = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
+  assert.deepEqual(await h.onMessage(letter(doorWire(lost), { type: "supergroup", chat: -10 }), KEY), { ignored: true });
+  assert.equal(sdk().sent.length, quiet);
+  assert.deepEqual([JSON.parse(sdk().kv.get(DOOR_STATE_KEY)).heard[0].way, JSON.parse(sdk().kv.get(DOOR_STATE_KEY)).heard[0].code], ["stray", "supergroup -10, от бота"]);
+  // Репетиция платформы: личное сообщение бота узнаётся, но ничего не шлёт.
+  assert.deepEqual(await h.onMessage(letter(doorWire(await sealRequest({ secret: SECRET, uid: OWNER, ts: clock }))), { ...KEY, testRun: true }), { ok: true, code: "door_request", side_effects: "none" });
+  assert.equal(sdk().sent.length, quiet);
+});
+
+test("личный ответ боту: по имени не вышло — по номеру чата; не вышло вовсе — весть хозяину о режиме общения ботов", async () => {
+  // Telegram описывает путь «по имени»; примет ли он номер, неизвестно — поэтому сердце пробует оба.
+  const refused = [];
+  const api = new Proxy({}, { get: (_, name) => (name !== "sendMessage" ? sdkApi[name] : async (params) => {
+    if (String(params.chat_id).startsWith("@")) { refused.push(params.chat_id); throw Object.assign(new Error("Bad Request: chat not found"), { code: 400 }); }
+    return sdkApi.sendMessage(params);
+  }) });
+  const h = heart({ PHRASES: true, ROOM_APP: true, DOOR_KEY: LINE }, { now: () => clock, api });
+  const request = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
+  assert.equal((await h.onMessage(letter(doorWire(request)), KEY)).code, "door_answer");
+  assert.deepEqual(refused, ["@door_bot"]);
+  assert.equal(toChat(BOT.id).length, 1, "ответ ушёл по номеру чата");
+  assert.equal((await openAnswer({ secret: SECRET, id: request.id, texts: toChat(BOT.id).map(item => item.text) })).ok, true);
+});
+
+test("дверь помнит, что слышала: строка статуса и слова для телефона; режим общения ботов включается по вопросу телефона и после публикации", async () => {
+  const h = make();
+  // Вопрос телефона (`phone.sh door`): сердце включает у себя режим общения ботов и говорит, что слышало.
+  const first = await h.doorState();
+  assert.deepEqual(calls("setMySettings"), [{ can_communicate_with_bots: true }]);
+  assert.deepEqual(first.split(" | "), [
+    `${DOOR_SAYS} name=ai_heart_bot seq=0`, "Что слышала Аи от бота двери за последние четверть часа:",
+    "• личное сообщение бота — не слышала", "• правка поста — не слышала", "• новый пост — не слышала", "Общение ботов у Аи: включено.",
+  ]);
+  assert.ok(!first.includes(SECRET) && !first.includes(DOOR), "ни ключа, ни номера канала в этих словах нет");
+  // Слово в канале, запрос правкой, запрос лично — и что из этого вышло.
+  await h.onMessage(post("Проверка: бот двери может писать в этот канал."), KEY);
+  clock += 20_000;
+  await h.onMessage(post(doorWire(await sealRequest({ secret: SECRET, uid: OWNER, ts: clock })), { extra: { edit_date: Math.floor(clock / 1000) } }), KEY);
+  clock += 100_000;
+  await h.onMessage(letter(doorWire(await sealRequest({ secret: "y".repeat(40), uid: OWNER, ts: clock }))), KEY);
+  clock += 5_000;
+  assert.deepEqual((await h.doorState()).split(" | ").slice(2, 5), [
+    "• личное сообщение бота — 5 с назад: запрос с чужой подписью: ключи у сторон разные", "• правка поста — 2 мин назад: запрос, ответила", "• новый пост — 2 мин назад: не запрос, просто слово",
+  ]);
+  // Телефон называет номер, после которого считать (он взял его до опыта): в ответе — только пришедшее после, и без
+  // времени: часы у разных запусков платформы расходятся на минуты, а номер по порядку — нет.
+  assert.match(await h.doorState(), new RegExp(`^${DOOR_SAYS} name=ai_heart_bot seq=3 \\| `, "u"));
+  assert.deepEqual((await h.doorState({ after: 1 })).split(" | ").slice(1, 5), [
+    "Что слышала Аи от бота двери за этот опыт:", "• личное сообщение бота — запрос с чужой подписью: ключи у сторон разные", "• правка поста — запрос, ответила", "• новый пост — не слышала",
+  ]);
+  assert.match(await h.doorState({ after: 3 }), /• личное сообщение бота — не слышала \| • правка поста — не слышала \| • новый пост — не слышала/u);
+  const status = async (heartOf) => { await heartOf.onMessage({ message_id: (mid += 1), date: Math.floor(clock / 1000), from: { id: OWNER, first_name: "Хозяин" }, chat: { id: OWNER, type: "private" }, text: "/status" }, KEY); return toOwner().at(-1).text; };
+  assert.match(await status(h), /Дверь приложения: открыта только вам · за сутки запросов: 1, отказов: 1 \(последний — bad_signature\) · путь: правка поста\n/u);
+  // Через четверть часа услышанное телефону уже не показывается: опыт давно кончился.
+  clock += 16 * 60_000;
+  assert.match(await h.doorState(), /• личное сообщение бота — не слышала \| • правка поста — не слышала \| • новый пост — не слышала/u);
+
+  // Запрос с верной подписью пришёл из другого канала: ключ записан не на тот канал — это видно и в статусе, и телефону.
+  reset();
+  const other = make();
+  assert.equal((await knock(other, {}, { chat: "-100777" })).out.code, "clock");
+  assert.match(await status(other), /за сутки запросов: 0 · запрос двери пришёл не туда \(channel -100777\)\n/u);
+  assert.match(await other.doorState(), /• запрос двери пришёл не туда — 0 с назад: channel -100777; если это канал — ключ записан на другой/u);
+  assert.match(await other.doorState({ after: 0 }), /• запрос двери пришёл не туда — channel -100777; если это канал — ключ записан на другой/u);
+  // Конверт двери от человека (или в виде, которого сердце не ждёт) — не разговор: запомнен и оставлен без ответа.
+  const sentSoFar = sdk().sent.length;
+  const pasted = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock });
+  assert.deepEqual(await other.onMessage({ message_id: (mid += 1), date: Math.floor(clock / 1000), from: { id: 5, first_name: "Гость", is_bot: false }, chat: { id: 5, type: "private" }, text: doorWire(pasted) }, KEY), { ignored: true, reason: "door" });
+  assert.equal(sdk().sent.length, sentSoFar);
+  assert.match(await other.doorState({ after: 1 }), /• запрос двери пришёл не туда — private 5, не от бота;/u);
+
+  // Сервер без setMySettings (до Bot API 10.5): причина — в статусе и в словах телефону, с тем, где включить руками.
+  reset();
+  sdk().failing.setMySettings = Object.assign(new Error("setMySettings failed"), { code: 404, description: "Not Found: method not found" });
+  const old = make();
+  assert.match(await old.doorState(), /Общение ботов у Аи не включилось \(Not Found: method not found\) — включите сами: @BotFather → \/mybots → бот Аи → Bot Settings → Bot-to-Bot Communication Mode\.$/u);
+  assert.match(await status(old), /от бота двери пока ничего не приходило · общение ботов не включилось \(Not Found: method not found\)\n/u);
+  // Учёт запросов эту запись не стирает.
+  await knock(old);
+  assert.match(await status(old), /путь: новый пост · общение ботов не включилось/u);
+
+  // После публикации (пробуждение с `deployed`) режим включается сам; обычный удар его не трогает; без ключа — тоже.
+  reset();
+  const fresh = make();
+  await fresh.tick({ ...KEY, tick: true });
+  assert.equal(calls("setMySettings").length, 0);
+  await fresh.tick({ ...KEY, tick: true, deployed: true });
+  assert.deepEqual(calls("setMySettings"), [{ can_communicate_with_bots: true }]);
+  reset();
+  const closed = make({ DOOR_KEY: "" });
+  await closed.tick({ ...KEY, tick: true, deployed: true });
+  assert.equal(calls("setMySettings").length, 0, "двери нет — режим общения ботов ей не нужен");
+  assert.equal(await closed.doorState(), `${DOOR_SAYS} name=ai_heart_bot seq=0 | У сердца нет ключа двери: оно опубликовано без строки KEY_DOOR.`);
+  // Тем же входом, что удар будильника: обработчик сообщений с контекстом владельца токена публикации. В самом
+  // репозитории ключа двери нет — настоящее сердце так и отвечает.
+  const { default: handler } = await import("../tgcloud/handlers/message.js");
+  assert.match(await handler({}, { door: "state", after: 0 }), new RegExp(`^${DOOR_SAYS} name=\\S+ seq=0 \\| У сердца нет ключа двери: оно опубликовано без строки KEY_DOOR\\.$`, "u"));
+});
+
 test("ключ двери попадает в сердце тем же путём, что остальные: KEY_DOOR → secrets.js; записан не так — двери нет", () => {
   const dir = mkdtempSync(join(tmpdir(), "door-"));
   try {
@@ -357,7 +532,12 @@ test("ключ двери попадает в сердце тем же путё�
 //
 // Поддельный Bot API — `tests/fixtures/telegram.mjs`: он ведёт себя так, как написано в исходниках настоящего сервера,
 // а не так, как удобно тесту (в 0.54.0 было наоборот — и первый живой опыт упёрся в то, чего тест не видел).
-const telegramStub = (options = {}) => telegramFixture({ door: DOOR, nextId: () => (mid += 1), ...options });
+// Путь по умолчанию у этих тестов — новый пост в канале (`DOOR_WAY=post`): так был написан посредник 0.54.1.
+// Тесты путей (0.54.2) называют путь сами.
+const telegramStub = async (options = {}) => {
+  const tg = await telegramFixture({ door: DOOR, nextId: () => (mid += 1), ...options });
+  return { ...tg, run: (args, extra = {}, input = null) => tg.run(args, { DOOR_WAY: "post", ...extra }, input) };
+};
 // Эти тесты поднимают сервер на 127.0.0.1 и запускают посредника отдельными процессами. Телефон гоняет набор перед
 // публикацией, и там тест порта не открывает и от скорости устройства не зависит (AGENTS.md, «Тесты»): пропуск. В 0.54.0
 // пропуска не было — правило было нарушено; на телефоне тест прошёл, но зависеть от этого публикация не должна.
@@ -673,5 +853,103 @@ test("ответа нет — улика в канале: запрос лежи�
     assert.equal(led.code, 5, led.out);
     assert.match(led.out, /Запрос так и лежал в канале[\s\S]+пришлите в чат разработки этот экран/u);
     assert.doesNotMatch(led.out, /опубликовано без ключа/u);
+  } finally { tg.close(); }
+});
+
+// ── Опыт трёх путей (0.54.2) ──
+// Вживую 22.11.2026 новый пост бота двери до двери не дошёл. Поддельный Telegram умеет и так (`botPosts: false`):
+// правки и личные сообщения ботов доходят, новые посты ботов друг до друга — нет.
+test("опыт трёх путей, как вживую 22.11.2026: новые посты ботов не доходят — личное сообщение и правка проходят в обе стороны; путь записан", { skip }, async () => {
+  const h = make();
+  const tg = await telegramStub({ hearts: () => h, botPosts: false });
+  try {
+    clock = Date.now();
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`, `KEY_DOOR=${LINE}`]);
+    // Сердце включает у себя режим общения ботов по вопросу телефона — как в `phone.sh door`; телефон запоминает
+    // номер последнего услышанного, чтобы после опыта спросить «что пришло за него».
+    const before = Number(/ seq=(\d+) /u.exec(await h.doorState())[1]);
+    const done = await tg.run(["ways", "--wait=3", "--poll=1"], { DOOR_WAY: "" });
+    assert.equal(done.code, 0, done.out);
+    const lines = done.out.trimEnd().split("\n");
+    assert.equal(lines[0], "Опыт двери: три пути по очереди — запрос к Аи и её ответ.");
+    assert.match(lines[1], /^ {2}✓ личное сообщение бота: ответ за \d+\.\d с$/u);
+    assert.match(lines[2], /^ {2}✓ правка поста в канале: ответ за \d+\.\d с \(новый пост Аи до бота двери не дошёл — дошла его правка\)$/u);
+    assert.equal(lines[3], "  ✗ новый пост в канале: за 3 с ответа нет — запрос так и лежал в канале (убрала его): Аи его не прочла");
+    assert.equal(lines[4], `✓ Дверь работает: путь — личное сообщение бота. Записала в ${tg.file}: DOOR_WAY=direct.`);
+    assert.match(lines[5], /^ {2}Комната: сборка \d+\.\d+\.\d+ · хозяин: да/u);
+    assert.equal(lines.length, 6, done.out);
+    assert.match(tg.text(), /^DOOR_WAY=direct$/mu);
+    assert.ok(tg.text().includes(`KEY_DOOR=${LINE}`), "прежние строки целы");
+    assert.deepEqual(tg.left(), [], "в канале после опыта пусто: заготовки, запросы и ответы убраны");
+    assert.equal(tg.called("setMySettings"), 1, "режим общения ботов бот двери включил себе сам, один раз");
+    assert.equal(tg.called("setWebhook") + tg.called("deleteWebhook"), 0);
+    // Что слышало сердце за этот опыт: личное и правку — исполнило; нового поста не слышало вовсе.
+    assert.deepEqual((await h.doorState({ after: before })).split(" | ").slice(1, 5), [
+      "Что слышала Аи от бота двери за этот опыт:", "• личное сообщение бота — запрос, ответила", "• правка поста — запрос, ответила", "• новый пост — не слышала",
+    ]);
+    // Дальше «look» идёт записанным путём — одним запросом, без опыта.
+    const sentSoFar = tg.called("sendMessage");
+    const again = await tg.run(["look", "--wait=5", "--poll=1"], { DOOR_WAY: "" });
+    assert.equal(again.code, 0, again.out);
+    assert.match(again.out, /^✓ Дверь работает: сердце ответило за /u);
+    assert.equal(tg.called("sendMessage"), sentSoFar + 1, "один запрос — лично");
+    // И любым названным: правкой.
+    const byEdit = await tg.run(["look", "--way=edit", "--wait=5", "--poll=1", "--flat"], { DOOR_WAY: "" });
+    assert.equal(byEdit.code, 0, byEdit.out);
+    assert.equal(JSON.parse(byEdit.out.split("\n")[1]).owner, true);
+    // Действие без названного и без записанного пути — не гадает.
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`, `KEY_DOOR=${LINE}`]);
+    const blind = await tg.run(["feed", '{"id":"abc123"}'], { DOOR_WAY: "" });
+    assert.equal(blind.code, 1); assert.match(blind.out, /Каким путём\? Сначала опыт: node scripts\/door-client\.mjs ways/u);
+    assert.match((await tg.run(["look", "--way=pigeon"], { DOOR_WAY: "" })).out, /Пути «pigeon» нет\. Есть: direct, edit, post\./u);
+  } finally { tg.close(); }
+});
+
+test("опыт трёх путей, когда доходит всё: три галочки; «look» без пути — он же; в правке видно, что новый пост Аи тоже дошёл", { skip }, async () => {
+  const h = make();
+  const tg = await telegramStub({ hearts: () => h, talks: true });
+  try {
+    clock = Date.now();
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`, `KEY_DOOR=${LINE}`]);
+    // Имя бота Аи называет телефон (`DOOR_AI_NAME`); номер её при этом может быть и неизвестен.
+    const done = await tg.run(["look", "--wait=4", "--poll=1"], { DOOR_WAY: "", DOOR_AI_ID: "", DOOR_AI_NAME: AI_NAME });
+    assert.equal(done.code, 0, done.out);
+    assert.match(done.out, /✓ личное сообщение бота: ответ за [\d.]+ с\n {2}✓ правка поста в канале: ответ за [\d.]+ с \(новый пост Аи до бота двери тоже дошёл\)\n {2}✓ новый пост в канале: ответ за [\d.]+ с\n✓ Дверь работает: путь — личное сообщение бота\./u);
+    assert.deepEqual(tg.left(), []);
+  } finally { tg.close(); }
+});
+
+test("личное сообщение не уходит: режим общения ботов не включён у Аи или у бота двери — слова Telegram и где включить; остальные пути пробуются", { skip }, async () => {
+  const h = make();
+  // У Аи режим не включён (сердце о нём ещё не спрашивали); новые посты ботов не доходят.
+  const tg = await telegramStub({ hearts: () => h, botPosts: false });
+  try {
+    clock = Date.now();
+    tg.keys([`OWNER_TG_ID=${OWNER}`, `DOOR_BOT_TOKEN=${DOOR_BOT}`, `KEY_DOOR=${LINE}`]);
+    const done = await tg.run(["ways", "--wait=3", "--poll=1"], { DOOR_WAY: "" });
+    assert.equal(done.code, 0, done.out);
+    assert.match(done.out, /✗ личное сообщение бота: запрос не ушёл — Forbidden: bot can't send messages to bots\n {2}Личное сообщение бота требует режима общения ботов у обоих: у бота двери он включён, у Аи его включает само сердце\. Не помогло — включите руками у обоих ботов \(у бота двери и у Аи\): @BotFather → \/mybots → бот → Bot Settings → Bot-to-Bot Communication Mode — и повторите команду\.\n/u);
+    assert.match(done.out, /✓ правка поста в канале: ответ за /u);
+    assert.match(done.out, /✓ Дверь работает: путь — правка поста в канале\./u);
+    assert.match(tg.text(), /^DOOR_WAY=edit$/mu);
+    // Сервер до Bot API 10.5: включить режим сам бот не может — сказано, что не вышло и где включить руками.
+    tg.state.oldApi = true; tg.state.bots.get(DOOR_BOT).talks = false;
+    const old = await tg.run(["look", "--way=direct", "--wait=3"], { DOOR_WAY: "" });
+    assert.equal(old.code, 1, old.out);
+    assert.match(old.out, /^Запрос не ушёл Аи лично: Forbidden: bot can't send messages to bots\.\n {2}Личное сообщение бота требует режима общения ботов у обоих: у бота двери включить не вышло \(Not Found: method not found\)/u);
+    // Telegram принял личное сообщение молча (как он поступит без режима, вживую не видели), а включить режим бот
+    // двери себе не смог: ответа нет — и та же строка говорит, у кого режим не включён.
+    tg.state.swallow = true;
+    const mute = await tg.run(["ways", "--wait=3", "--poll=1"], { DOOR_WAY: "" });
+    assert.match(mute.out, /✗ личное сообщение бота: за 3 с ответа нет\n {2}Личное сообщение бота требует режима общения ботов у обоих: у бота двери включить не вышло \(Not Found: method not found\), у Аи его включает само сердце\. Не помогло — включите руками у обоих ботов/u);
+    tg.state.swallow = false;
+    // Ни один путь не прошёл: Аи в канале нет, личное не уходит — код «ответа нет», запросы за собой убраны.
+    tg.state.channel.admins.delete(AI_ID);
+    const none = await tg.run(["ways", "--wait=3", "--poll=1"], { DOOR_WAY: "" });
+    assert.equal(none.code, 5, none.out);
+    assert.match(none.out, /✗ Ни одним путём ответ не пришёл\.\n {2}Скажите Аи «статус» и пришлите в чат разработки этот экран и её строку «Дверь приложения»/u);
+    assert.deepEqual(tg.left(), []);
+    // Под `phone.sh door` подсказку говорит он сам — после того как спросит сердце, что оно слышало.
+    assert.doesNotMatch((await tg.run(["ways", "--wait=3", "--poll=1"], { DOOR_WAY: "", DOOR_FLOW: "1" })).out, /Скажите Аи/u);
   } finally { tg.close(); }
 });

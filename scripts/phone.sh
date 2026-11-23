@@ -1240,10 +1240,92 @@ EOF
   # тот же номер — предположение о платформе (как у будильника выше). Поэтому
   # посредник на нём ничего не обрывает: не сошлось — скажет «не вижу Аи среди
   # администраторов» и всё равно сделает опыт.
-  local AI_ID="" DOOR_WAIT="${HEART_DOOR_WAIT:-600}"
+  # DOOR_EACH — сколько секунд ждать ответа каждым из трёх путей опыта; AI_NAME — имя бота Аи (его называет сердце);
+  # DOOR_SEQ — номер последнего, что дверь слышала до опыта: после опыта сердце назовёт только то, что пришло за него.
+  # DOOR_OPEN — сердце само сказало, что дверь у него открыта (ключ на месте, код новый): молчит опыт — дело не в ключе.
+  local AI_ID="" AI_NAME="" DOOR_SAID="" DOOR_NOW="" DOOR_SEQ="" DOOR_OPEN="" DOOR_WAIT="${HEART_DOOR_WAIT:-600}" DOOR_EACH="${HEART_DOOR_TRY:-15}"
   case "${TOKEN%%:*}" in app[0-9]*) AI_ID="${TOKEN%%:*}"; AI_ID="${AI_ID#app}" ;; esac
   case "$AI_ID" in ''|*[!0-9]*) AI_ID="" ;; esac
-  door_client() { DOOR_AI_ID="$AI_ID" DOOR_FLOW=1 HEART_ENV="$ENV_FILE" node "$REPO/scripts/door-client.mjs" "$@"; }
+  door_client() { DOOR_AI_ID="$AI_ID" DOOR_AI_NAME="$AI_NAME" DOOR_FLOW=1 HEART_ENV="$ENV_FILE" node "$REPO/scripts/door-client.mjs" "$@"; }
+  # Вопрос самому сердцу — через платформу, как удар будильника без второго бота: что дверь слышала за последние
+  # минуты. Первый живой опыт (22.11.2026) кончился словами «ответа нет», и по экрану было не узнать, дошёл ли
+  # запрос до Аи. Заодно сердце включает у себя режим общения ботов и называет имя своего бота.
+  # Первым словом команды — номер, после которого считать («что слышала за этот опыт»); без него — за четверть часа.
+  # 0 — ответило: слова в DOOR_SAID, имя — в AI_NAME, номер последнего услышанного — в DOOR_NOW.
+  door_state() {
+    DOOR_SAID=""; DOOR_NOW=""; DOOR_OPEN=""
+    [ -f "$LIVE/tgcloud/handlers/message.js" ] && [ -f "$LIVE/scripts/inject-secrets.mjs" ] || return 1
+    ensure_cli > /dev/null 2>&1 || return 1
+    local out name head ctx='{ door: "state" }'
+    case "${1:-}" in ''|*[!0-9]*) ;; *) ctx="{ door: \"state\", after: $1 }" ;; esac
+    ( cd "$LIVE" && node scripts/inject-secrets.mjs ) > /dev/null 2>&1 < /dev/null
+    out="$(WORK="$LIVE" tg run handlers/message '{}' --ctx "$ctx" 2>&1)"
+    restore_live
+    DOOR_SAID="$(printf '%s\n' "$out" | sed "s/$(printf '\033')\[[0-9;]*m//g" | sed -n 's/^.*DOOR-SAYS //p' | head -n 1 | sed 's/  *[0-9][0-9]*ms *$//')"
+    [ -n "$DOOR_SAID" ] || return 1
+    head="${DOOR_SAID%% | *}"
+    name="${head#name=}"; name="${name%% *}"
+    case "$name" in ''|-|*[!A-Za-z0-9_]*) ;; *) AI_NAME="$name" ;; esac
+    case "$head" in *' seq='*) DOOR_NOW="${head##* seq=}"; DOOR_NOW="${DOOR_NOW%% *}" ;; esac
+    case "$DOOR_NOW" in ''|*[!0-9]*) DOOR_NOW="" ;; esac
+    case "$DOOR_SAID" in *"Что слышала Аи"*) DOOR_OPEN=1 ;; esac
+    return 0
+  }
+  # Что слышала Аи — строками на экран: по ним видно, какой путь до неё доходит, даже когда ответа не было.
+  door_heard() {
+    if door_state "$DOOR_SEQ"; then
+      case "$DOOR_SAID" in *' | '*) printf '%s\n' "${DOOR_SAID#* | }" | tr '|' '\n' | sed 's/^ *//; s/ *$//' ;; esac
+      return 0
+    fi
+    echo "Что слышала Аи, спросить у сердца не вышло. Скажите ей «статус» и пришлите в чат разработки этот экран и её строку «Дверь приложения»."
+    return 1
+  }
+  # Слова платформы о вебхуке бота Аи — без цвета и без адреса (адрес ни на экран, ни в журнал не идёт).
+  door_hook() { tg webhook "$@" 2>&1 | sed "s/$(printf '\033')\[[0-9;]*m//g" | grep -v -i -E '^[[:space:]]*(expected[[:space:]]+)?url:'; }
+  # Каких событий двери нет в подписке. Личное сообщение бота приходит событием «message», пост канала —
+  # «channel_post», его правка — «edited_channel_post»; считаются те, для которых в опубликованном коде есть обработчик.
+  door_lacks() {
+    local words name dir="$REPO" lacks=""
+    words=" $(printf '%s' "$1" | tr ',' ' ' | tr -s '[:space:]' ' ') "
+    [ -d "$LIVE/tgcloud/handlers" ] && dir="$LIVE"
+    for name in message channel_post edited_channel_post; do
+      [ -f "$dir/tgcloud/handlers/$name.js" ] || continue
+      case "$words" in *" $name "*) ;; *) lacks="$lacks $name" ;; esac
+    done
+    printf '%s' "$lacks"
+  }
+  # Подписка бота Аи на события Telegram — строкой на экран, до опыта. Нет события в подписке — Telegram не отдаёт его
+  # сердцу вовсе, а на экране это то же «ответа нет» и «не слышала» (опыт 22.11.2026 этого не различал). Нет нужного —
+  # подписка чинится тут же.
+  door_events() {
+    local out words lacks
+    ensure_cli > /dev/null 2>&1 || return 0
+    out="$(door_hook)"
+    words="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*allowed updates:[[:space:]]*//p' | head -n 1)"
+    if [ -z "$words" ]; then echo "Подписку Аи на события Telegram узнать не вышло — опыт идёт и без этого."; return 0; fi
+    lacks="$(door_lacks "$words")"
+    if [ -z "$lacks" ]; then echo "✓ Подписка Аи на события Telegram: личные сообщения, посты канала и их правки — на месте."; return 0; fi
+    echo "✗ Аи не подписана на события:$lacks — такие запросы Telegram ей не отдаёт вовсе. Чиню подписку…"
+    out="$(door_hook sync)"
+    words="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*allowed updates:[[:space:]]*//p' | head -n 1)"
+    lacks="$(door_lacks "$words")"
+    if [ -n "$words" ] && [ -z "$lacks" ]; then echo "✓ Подписка починена: теперь эти события до Аи доходят."
+    else echo "✗ Подписка не починилась${lacks:+ — нет событий:$lacks}. Пришлите этот экран в чат разработки."; fi
+    return 0
+  }
+  # Опыт не прошёл — что знает сам Telegram о доставке событий Аи: сколько их ждёт в очереди и чем кончилась
+  # последняя доставка. Сердце о недоставленном не знает; видно это только здесь.
+  door_delivery() {
+    local out pending last
+    ensure_cli > /dev/null 2>&1 || return 0
+    out="$(door_hook)"
+    pending="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*pending updates:[[:space:]]*//p' | head -n 1 | tr -cd '0-9')"
+    last="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*last error:[[:space:]]*//p' | head -n 1 | sed 's#[A-Za-z][A-Za-z]*://[^ ]*#(адрес)#g' | scrub)"
+    [ -n "$pending" ] || [ -n "$last" ] || return 0
+    if [ -n "$last" ]; then echo "Telegram о доставке событий Аи: в очереди — ${pending:-0}; последняя ошибка доставки — «${last:0:200}»."
+    else echo "Telegram о доставке событий Аи: в очереди — ${pending:-0}; ошибок доставки нет."; fi
+    return 0
+  }
   # Как у «deploy»: 0 — опубликовано; иначе причина уже названа строками публикации.
   door_publish() {
     local code
@@ -1252,17 +1334,17 @@ EOF
     failed
     return 1
   }
-  # Опыт сразу после публикации. Когда именно платформа начинает отвечать новым
-  # кодом, неизвестно: первая проба без ответа — ещё не приговор, через четверть
-  # минуты — вторая, и уже её слова — итог.
+  # Опыт — три пути по очереди (посредник, «ways»): личное сообщение бота, правка поста, новый пост.
+  # Сразу после публикации: когда именно платформа начинает отвечать новым кодом, неизвестно — первая проба
+  # без ответа ещё не приговор, через четверть минуты — вторая, и уже её слова — итог.
   door_fresh() {
     local code
-    door_client look --wait=40 --try; code=$?
+    door_client ways "--wait=$DOOR_EACH" --try; code=$?
     # 5 — ответа нет; 7 — ответило сердце с другим ключом: прежний код ещё на месте.
     case "$code" in 5|7) ;; *) return "$code" ;; esac
     echo "Сердце только что опубликовано — возможно, новый код ещё не заработал. Пробую ещё раз…"
     sleep "${HEART_DOOR_PAUSE:-15}"
-    door_client look --wait=40
+    door_client ways "--wait=$DOOR_EACH"
   }
   open_door() {
     local given="${1:-}" code line more published=0
@@ -1302,23 +1384,42 @@ EOF
     # 2. Канал и ключ: посредник ждёт, пока бота добавят в канал, и пишет ключ в файл.
     door_client setup "--wait=$DOOR_WAIT" || return 1
     load_env "$ENV_FILE"
-    # 3. Сердце с этим ключом. Опубликовано с ним же — второй раз не нужно.
-    if [ "$(published_door)" != "$(door_mark)" ]; then
+    # 3. Сердце с этим ключом. Опубликовано с ним же и той же сборкой, что лежит в папке, — второй раз не нужно.
+    # (Сборка в папке новее опубликованной — дом ещё не успел: опыт со старым сердцем был бы впустую.)
+    if [ "$(published_door)" != "$(door_mark)" ] || [ "$(published_build)" != "$(build_of)" ]; then
       echo "Публикую сердце с ключом двери — минута-другая…"
       door_publish || { echo "✗ Сердце с ключом двери не опубликовалось — дверь пока закрыта. Причина — строками выше."; return 1; }
       published=1
     fi
-    # 4. Опыт. Метка могла и обмануть (сердце публиковали не отсюда): молчит дверь
-    # или ключи разные — публикация и вторая попытка.
+    # 4. Опыт. Сначала — подписка бота Аи на события: без неё запрос до сердца не дойдёт, каким путём его ни шли.
+    # Затем — вопрос сердцу: оно включает у себя режим общения ботов, называет имя своего бота и номер
+    # последнего, что слышала дверь, — после опыта по этому номеру видно, что пришло именно за него.
+    # Метка могла и обмануть (сердце публиковали не отсюда): молчит дверь или ключи разные — публикация и вторая попытка.
+    door_events
+    local open=""
+    door_state && { DOOR_SEQ="$DOOR_NOW"; open="$DOOR_OPEN"; }
     if [ "$published" = 1 ]; then door_fresh; code=$?
     else
-      door_client look "--wait=${HEART_DOOR_TRY:-20}" --try; code=$?
-      case "$code" in
-        5|7)
-          echo "Публикую сердце заново: в опубликованном, похоже, нет этого ключа двери…"
-          door_publish || { echo "✗ Сердце с ключом двери не опубликовалось — дверь пока закрыта. Причина — строками выше."; return 1; }
-          door_fresh; code=$? ;;
-      esac
+      door_client ways "--wait=$DOOR_EACH" --try; code=$?
+      # Ответа нет (5), а сердце перед опытом само сказало, что дверь у него открыта: ключ на месте и код новый —
+      # вторая публикация ничего не изменит, запрос теряется по дороге. Ключи разные (7) или сердце на вопрос
+      # о двери не ответило (прежняя сборка, публиковали не отсюда) — публикация и вторая попытка. Она же — когда
+      # запрос до сердца дошёл, но «не туда»: ключ у него от другого канала, и публикация с ключом из файла это правит.
+      if [ "$code" = 5 ] && [ "$open" = 1 ] && door_state "$DOOR_SEQ"; then
+        case "$DOOR_SAID" in *"пришёл не туда"*) open="" ;; esac
+      fi
+      if [ "$code" = 7 ] || { [ "$code" = 5 ] && [ "$open" != 1 ]; }; then
+        echo "Публикую сердце заново: в опубликованном, похоже, нет этого ключа двери…"
+        door_publish || { echo "✗ Сердце с ключом двери не опубликовалось — дверь пока закрыта. Причина — строками выше."; return 1; }
+        door_fresh; code=$?
+      fi
+    fi
+    # 5. Что слышала сама Аи: какой путь до неё дошёл — видно и тогда, когда ответа не было.
+    door_heard || true
+    # 6. Опыт не прошёл — что говорит Telegram о доставке её событий (очередь, последняя ошибка) и что делать с экраном.
+    if [ "$code" != 0 ]; then
+      door_delivery
+      echo "Пришлите этот экран целиком в чат разработки: по нему видно, где теряется запрос."
     fi
     return "$code"
   }
