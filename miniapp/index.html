@@ -332,6 +332,16 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 @keyframes gale { from { transform: skewX(-2.4deg); } to { transform: skewX(3.4deg) scaleX(1.03); } }
 /* 0.49.0 — Байт просится на руки: лапы тянутся к ней. */
 #room .reach { animation: scratch 1.5s ease-in-out infinite alternate; }
+/* 0.56.0 — корм сыплется из пакета: кусочек летит от угла пакета (--ax, --ay) туда, куда она сыплет (--bx, --by), и
+   там пропадает — в лапах Байта или на полу. Байт под пакетом ловит: лапы ходят чаще, чем когда он просится на руки. */
+#room .kibble { pointer-events: none; }
+#room .kib { transform-box: fill-box; transform-origin: 50% 50%; animation: kib 1.35s cubic-bezier(0.5, 0, 0.9, 0.7) infinite; animation-delay: var(--d, 0s); }
+@keyframes kib { from { transform: translate(var(--ax), var(--ay)); opacity: 0; } 9% { opacity: 1; } 90% { opacity: 1; } to { transform: translate(var(--bx), var(--by)) rotate(150deg); opacity: 0; } }
+#room .grabs .reach { animation-duration: 0.4s; }
+/* Миску наполнили: корм падает в неё сверху дважды и пропадает, горка растёт от дна — один раз. */
+#room .refill .kib { animation-iteration-count: 2; animation-fill-mode: both; }
+#room .refill .heap { transform-box: fill-box; transform-origin: 50% 100%; animation: heap 2.7s ease-out both; }
+@keyframes heap { from { transform: scale(0.45, 0.1); opacity: 0.3; } to { transform: none; opacity: 1; } }
 /* 0.49.0 — страница свёрнута: движение на рисунке стоит (.resting); её картинка ещё в пути — мягкий силуэт и три
    точки (.coming); журнал ошибок под строкой «страница N» (.oops). */
 .resting #room *, .resting #sky *, .resting .rainbox * { animation-play-state: paused !important; }
@@ -348,6 +358,7 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 @media (prefers-reduced-motion: reduce) {
   #room *, #sky *, .rainbox *, .heart, #say.fresh, .actions button.busy { animation: none !important; }
   .rainbox { transition: none !important; }
+  #room .refill .kib { display: none; }
 }
 </style>
 </head>

@@ -25,6 +25,8 @@ const { drawRoom, drawBackdrop, drawRain, drawInside, WIDTH, HEIGHT, WIN, RAIN_S
 /** Её картинки — те самые модули, что грузит страница (папка `miniapp/her/`, с 0.40.0). */
 const SPRITES = Object.fromEntries(await Promise.all(Object.keys(HER_SPRITES).map(async (name) => [name, (await import(`../miniapp/her/${name}.js`)).default])));
 const PAINTED = { sprites: SPRITES };
+/** Картинка комнаты (0.53.0): с ней миска — на картинке, а корм в ней рисует код. */
+const DAY_ROOM = (await import("../miniapp/room/day.js")).default;
 /** Вторые кадры поз (0.45.0): не позы — в `HER_SPRITES` их нет, а в папке картинок они лежат рядом. */
 const FRAMES = Object.values(scene.HER_FRAMES).map(([name]) => name);
 const FRAME_SPRITES = Object.fromEntries(await Promise.all(FRAMES.map(async (name) => [name, (await import(`../miniapp/her/${name}.js`)).default])));
@@ -1418,7 +1420,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "19");
+  assert.equal(logic.PAGE, "20");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1733,6 +1735,15 @@ test("страница: папка уходит на платформу файл
   gather({ part: "вечер", her: { pose: "read", key: "уют", beat: true, face: "drowsy" }, things: [] });
   gather({ part: "день", her: { pose: "shelf", key: "дело", beat: true }, cat: { shape: "sit", place: "bowl", key: "сыт" }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 } });
   assert.deepEqual([...classes].filter(name => !mimed.has(name)).sort(), ["hop", "mark", "notice", "rise", "slow"]);
+  // 0.56.0: корм рисует код — кусочки («kibble», «kib»); Байт под пакетом ловит («grabs»); миску наполнили только
+  // что — корм падает в неё, горка растёт («refill», «heap» — у миски на картинке комнаты).
+  const poured = new Set(classes);
+  gather({ part: "утро", her: { pose: "feed", key: "дело", beat: true }, cat: { shape: "eat", place: "near", key: "голоден" }, things: [] });
+  gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, cat: { shape: "eat", place: "bowl", key: "сыт" }, things: [], fed: true }, { ...PAINTED, fedWas: false });
+  // Горка — у миски на картинке комнаты; остальные классы комнаты-картинки проверяет `tests/painted.test.mjs`.
+  assert.match(drawRoom({ part: "день", her: { pose: "desk", key: "дело", beat: true }, cat: { shape: "eat", place: "bowl", key: "сыт" }, things: [], fed: true }, { ...PAINTED, room: DAY_ROOM, fedWas: false }), /<g class="refill"><g class="heap">/u);
+  classes.add("heap");
+  assert.deepEqual([...classes].filter(name => !poured.has(name)).sort(), ["grabs", "heap", "kib", "kibble", "refill"]);
   // Сценка дня на рисунке и небо по погоде: у каждой перемены и у каждого неба — свои классы.
   const staged = new Set(classes);
   for (const name of scene.SCENE_FX) gather({ part: "день", her: { pose: "desk", key: "дело" }, cat: { shape: "belly", place: "near", key: "ласка" }, things: [...THINGS], fx: [name] });
@@ -1858,7 +1869,7 @@ test("страница: папка уходит на платформу файл
   // Рисунку отдаётся, что уже загружено и кто где был на прежнем рисунке (0.44.0: до нового места она и Байт доходят
   // шагом); страница без картинок (рядом прежний `scene.js`) рисует её кодом.
   // С 0.53.0 — и картинка комнаты (`room`), если она уже здесь.
-  assert.match(app, /const options = canPaint \? \{\s+sprites, \.\.\.\(picture \? \{ room: picture \} : \{\}\), \.\.\.\(before\?\.her \? \{ was: before\.her \} : \{\}\), \.\.\.\(before\?\.cat \? \{ catWas: before\.cat \} : \{\}\), \.\.\.\(state\.entering \? \{ enter: true \} : \{\}\),\s+\} : undefined;/u);
+  assert.match(app, /const options = canPaint \? \{\s+sprites, \.\.\.\(picture \? \{ room: picture \} : \{\}\), \.\.\.\(before\?\.her \? \{ was: before\.her \} : \{\}\), \.\.\.\(before\?\.cat \? \{ catWas: before\.cat \} : \{\}\), \.\.\.\(before\?\.fed === false \|\| Date\.now\(\) < drawn\.fedUntil \? \{ fedWas: false \} : \{\}\), \.\.\.\(state\.entering \? \{ enter: true \} : \{\}\),\s+\} : undefined;/u);
   // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
   assert.match(app, /const fresh = putInside\(view, options, renew\);/u);
   assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
@@ -1952,3 +1963,77 @@ test("ветер (0.51.0): сила — из погоды города; силь
   assert.deepEqual([out.city, out.wind], [false, out.sky === "storm" ? 2 : undefined]);
 });
 
+test("0.56.0, корм рисует код: из пакета он сыплется Байту в лапы (или на пол), а в миску — когда её наполнили; на картинке корма в воздухе нет", async () => {
+  const html = readFileSync(new URL("../miniapp/index.html", import.meta.url), "utf8");
+  const bits = (markup) => [...markup.matchAll(/<g class="kib" style="--ax:(-?[\d.]+)px;--ay:(-?[\d.]+)px;--bx:(-?[\d.]+)px;--by:(-?[\d.]+)px;--d:(-?[\d.]+)s"><ellipse cx="(-?[\d.]+)" cy="(-?[\d.]+)"/gu)]
+    .map(found => found.slice(1).map(Number)).map(([ax, ay, bx, by, late, x, y]) => ({ from: [x + ax, y + ay], to: [x + bx, y + by], at: [x, y], late }));
+  const meal = (cat, extra = {}) => ({ part: "утро", her: { pose: "feed", key: "дело", beat: true, ...extra }, ...(cat ? { cat } : {}), things: [] });
+  const near = { shape: "eat", place: "near", key: "голоден" };
+  for (const wear of [undefined, "home"]) {
+    const view = meal(near, wear ? { wear } : {}), name = spriteOf(view), markup = drawRoom(view, PAINTED), cast = scene.castOf(view, PAINTED);
+    assert.equal(name, wear ? "home-feed" : "feed");
+    // Угол пакета — в долях картинки; от него и летят кусочки.
+    const [fx, fy] = HER_SPRITES[name].pour, sprite = SPRITES[name], tall = HER_SPRITES[name].tall, wide = sprite.w * tall / sprite.h;
+    assert.ok(fx > 0 && fx < 0.3 && fy > 0.3 && fy < 0.7, `${name}: угол пакета — слева, на высоте её рук`);
+    // Её ступни — на линии 500 (`FEET` в scene.js); картинка стоит на ней, ось тела — `cx`.
+    const mouth = [cast.her.x - wide * sprite.cx + wide * fx, 500 - tall + tall * fy];
+    const flying = bits(markup);
+    assert.equal(flying.length, scene.KIBBLE.count, `${name}: кусочков столько, сколько задано`);
+    assert.equal((markup.match(/class="kibble"/gu) ?? []).length, 1);
+    for (const bit of flying) {
+      assert.ok(Math.abs(bit.from[0] - mouth[0]) < 2 && Math.abs(bit.from[1] - mouth[1]) < 0.2, `${name}: кусочек вылетает из угла пакета — ${bit.from}`);
+      assert.ok(bit.at[1] > mouth[1] && bit.at[1] < bit.to[1], "без движения кусочек стоит на пути, а не у пакета");
+      assert.ok(bit.late <= 0 && bit.late > -scene.KIBBLE.seconds, "каждый вылетает в свой миг — раньше начала рисунка");
+    }
+    assert.equal(new Set(flying.map(bit => bit.at[1])).size, flying.length, "без движения кусочки не лежат кучкой");
+    assert.equal(new Set(flying.map(bit => bit.late)).size, flying.length);
+    // Байт: стоит под пакетом на задних лапах, лапами к ней; корм кончается у его лап — выше головы, под углом пакета.
+    assert.deepEqual([cast.cat.shape, cast.cat.mirror, cast.cat.x < cast.her.x], ["beg", true, true]);
+    assert.match(markup, /<g class="grabs">/u);
+    for (const bit of flying) {
+      assert.ok(Math.abs(bit.to[0] - (cast.cat.x + 22.7 * cast.cat.k)) < 2.5, `${name}: корм падает ему в лапы — ${bit.to}`);
+      assert.ok(bit.to[1] > cast.cat.y - 72 * cast.cat.k && bit.to[1] < cast.cat.y - 50 * cast.cat.k, `${name}: в поднятые лапы — ${bit.to}`);
+      assert.ok(bit.to[1] - bit.from[1] > 25, "лететь есть куда");
+    }
+    assert.ok(markup.indexOf('class="kibble"') < markup.indexOf('class="grabs"'), "корм — под его лапами: они его закрывают");
+    assert.ok(markup.indexOf('class="kibble"') > markup.indexOf(`href="#r-her-${name}"`), "и перед её коленями");
+    // Байта рядом нет — корм долетает до пола, там горка.
+    const alone = drawRoom(meal({ shape: "curl", place: "sill", key: "спит" }, wear ? { wear } : {}), PAINTED), falling = bits(alone);
+    assert.equal(falling.length, scene.KIBBLE.count);
+    for (const bit of falling) assert.ok(bit.to[1] > 490 && bit.to[1] <= 498 && bit.to[0] < mouth[0], `${name}: до пола, чуть левее пакета — ${bit.to}`);
+    const heap = alone.slice(alone.indexOf('class="kibble"'), alone.indexOf('<g class="kib"'));
+    assert.equal((heap.match(/<ellipse/gu) ?? []).length, 5, "на полу — горка из пяти кусочков");
+    assert.doesNotMatch(alone, /class="grabs"/u);
+  }
+  // Другая поза — корма нет; она ещё идёт к месту — корм появится, когда присядет.
+  assert.doesNotMatch(drawRoom({ part: "день", her: { pose: "desk", key: "дело", beat: true }, cat: near, things: [] }, PAINTED), /class="kib/u);
+  const coming = drawRoom(meal(near), { ...PAINTED, was: { name: "work", x: 252 } });
+  assert.match(coming, /<g class="arrive late" style="--t:[\d.]+s"><g class="kibble"/u);
+  // Миску наполнили только что: на прежнем рисунке она была пуста — корм падает в неё, горка растёт; один раз.
+  const picture = DAY_ROOM;
+  const full = { part: "день", her: { pose: "desk", key: "дело", beat: true }, cat: { shape: "eat", place: "bowl", key: "сыт" }, things: [], fed: true };
+  for (const options of [PAINTED, { ...PAINTED, room: picture }]) {
+    const fresh = drawRoom(full, { ...options, fedWas: false });
+    assert.match(fresh, /<g class="refill">/u);
+    const into = bits(fresh.slice(fresh.indexOf('class="refill"')));
+    assert.equal(into.length, scene.KIBBLE.count);
+    for (const bit of into) assert.ok(bit.to[1] - bit.from[1] > 40 && Math.abs(bit.to[0] - bit.from[0]) < 6, "в миску корм падает сверху, отвесно");
+    assert.doesNotMatch(drawRoom(full, options), /class="refill"/u, "миска уже была полна — ничего не сыплется");
+    assert.doesNotMatch(drawRoom({ ...full, fed: false }, { ...options, fedWas: false }), /class="refill"/u);
+  }
+  assert.match(drawRoom(full, { ...PAINTED, room: picture, fedWas: false }), /<g class="refill"><g class="heap">/u);
+  assert.deepEqual([scene.castOf(full, PAINTED).fed, scene.castOf({ ...full, fed: false }, PAINTED).fed], [true, false]);
+  // Стили страницы: полёт задан сдвигами; без движения — кусочки стоят, а над миской их нет вовсе.
+  assert.match(html, /#room \.kib \{[^}]*animation: kib 1\.35s[^}]*infinite; animation-delay: var\(--d, 0s\); \}/u);
+  assert.equal(scene.KIBBLE.seconds, 1.35);
+  assert.match(html, /@keyframes kib \{ from \{ transform: translate\(var\(--ax\), var\(--ay\)\); opacity: 0; \}.*to \{ transform: translate\(var\(--bx\), var\(--by\)\)/u);
+  assert.match(html, /#room \.refill \.kib \{ animation-iteration-count: 2; animation-fill-mode: both; \}/u);
+  assert.match(html, /@media \(prefers-reduced-motion: reduce\) \{[^@]*#room \.refill \.kib \{ display: none; \}/u);
+  // Картинки: нарисованный корм в воздухе стёрт — модули стали легче, чем были с ним (47 179 и 48 160 знаков).
+  for (const [name, was] of [["feed", 47179], ["home-feed", 48160]]) assert.ok(statSync(new URL(`../miniapp/her/${name}.js`, import.meta.url)).size < was - 1500, `${name}: ${statSync(new URL(`../miniapp/her/${name}.js`, import.meta.url)).size}`);
+  // Страница передаёт рисунку, что миска была пуста, — и ещё три секунды после: пролёт не обрывается новым рисунком.
+  const page = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  assert.match(page, /before\?\.fed === false \|\| Date\.now\(\) < drawn\.fedUntil \? \{ fedWas: false \} : \{\}/u);
+  assert.match(page, /if \(before\?\.fed === false && drawn\.cast\?\.fed === true\) drawn\.fedUntil = Date\.now\(\) \+ REFILL_MS;/u);
+  assert.match(page, /const REFILL_MS = 3000;/u);
+});

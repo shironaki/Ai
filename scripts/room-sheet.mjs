@@ -34,7 +34,8 @@
  * со стилями движения из `miniapp/index.html` (правила `#room …` и их `@keyframes`), и каждое движение остановлено в
  * миг `"at"` (миллисекунды от появления рисунка): так шаг Байта, её шаг и вторые кадры поз видны по кадрам, а не
  * «на слово». У рисунка можно назвать, откуда идут: `"was": { "name": "work", "x": 160 }` — она, `"catWas": { "x":
- * 300, "y": 456, "shape": "sit" }` — Байт, `"enter": true` — она входит от двери. Рисунков — не больше двадцати
+ * 300, "y": 456, "shape": "sit" }` — Байт, `"enter": true` — она входит от двери, `"fedWas": false` — миска на
+ * прежнем рисунке была пуста (0.56.0: корм в неё сыплется на глазах). Рисунков — не больше двадцати
  * шести (у каждого своя приставка имён красок); за окном на таком листе пусто — слой неба на странице отдельный.
  *
  * Она на листах — как на странице: картинкой из `miniapp/her/` (с 0.40.0). Четвёртое слово `drawn` рисует её
@@ -201,9 +202,9 @@ async function motionCells() {
   const css = (/<style>([\s\S]*?)<\/style>/u.exec(markup)?.[1] ?? "").split("\n").filter(line => /^(?:#room \.|@keyframes )/u.test(line)).join("\n");
   const all = { ...sprites, ...frames }, letters = "abcdefghijklmnopqrstuvwxyz", used = new Set();
   if (sheet.views.length > letters.length) { console.error("На листе «движение» — не больше 26 рисунков."); process.exit(2); }
-  const list = sheet.views.map(({ label = "", view: described, crop, at = 0, was = null, catWas = null, enter = false }, index) => {
+  const list = sheet.views.map(({ label = "", view: described, crop, at = 0, was = null, catWas = null, enter = false, fedWas }, index) => {
     const [x, y, w, h] = crop ?? sheet.crop ?? [0, 0, WIDTH, HEIGHT];
-    const inside = drawInside(described, { sprites: all, prefix: `${letters[index]}-`, ...(sheet.room !== false && roomFor(described) ? { room: roomFor(described) } : {}), ...(was ? { was } : {}), ...(catWas ? { catWas } : {}), ...(enter === true ? { enter: true } : {}) });
+    const inside = drawInside(described, { sprites: all, prefix: `${letters[index]}-`, ...(sheet.room !== false && roomFor(described) ? { room: roomFor(described) } : {}), ...(was ? { was } : {}), ...(catWas ? { catWas } : {}), ...(enter === true ? { enter: true } : {}), ...(fedWas === false ? { fedWas: false } : {}) });
     for (const found of inside.matchAll(/href="#r-her-([a-z0-9-]+?)(?:-blink)?"/gu)) used.add(found[1]);
     // За окном — небо и город этого часа (неподвижные: стили неба на лист не берутся). Имена красок у каждого рисунка
     // свои: буквы с конца алфавита, чтобы не совпасть с буквами самой комнаты; рисунков больше тринадцати — серый фон.

@@ -1121,6 +1121,17 @@ build, side_effects: "none" }` — без чтения и записи.
 в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
 `<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
 
+## Что добавила 0.56.0: где что лежит
+
+| Что | Где |
+|---|---|
+| Корм, который сыплется: кусочки, их путь, горка на полу | `kibble` и `KIBBLE` в `miniapp/scene.js`; полёт — `.kib` и `@keyframes kib` в `miniapp/index.html` |
+| Откуда он сыплется | поле `pour` у картинок `feed` и `home-feed` в `HER_SPRITES` (угол пакета, в долях картинки) |
+| Байт ловит корм: фигура и место | место «ест рядом» при её картинке с `drop` — `only: "beg"`, `grabs` (`catSpotsBy`); лапы чаще — `.grabs .reach` |
+| Миску наполнили только что | `castOf(...).fed` → страница шлёт `options.fedWas` (`miniapp/app.js`) → `.refill`, `.heap` |
+| Картинки без нарисованного корма | `miniapp/her/feed.js`, `miniapp/her/home-feed.js` |
+| Слова о Байте, который ловит | третья строка запаса «+комната:байт:завтрак» в `PHRASES.txt` |
+
 ## Что добавила 0.55.1: где что лежит
 
 | Что | Где |

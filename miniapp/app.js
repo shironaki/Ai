@@ -69,7 +69,9 @@ let header = "";
 // её картинка и место, где она стоит, место и фигура Байта — по ним прежняя поза тает, а до нового места они
 // доходят шагом. `back` и `inside` — приставки имён слоёв: когда час сменяется при открытой странице, прежний слой
 // тает поверх нового, и имена у них должны быть разными.
-const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-", until: 0, still: null, shown: null, inks: null, zones: "", room: "" };
+const drawn = { part: "", sky: "", moon: null, view: "", cast: null, back: "s-", inside: "r-", until: 0, still: null, shown: null, inks: null, zones: "", room: "", fedUntil: 0 };
+/** Сколько длится «миску наполнили» (0.56.0): корм падает в неё и горка растёт; рисунок в это время миску не трогает. */
+const REFILL_MS = 3000;
 // Сколько прежний слой тает поверх нового (то же число — в стилях: `.fading`).
 const FADE_MS = 1600;
 // Сколько её нет, пока она переодевается.
@@ -697,7 +699,7 @@ function paint() {
     const renew = fade || (drawn.shown !== null && drawn.room !== pictureName);
     const before = renew ? null : drawn.cast;
     const options = canPaint ? {
-      sprites, ...(picture ? { room: picture } : {}), ...(before?.her ? { was: before.her } : {}), ...(before?.cat ? { catWas: before.cat } : {}), ...(state.entering ? { enter: true } : {}),
+      sprites, ...(picture ? { room: picture } : {}), ...(before?.her ? { was: before.her } : {}), ...(before?.cat ? { catWas: before.cat } : {}), ...(before?.fed === false || Date.now() < drawn.fedUntil ? { fedWas: false } : {}), ...(state.entering ? { enter: true } : {}),
     } : undefined;
     if (renew) {
       drawn.inside = drawn.inside === "r-" ? "q-" : "r-";
@@ -709,6 +711,9 @@ function paint() {
     drawn.view = key;
     drawn.room = pictureName;
     drawn.cast = castNow(view);
+    // Миску наполнили только что (0.56.0): пока корм в неё падает, следующий рисунок получает ту же примету — миска
+    // рисуется теми же словами, и страница её не трогает: пролёт не обрывается на середине.
+    if (before?.fed === false && drawn.cast?.fed === true) drawn.fedUntil = Date.now() + REFILL_MS;
     // Картинка, которая сейчас на рисунке, в памяти телефона — последняя: её и ждать в следующий заход.
     if (drawn.cast?.her?.name) keepSprite(drawn.cast.her.name);
     // До какого времени на рисунке идёт переход (она идёт, тает, проявляется): запоздавший второй кадр его не обрывает.

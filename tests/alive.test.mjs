@@ -2495,11 +2495,12 @@ test("0.48.0, её день в комнате: шаг один и тот же �
   // Байт — при ней: ест рядом, с места не ходит.
   assert.deepEqual([seen.cat.shape, seen.cat.place, seen.cat.still], ["eat", "near", true]);
   assert.ok(pool("байт:завтрак").map(plain).includes(seen.cat.line), seen.cat.line);
-  // Страница: картинка «насыпает корм»; Байт — слева от неё, куда сыплется корм, мордой к пакету.
+  // Страница: картинка «насыпает корм»; Байт — слева от неё, куда сыплется корм, лапами к пакету: с 0.56.0 он не
+  // лежит под ним, а стоит на задних лапах и ловит (фигура «тянется»); сердцу он по-прежнему «ест рядом».
   const state = logic.applyLook(logic.blank(7), seen, time.now());
   assert.match(scene.spriteOf(logic.viewOf(state)), /^(?:home-)?feed$/u);
   const cast = scene.castOf(logic.viewOf(state), PAINTED);
-  assert.ok(cast.cat.x < cast.her.x && cast.cat.mirror === true && cast.cat.shape === "eat", JSON.stringify(cast));
+  assert.ok(cast.cat.x < cast.her.x && cast.cat.mirror === true && cast.cat.shape === "beg", JSON.stringify(cast));
   // Через пять минут она говорит то же: спросили заново, спросили в чате, зашли словами.
   time.add(5 * 60_000);
   const again = await h.onRoom({ do: "look", again: true }, from(5));
