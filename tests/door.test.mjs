@@ -11,11 +11,12 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { heart, sdk, reset, KEY, OWNER, toChat, toOwner, calls } from "./fixtures/kit.mjs";
-import { api as sdkApi } from "./fixtures/sdk-stub.mjs";
+import { api as sdkApi, db as sdkDb } from "./fixtures/sdk-stub.mjs";
 import { telegramStub as telegramFixture, AI_ID, AI_NAME, DOOR_BOT, VOICE_BOT, NEW_BOT, idOf } from "./fixtures/telegram.mjs";
 
 const { doorKey, doorPayload, doorWire, doorRead, doorParts, hmac, DOOR_ALLOW, DOOR_NOT_ALLOWED, DOOR_POST_MAX, DOOR_PER_MINUTE, DOOR_PER_PERSON, DOOR_NOTES, DOOR_PREFIX, DOOR_STATE_KEY, DOOR_WAYS, DOOR_SLOT_TEXT, DOOR_SAYS } = await import("../tgcloud/lib/bridge.js");
 const { sealRequest, openAnswer } = await import("../scripts/door-client.mjs");
+const { BUILD: BUILD_NOW } = await import("../tgcloud/lib/heart.js");
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const SECRET = "door-test-secret-0123456789abcdefghij";
@@ -952,4 +953,294 @@ test("личное сообщение не уходит: режим общени
     // Под `phone.sh door` подсказку говорит он сам — после того как спросит сердце, что оно слышало.
     assert.doesNotMatch((await tg.run(["ways", "--wait=3", "--poll=1"], { DOOR_WAY: "", DOOR_FLOW: "1" })).out, /Скажите Аи/u);
   } finally { tg.close(); }
+});
+
+// ── пакетная синхронизация (0.59.0): действие двери `sync` — очередь приложения, которое работает без сети ──
+// Запрос владельца — `docs/SYNC-CONTRACT.md` в репозитории приложения; договор сердца — `docs/DOOR.md`, раздел 14.
+const { DOOR_SYNC, DOOR_SYNC_DO, DOOR_SYNC_EVENTS, DOOR_SYNC_IN_MAX, DOOR_IN_MAX, DOOR_SYNC_KEEP, DOOR_SYNC_DEVICES, DOOR_SYNC_KEY, DOOR_SYNC_LATER, DOOR_SYNC_PENDING_MS } = await import("../tgcloud/lib/bridge.js");
+const { ROOM_KEY, IDS_MAX } = await import("../tgcloud/lib/room.js");
+const DEVICE = "k3m8p4r2t7v9x5z1";
+const event = (seq, action, input = {}, id = `ev${String(seq).padStart(18, "0")}`) => ({ id, seq, at: clock - 1000, do: action, in: input });
+const batch = (base, events, more = {}) => ({ v: 1, device: DEVICE, base, events, ...more });
+/** Пачка через дверь: между пачками приложение ждёт не меньше шести секунд. */
+const syncing = async (h, input, fields = {}) => { clock += 7000; const sent = await knock(h, { do: "sync", input, ...fields }); return { out: sent.out, ...(await opened(sent.request)) }; };
+const kept = (id = OWNER) => JSON.parse(sdk().kv.get(ROOM_KEY(id)) ?? "null");
+const ledger = (id = OWNER) => JSON.parse(sdk().kv.get(DOOR_SYNC_KEY(id)) ?? "null");
+/** Каждый номер события — ровно в одном из трёх списков. */
+const sorted = (result) => [...result.ack, ...result.rejected.map(item => item.id), ...result.retry].sort();
+const CURSOR = /^c1\.[1-9]\d*\.[0-9a-f]{16}$/u;
+
+test("sync: пачка применяется по порядку к нынешней комнате; точный повтор второй раз её не меняет — и на другой день; другое под тем же seq — seq_conflict", async () => {
+  const h = make();
+  const first = await syncing(h, batch(null, [event(1, "feed"), event(2, "tea")]));
+  assert.deepEqual([first.out.code, first.out.do, first.out.answered], ["door_answer", "sync", true]);
+  const one = first.result;
+  assert.deepEqual(Object.keys(one), ["ok", "do", "build", "server_ts", "cursor", "ack", "rejected", "retry", "conflicts", "snapshot"], "поля ответа — как в договоре");
+  assert.deepEqual([one.ok, one.do, one.server_ts], [true, "sync", clock]);
+  assert.match(one.cursor, CURSOR);
+  assert.deepEqual([one.ack, one.rejected, one.retry, one.conflicts], [[event(1, "feed").id, event(2, "tea").id], [], [], []]);
+  // Снимок — полный ответ `look` после всех применений: комнату по нему можно нарисовать.
+  assert.deepEqual([one.snapshot.ok, one.snapshot.do, one.snapshot.done.feed, one.snapshot.done.tea], [true, "look", 1, 1]);
+  for (const field of ["her", "cat", "plant", "clock", "things", "sky", "done"]) assert.ok(field in one.snapshot, `в снимке есть «${field}»`);
+  assert.deepEqual(kept().done, { feed: 1, tea: 1 });
+  assert.deepEqual(kept().ids, one.ack.map(id => `+${id}`), "номер события — номер действия комнаты: запись помнит его без срока");
+
+  // Ответ не дошёл — приложение шлёт ту же пачку: подтверждена, комната не тронута, курсор тот же.
+  const again = (await syncing(h, batch(null, [event(1, "feed"), event(2, "tea")]))).result;
+  assert.deepEqual([again.ok, again.ack, again.rejected, again.retry, again.cursor], [true, one.ack, [], [], one.cursor]);
+  assert.deepEqual(kept().done, { feed: 1, tea: 1 }, "второй раз Байта не кормили");
+
+  // Тот же seq с другим действием, другими полями или другим номером — постоянный отказ, без применения.
+  const clash = (await syncing(h, batch(one.cursor, [event(1, "feed", { kind: "x" }), event(2, "water"), event(3, "water", {}, "zz000000000000000003"), event(4, "play")]))).result;
+  assert.deepEqual(clash.rejected.map(item => [item.id, item.code, item.final]), [[event(1, "feed").id, "seq_conflict", true], [event(2, "tea").id, "seq_conflict", true]]);
+  assert.deepEqual(clash.ack, ["zz000000000000000003", event(4, "play").id], "остальные события пачки применены");
+  assert.deepEqual(kept().done, { feed: 1, tea: 1, water: 1, play: 1 });
+  assert.deepEqual(sorted(clash), [event(1, "x").id, event(2, "x").id, event(4, "x").id, "zz000000000000000003"].sort());
+  const other = (await syncing(h, batch(clash.cursor, [event(3, "water", {}, "yy000000000000000003")]))).result;
+  assert.deepEqual(other.rejected.map(item => item.code), ["seq_conflict"], "тот же seq с другим номером события");
+  // Тот же номер события под другим seq — тоже отказ: это не повтор.
+  const moved = (await syncing(h, batch(other.cursor, [event(9, "play", {}, event(4, "play").id)]))).result;
+  assert.deepEqual(moved.rejected.map(item => [item.code, item.final]), [["id_conflict", true]]);
+  assert.equal(kept().done.play, 1);
+
+  // Смена дня и перезапуск: память о событиях — в базе, без срока.
+  clock += 86_400_000 + 3_600_000;
+  const later = (await syncing(make(), batch(moved.cursor, [event(1, "feed"), event(2, "tea")]))).result;
+  assert.deepEqual([later.ack, later.rejected, later.retry], [one.ack, [], []]);
+  assert.equal(kept().day, "2026-11-22", "запись комнаты повтор не тронул");
+  assert.deepEqual([later.snapshot.done.feed, later.snapshot.done.tea], [0, 0], "в новом дне Байта ещё не кормили — и повтор его не кормил");
+  assert.equal(later.cursor, moved.cursor, "комната не менялась — курсор прежний");
+});
+
+test("sync: курсор меняется от любой перемены комнаты; устаревший — применить и пометить rebased; чужой и «из будущего» — bad_cursor со свежим снимком", async () => {
+  const h = make();
+  await room(h, { do: "look" });
+  const one = (await syncing(h, batch(null, [event(1, "feed")]))).result;
+  // Пустая пачка с нынешним курсором — сверка: тот же курсор и свежий снимок.
+  const idle = (await syncing(h, batch(one.cursor, []))).result;
+  assert.deepEqual([idle.ok, idle.cursor, idle.ack, idle.retry, idle.snapshot.ok], [true, one.cursor, [], [], true]);
+  // Ещё один заход на страницу — не перемена: курсор тот же.
+  await room(h, { do: "look" });
+  assert.equal((await syncing(h, batch(one.cursor, []))).result.cursor, one.cursor);
+  // Комнату изменили другим входом — страницей: прежний курсор устарел. Пачка не отвергается: применена поверх.
+  assert.equal((await room(h, { do: "tea", id: "page000001" })).ok, true);
+  const rebased = (await syncing(h, batch(one.cursor, [event(2, "water"), event(3, "pick", { key: "нет-такой", pick: 0 })]))).result;
+  assert.equal(rebased.ok, true);
+  assert.deepEqual(rebased.ack, [event(2, "water").id]);
+  assert.deepEqual(rebased.conflicts.map(item => [item.id, item.code]), [[event(2, "water").id, "rebased"]], "помечено только применённое");
+  assert.ok(rebased.conflicts[0].text.length > 10);
+  assert.notEqual(rebased.cursor, one.cursor);
+  assert.deepEqual([rebased.snapshot.done.tea, rebased.snapshot.done.water], [1, 1], "в снимке — и чужая перемена, и своя");
+  // Одиночное действие двери — такая же перемена.
+  clock += 7000;
+  await knock(h, { do: "play", input: { id: "door000001" } });
+  const stale = (await syncing(h, batch(rebased.cursor, [event(4, "pet")]))).result;
+  assert.deepEqual(stale.conflicts.map(item => item.code), ["rebased"]);
+  // С нынешним курсором — без пометок.
+  const fresh = (await syncing(h, batch(stale.cursor, [event(5, "lamp")]))).result;
+  assert.deepEqual([fresh.ack.length, fresh.conflicts], [1, []]);
+
+  // Курсор не её: испорчен, с чужой печатью, не того вида. Ничего не применяется; это обычный ответ, не пометка двери.
+  const before = JSON.stringify(kept());
+  clock += 61_000;
+  for (const bad of ["мусор", "c1.2.0123456789abcdef", `${fresh.cursor}0`, fresh.cursor.replace(/^c1\.(\d+)/u, (_, n) => `c1.${Number(n) + 1}`), ""]) {
+    const refused = await syncing(h, batch(bad, [event(6, "pat"), event(7, "book")]));
+    assert.equal(refused.out.code, "door_answer", bad);
+    assert.deepEqual([refused.result.ok, refused.result.do, refused.result.code], [false, "sync", "bad_cursor"], bad);
+    assert.deepEqual([refused.result.ack, refused.result.rejected, refused.result.retry, refused.result.conflicts], [[], [], [event(6, "pat").id, event(7, "book").id], []], bad);
+    assert.equal(refused.result.cursor, fresh.cursor, "свежий курсор — в том же ответе");
+    assert.deepEqual([refused.result.snapshot.ok, refused.result.snapshot.do], [true, "look"]);
+  }
+  assert.equal(JSON.stringify(kept()), before, "комната не тронута");
+  assert.equal(ledger().devices[DEVICE].seen[6], undefined, "и события не запомнены: их пришлют снова");
+  // «Из будущего»: печать верная, а номер больше нынешнего — сердце потеряло счёт (память чистили).
+  sdk().kv.delete(DOOR_SYNC_KEY(OWNER));
+  clock += 61_000;
+  const future = (await syncing(h, batch(fresh.cursor, [event(6, "pat")]))).result;
+  assert.deepEqual([future.ok, future.code, future.retry], [false, "bad_cursor", [event(6, "pat").id]]);
+  assert.match(future.cursor, CURSOR);
+  const healed = (await syncing(h, batch(future.cursor, [event(6, "pat")]))).result;
+  assert.deepEqual([healed.ok, healed.ack, healed.conflicts], [true, [event(6, "pat").id], []], "со свежим курсором пачка проходит");
+});
+
+test("sync: что не так с пачкой целиком — отказ bad_sync; что не так с событием — постоянный отказ ему одному; пределы — 12 событий и 3000 знаков", async () => {
+  const h = make();
+  const whole = [
+    batch(null, [], { v: 2 }), { ...batch(null, []), device: "short" }, { ...batch(null, []), device: "К".repeat(16) }, batch(7, []), batch("c".repeat(65), []),
+    { v: 1, device: DEVICE, base: null }, batch(null, "нет"), batch(null, Array.from({ length: DOOR_SYNC_EVENTS + 1 }, (_, index) => event(100 + index, "pet"))),
+    batch(null, [event(1, "pet", {}, "short")]), batch(null, [event(1, "pet", {}, "EV000000000000000001")]), batch(null, [event(1, "pet"), event(2, "pet", {}, event(1, "pet").id)]),
+    batch(null, [event(2, "pet"), event(1, "feed")]), batch(null, [event(2, "pet"), event(2, "feed", {}, "zz000000000000000002")]), batch(null, [{ ...event(1, "pet"), seq: 0 }]), batch(null, [{ ...event(1, "pet"), seq: 1.5 }]), batch(null, ["событие"]),
+  ];
+  for (const input of whole) {
+    clock += 61_000 / 4;
+    const refused = (await syncing(h, input)).result;
+    assert.deepEqual([refused.ok, refused.do, refused.code], [false, "sync", "bad_sync"], JSON.stringify(input).slice(0, 90));
+    assert.ok(refused.text.length > 5);
+  }
+  assert.equal(ledger(), null, "от таких пачек в памяти ничего не остаётся");
+  assert.equal(kept(), null);
+
+  // Событие с верным номером, но негодное: отказ ему одному, остальные идут. Отказ запомнен: повтор получит его же.
+  clock += 61_000;
+  const input = batch(null, [
+    event(1, "look"), event(2, "album"), event(3, "say", { text: "привет" }), event(4, "fly"), event(5, "feed", [1, 2]), { ...event(6, "feed"), at: "вчера" }, { id: event(7, "feed").id, seq: 7, do: "feed", in: {} },
+    event(8, "pick", { key: "нет-такой", pick: 0 }), event(9, "gift", { kind: "слон" }), { id: event(10, "water").id, seq: 10, at: clock, do: "water" }, event(11, "feed"),
+  ]);
+  const mixed = (await syncing(h, input)).result;
+  assert.equal(mixed.ok, true);
+  assert.deepEqual(mixed.rejected.map(item => [item.id.slice(-2), item.code, item.final]), [["01", "bad_do", true], ["02", "bad_do", true], ["03", "bad_do", true], ["04", "bad_do", true], ["05", "bad_in", true], ["06", "bad_at", true], ["07", "bad_at", true], ["08", "unknown", true], ["09", "unknown", true]]);
+  assert.ok(mixed.rejected.every(item => typeof item.text === "string" && item.text.length > 5), "у каждого отказа — слова");
+  assert.deepEqual(mixed.ack, [event(10, "water").id, event(11, "feed").id], "поле in можно не слать: это {}");
+  assert.deepEqual(sorted(mixed), input.events.map(item => item.id).sort());
+  assert.deepEqual(kept().done, { water: 1, feed: 1 });
+  const repeat = (await syncing(h, batch(mixed.cursor, input.events))).result;
+  assert.deepEqual([repeat.rejected.map(item => item.code), repeat.ack, repeat.cursor], [mixed.rejected.map(item => item.code), mixed.ack, mixed.cursor]);
+  assert.deepEqual(kept().done, { water: 1, feed: 1 });
+
+  // Предел поля `in`: у пачки — 3000 знаков, у одиночного действия — прежние 1024. Больше — пометка двери, как и была.
+  assert.deepEqual([DOOR_IN_MAX, DOOR_SYNC_IN_MAX, DOOR_SYNC_EVENTS], [1024, 3000, 12]);
+  clock += 61_000;
+  const wide = batch(mixed.cursor, [event(12, "pet")], { pad: "" });
+  wide.pad = "x".repeat(DOOR_SYNC_IN_MAX - JSON.stringify(wide).length);
+  assert.equal(JSON.stringify(wide).length, 3000);
+  assert.deepEqual((await syncing(h, wide)).result.ack, [event(12, "pet").id], "ровно 3000 — проходит; лишние поля пачки не мешают");
+  const over = await syncing(h, { ...wide, pad: `${wide.pad}x` });
+  assert.deepEqual([over.out.code, over.ok, over.code], ["door_bad_envelope", false, "bad_envelope"]);
+  clock += 7000;
+  const single = await knock(h, { do: "feed", input: { pad: "x".repeat(DOOR_IN_MAX) } });
+  assert.equal(single.out.code, "door_bad_envelope", "одиночным действиям предел не подняли");
+  // Двенадцать событий — в одной пачке, одним ответом: предел частоты страницы к очереди не относится.
+  clock += 61_000;
+  const full = (await syncing(h, batch(null, Array.from({ length: DOOR_SYNC_EVENTS }, (_, index) => event(20 + index, index % 2 ? "lamp" : "music"))))).result;
+  assert.deepEqual([full.ack.length, full.rejected, full.retry], [DOOR_SYNC_EVENTS, [], []]);
+  const more = (await syncing(h, batch(full.cursor, Array.from({ length: DOOR_SYNC_EVENTS }, (_, index) => event(40 + index, index % 2 ? "lamp" : "music"))))).result;
+  assert.deepEqual([more.ack.length, more.retry], [DOOR_SYNC_EVENTS, []], "и следующая пачка через семь секунд — тоже");
+  // Частота самих пачек — как у одиночных действий: десять запросов человека в минуту. У отказа — `wait`, секунды:
+  // `retry` у пачки — список событий.
+  clock = Math.ceil(clock / 60_000) * 60_000 + 61_000;
+  let slow = null;
+  for (let index = 0; index <= DOOR_PER_PERSON; index += 1) { const sent = await knock(h, { do: "sync", input: batch(null, []) }); slow = (await opened(sent.request)).result; }
+  assert.deepEqual([slow.ok, slow.do, slow.code, slow.retry], [false, "sync", "slow", undefined]);
+  assert.ok(Number.isInteger(slow.wait) && slow.wait > 0 && slow.wait <= 60);
+});
+
+test("sync: кого и что пускает дверь; список действий очереди — всё, что меняет комнату; память о событиях ограничена числом, а не сроком", async () => {
+  // Действие двери, а не комнаты: в списке действий комнаты его нет, страница его не знает.
+  assert.equal(DOOR_SYNC, "sync");
+  assert.ok(!DOOR_ALLOW.includes(DOOR_SYNC) && !DOOR_NOT_ALLOWED.includes(DOOR_SYNC));
+  assert.deepEqual([...DOOR_SYNC_DO].sort(), DOOR_ALLOW.filter(name => name !== "look" && name !== "album").sort(), "в очередь идёт всё разрешённое, кроме чтения");
+  assert.deepEqual([...DOOR_SYNC_LATER].sort(), ["off", "runtime_error", "slow", "storage"]);
+  const h = make();
+  assert.equal((await room(h, { do: "sync", v: 1, device: DEVICE, base: null, events: [] })).code, "unknown", "со страницы пачку не принять");
+  // Чужому — как и одиночные действия: дверь открыта только хозяину.
+  const guest = (await syncing(h, batch(null, [event(1, "feed")]), { uid: GUEST })).result;
+  assert.deepEqual([guest.ok, guest.do, guest.code], [false, "sync", "door_closed"]);
+  assert.equal(kept(GUEST), null);
+  // Список действий сузили настройкой: пачки идут, только если в нём названо `sync`; событие вне списка — отказ ему.
+  const narrow = (await syncing(make({ DOOR_ALLOW: ["look", "feed"] }), batch(null, [event(1, "feed")]))).result;
+  assert.deepEqual([narrow.ok, narrow.do, narrow.code], [false, "sync", "forbidden"]);
+  const some = (await syncing(make({ DOOR_ALLOW: ["look", "feed", "sync"] }), batch(null, [event(1, "feed"), event(2, "tea")]))).result;
+  assert.deepEqual([some.ack, some.rejected.map(item => [item.code, item.final])], [[event(1, "feed").id], [["forbidden", true]]]);
+  // У гостя, которого пустили, — своя запись: события хозяина ему не подтверждаются.
+  const open = make({ DOOR_GUESTS: true });
+  clock += 61_000;
+  const visitor = (await syncing(open, batch(null, [event(1, "feed")]), { uid: GUEST })).result;
+  assert.deepEqual([visitor.ok, visitor.ack.length], [true, 1]);
+  assert.equal(kept(GUEST).done.feed, 1);
+  assert.notEqual(visitor.cursor, some.cursor);
+
+  // Память: последние DOOR_SYNC_KEEP событий установки; вытесненное — «ниже пола»: seq_old, без применения.
+  reset(); clock = T;
+  const long = make();
+  let cursor = null, seq = 0;
+  for (let round = 0; round < 6; round += 1) {
+    clock += 61_000;
+    const done = (await syncing(long, batch(cursor, Array.from({ length: DOOR_SYNC_EVENTS }, () => { seq += 1; return event(seq, seq % 2 ? "lamp" : "music"); })))).result;
+    assert.deepEqual([done.ack.length, done.retry.length, done.rejected.length], [DOOR_SYNC_EVENTS, 0, 0]);
+    cursor = done.cursor;
+  }
+  const mine = ledger().devices[DEVICE];
+  assert.deepEqual([Object.keys(mine.seen).length, mine.floor], [DOOR_SYNC_KEEP, 72 - DOOR_SYNC_KEEP]);
+  assert.ok(kept().ids.length <= IDS_MAX);
+  clock += 61_000;
+  const old = (await syncing(long, batch(cursor, [event(1, "lamp"), event(60, "music"), event(72, "music")]))).result;
+  assert.deepEqual(old.rejected.map(item => [item.id, item.code, item.final]), [[event(1, "lamp").id, "seq_old", true]]);
+  assert.deepEqual(old.ack, [event(60, "music").id, event(72, "music").id], "что в памяти — подтверждается");
+  assert.equal(old.cursor, cursor, "ничего не применено");
+  // Установок у человека — не больше DOOR_SYNC_DEVICES: дольше всех молчавшая забывается.
+  for (let index = 0; index < DOOR_SYNC_DEVICES + 1; index += 1) {
+    clock += 61_000;
+    await syncing(long, { ...batch(null, [event(1, "lamp", {}, `dv${String(index).padStart(18, "0")}`)]), device: `device${String(index).padStart(10, "0")}` });
+  }
+  assert.equal(Object.keys(ledger().devices).length, DOOR_SYNC_DEVICES);
+  assert.ok(!(DEVICE in ledger().devices), "первой забыта та, что молчала дольше всех");
+});
+
+test("sync: память отказала посреди пачки — применённое подтверждено, остальное ждёт; повтор той же пачки безопасен", async () => {
+  const h = make();
+  const one = (await syncing(h, batch(null, [event(1, "lamp")]))).result;
+  // После первой записи комнаты её чтение начинает падать: первое событие пачки легло, второе и третье — уже нет.
+  const realGet = sdkDb.get, realRun = sdkDb.run;
+  let armed = false, broken = false;
+  sdkDb.run = async (query, params = {}) => { const out = await realRun(query, params); if (armed && params[":key"] === ROOM_KEY(OWNER) && query.includes("kv_state")) broken = true; return out; };
+  sdkDb.get = async (query, params = {}) => { if (broken && params[":key"] === ROOM_KEY(OWNER)) throw new Error("база не ответила"); return realGet(query, params); };
+  let half = null;
+  const events = [event(2, "feed"), event(3, "tea"), event(4, "water")];
+  try {
+    clock += 7000;
+    const request = await sealRequest({ secret: SECRET, uid: OWNER, ts: clock, do: "sync", input: batch(one.cursor, events) });
+    armed = true;
+    await h.onMessage(post(doorWire(request)), KEY);
+    half = (await opened(request)).result;
+  } finally { sdkDb.get = realGet; sdkDb.run = realRun; }
+  assert.equal(half.ok, true);
+  assert.deepEqual([half.ack, half.rejected, half.retry], [[events[0].id], [], [events[1].id, events[2].id]], "временный отказ — не постоянный: события остаются в очереди");
+  assert.deepEqual([half.snapshot.ok, half.snapshot.code], [false, "storage"], "снимка нет — так и сказано");
+  assert.match(half.cursor, CURSOR);
+  assert.deepEqual(sorted(half), events.map(item => item.id).sort());
+  assert.equal(kept().done.feed, 1);
+  // Повтор той же пачки, когда память вернулась: первое — подтверждено и не применяется второй раз, остальные — применены.
+  const whole = (await syncing(h, batch(one.cursor, events))).result;
+  assert.deepEqual([whole.ok, whole.ack, whole.retry, whole.rejected], [true, events.map(item => item.id), [], []]);
+  assert.deepEqual(kept().done, { feed: 1, tea: 1, water: 1 });
+  assert.equal(whole.snapshot.ok, true);
+  assert.deepEqual(whole.conflicts.map(item => [item.id, item.code]), [[events[1].id, "rebased"], [events[2].id, "rebased"]], "курсор пачки устарел: первое событие комнату уже изменило");
+
+  // Запуск оборвался между применением и записью исхода: событие числится «в работе». Пока полминуты не прошло —
+  // «подождать»; потом оно применяется заново — и комната второй раз его не принимает: помнит номер.
+  clock += 61_000;
+  const lost = event(5, "play");
+  assert.equal((await h.onRoom({ do: "play", id: lost.id }, { initData: { user: { id: OWNER } }, door: true, sync: true })).ok, true, "комната событие применила");
+  const digest = (await hmac(SECRET, "AI-DOOR1\nevent\nplay\n{}")).slice(0, 16);
+  const pending = (stamp) => sdk().kv.set(DOOR_SYNC_KEY(OWNER), JSON.stringify({ ...ledger(), devices: { [DEVICE]: { ...ledger().devices[DEVICE], seen: { ...ledger().devices[DEVICE].seen, 5: [lost.id, digest, "p", stamp, "чужой"] } } } }));
+  pending(clock + 7000);
+  const busy = (await syncing(h, batch(null, [lost, event(6, "pet")]))).result;
+  assert.deepEqual([busy.ack, busy.rejected, busy.retry], [[], [], [lost.id, event(6, "pet").id]], "событие у другого запуска — ждём; что после него — тоже: порядок важнее");
+  assert.equal(kept().done.pet, undefined);
+  assert.equal(ledger().devices[DEVICE].seen[6], undefined, "заявка на то, что не применялось, снята");
+  clock += DOOR_SYNC_PENDING_MS;
+  const healed = (await syncing(h, batch(null, [lost, event(6, "pet")]))).result;
+  assert.deepEqual([healed.ack, healed.rejected, healed.retry], [[lost.id, event(6, "pet").id], [], []]);
+  assert.deepEqual([kept().done.play, kept().done.pet], [1, 1], "с Байтом сыграли один раз, а не два");
+  assert.deepEqual(ledger().devices[DEVICE].seen[5].slice(0, 3), [lost.id, digest, "a"]);
+});
+
+test("sync: договор в docs/DOOR.md (раздел 14) сходится с кодом — список действий, коды, пределы, проверочный курсор", () => {
+  const doc = read("docs/DOOR.md"), part = doc.slice(doc.indexOf("\n## 14. "));
+  assert.ok(doc.includes("\n## 14. ") && part.length > 4000);
+  for (const name of DOOR_SYNC_DO) assert.ok(part.includes(`\`${name}\``), name);
+  for (const code of ["bad_sync", "bad_cursor", "seq_conflict", "id_conflict", "seq_old", "bad_do", "bad_in", "bad_at", "forbidden", "rebased", "too_big", "door_closed", "bad_input", ...DOOR_SYNC_LATER]) assert.ok(part.includes(`\`${code}\``), code);
+  for (const number of [DOOR_SYNC_IN_MAX, DOOR_IN_MAX, DOOR_SYNC_EVENTS, DOOR_SYNC_KEEP, DOOR_SYNC_DEVICES, IDS_MAX, DOOR_SYNC_PENDING_MS / 1000, DOOR_PER_PERSON, DOOR_PER_MINUTE]) assert.match(part, new RegExp(`(^|\\D)${number}(\\D|$)`, "u"), String(number));
+  // Курсор из примера — тот, что выдаст сердце с ключом и человеком стенда на второй перемене.
+  assert.ok(part.includes(`Ключ двери \`${SECRET}\`, \`uid\` ${OWNER}`));
+  const vector = `c1.2.${createHmac("sha256", SECRET).update(`AI-DOOR1\ncursor\n${OWNER}\n2`).digest("hex").slice(0, 16)}`;
+  assert.ok(part.includes(vector), vector);
+  // Примеры раздела — настоящий JSON с полями договора.
+  const samples = [...part.matchAll(/```json\n([\s\S]*?)\n```/gu)].map(found => JSON.parse(found[1]));
+  assert.ok(samples.length >= 5);
+  const answers = samples.filter(item => item.do === "sync");
+  assert.ok(answers.length >= 3 && answers.every(item => ["ok", "do", "build", "server_ts", "cursor", "ack", "rejected", "retry", "conflicts", "snapshot"].every(field => field in item)));
+  assert.ok(answers.some(item => item.conflicts.some(entry => entry.code === "rebased")), "есть пример с устаревшим курсором");
+  assert.ok(answers.some(item => item.ok === false && item.code === "bad_cursor" && item.retry.length === 1));
+  assert.ok(answers.every(item => item.build === BUILD_NOW), "сборка в примерах — нынешняя");
 });

@@ -69,7 +69,7 @@ import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS 
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
-import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES } from "./keepsake.js";
+import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES, KEEPSAKE_KEY } from "./keepsake.js";
 import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, ROOM_RECENT_KEY, RECENT_MAX, sceneByKey, herPose, catPose, catAfter, colourHex,
   skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
   READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow, WOKE_MS, wokeNow } from "./room.js";
@@ -141,19 +141,17 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.58.0";
+export const BUILD = "0.59.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.58.0 — я встаю к своему «доброму утру»: о фаджре напоминаю и здороваюсь уже проснувшаяся, а не во сне",
-  "подъём в комнате — в тот час, когда я пишу вам «доброе утро»: на фаджр — с рассветом, по часам — в названное время",
-  "если я напоминаю о намазе заранее, встаю на столько же раньше",
-  "ночью меня можно разбудить: напишите в чат или скажите слово в комнате — я проснусь и скажу об этом",
-  "двадцать минут после этого я сижу в кресле сонная и зеваю; тишина — засыпаю снова",
-  "пока вы пишете, я не засыпаю и второй раз «я спала» не говорю",
-  "вечером и ночью в разговоре могу зевнуть и сказать, что хочу спать",
-  "чего ещё нет: ложусь я всегда в одиннадцать, даже если «спокойной ночи» вы перенесли на другой час",
-  "внизу комнаты теперь «страница 22»",
+  "0.59.0 — приложение на телефоне сможет работать без сети: всё, что вы сделали в комнате, оно пришлёт мне пачкой, когда сеть вернётся",
+  "у двери приложения новое действие — sync: до двенадцати действий за раз, по порядку, поверх того, что в комнате сейчас",
+  "одно и то же действие я не выполню дважды — даже если пачку пришлют снова через день: помню последние события каждой установки",
+  "если комнату за это время изменили из чата или со страницы, я ничего не затираю: применяю поверх и помечаю, что комната была уже другой",
+  "в ответ отдаю свежий снимок комнаты и отметку, по которой приложение поймёт, менялась ли комната с прошлого раза",
+  "одиночные действия двери и сама комната работают как раньше",
+  "чего ещё нет: с настоящим приложением и настоящим Telegram это не проверено — только на стенде",
 ]);
 
 const DAY = 86_400_000;
@@ -2383,7 +2381,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * доверенного посредника отдельного приложения. Ключ («номер канала:секрет») — строка `KEY_DOOR` на телефоне;
    * без ключа двери нет. Вся проверка — в `bridge.js` (`createDoor`), здесь только сборка.
    */
-  const appDoor = createDoor({ key: config.DOOR_KEY ?? extraKeys.door ?? "", onRoom, api, store, now, ownerId: OWNER, guests: config.DOOR_GUESTS === true, allow: config.DOOR_ALLOW, build: BUILD, busy: [config.ABILITIES_CHANNEL_ID], report: (item) => notices.report(item) });
+  const appDoor = createDoor({ key: config.DOOR_KEY ?? extraKeys.door ?? "", onRoom, api, store, now, ownerId: OWNER, guests: config.DOOR_GUESTS === true, allow: config.DOOR_ALLOW, build: BUILD, busy: [config.ABILITIES_CHANNEL_ID], report: (item) => notices.report(item),
+    // Что помнит комната (для курсора `sync`, 0.59.0): её запись и альбом.
+    stateKeys: (uid) => [ROOM_KEY(uid), KEEPSAKE_KEY(uid)] });
 
   /** Привычки: завести, отметить, посмотреть, убрать. `null` — речь не о них. */
   async function habitThings(turn, prompt) {

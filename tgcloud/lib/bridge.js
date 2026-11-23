@@ -259,6 +259,26 @@ export const DOOR_SAYS = "DOOR-SAYS";
  */
 export const DOOR_ALLOW = Object.freeze(["look", "pet", "feed", "play", "tea", "water", "pat", "book", "quiet", "wear", "brew", "call", "window", "lamp", "music", "pick", "album", "gift", "snap"]);
 export const DOOR_NOT_ALLOWED = Object.freeze(["oops", "say"]);
+/**
+ * Пакетная синхронизация (0.59.0, `docs/DOOR.md`, раздел 14) — действие самой двери, а не комнаты: очередь
+ * приложения, которое работает без сети. Знаков в поле `in`: у одиночного действия — 1024, у пачки — 3000.
+ */
+export const DOOR_SYNC = "sync";
+export const DOOR_IN_MAX = 1024;
+export const DOOR_SYNC_IN_MAX = 3000;
+/** Событий в пачке; сколько последних событий установки сердце помнит (без срока); сколько установок у человека. */
+export const DOOR_SYNC_EVENTS = 12;
+export const DOOR_SYNC_KEEP = 64;
+export const DOOR_SYNC_DEVICES = 8;
+/** Сколько событие числится «в работе» у другого запуска; дольше — тот запуск оборвался. */
+export const DOOR_SYNC_PENDING_MS = 30_000;
+/** Что кладут в очередь: всё, что меняет комнату. `look` и `album` — чтение. */
+export const DOOR_SYNC_DO = Object.freeze(["pet", "feed", "play", "tea", "water", "pat", "book", "quiet", "wear", "brew", "call", "window", "lamp", "music", "pick", "gift", "snap"]);
+/** Отказы комнаты, после которых событие остаётся в очереди: память не ответила, слишком часто, комната закрыта, поломка. */
+export const DOOR_SYNC_LATER = Object.freeze(["storage", "slow", "off", "runtime_error"]);
+/** Поля записей комнаты, которые не считаются переменой: заходы и номера действий. */
+export const DOOR_SYNC_IDLE = Object.freeze(["near", "n", "ops", "ids", "word"]);
+export const DOOR_SYNC_KEY = (uid) => `heart:door:sync:${uid}`;
 
 /** Ключ двери — «номер канала:секрет» одной строкой (`KEY_DOOR` на телефоне): секрет без канала ничего не открывает. */
 export function doorKey(value) {
@@ -317,7 +337,7 @@ export function doorParts(text, room = DOOR_POST_MAX - 260) {
   return parts;
 }
 
-export function createDoor({ key = "", onRoom = null, api = null, store = null, now = () => Date.now(), ownerId = 0, guests = false, allow = DOOR_ALLOW, build = "", report = null, tidy = true, busy = [] } = {}) {
+export function createDoor({ key = "", onRoom = null, api = null, store = null, now = () => Date.now(), ownerId = 0, guests = false, allow = DOOR_ALLOW, build = "", report = null, tidy = true, busy = [], stateKeys = null } = {}) {
   const parsed = doorKey(key);
   // Канал, по которому уже ходит другое (мост с сестрой, а по нему и будильник), дверью быть не может: дверь забирает
   // себе все посты своего канала, и мост с будильником замолчали бы без единого слова. С таким ключом двери нет.
@@ -450,7 +470,7 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
     const { id, ts, uid, sig } = envelope, op = envelope.do, input = envelope.in ?? "";
     const shaped = Number(envelope.v) === 1 && typeof id === "string" && /^[A-Za-z0-9_-]{8,40}$/u.test(id)
       && Number.isSafeInteger(ts) && ts > 0 && Number.isSafeInteger(uid) && uid > 0
-      && typeof op === "string" && /^[a-z]{1,16}$/u.test(op) && typeof input === "string" && input.length <= 1024
+      && typeof op === "string" && /^[a-z]{1,16}$/u.test(op) && typeof input === "string" && input.length <= (op === DOOR_SYNC ? DOOR_SYNC_IN_MAX : DOOR_IN_MAX)
       && typeof sig === "string" && /^[0-9a-f]{64}$/u.test(sig);
     if (!shaped) return note(at, "bad_envelope", id, to);
     let expected;
@@ -480,15 +500,22 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
 
     const refuse = (code, text, more = {}) => ({ ok: false, code, text, build, ...more });
     let result;
-    if (gate === "slow") result = refuse("slow", "Слишком часто. Чуть позже.", { retry: 60 - Math.floor((at % 60_000) / 1000) });
+    // У пачки `retry` — список событий, поэтому секунды до новой минуты названы иначе: `wait`.
+    if (gate === "slow") result = refuse("slow", "Слишком часто. Чуть позже.", { [op === DOOR_SYNC ? "wait" : "retry"]: 60 - Math.floor((at % 60_000) / 1000) });
     else if (!(guests === true || (Number(ownerId) > 0 && uid === Number(ownerId)))) result = refuse("door_closed", "Дверь приложения пока открыта только хозяину.");
-    else if (!permit.has(op)) result = refuse("forbidden", "Через приложение этого не делают.");
+    else if (op === DOOR_SYNC ? !syncOn : !permit.has(op)) result = refuse("forbidden", "Через приложение этого не делают.");
     else {
       let fields = null;
       try { fields = input ? JSON.parse(input) : {}; } catch { fields = null; }
       if (!fields || typeof fields !== "object" || Array.isArray(fields)) result = refuse("bad_input", "Не разобрала, что передано.");
-      else result = await onRoom({ ...fields, do: op }, { initData: { user: { id: uid } }, door: true });
+      else if (op === DOOR_SYNC) {
+        result = await sync(uid, fields);
+        // Снимок не помещается в восемь постов — подтверждения важнее: ответ уходит без него.
+        if (doorParts(JSON.stringify(result)).length > DOOR_PARTS_MAX) result = { ...result, snapshot: { ok: false, do: "look", code: "too_big", text: "Снимок не поместился в ответ. Возьмите его действием look.", build } };
+      } else result = await onRoom({ ...fields, do: op }, { initData: { user: { id: uid } }, door: true });
     }
+    // Любой ответ на пачку назван её действием — и отказ двери тоже.
+    if (op === DOOR_SYNC && result?.do !== DOOR_SYNC) result = { ...result, do: DOOR_SYNC };
     let posts = 0;
     try { posts = await answer(id, result, to); }
     catch {
@@ -506,6 +533,172 @@ export function createDoor({ key = "", onRoom = null, api = null, store = null, 
       try { await api.deleteMessage({ chat_id: channel, message_id: message.message_id }); } catch { /* останется в канале */ }
     }
     return { ok: true, code: "door_answer", do: op, parts: posts, answered: result?.ok === true };
+  }
+
+  /* ── пакетная синхронизация (0.59.0): действие двери `sync` ─────────────────────────────────────────────────
+   * Приложение на телефоне работает без сети: действия ложатся в его очередь, а сюда приходят пачками. Договор —
+   * `docs/DOOR.md`, раздел 14; запрос владельца — `docs/SYNC-CONTRACT.md` в репозитории приложения.
+   *   • события применяются по порядку к нынешней комнате — теми же действиями, что и одиночные;
+   *   • сердце помнит последние события каждой установки (`DOOR_SYNC_KEEP`) без срока: то же событие второй раз
+   *     не применяется, другое под тем же номером — отказ `seq_conflict`;
+   *   • курсор — номер перемены комнаты с печатью ключом двери; перемену сердце видит по отпечатку того, что
+   *     комната помнит (`stateKeys`), каким бы входом её ни изменили.
+   * ─────────────────────────────────────────────────────────────────────────────────────────────────────── */
+  // Список действий сузили настройкой — пачки идут, только если в нём названо и `sync`.
+  const syncOn = allow === DOOR_ALLOW || !Array.isArray(allow) || allow.map(String).includes(DOOR_SYNC);
+  const checked = async (name) => {
+    if (typeof store.getChecked === "function") { const got = await store.getChecked(name); if (!got?.ok) throw new Error("door: memory is silent"); return got.value ?? null; }
+    return (await store.get(name)) ?? null;
+  };
+  /** Курсор снимка — «c1.<номер перемены>.<печать>»: чужой или испорченный с печатью не сойдётся. */
+  const cursorOf = async (uid, rev) => `c1.${rev}.${(await hmac(secret, `AI-DOOR1\ncursor\n${uid}\n${rev}`)).slice(0, 16)}`;
+  const cursorRev = async (uid, value) => {
+    const found = /^c1\.([1-9]\d{0,14})\.[0-9a-f]{16}$/u.exec(String(value ?? ""));
+    return found && (await cursorOf(uid, Number(found[1]))) === String(value) ? Number(found[1]) : null;
+  };
+  /** Отпечаток того, что комната помнит. Служебное (заходы, номера действий) — не перемена. */
+  const markOf = async (uid) => {
+    const parts = [];
+    for (const name of typeof stateKeys === "function" ? stateKeys(uid) : []) {
+      const value = await checked(name);
+      parts.push(canonical(value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([field]) => !DOOR_SYNC_IDLE.includes(field))) : value));
+    }
+    return (await hmac(secret, `AI-DOOR1\nstate\n${uid}\n${parts.join("\n")}`)).slice(0, 24);
+  };
+  /** Запись синхронизации человека: счёт перемен, отпечаток и события установок (`seq` → номер, отпечаток, исход). */
+  const syncBook = (saved) => {
+    const state = plain(saved), devices = {};
+    for (const [name, entry] of Object.entries(plain(state.devices))) {
+      if (/^[a-z0-9]{16,32}$/u.test(name)) devices[name] = { at: Number(plain(entry).at) || 0, floor: Number(plain(entry).floor) || 0, seen: { ...plain(plain(entry).seen) } };
+    }
+    return { v: 1, rev: Number.isSafeInteger(state.rev) && state.rev > 0 ? state.rev : 0, mark: typeof state.mark === "string" ? state.mark : "", devices };
+  };
+
+  async function sync(uid, fields) {
+    const refuse = (code, text, more = {}) => ({ ok: false, do: DOOR_SYNC, code, text, build, ...more });
+    const ctx = { initData: { user: { id: uid } }, door: true, sync: true };
+    // 1. Вид пачки. Что не так с ней целиком — отказ всей пачке: ничего не применяется и не запоминается.
+    const device = fields.device, base = fields.base ?? null, list = fields.events;
+    if (Number(fields.v) !== 1) return refuse("bad_sync", "Версия пачки — не 1.");
+    if (typeof device !== "string" || !/^[a-z0-9]{16,32}$/u.test(device)) return refuse("bad_sync", "Номер установки device — от 16 до 32 знаков: a–z и 0–9.");
+    if (base !== null && !(typeof base === "string" && base.length <= 64)) return refuse("bad_sync", "Курсор base — строка до 64 знаков или null.");
+    if (!Array.isArray(list) || list.length > DOOR_SYNC_EVENTS) return refuse("bad_sync", `Событий в пачке — от 0 до ${DOOR_SYNC_EVENTS}.`);
+    const events = [], named = new Set();
+    let top = 0;
+    for (const raw of list) {
+      const item = plain(raw);
+      if (typeof item.id !== "string" || !/^[a-z0-9]{20}$/u.test(item.id) || named.has(item.id)) return refuse("bad_sync", "У каждого события свой номер id: ровно 20 знаков a–z и 0–9.");
+      if (!Number.isSafeInteger(item.seq) || item.seq <= top) return refuse("bad_sync", "Номера seq — целые, больше нуля и идут по возрастанию.");
+      named.add(item.id); top = item.seq; events.push(item);
+    }
+    const all = events.map(item => item.id);
+    const silent = () => refuse("storage", "Память сейчас не отвечает. Пачка не тронута: повторите позже.", { server_ts: now(), cursor: null, ack: [], rejected: [], retry: all, conflicts: [], snapshot: null });
+    const key = DOOR_SYNC_KEY(uid), at = now(), token = Math.random().toString(36).slice(2, 12);
+
+    // 2. Что сердце помнит и какая комната сейчас. Изменилась с прошлой сверки (чат, страница, одиночное действие
+    //    двери) — счёт перемен идёт дальше: курсор прошлого снимка устарел.
+    let rev = 0, markNow = "";
+    try {
+      const book = syncBook(await checked(key));
+      markNow = await markOf(uid);
+      rev = book.rev > 0 && book.mark === markNow ? book.rev : book.rev + 1;
+    } catch { return silent(); }
+
+    /** Снимок — после всего; курсор — ровно к нему. Заодно в запись ложатся исходы событий этой пачки. */
+    const finish = async (head, lists, outcomes = new Map()) => {
+      let snapshot = null, markAfter = null;
+      try { snapshot = await onRoom({ do: "look", again: true }, ctx); } catch { snapshot = null; }
+      try { markAfter = await markOf(uid); } catch { markAfter = null; }
+      if (markAfter !== null && markAfter !== markNow) rev += 1;
+      await store.update(key, (before) => {
+        const book = syncBook(before), mine = book.devices[device] ?? { at: 0, floor: 0, seen: {} }, seen = { ...mine.seen };
+        for (const [seq, outcome] of outcomes) {
+          const entry = seen[seq];
+          // Заявку перехватил другой запуск — она уже не наша.
+          if (!Array.isArray(entry) || entry[2] !== "p" || entry[4] !== token) continue;
+          if (outcome === null) delete seen[seq]; else seen[seq] = [entry[0], entry[1], ...outcome];
+        }
+        // Помнятся последние события установки; что вытеснено — ниже «пола»: такой номер уже не проверить.
+        let floor = mine.floor;
+        const order = Object.keys(seen).map(Number).sort((a, b) => a - b);
+        while (order.length > DOOR_SYNC_KEEP) { const gone = order.shift(); floor = Math.max(floor, gone); delete seen[gone]; }
+        const devices = { ...book.devices, [device]: { at, floor, seen } };
+        for (const name of Object.keys(devices).sort((a, b) => devices[b].at - devices[a].at).slice(DOOR_SYNC_DEVICES)) delete devices[name];
+        return { v: 1, rev: Math.max(book.rev, rev), mark: markAfter ?? book.mark, devices };
+      }).catch(() => false);
+      return {
+        ...head, do: DOOR_SYNC, build, server_ts: now(), cursor: await cursorOf(uid, rev), ...lists,
+        snapshot: snapshot ?? { ok: false, do: "look", code: "runtime_error", text: "Снимок не собрался. Возьмите его действием look.", build },
+      };
+    };
+
+    // 3. Курсор приложения. Не мой или из будущего — ничего не применять: приложению нужен свежий снимок.
+    let stale = false;
+    if (base !== null) {
+      const seen = await cursorRev(uid, base);
+      if (seen === null || seen > rev) {
+        return finish({ ok: false, code: "bad_cursor", text: "Курсор не мой или из будущего. Ничего не применено: возьмите снимок и курсор из этого ответа и повторите пачку." }, { ack: [], rejected: [], retry: all, conflicts: [] });
+      }
+      stale = seen < rev;
+    }
+
+    // 4. Заявка — одной правкой записи: что уже подтверждено, что отвергнуто, что новое («в работе»).
+    const digests = new Map();
+    for (const item of events) digests.set(item.id, (await hmac(secret, `AI-DOOR1\nevent\n${String(item.do)}\n${canonical(item.in ?? {})}`)).slice(0, 16));
+    let verdicts = null;
+    const claimed = await store.update(key, (before) => {
+      const book = syncBook(before), mine = book.devices[device] ?? { at: 0, floor: 0, seen: {} }, seen = { ...mine.seen };
+      const byId = new Map(Object.entries(seen).filter(([, entry]) => Array.isArray(entry)).map(([seq, entry]) => [entry[0], Number(seq)]));
+      const plan = new Map();
+      for (const item of events) {
+        const known = seen[item.seq], digest = digests.get(item.id);
+        if (Array.isArray(known)) {
+          if (known[0] !== item.id || known[1] !== digest) plan.set(item.id, { kind: "no", code: "seq_conflict", text: "Под этим номером seq я уже помню другое событие. Не применено." });
+          else if (known[2] === "a") plan.set(item.id, { kind: "ack" });
+          else if (known[2] === "r") plan.set(item.id, { kind: "no", code: String(known[3] ?? "refused"), text: String(known[4] ?? "") });
+          // «В работе» у другого запуска: подождать. Дольше полуминуты — тот запуск оборвался: применяем заново
+          // (комната второй раз не примет — она помнит номер действия).
+          else if (known[4] !== token && at - Number(known[3]) >= 0 && at - Number(known[3]) < DOOR_SYNC_PENDING_MS) plan.set(item.id, { kind: "busy" });
+          else { seen[item.seq] = [item.id, digest, "p", at, token]; plan.set(item.id, { kind: "new" }); }
+          continue;
+        }
+        if (item.seq <= mine.floor) { plan.set(item.id, { kind: "no", code: "seq_old", text: "Номер seq старше тех, что я помню: проверить его уже нельзя. Не применено." }); continue; }
+        if (byId.has(item.id)) { plan.set(item.id, { kind: "no", code: "id_conflict", text: "Этот номер id я уже помню под другим seq. Не применено." }); continue; }
+        const flaw = !DOOR_SYNC_DO.includes(item.do) ? ["bad_do", "Такое действие в очередь не кладут."]
+          : !permit.has(item.do) ? ["forbidden", "Через приложение этого не делают."]
+            : !(item.in === undefined || (item.in && typeof item.in === "object" && !Array.isArray(item.in))) ? ["bad_in", "Поля действия in — объект."]
+              : !(Number.isSafeInteger(item.at) && item.at > 0) ? ["bad_at", "Время действия at — целое число миллисекунд."] : null;
+        if (flaw) { seen[item.seq] = [item.id, digest, "r", flaw[0], flaw[1]]; plan.set(item.id, { kind: "no", code: flaw[0], text: flaw[1] }); }
+        else { seen[item.seq] = [item.id, digest, "p", at, token]; plan.set(item.id, { kind: "new" }); }
+        byId.set(item.id, item.seq);
+      }
+      verdicts = plan;
+      return { ...book, devices: { ...book.devices, [device]: { at, floor: mine.floor, seen } } };
+    }).catch(() => false);
+    if (claimed !== true || !verdicts) return silent();
+
+    // 5. По порядку — к нынешней комнате. Временный отказ останавливает пачку: что после него, ждёт своей очереди.
+    const ack = [], rejected = [], retry = [], conflicts = [], outcomes = new Map();
+    let halted = false;
+    for (const item of events) {
+      const verdict = verdicts.get(item.id);
+      if (verdict.kind === "ack") { ack.push(item.id); continue; }
+      if (verdict.kind === "no") { rejected.push({ id: item.id, code: verdict.code, text: verdict.text, final: true }); continue; }
+      if (verdict.kind === "busy") { retry.push(item.id); halted = true; continue; }
+      if (halted) { retry.push(item.id); outcomes.set(item.seq, null); continue; }
+      let result = null;
+      try { result = await onRoom({ ...plain(item.in), do: item.do, id: item.id }, ctx); } catch { result = null; }
+      if (result?.ok === true) {
+        ack.push(item.id); outcomes.set(item.seq, ["a"]);
+        if (stale) conflicts.push({ id: item.id, code: "rebased", text: "Комната изменилась, пока действие ждало в очереди: применено поверх нынешнего состояния." });
+        continue;
+      }
+      const code = String(result?.code ?? "runtime_error");
+      if (!result || DOOR_SYNC_LATER.includes(code)) { retry.push(item.id); outcomes.set(item.seq, null); halted = true; continue; }
+      const text = String(result.text ?? "").slice(0, 200);
+      rejected.push({ id: item.id, code, text, final: true }); outcomes.set(item.seq, ["r", code, text]);
+    }
+    return finish({ ok: true }, { ack, rejected, retry, conflicts }, outcomes);
   }
 
   /** Одноразовые номера старше суток не нужны: такой запрос не пройдёт уже по времени. */

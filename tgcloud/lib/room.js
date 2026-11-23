@@ -779,6 +779,14 @@ export const CALL_MS = 30_000;
 /** Сколько помнится номер действия страницы (0.49.0: десять минут — хватает и на кнопку «ещё раз») и сколько их хранится в записи. */
 export const OPS_KEEP_MS = 10 * 60_000;
 export const OPS_MAX = 16;
+/**
+ * Номера событий очереди приложения (0.59.0; `sync` двери, `docs/DOOR.md`, раздел 14) — без срока, последние сорок
+ * восемь. Очередь может повторить событие и через час, и на другой день — комната не примет его второй раз. Такой
+ * номер приходит со знаком «+» впереди (его ставит `roomdoor.js`; страница такой номер прислать не может); сам номер
+ * и перемена ложатся одной правкой записи. Номера страницы помнятся по-прежнему десять минут.
+ */
+export const IDS_MAX = 48;
+export const LASTING_ID = "+";
 /** Предел частоты для мини-приложения: столько действий за двадцать секунд пальцем не сделать. */
 export const RUSH_MS = 20_000;
 export const RUSH_MAX = 12;
@@ -851,10 +859,12 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     const done = await amend(userId, day, (state) => {
       repeat = false; slow = false;
       const ops = id || limit ? opsOf(state, at) : [];
-      if (id && ops.some(op => op[0] === id)) { repeat = true; return null; }
+      const lasting = String(id).startsWith(LASTING_ID);
+      const ids = lasting ? (Array.isArray(state.ids) ? state.ids : []).filter(item => typeof item === "string").slice(-IDS_MAX) : [];
+      if (id && (ops.some(op => op[0] === id) || ids.includes(id))) { repeat = true; return null; }
       if (limit && ops.filter(op => at - Number(op[1]) < RUSH_MS).length >= RUSH_MAX) { slow = true; return null; }
       const next = change(state, at);
-      return next && (id || limit) ? { ...next, ops: [...ops, [id, at]].slice(-OPS_MAX) } : next;
+      return next && (id || limit) ? { ...next, ops: [...ops, [id, at]].slice(-OPS_MAX), ...(lasting ? { ids: [...ids, id].slice(-IDS_MAX) } : {}) } : next;
     });
     return { ...done, repeat, slow };
   }
