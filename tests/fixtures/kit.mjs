@@ -79,8 +79,13 @@ export const group = (text, options = {}) => message(text, { chat: -10, type: "s
 /** Её собственное сообщение, на которое отвечают. */
 export const hers = (text = "ответ", id = 50) => ({ message_id: id, from: { id: 999, is_bot: true, username: "ai_heart_bot" }, text });
 
+/**
+ * Сердце на стабе. Настоящие часы (`wall`) в тестах стоят: ими сердце меряет, сколько времени ушло на работу
+ * внутри одного хода (репетиция списка — не дольше восьми секунд), а тесты идут и на телефоне перед публикацией
+ * и от скорости устройства зависеть не должны. Нужны идущие часы — передать свои.
+ */
 export function heart(overrides = {}, options = {}) {
-  return createHeart({ db: sdkDb, api: sdkApi, fetchImpl: sdkFetch, InputFile, config: { ...BASE, ...overrides }, ...options });
+  return createHeart({ db: sdkDb, api: sdkApi, fetchImpl: sdkFetch, InputFile, config: { ...BASE, ...overrides }, wall: () => 0, ...options });
 }
 
 /** Тело запроса к провайдеру и системная подсказка в нём. */

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { heart, message, group, reset, last, calls, chats, says, refuses, sdk, source, sourced, toOwner, OWNER, KEY, toChat } from "./fixtures/kit.mjs";
 
-const { splitKey, fromBase64, refusal, subjectOf, createDraw, briefOf, unknownFields } = await import("../tgcloud/lib/draw.js");
+const { splitKey, fromBase64, refusal, subjectOf, portraitLooks, createDraw, briefOf, unknownFields } = await import("../tgcloud/lib/draw.js");
 const { subjectFor, placesIn, SUBJECTS, GUESSABLE } = await import("../tgcloud/lib/data/subjects.js");
 const CAT_WORDS = subjectFor("кота").prompt;
 const { CONFIG } = await import("../tgcloud/lib/config.js");
@@ -54,7 +54,7 @@ test("ключ и разбор: «ID:токен», base64 своими сила�
   for (const said of ["кота в шляпе", "голые деревья зимой", "кота, который соскучился", "греблю на озере", "члена экипажа у штурвала", "Sussex landscape"]) assert.equal(refusal(said), "", said);
   // «Себя в шляпе» — она же, но как просили; «себя» и «себя ещё» — канон целиком.
   assert.deepEqual({ ...subjectOf("себя в шляпе"), look: "" }, { own: "self", text: "в шляпе", look: "" });
-  assert.match(subjectOf("саму себя с котом на руках").look, /young adult woman.*blue streak/u);
+  assert.match(subjectOf("саму себя с котом на руках").look, /young adult woman.*long straight black hair.*crimson red eyes/u);
   assert.ok(subjectOf("себя ещё").prompt && !subjectOf("себя ещё").text);
 });
 
@@ -126,12 +126,14 @@ test("она сама, её комната, «ещё» и «нарисуй ме�
   source("m2m100", translated("a red fox in the snow"));
   const h = heart(ON, { now: () => NOON });
   await h.onMessage(message("нарисуй себя"), KEY);
-  assert.match(asked("flux-1-schnell")[0].prompt, /dark hair with one blue streak.*headphones/u);
+  assert.match(asked("flux-1-schnell")[0].prompt, /long straight black hair and blunt bangs, crimson red eyes, black choker.*leather jacket/u);
+  // Прежний облик (до портрета) не просится ни словом.
+  assert.doesNotMatch(asked("flux-1-schnell")[0].prompt, /blue|shoulder-length|sweater|headphones/u);
   assert.equal(asked("m2m100").length, 0, "канон уже по-английски — переводить нечего");
   await h.onMessage(message("нарисуй свою комнату"), KEY);
   assert.match(asked("flux-1-schnell")[1].prompt, /window with rain.*grey cat/u);
   await h.onMessage(message("нарисуй меня"), KEY);
-  assert.match(last(), /Я не знаю, как вы выглядите.*Опишите словами/su);
+  assert.match(last(), /Я не знаю, как вы выглядите.*Опишите себя словами/su);
   assert.equal(photos().length, 2);
 
   await h.onMessage(message("нарисуй лису на снегу"), KEY);
@@ -141,7 +143,7 @@ test("она сама, её комната, «ещё» и «нарисуй ме�
 
   // «Себя в шляпе»: переводится только просьба, её приметы добавляются сами.
   await h.onMessage(message("нарисуй себя в шляпе"), KEY);
-  assert.match(asked("flux-1-schnell").at(-1).prompt, /^a red fox in the snow, a young adult woman with shoulder-length dark hair with one blue streak/u);
+  assert.match(asked("flux-1-schnell").at(-1).prompt, /^a red fox in the snow, a young adult woman with very long straight black hair and blunt bangs, crimson red eyes, black choker/u);
   assert.equal(asked("m2m100").at(-1).text, "в шляпе");
   assert.equal(photos().length, 5);
 
@@ -782,3 +784,129 @@ test("запасные художники: FLUX.2 klein получает фор�
   assert.equal(forms("flux-2-klein-4b").length, 0);
   assert.match(last(OWNER), /^Не вышло: мастерская этот запрос не пропустила — это её фильтр, не мой\..*SDXL Lightning — 410 «Model has been deprecated»/u);
 });
+
+test("портрет по описанию (0.51.0, идея 197): какая реплика — описание внешности, а какая нет", () => {
+  for (const [said, looks] of [
+    ["у меня тёмные волосы, я ношу очки", "тёмные волосы, очки"],
+    ["У меня тёмные волосы, я ношу очки, одного зуба нету.", "тёмные волосы, очки, одного зуба нету"],
+    ["одного зуба нету", "одного зуба нету"],
+    ["мне 30 лет, я парень в чёрной куртке", "30 лет, парень в чёрной куртке"],
+    ["Я рыжая, с веснушками", "рыжая, с веснушками"],
+    ["короткая стрижка и борода", "короткая стрижка и борода"],
+    ["я высокий, худой, в очках", "высокий, худой, в очках"],
+    ["девушка с длинными русыми волосами!", "девушка с длинными русыми волосами"],
+  ]) assert.equal(portraitLooks(said), looks, said);
+  for (const said of [
+    // Слово о внешности — только с начала слова.
+    "просто так", "поставь точку", "на улице холодно", "вкусы у всех разные", "я из Ростова", "сегодня полный завал", "это лицензия",
+    // Вопрос, слова о ней самой, о ком-то ещё, жалоба.
+    "а какие волосы красивее?", "у тебя красивые глаза", "твои волосы лучше", "у меня рыжий кот", "у моей сестры длинные волосы", "у брата борода",
+    "у меня болит зуб", "зуб ноет второй день", "ходил к стоматологу, зуб лечили",
+    // Не о внешности вовсе, пусто, слишком коротко и слишком длинно.
+    "ладно, потом", "вот так выгляжу", "", "усы", `у меня тёмные волосы ${"и ещё ".repeat(60)}`,
+  ]) assert.equal(portraitLooks(said), null, said);
+});
+
+test("портрет по описанию (0.51.0, идея 197): после «нарисуй меня» первая реплика о внешности — рисунок, один раз и в срок", async () => {
+  reset();
+  source("flux-1-schnell", image());
+  source("m2m100", translated("portrait of a person: dark hair, glasses"));
+  let at = NOON;
+  const h = heart({ ...ON, PHRASES: true }, { now: () => at });
+  const said = async (text) => { await h.onMessage(message(text), KEY); return photos().length; };
+  const sent = () => JSON.stringify(asked("m2m100").at(-1));
+  // Без просьбы описание — обычная реплика: о зубе отвечает словарь (тема «нет зуба»), художника никто не зовёт.
+  const TOOTH = /примет|улыбку ни с чьей не спутаешь/iu;
+  assert.equal(await said("одного зуба нету"), 0);
+  assert.match(last(), TOOTH);
+  assert.equal(asked("m2m100").length, 0);
+
+  // Разговор со снимка владельца (сообщение 51): просьба вопросом — она просит описание и ждёт его.
+  assert.equal(await said("А сможешь нарисовать меня?"), 0);
+  assert.equal(last(), "Я не знаю, как вы выглядите. Опишите себя словами — волосы, глаза, одежду — или пришлите фото, и я нарисую. Или сразу целиком: «нарисуй девушку с рыжими волосами у окна».");
+  // «Вот так выгляжу» — не описание: ожидание остаётся. «Одного зуба нету» — уже примета, а не тема словаря.
+  assert.equal(await said("вот так выгляжу"), 0);
+  assert.equal(await said("одного зуба нету"), 1, last());
+  assert.match(sent(), /портрет человека: одного зуба нету/u);
+  assert.match(asked("flux-1-schnell").at(-1).prompt, /portrait of a person: dark hair, glasses/u);
+  // Один раз: вторая реплика о внешности рисунка не даёт — и о зубе снова отвечает словарь.
+  assert.equal(await said("у меня ещё и борода"), 1);
+  const before = asked("m2m100").length;
+  assert.equal(await said("одного зуба нету"), 1);
+  assert.match(last(), TOOTH);
+  assert.equal(asked("m2m100").length, before, "о зубе снова отвечает словарь");
+
+  // Художнику — приметы, а не рассказ от первого лица. Между просьбой и описанием — другие реплики: ожидание живо.
+  assert.equal(await said("нарисуй меня"), 1);
+  const quiet = asked("m2m100").length;
+  for (const other of ["ладно, потом", "у тебя красивые глаза", "а какие волосы тебе нравятся?", "у меня болит зуб"]) assert.equal(await said(other), 1, other);
+  assert.equal(asked("m2m100").length, quiet, "жалоба остаётся жалобой, слова о ней — словами о ней: художника не звали");
+  assert.match(last(), /врач|боль|лечи|питья|сочувств/iu);
+  at += 100_000;
+  assert.equal(await said("у меня тёмные волосы, я ношу очки"), 2, last());
+  assert.match(sent(), /портрет человека: тёмные волосы, очки/u);
+
+  // Две минуты прошло (0.52.0: было десять — «это много», сообщение 53) — описание опоздало; опоздавшая отметка
+  // снята, и следующее описание тоже не рисунок.
+  assert.equal(await said("нарисуй мой портрет"), 2);
+  at += 2 * 60_000 + 1000;
+  assert.equal(await said("у меня зелёные глаза и короткая стрижка"), 2);
+  at -= 100_000;
+  assert.equal(await said("у меня зелёные глаза и короткая стрижка"), 2);
+  // «Нарисуй ещё» после портрета — тот же портрет: сюжет записан как обычный.
+  assert.equal(await said("нарисуй меня"), 2);
+  assert.equal(await said("мне 30 лет, я парень в чёрной куртке"), 3, last());
+  assert.match(sent(), /портрет человека: 30 лет, парень в чёрной куртке/u);
+  assert.equal(await said("нарисуй ещё"), 4, last());
+});
+
+test("портрет по фото (0.52.0): после «нарисуй меня» своё фото — зрение называет приметы, художник рисует; без просьбы фото — обычное фото", async () => {
+  reset();
+  source("flux-1-schnell", image());
+  source("m2m100", translated("portrait of a person: a man about thirty, short dark hair, glasses, grey hoodie"));
+  let at = NOON;
+  const h = heart({ ...ON, PHRASES: true }, { now: () => at });
+  const photo = (caption = null) => message(null, { extra: { photo: [{ file_id: "me", width: 1280, height: 960, file_size: 200_000 }], ...(caption ? { caption } : {}) } });
+  const looks = () => sdk().fetches.filter(item => String(item.url).endsWith("/chat/completions")).map(item => JSON.parse(item.options.body)).filter(body => Array.isArray(body.messages?.[1]?.content));
+  sdk().apiReplies.getFileContent = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5]);
+
+  // Без просьбы: фото — обычное фото: зрение описывает, отвечает она сама; художника не зовут.
+  sdk().fetchQueue.push(says("На фото мужчина в очках у окна."), says("Хороший кадр."));
+  await h.onMessage(photo(), KEY);
+  assert.equal(last(), "Хороший кадр.");
+  assert.equal(photos().length, 0);
+  assert.equal(looks().at(-1).messages[1].content[0].text, "Опиши картинку.");
+
+  // «Нарисуй меня» → «вот так выгляжу» с фото: зрению — вопрос о приметах, художнику — её ответ.
+  await h.onMessage(message("нарисуй меня"), KEY);
+  assert.match(last(), /волосы, глаза, одежду — или пришлите фото, и я нарисую/u);
+  sdk().fetchQueue.push(says("мужчина лет тридцати, короткие тёмные волосы, очки, серое худи"));
+  await h.onMessage(photo("вот так выгляжу"), KEY);
+  assert.equal(photos().length, 1, last());
+  assert.match(looks().at(-1).messages[1].content[0].text, /^Вопрос человека к картинке: «Опиши внешность человека на фото для художника: пол и примерный возраст, волосы, глаза, черты лица, одежда\. Только приметы/u);
+  assert.match(JSON.stringify(asked("m2m100").at(-1)), /портрет человека: мужчина лет тридцати, короткие тёмные волосы, очки, серое худи/u);
+  assert.match(asked("flux-1-schnell").at(-1).prompt, /portrait of a person: a man about thirty/u);
+
+  // Один раз: следующее фото — снова обычное.
+  sdk().fetchQueue.push(says("На фото тот же мужчина."), says("Вижу."));
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 1);
+  assert.equal(last(), "Вижу.");
+  // Фото опоздало (две минуты прошли) — обычное фото, отметка снята со следующим описанием словами.
+  await h.onMessage(message("нарисуй меня"), KEY);
+  at += 2 * 60_000 + 1000;
+  sdk().fetchQueue.push(says("На фото мужчина."), says("Вижу и это."));
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 1);
+  // Зрение не ответило — рисунка нет, она говорит об этом сама; просьба в силе, пока не вышел срок.
+  at = NOON + 3_600_000;
+  await h.onMessage(message("нарисуй меня"), KEY);
+  sdk().fetchQueue.push({ ok: false, status: 503, headers: { get: () => null }, json: async () => ({}), text: async () => "" });
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 1);
+  assert.match(last(), /Не получилось рассмотреть фото|Зрение сейчас перегружено/u);
+  sdk().fetchQueue.push(says("женщина, длинные рыжие волосы, зелёное платье"));
+  await h.onMessage(photo(), KEY);
+  assert.equal(photos().length, 2, last());
+});
+

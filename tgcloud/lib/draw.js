@@ -235,12 +235,31 @@ export function refusal(text, { free = false } = {}) {
 }
 
 // ── что именно просят ────────────────────────────────────────────────────
-/** Она сама, её комната и кот — по канону из словаря; описания на английском. */
-const SELF = "anime style portrait of a young adult woman with shoulder-length dark hair with one blue streak, blue eyes, headphones around her neck, oversized cozy sweater, gentle smile, rainy window with city lights in the background, soft warm light, detailed illustration";
+/**
+ * Она сама, её комната и кот — по канону из словаря; описания на английском. С 0.42.0 она — по портрету
+ * (`docs/profile/welcome.jpg`) и по картинкам комнаты: то же, что говорит о себе словами («как ты выглядишь»).
+ */
+const SELF = "anime style portrait of a young adult woman with very long straight black hair and blunt bangs, crimson red eyes, black choker with a small ring, red off-shoulder top, black leather jacket slipped off her shoulders, gentle smile, rainy window with city lights in the background, soft warm light, detailed illustration";
 /** Её приметы без позы и фона — для «нарисуй себя в шляпе». */
-const LOOK = "a young adult woman with shoulder-length dark hair with one blue streak, blue eyes, anime style, detailed illustration";
+const LOOK = "a young adult woman with very long straight black hair and blunt bangs, crimson red eyes, black choker, anime style, detailed illustration";
 const ROOM = "cozy small room at night, floor-to-ceiling window with rain and city lights outside, wooden desk with a warm lamp and a teapot, bookshelf with manga, blue plaid on an armchair, string lights, a small cactus on the windowsill, a grey cat sleeping on a pillow, anime background art, warm atmosphere, detailed";
 const CAT = "a fluffy grey cat sleeping on a computer keyboard in a cozy room with a rainy window, anime style, warm light, detailed illustration";
+/**
+ * Портрет по описанию (идея 197, 0.51.0). После «нарисуй меня» она две минуты ждёт реплику о внешности; здесь —
+ * разбор такой реплики: приметы для художника или null — это не описание. «У меня тёмные волосы, я ношу очки» →
+ * «тёмные волосы, очки». Не описание: вопрос; слова о ней самой («у тебя красивые глаза»); слова о ком-то ещё («у
+ * меня рыжий кот»); жалоба («болит зуб»); реплика без единого слова о внешности. Слово считается с начала:
+ * «просто» — не «рост», «точка» — не «очки», «улица» — не «лицо».
+ */
+const LOOKS = /(?<![а-яё])(?:волос[а-яё]*|глаз(?:а|ами|ах)?(?![а-яё])|бород[а-яё]*|усы|усами|усат[а-яё]*|очк(?:и|ах|ами)(?![а-яё])|очкарик[а-яё]*|рост(?:ом|а)?(?![а-яё])|(?:не)?высок(?:ий|ая|ого|ой)(?![а-яё])|худ(?:ой|ая|ощав[а-яё]*|еньк[а-яё]*)(?![а-яё])|стройн[а-яё]*|полноват[а-яё]*|пухл[а-яё]*|стрижк[а-яё]*|лыс[а-яё]*|кудр[а-яё]*|блондин[а-яё]*|брюнет[а-яё]*|рыж[а-яё]*|рус(?:ый|ая|ые|ыми)(?![а-яё])|шатен[а-яё]*|сед(?:ой|ая|ые|ыми|ина)(?![а-яё])|веснушк[а-яё]*|смугл[а-яё]*|бледн[а-яё]*|родинк[а-яё]*|шрам[а-яё]*|зуб(?:а|ы|ов|ами)?(?![а-яё])|бров[а-яё]*|ресниц[а-яё]*|губ(?:ы|ами)(?![а-яё])|лиц(?:о|а|ом)(?![а-яё])|улыбк[а-яё]*|одет[а-яё]*|ношу|куртк[а-яё]*|свитер[а-яё]*|плать[а-яё]*|костюм[а-яё]*|худи|футболк[а-яё]*|рубашк[а-яё]*|джинс[а-яё]*|кепк[а-яё]*|шляп[а-яё]*|тату[а-яё]*|пирсинг[а-яё]*|серьг[а-яё]*|сер[её]жк[а-яё]*|хвостик[а-яё]*|хвост(?:ом)?(?![а-яё])|ч[её]лк[а-яё]*|парень|девушка|мужчина|женщина|мальчик|девочка|\d+\s*(?:лет|года?)(?![а-яё]))/iu;
+const NOT_LOOKS = /(?<![а-яё])(?:ты|тебя|тебе|тобой|тво[йяеёи][а-яё]*|бол(?:ит|ят|ел[аои]?|ь|ен|ьн[а-яё]*)|ноет|врач[а-яё]*|стоматолог[а-яё]*|дантист[а-яё]*|температур[а-яё]*|простуд[а-яё]*|леч[а-яё]*|кот[а-яё]*|кошк[а-яё]*|собак[а-яё]*|п[её]с(?![а-яё])|сын[а-яё]*|доч[а-яё]*|муж[а-яё]*|жен[аыуео][а-яё]*|брат[а-яё]*|сестр[а-яё]*|мам[а-яё]*|пап[а-яё]*|друг[а-яё]*|подруг[а-яё]*|сосед[а-яё]*|начальник[а-яё]*)(?![а-яё])/iu;
+export function portraitLooks(said) {
+  const text = String(said ?? "").replace(/\s+/gu, " ").trim();
+  if (text.length < 6 || text.length > 300 || /\?\s*$/u.test(text) || !LOOKS.test(text) || NOT_LOOKS.test(text)) return null;
+  // Художнику — приметы, а не рассказ от первого лица.
+  const looks = text.replace(/(?<![а-яё])(?:у\s+меня|я\s+ношу|я|меня|мне|мои|моя|мой|мо[её])(?![а-яё])/giu, " ").replace(/\s+([,.;!])/gu, "$1").replace(/\s+/gu, " ").replace(/^[\s,;.—-]+|[\s,;.!—-]+$/gu, "").trim();
+  return looks.length >= 4 ? looks : null;
+}
 /**
  * Слова после «нарисуй» → что рисовать:
  *   { own: "self" | "room" | "cat", prompt } — она сама, комната, кот;

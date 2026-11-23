@@ -11,8 +11,7 @@
  * Стол — одна запись на сообщение с игрой. В чате может идти несколько
  * столов сразу; брошенный стол забывается через шесть часов.
  */
-import { FIVE_LETTER, LONG_WORDS } from "./data/words.js";
-import { TRUTHS, DARES, BOTTLE_FRIENDLY, BOTTLE_WARM } from "./data/party.js";
+import { FIVE_LETTER, LONG_WORDS, TRUTHS, DARES, BOTTLE_FRIENDLY, BOTTLE_WARM } from "./data/games.js";
 import { ACTIONS, lineFor, accusative } from "./rp.js";
 import { fold } from "./sources.js";
 import { safeName } from "./address.js";

@@ -80,6 +80,12 @@ if (extra.cloudflare && !/^[0-9a-f]{32}:[\x21-\x7e]{20,}$/iu.test(extra.cloudfla
   delete extra.cloudflare;
 }
 
+// Дверь приложения (docs/DOOR.md): ключ особого вида — «номер канала:секрет». Секрет без канала не открывает ничего.
+if (extra.door && !/^-100\d{5,15}:[\x21-\x7e]{32,}$/u.test(extra.door)) {
+  warn('KEY_DOOR must look like "<channel id>:<secret>": the channel id starts with -100, then a colon, then at least 32 characters — the app door stays closed.');
+  delete extra.door;
+}
+
 let text = readFileSync(file, "utf8");
 const slots = [
   [/export const AI_API_KEY = .*;/u, `export const AI_API_KEY = ${JSON.stringify(key)};`],

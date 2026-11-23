@@ -57,6 +57,16 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
     return { ok: false, written: false };
   }
 
+  /**
+   * Выполнить `fn`, не оставив следа в счётчиках. Репетиция реплик (сверка списка непонятого со сборкой)
+   * идёт настоящим разбором, а он считает события; считать репетицию работой за день нельзя.
+   */
+  async function quiet(fn) {
+    const saved = pending;
+    pending = {};
+    try { return await fn(); } finally { pending = saved; }
+  }
+
   const day = (date = dayOf(now())) => read(date);
 
   /** Был ли день вообще: пустой день не стоит вести владельцу. */
@@ -130,5 +140,5 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
     return out;
   }
 
-  return Object.freeze({ bump, commit, day, active, lines });
+  return Object.freeze({ bump, commit, quiet, day, active, lines });
 }

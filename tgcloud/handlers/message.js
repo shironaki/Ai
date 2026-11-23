@@ -9,11 +9,13 @@ import { heart } from "../lib/instance.js";
  *
  * Будильник входит сюда же: `tgcloud run handlers/message --ctx '{ tick: true }'`.
  * Обновление из Telegram такого контекста получить не может: его задаёт
- * только владелец токена публикации.
+ * только владелец токена публикации. Тем же входом телефон спрашивает, что
+ * слышала дверь приложения: `--ctx '{ door: "state", after: N }'` (`phone.sh door`).
  */
 export default async function (message, ctx = {}) {
   try {
     if (ctx?.tick === true) return await heart.tick(ctx);
+    if (ctx?.door === "state") return await heart.doorState(ctx);
     const result = await heart.onMessage(message, ctx);
     // A test run must be able to prove the route without touching Telegram.
     return ctx?.testRun === true ? { ...result, side_effects: "none" } : result;

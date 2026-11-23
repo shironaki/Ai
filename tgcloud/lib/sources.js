@@ -652,6 +652,36 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { ok: true, place, text: `${text}${got.stale ? "\n(Свежих данных нет — это прогноз трёхчасовой давности.)" : ""}`, today: dayLine(0, "Сегодня"), stale: Boolean(got.stale), source: "Open-Meteo" };
   }
 
+  /**
+   * Что сейчас в этом городе: код погоды службы (таблица ВМО) и температура — по тому же прогнозу, что и «погода»
+   * (запрос — один на двадцать минут на город). `null` — узнать не удалось (город не найден, сеть молчит). Нужно
+   * комнате: за её окном та же погода, что у человека (0.44.0; до того отсюда брался только снег).
+   */
+  async function skyNow(placeText) {
+    const place = await findPlace(placeText, { tries: 1 });
+    if (!place?.ok) return null;
+    const url = `${METEO}?latitude=${place.latitude}&longitude=${place.longitude}`
+      + "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"
+      + "&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max"
+      + "&timezone=auto&forecast_days=3&wind_speed_unit=ms";
+    // Комната ждать не может: короткий срок, и к источнику, который только что молчал, не ходим вовсе.
+    const got = await cached(`heart:src:meteo:${cityKey(place.name)}`, 20 * 60_000, async () => {
+      const answer = await getJson(url, { timeout: 1800, soft: true });
+      return answer.ok && answer.data?.daily ? { ok: true, current: answer.data.current ?? null, daily: answer.data.daily } : { ok: false, code: "network" };
+    }, { staleMs: 3 * 3_600_000 });
+    if (!got?.ok || !got.current) return null;
+    const code = Number(got.current.weather_code);
+    if (!Number.isFinite(code)) return null;
+    // Ветер — в метрах в секунду (`wind_speed_unit=ms`): комнате он нужен для штор и облаков (0.51.0).
+    return { code, temp: Number(got.current.temperature_2m), wind: Number(got.current.wind_speed_10m), place: place.name };
+  }
+  /** Идёт ли в этом городе снег: `true` / `false`; `null` — узнать не удалось. Коды снега: 71–77, 85, 86. */
+  async function snowing(placeText) {
+    const now = await skyNow(placeText);
+    if (!now) return null;
+    return (now.code >= 71 && now.code <= 77) || now.code === 85 || now.code === 86;
+  }
+
   // ── курсы ───────────────────────────────────────────────────────────────
   /**
    * Курсы: главный источник — официальный, с «вчера»; два запасных — рыночные,
@@ -756,5 +786,5 @@ export function createSources({ fetchImpl = null, store = null, now = () => Date
     return { wiki: encyclopedia.ok, weather: meteo.ok, rates: bank.ok === true, spare: bank.via === "spare" };
   }
 
-  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, rates, convert, animal, gesture, probe, advise, daily, onThisDay, lookup, translate, fetchJson: getJson });
+  return Object.freeze({ available, wiki, wordExists, findPlace, countryOf, publicHolidays, cityExists, weather, skyNow, snowing, rates, convert, animal, gesture, probe, advise, daily, onThisDay, lookup, translate, fetchJson: getJson });
 }

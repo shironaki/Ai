@@ -21,8 +21,7 @@ const { parseGame, tail } = await import("../tgcloud/lib/games.js");
 const { parsePicture } = await import("../tgcloud/lib/pictures.js");
 const { parseReminder, nextOccurrence } = await import("../tgcloud/lib/reminders.js");
 const { CITIES } = await import("../tgcloud/lib/data/cities.js");
-const { FIVE_LETTER, LONG_WORDS } = await import("../tgcloud/lib/data/words.js");
-const { RIDDLES, MOVIES } = await import("../tgcloud/lib/data/riddles.js");
+const { FIVE_LETTER, LONG_WORDS, RIDDLES, MOVIES } = await import("../tgcloud/lib/data/games.js");
 
 const TZ = "Europe/Moscow";
 /** 12 ноября 2026, 16:00 по Москве, четверг. */
@@ -797,5 +796,8 @@ test("публикация: секреты вписываются одним с�
   assert.match(workflow, /needs: tests\n[\s\S]*Rehearse in the cloud before publishing[\s\S]*name: Publish\n/, "публикации предшествуют тесты и репетиция в облаке");
   assert.match(workflow, /--ctx '\{ tick: true, deployed: true \}'/, "после публикации сердце будят");
   assert.equal((workflow.match(/node scripts\/inject-secrets\.mjs/g) ?? []).length, 2, "секреты вписывает один скрипт — и для публикации, и для будильника");
+  // Кнопка шлёт в облако тот же облегчённый код, что и телефон: в каждой работе, которая его отправляет, и до ключей.
+  assert.equal((workflow.match(/run: node scripts\/slim\.mjs --here\n/g) ?? []).length, 3, "проверка, публикация и будильник — без комментариев");
+  assert.match(workflow, /node scripts\/slim\.mjs --here\n[\s\S]*node scripts\/inject-secrets\.mjs --require-key/, "сначала облегчение, потом ключи");
   assert.equal((workflow.match(/git checkout -- tgcloud\/lib\/secrets\.js/g) ?? []).length, 2, "и оба раза слоты возвращаются пустыми");
 });

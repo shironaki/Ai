@@ -12,7 +12,7 @@ import { parseWhois, registeredText } from "./whois.js";
 import { safeName } from "./address.js";
 import { fold } from "./sources.js";
 import { pickSticker } from "./pictures.js";
-import { QUESTIONS } from "./data/party.js";
+import { QUESTIONS } from "./data/games.js";
 import {
   parseOwn, ownActionProblem, matchOwn, actionKeyOf, gifKeyOf, OWN_ACTIONS_MAX, OWN_GIFS_MAX,
   parseBond, bondInfo, bondsOf, partnerOf, bondProblem, bondKeyboard, BONDS, BONDS_KEY, BOND_ASK_TTL_MS,
@@ -220,7 +220,7 @@ export function createFun({
     if (!asked) return null;
     if (turn.dry) return say(turn, "Разобрала бы это как просьбу о тишине — репетиция, ничего не меняю.");
     if (turn.isPrivate) {
-      return asked.speak ? null : say(turn, "В личке я пишу только в ответ — молчать здесь не от чего. Ночные вести отключает «не пиши ночью», в группе тишину просит админ: «Аи, помолчи час».");
+      return asked.speak ? null : say(turn, "В личке я пишу в ответ, а первой — редко и только о своём дне; не нужно и этого — «не пиши». Ночные вести отключает «не пиши ночью», в группе тишину просит админ: «Аи, помолчи час».");
     }
     const until = await quiet(turn.chatId);
     if (asked.speak) {

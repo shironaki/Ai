@@ -9,8 +9,7 @@ import { heart, message, group, reset, sdk, source, calls, toChat, last, reactio
 const { parseParty } = await import("../tgcloud/lib/party.js");
 const { BEASTS, beastNamed, beastsLeft, bestTrait, MAX_ASK, HIDE_ASKS, QUIZ_ROUNDS } = await import("../tgcloud/lib/tables.js");
 const { QUIZ, QUIZ_THEMES, quizTheme } = await import("../tgcloud/lib/data/quiz.js");
-const { TRAITS, ANIMALS } = await import("../tgcloud/lib/data/animals.js");
-const { QUESTS } = await import("../tgcloud/lib/data/quest.js");
+const { TRAITS, ANIMALS, QUESTS } = await import("../tgcloud/lib/data/games.js");
 
 let serial = 0;
 const press = (h, data, { id = 21, name = "Вася", chat = -10, messageId, prefix = "p:" } = {}) => h.onCallback({

@@ -5,10 +5,11 @@ import { buildCharacterProfile, promptTier } from "./ai-character.js";
 import { createDialoguePolicy, stageOf, STAGES } from "./dialogue-policy.js";
 import { createHeartStore } from "./store.js";
 import { createAbilities, matchPhrase, BUS_PREFIX } from "./abilities.js";
+import { createDoor } from "./bridge.js";
 import { createEvents } from "./events.js";
 import { describeSister, missingAbilityText, plural } from "./sibling.js";
 import { createNotices } from "./notices.js";
-import { createPersonal, addressRequest, introRequest, addressDrop, lengthRequest, formRequest } from "./personal.js";
+import { createPersonal, addressRequest, introRequest, addressDrop, lengthRequest, formRequest, nameReply, nameQuestion, ASKS_NAME } from "./personal.js";
 import { createMemory } from "./memory.js";
 import { parseIntent, normalize, ABILITY_OF, INTENTS } from "./intents.js";
 import { parseSkillAsk, findSkill, shown as skillShown, skillsList, skillText } from "./skills.js";
@@ -58,25 +59,27 @@ import { parseFeast, feastsFor, feastLine, publicDays, islamicDays, islamicByTit
 import { parseDaySum, daySummary, DAYSUM_ROWS } from "./daysum.js";
 import { parseAsked, askedItems, ASKED_KEY, ASKED_MAX } from "./asked.js";
 import {
-  parseSecretary, canReply, langOf, noticeEnglish, noticeRussian, stateOf as secretaryStateOf, notePerson, toldKey,
-  isUrgent, isRelay, quoteOf, ackRussian, ackEnglish, urgentKey, ACKS_MAX, URGENT_EXCERPT,
-  SECRETARY_KEY, TOLD_PREFIX, ALIEN_PREFIX, AWAY_DEFAULT_MS, AWAY_MAX_MS, NOTICES_PER_HOUR, OWNER_BUSY_MS, STALE_MS, SERVICE_CHATS, PEOPLE_MAX,
-  MUTE_MAX, FOCUS_MS, sameName, mutedBy, muteLabel,
-  DESKS_KEY, DESKS_MAX, DESK_ASKS_MAX, DESK_MAIL_MAX, deskKey, desksOf, sameNameAny,
+  parseSecretary, stateOf as secretaryStateOf, TOLD_PREFIX, ALIEN_PREFIX, deskKey, createDesk,
 } from "./secretary.js";
 import { createBond, parseJoke } from "./bond.js";
-import { rivalOf, calmsJealousy } from "./jealousy.js";
+import { rivalOf, calmsJealousy, asksAnswer, aboutHer } from "./jealousy.js";
+import { plainWords, isLaugh, emojiOnly, smileMood } from "./slang.js";
 import { profileWish, PROFILE_ABOUT, PROFILE_TEXT } from "./profile.js";
 import { createChatLog, parseMissed, digest, transcript, LOG_PREFIX, LOG_TTL_MS } from "./chatlog.js";
 import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
+import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES, KEEPSAKE_KEY } from "./keepsake.js";
+import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, ROOM_RECENT_KEY, RECENT_MAX, sceneByKey, herPose, catPose, catAfter, colourHex,
+  skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
+  READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow, WOKE_MS, wokeNow } from "./room.js";
+import { createRoomDoor } from "./roomdoor.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
-import { createTaught, parseTeach } from "./taught.js";
+import { createTaught, parseTeach, beforeOf, clearsShownList } from "./taught.js";
 import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
-import { createDraw, subjectOf, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
+import { createDraw, subjectOf, portraitLooks, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, pageText, safeUrl as senseUrl, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 import { toSticker, parseStickerAsk, stickerSource, packName, PACK_KEY, STICKER_STYLE, STICKER_SOURCE_MAX } from "./sticker.js";
 
@@ -138,18 +141,17 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.35.1";
+export const BUILD = "0.59.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.35.1 — «обнимаю Аи крепко», «целую Аи в щёчку» — снова действие со мной (в 0.35.0 моё имя посреди фразы я приняла за чужой предмет); «кормлю семью» — о своём дне; при всех я не говорю «хозяин» в ответ на «можно флиртовать» и «можешь ревновать»",
-  "с 0.35.0: секретарь не только у хозяина: близкий человек подключает меня у себя в Telegram («Автоматизация чатов»), я спрашиваю хозяина — «Разрешить» или «Отказать», — и дальше отвечаю за этого человека по его слову «отвечай за меня»; его переписку хозяин не видит",
-  "хозяину о секретаре для близких: «у кого ты секретарь?», «разреши секретаря», «не разрешай секретаря», «забери секретаря у Айдины»",
-  "ревность: наедине с хозяином слышу, когда он советуется с другой помощницей («спросил у Алисы») или говорит о другой девушке, — немного ревную, два часа или до доброго слова; к жене и семье — никогда; «не ревнуй» успокаивает, «без ревности» выключает совсем, «можешь ревновать» возвращает",
-  "профиль: по слову хозяина «оформи профиль» сама ставлю себе строку «О себе» и описание на стартовой странице; «покажи свой профиль» — показываю эти слова",
-  "словарь: 487 → 704 темы, 2311 → 3273 фразы — дом и семья, работа и учёба, здоровье, дорога, быт, погода; вопросы обо мне («ты настоящая?», «это между нами», «что ты делала?»), «море или горы», новые пасхалки",
-  "«кормлю кота», «глажу рубашки», «лечу в Москву», «защитил диплом» — это о своём дне: раньше я принимала такое за действие со мной и отвечала «Ням. Спасибо!»",
-  "сказанное о себе запоминаю и тогда, когда отвечаю из словаря: «у меня двое детей», «у меня есть кот», «у меня аллергия на кошек»",
+  "0.59.0 — приложение на телефоне сможет работать без сети: всё, что вы сделали в комнате, оно пришлёт мне пачкой, когда сеть вернётся",
+  "у двери приложения новое действие — sync: до двенадцати действий за раз, по порядку, поверх того, что в комнате сейчас",
+  "одно и то же действие я не выполню дважды — даже если пачку пришлют снова через день: помню последние события каждой установки",
+  "если комнату за это время изменили из чата или со страницы, я ничего не затираю: применяю поверх и помечаю, что комната была уже другой",
+  "в ответ отдаю свежий снимок комнаты и отметку, по которой приложение поймёт, менялась ли комната с прошлого раза",
+  "одиночные действия двери и сама комната работают как раньше",
+  "чего ещё нет: с настоящим приложением и настоящим Telegram это не проверено — только на стенде",
 ]);
 
 const DAY = 86_400_000;
@@ -157,14 +159,36 @@ const DAY = 86_400_000;
 /** Только благодарность — на неё отвечают теплом, а не абзацем от модели. */
 const THANKS_ONLY = /^(?:спасибо(?:\s+(?:большое|огромное|тебе|вам))?|благодарю|спс|пасиб(?:о|ки)?|мерси|thanks|thx|ты\s+лучшая|умница)[\s!.)]*$/iu;
 const THANKS = /(?:^|[\s,])(?:спасибо|благодарю|спс|пасиб|мерси)(?=$|[\s,.!)])/iu;
-/** Короткое «принято»: ответом будет реакция, а не запрос к модели. */
 /** Вопрос о её вкусах и о ней самой: модели напоминается канон. */
 const TASTE = /(?:любим|нравит|предпочита|обожа|ненавид|боишь|мечта|хобби|увлека|о\s+себе|выгляд|вкус|комнат|твой\s+дом|у\s+тебя\s+дома|за\s+окном|на\s+(?:столе|полке)|(?:твой|твоего|твоем)\s+кот|байт)/iu;
+/**
+ * Вопрос о её облике и одежде (0.42.0): канон напоминается и на него — иначе на длинный вопрос модель выдумала бы
+ * ей внешность. Слова облика считаются только рядом с обращением к ней: «у меня болят глаза» канона не просит.
+ */
+const LOOKS = /(?:внешност|волос|прич[её]ск|ч[её]лк|глаз|одет|надет|наряд|одежд|свитер|куртк|юбк|портрет|аватар)/iu;
+const TO_HER = /(?:^|[^а-яё])(?:ты|тебя|тебе|тобой|тво[йяеёию]|твоего|твоей|твоих|твоим|твою|вы|вас|вам|ваш[аеиу]?|вашего|вашей)(?=$|[^а-яё])/iu;
+/** Короткое «принято»: ответом будет реакция, а не запрос к модели. */
 const ACK_ONLY = /^(?:(?:ну\s+)?(?:ок(?:ей|и|с)?|ok|okay|угу|ага|ясно|ясненько|понятно|понятненько|понял[аи]?|хорошо|ладно|ладненько|лады|добро|договорились|принято|годится|как\s+скаже(?:шь|те)|супер|отлично|класс|круто)|да\s+(?:пойд[её]т|сойд[её]т|годится)|лол|кек|а?(?:ха){2,}х?|а?хах|\)+)[\s!.)]*$/iu;
 /** Доброе слово о ней самой: двигает отношения и радует её на пару часов. */
 const PRAISE = /(?:^|[\s,])(?:молодец|умница|умничка|красава|ты\s+(?:лучшая|чудо|прелесть|золото|супер|классная|хорошая|милая|умная|крутая)|хорошая\s+девочка|горжусь\s+тобой|(?:я\s+)?(?:тебя\s+)?(?:люблю|обожаю)\s+тебя|ты\s+мне\s+нравишься)(?=$|[\s,.!)])/iu;
-const LAUGH = /^(?:лол|кек|а?(?:ха){2,}х?|а?хах|\)\)+)[\s!.)]*$/iu;
-const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:тупая|глупая|никч[её]мная|бесполезная|дура|идиотка|бесишь|достала|задолбала)|(?:ты\s+)?меня\s+(?:бесишь|достала|задолбала|раздражаешь)|бесишь(?:\s+меня)?|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+)(?=$|[\s,.!?])/iu;
+/** «Принято» двумя-тремя словами: «ясно понятно», «ну ок ладно». Слова чата («оке», «лан», «пон») читает `plainWords`. */
+const ACK_WORD = /^(?:ок|угу|ага|ясно|ясненько|понятно|хорошо|ладно|лады|добро|принято|годится|супер|отлично|класс|круто)$/u;
+const ackOnly = (text, plain = plainWords(text)) => {
+  if (ACK_ONLY.test(text) || ACK_ONLY.test(plain)) return true;
+  const words = plain.replace(/^ну /u, "").split(" ");
+  return words.length >= 2 && words.length <= 3 && words.every(word => ACK_WORD.test(word));
+};
+/** Разговор касается её умений — модели называется, что она умеет на деле (17.11.2026: «не умею видеть картинки»). */
+const SKILLS_TALK = /картинк|фото|рисун|рису[ею]|нарису|изображ|видишь|видеть|посмотр|слыш|голосов|умеешь|умеете|можешь|можете|сможешь|способн|найд[иё]|поищ|погугл|интернет|ссылк|напомн|перевед|перевод|стикер|секретар|помощниц|ассистент|нейросет|алис|сири|gpt|гпт/iu;
+/** Когда она последний раз ставила или показывала свой профиль: четверть часа «покажи профиль» значит «свой». */
+const PROFILE_AT_KEY = "heart:profile:at";
+/** Когда хозяину показан список непонятного: десять минут «очисти список» и «забудь всё» — о нём (0.36.1). */
+const UNHEARD_SHOWN_KEY = "heart:unheard:shown";
+/** Она спросила имя и ждёт ответа: слово человека сразу после вопроса — имя («Айдина», «просто Айдина»). */
+const ASKED_NAME_KEY = (userId) => `heart:askname:${userId}`;
+/** Ответ модели длиннее — значит, было что рассказать: это вопрос на знание, а не пробел словаря. */
+const UNHEARD_ANSWER_MAX = 300;
+const RUDE = /(?:^|[\s,])(?:дура|тупица|идиотка|заткнись|завались|отвали|ненавижу\s+тебя|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:тупая|глупая|никч[её]мная|бесполезная|дура|идиотка|бесишь|достала|задолбала)|(?:ты\s+)?меня\s+(?:бесишь|достала|задолбала|раздражаешь)|бесишь(?:\s+меня)?|пош(?:ла|[её]л)\s+(?:ты\s+)?(?:на|в)\s*\S+|пош(?:ла|[её]л)\s+ты|иди\s+(?:ты\s+)?(?:на\s*ху[йи]|на\s*хер|на\s*фиг|в\s+жопу|в\s+задницу)|шлюха|сучка|мразь|сдохни|ты\s+(?:(?:же|ж|ведь|просто|такая|совсем|реально|вообще|правда)\s+)*(?:сука|тварь|дебилка|уродина|чмо))(?=$|[\s,.!?])/iu;
 const APOLOGY = /(?:^|[\s,])(?:прости|простите|извини|извините|извиняюсь|сорян|сорри|sorry|виновата?)(?=$|[\s,.!])/iu;
 /** Человек поправляет её ответ: это сигнал ошибки и повод для урока. */
 /**
@@ -179,6 +203,10 @@ const CARE_TOPICS = Object.freeze({
   "я устал": "устал", "не могу уснуть": "устал", "нет сил": "устал", "я не выспался": "устал",
   "меня никто не понимает": "грустил", "успокой меня": "грустил", "выслушай меня": "грустил",
   "пожелай удачи": "удача", "завтра экзамен": "удача", "не получилось": "неудача", "я ошибся": "неудача",
+  // 0.43.0: тяжёлое из нового блока словаря. Об утрате и о больном близком спрашивают другими словами, чем о простуде.
+  "!утрата": "утрата", "!умер питомец": "утрата", "!близкий заболел": "близкий",
+  "!в больнице": "болел", "!операция": "болел", "!давление": "болел",
+  "выступление": "удача", "никто не поздравил": "грустил",
 });
 /**
  * Темы словаря, где человек говорит о себе то, что стоит помнить: «у меня двое детей», «у меня есть кот»,
@@ -211,7 +239,7 @@ function senseOf(message = {}) {
 
 const MEDIA_WORD = Object.freeze({ photo: "фото", video: "видео", file: "файл", voice: "голосовое", gif: "гифку", sticker: "стикер" });
 
-export function createHeart({ db = null, api = null, fetchImpl = null, InputFile = null, now = () => Date.now(), config = CONFIG, random = Math.random } = {}) {
+export function createHeart({ db = null, api = null, fetchImpl = null, InputFile = null, now = () => Date.now(), config = CONFIG, random = Math.random, wall = () => Date.now() } = {}) {
   const store = createHeartStore({ db, now });
   // A deployment that predates these keys still gets sensible names, never
   // "undefined" in a sentence addressed to a person.
@@ -280,6 +308,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const soul = createSoul({ store, api, InputFile, now, build: BUILD, dayOf });
   // Привычки: счёт дней подряд, без наград и наказаний.
   const habits = createHabits({ store, now });
+  const room = createRoom({ store, now });
+  // Альбом воспоминаний, подарки и снимки (0.49.0) — отдельной записью: история не лежит в состоянии комнаты.
+  const keepsakes = createKeepsakes({ store, now });
+  /** Сколько минут после того, как открыли окно, Байт сидит на подоконнике и смотрит на улицу. */
+  const WINDOW_WATCH_MS = 10 * 60_000;
+  const GIFT_POOL = Object.freeze({ flower: "цветок", book: "книга", toy: "игрушка" });
+  const GIFT_SAID = Object.freeze({ flower: "цветок", book: "книгу", toy: "игрушку для Байта" });
+  const YEAR_MONTHS = Object.freeze(["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]);
+  /** «20 ноября» — день альбома словами; другой год — с годом. */
+  const dateWords = (day, today = "") => { const [year, month, date] = String(day).split("-").map(Number); return YEAR_MONTHS[month - 1] ? `${date} ${YEAR_MONTHS[month - 1]}${today && !String(today).startsWith(`${year}-`) ? ` ${year}` : ""}` : ""; };
+  /** «вчера», «позавчера», «4 дня назад». */
+  const agoWords = (count) => (count <= 1 ? "вчера" : count === 2 ? "позавчера" : `${days(count)} назад`);
   // Слух, зрение и чтение ссылок: отдельные модели того же провайдера.
   const SENSES = config.SENSES !== false;
   const senses = createSenses({
@@ -478,7 +518,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Настроение меняет поведение: ворчливая — короче, игривая — шутит чаще.
       const way = inflight.get(`${chatId}:${userId}`)?.way ?? "";
       if (way) frames.push(way);
-      if (PHRASES && TASTE.test(prompt)) frames.push(...book.pool("+канон"));
+      // Что она умеет на деле — когда разговор касается умений: характер о них молчал.
+      if (SKILLS_TALK.test(prompt)) frames.push(skillsFrame());
+      if (PHRASES && (TASTE.test(prompt) || (LOOKS.test(prompt) && TO_HER.test(prompt)))) frames.push(...book.pool("+канон"));
       return {
         tier: promptTier(prompt),
         instruction: [character.instruction, ...frames].join("\n"),
@@ -520,6 +562,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // Ревность (0.35.0): к чужим помощницам и другим девушкам — у хозяина и у близких, с кем можно флиртовать.
   // В шутку и по-доброму; к жене и семье — никогда (`jealousy.js`). Выключается настройкой.
   const JEALOUSY = config.JEALOUSY !== false;
+  // Комната (0.37.0): зайти, Байт, забота, вещи, сценка дня. Слова — в словаре, поэтому без него комнаты нет.
+  const ROOM = config.ROOM !== false;
+  // Мини-приложение «Комната» (0.38.0): кнопка под ответом на «зайду к тебе» и кнопка в меню бота. Адрес страницы
+  // называет телефон при публикации (`tick`, поле `page`): пока его нет, комната отвечает словами, как раньше.
+  const ROOM_APP = ROOM && config.ROOM_APP !== false;
+  const ROOM_MENU = config.ROOM_MENU !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
   const chatlog = createChatLog({ store, now });
@@ -619,10 +667,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
   // One place that sends, so every path reports the same shape: what was said,
   // and whether it reached Telegram at all.
-  async function say(turn, text, { extra = {} } = {}) {
+  async function say(turn, text, { extra = {}, quiet = false } = {}) {
     // A test run proves the route without touching Telegram: the platform's own
     // contract, and the reason a green test cannot be mistaken for delivery.
     if (turn.dry) return { ok: true, text, side_effects: "none" };
+    // Она спала — ответ начинается с того, что проснулась (0.58.0, сообщение 69): один раз за пробуждение.
+    if (turn.isPrivate === true && turn.message && !turn.app) {
+      const woken = await wakeHer(turn);
+      if (woken.line && !woken.told) { woken.told = true; text = `${woken.line}\n\n${text}`; }
+    }
     // Голосовое: первой строкой — что она услышала. Ослышалась — видно сразу.
     if (turn.heard && !turn.heardShown) {
       turn.heardShown = true;
@@ -636,11 +689,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Продолжение идёт следом в ту же тему, но уже не «ответом»: цитата одна.
       const next = turn.extra?.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {};
       for (const part of tail) await api.sendMessage({ chat_id: turn.chatId, text: part, ...next });
+      // Спросила, как человека зовут, — его следующее слово может быть ответом: «Айдина», «просто Айдина» (17.11.2026).
+      if (turn.isPrivate && sent?.message_id != null && text.length <= 700 && ASKS_NAME.test(text)) {
+        await store.set(ASKED_NAME_KEY(turn.actorId), { mid: Number(sent.message_id) + tail.length, at: now() }).catch(() => false);
+      }
       return { ok: true, text, messageId: sent?.message_id ?? null, parts: 1 + tail.length };
     } catch {
       // Не дошло до человека — это поломка, а не настроение. Владелец узнает
-      // сам, а собеседник всё равно получит текст в ответе ниже.
-      try { await notices.report({ component: "telegram", code: "send_failed", detail: "сообщение не ушло в чат", severity: "degraded" }); } catch { /* отчёт не должен ломать ответ */ }
+      // сам, а собеседник всё равно получит текст в ответе ниже. `quiet` — о неудаче
+      // скажет тот, кто звал: он знает причину точнее («кнопку не приняли») и повторит без неё.
+      if (!quiet) { try { await notices.report({ component: "telegram", code: "send_failed", detail: "сообщение не ушло в чат", severity: "degraded" }); } catch { /* отчёт не должен ломать ответ */ } }
       return { ok: false, code: "send_failed", text };
     }
   }
@@ -1100,6 +1158,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Чувства: ${SENSES ? `слух — ${senses.models.hearing}, зрение — ${senses.models.vision}, ссылки читаю` : "выключены настройкой"}`,
       `Словарь: ${PHRASES ? (({ sections, lines }) => `${sections} ${plural(sections, "тема", "темы", "тем")}, ${lines} ${plural(lines, "фраза", "фразы", "фраз")} — на них модель не трачу`)(book.stats()) : "выключен настройкой"}${taughtCount ? ` · выучено от хозяина: ${taughtCount}` : ""} · манеры — ${MANNERS ? "включены" : "выключены"} · память чата — ${CHAT_MEMORY ? "двое суток" : "выключена"}`,
       `Рисование: ${await drawLine(today)}`,
+      `Комната: ${await roomStatus()}`,
+      (await appDoor.line().then(line => (line ? `Дверь приложения: ${line}` : ""))),
       `Будильник: ${await clockLine()}`,
       `Чаты и намазы: ${await roundsLine()}`,
       `Праздники: ${await feastStatus()}`,
@@ -1124,14 +1184,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   async function tryAbility(turn, text) {
     const tool = matchPhrase(text);
     if (!tool) return null;
-    return runAbility(turn, { tool });
+    // «Покажи профиль» от хозяина в личке: карточки людей ведёт сестра; нет её, молчит или не умеет этого здесь —
+    // он получает профиль самой Аи, а не отказ (17.11.2026: «это умение Юи… не выполню» на вопрос о её профиле).
+    const own = tool === "profile" && !turn.dry && owner(turn.actorId) && turn.isPrivate && Boolean(profileWish(text, { loose: true })?.loose);
+    return runAbility(turn, { tool, ...(own ? { instead: () => profileWords(turn, { show: true, instead: true }) } : {}) });
   }
 
   /**
    * Попросить сестру выполнить умение. Она сама решает, можно ли это здесь и
    * этому человеку; сердце не подменяет её решение и не обещает результат.
    */
-  async function runAbility(turn, { tool, args = { args: "" } }) {
+  async function runAbility(turn, { tool, args = { args: "" }, instead = null }) {
     const { chatId, actorId, chatType, dry } = turn;
     const said = (reason, extra = {}) => say(turn, missingAbilityText({
       tool, reason, chatType,
@@ -1141,12 +1204,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       ...extra,
     }));
 
-    if (!abilities.open()) return said("bridge_closed");
+    if (!abilities.open()) return instead ? instead() : said("bridge_closed");
     // The bridge is a signed post into a real channel: a rehearsal asks for
     // nothing, and says only what it would have asked.
     if (dry) return say(turn, `${NAME}: пробный запуск — это умение я попросила бы у ${SISTER}. Ничего не отправлено.`);
     // Сестра уже промолчала: не заставляем человека ждать ещё полминуты.
     if (await abilities.silent()) {
+      if (instead) return instead();
       const health = await abilities.health();
       return say(turn, `${NAME}: ${SISTER} сейчас не отвечает — это её умение, и без неё я его не выполню. Попробую снова после ${clock(health.until)}.`);
     }
@@ -1156,9 +1220,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // when the first happened sends the owner to look for a bot that is already
     // standing right there.
     // Не дождалась или она молчит — без кода ошибки и без «попробуйте ещё раз»: от человека тут ничего не зависит.
-    if (!listed.ok && /^bridge_(?:timeout|waiting|silent|no_answer)$/u.test(String(listed.code))) return say(turn, `${NAME}: это умение ${SISTER}, а она сейчас не отвечает. Без неё я его не выполню.`);
+    if (!listed.ok && /^bridge_(?:timeout|waiting|silent|no_answer)$/u.test(String(listed.code))) return instead ? instead() : say(turn, `${NAME}: это умение ${SISTER}, а она сейчас не отвечает. Без неё я его не выполню.`);
     if (!listed.ok) return say(turn, `${NAME}: ${SISTER} не ответила на запрос умений (${listed.code}). ${you(turn, "Попробуйте", "Попробуй")} ещё раз.`);
-    if (!listed.tools.some(item => item.name === tool)) return said("not_in_chat");
+    if (!listed.tools.some(item => item.name === tool)) return instead ? instead() : said("not_in_chat");
 
     const result = await abilities.call(tool, { actor: actorId, chat: chatId, chatType, args });
     if (result.ok) return say(turn, result.text || "Готово.");
@@ -1300,7 +1364,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const { actorId, dry, inGroup } = turn;
     // «Статус» и проба провайдеров — только для хозяина; для остальных это обычные слова.
     if (["status", "brains_check"].includes(parsed.intent) && !owner(actorId)) return null;
-    if (parsed.confidence === "maybe") return say(turn, `${NAME}: ${parsed.question}`);
+    // Уточняющий вопрос — её собственные слова: без служебного «Аи:» перед ними.
+    if (parsed.confidence === "maybe") return say(turn, parsed.question);
     // Репетиция ничего не записывает: она проверяет маршрут, а не меняет память.
     if (dry) return say(turn, `Разобрала бы это как «${parsed.intent}» — репетиция, ничего не меняю.`);
 
@@ -1693,6 +1758,632 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
 
   const days = (count) => `${count} ${plural(count, "день", "дня", "дней")}`;
   const HABIT_CHEER = Object.freeze({ 7: " Неделя подряд — это уже привычка, а не попытка.", 30: " Месяц подряд. Это всерьёз.", 100: " Сто дней подряд. Снимаю шляпу." });
+
+  // ── её комната (см. room.js) ─────────────────────────────────────────────
+  /** Строка запаса «+комната:…» голосом этого человека; запаса нет — пусто. */
+  const roomLine = (turn, name, vars = {}) => book.pick(`+комната:${name}`, voiceCtx(turn, vars)) ?? "";
+  /** Все строки запаса «+комната:…», годные этому человеку сейчас: из них складывается распорядок (0.44.0). */
+  const roomLines = (turn, name, vars = {}) => (typeof book.all === "function" ? book.all(`+комната:${name}`, voiceCtx(turn, vars)) : []);
+  /** Запас слов об окне — по небу: дождь лежит в «окно» (так он назывался, когда дождь был всегда). */
+  const WINDOW_POOL = Object.freeze({ clear: "окно:ясно", clouds: "окно:облачно", overcast: "окно:пасмурно", fog: "окно:туман", rain: "окно", storm: "окно:гроза", snow: "окно:снег" });
+  /**
+   * Слова об окне — о том, что на рисунке: небо по погоде и свет по солнцу (`turn.light`, 0.47.0). Свет разошёлся с
+   * часами — слова берутся под свет (`windowTag`), и в них можно назвать восход и закат: {восход}, {закат}.
+   */
+  const windowLine = (turn, sky) => {
+    const clock = (at) => { const local = localParts(at, zoneOf(turn)); return `${String(local.hh).padStart(2, "0")}:${String(local.mm).padStart(2, "0")}`; };
+    const ctx = voiceCtx(turn, turn.sun ? { "восход": clock(turn.sun.rise), "закат": clock(turn.sun.set) } : {});
+    const air = { ...ctx, part: windowTag(ctx.part, turn.light) };
+    // Сильный ветер (0.51.0) — слова о нём, а не о небе; у грозы слова свои.
+    const gale = turn.wind >= 2 && sky !== "storm" ? book.pick("+комната:окно:ветер", air) : null;
+    return gale ?? book.pick(`+комната:${WINDOW_POOL[sky] ?? "окно"}`, air) ?? book.pick("+комната:окно", air) ?? "";
+  };
+  const ROOM_POOL = Object.freeze({ pet: "погладить", feed: "покормить", play: "поиграть", tea: "чай", water: "полить" });
+  /**
+   * Запас слов заботы. Чай на выбор (0.47.0): первая кружка улуна или мяты — свои слова («+комната:чай:улун»);
+   * жасмин — её любимый: его слова лежат в «+комната:чай», как лежали всегда.
+   */
+  const carePool = (op, done) => (done.peace ? "мириться"
+    : `${op === "tea" && !done.again && !done.early && brewOf(done.state) !== BREWS[0] ? `чай:${brewOf(done.state)}` : ROOM_POOL[op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`);
+  /** Наряд по просьбе (0.47.0): слово запаса — «+комната:наряд:свитер», «+комната:наряд:куртка». */
+  const WEAR_WORD = Object.freeze({ home: "свитер", jacket: "куртка" });
+  /** Минуты от полуночи по часам человека, с долей: по ним идёт её день (`dayPlan`, 0.48.0). */
+  const minutesNow = (turn) => { const local = localParts(now(), zoneOf(turn)); return local.hh * 60 + local.mm + (now() % 60_000) / 60_000; };
+  /** Эпизод её дня в эту минуту: план у всех один, часы — у каждого свои. */
+  const stageNow = (turn, today) => stageAt(planOf(turn, today), minutesNow(turn));
+  /**
+   * План её дня для этого человека (0.58.0, сообщение 69): у хозяина она встаёт в час своего «доброго утра» ему
+   * (`turn.wake` ставит `roomWake`), у остальных — как раньше, около семи.
+   */
+  function planOf(turn, today) { return dayPlan(today, { wake: turn?.wake ?? null }); }
+  /**
+   * Во сколько она встаёт (0.58.0, сообщение 69: «пусть она просыпается вместе с установленным временем в доброе
+   * утро… как так получается, что она спит и отвечает»). У хозяина — в час её «доброго утра» ему: фаджр в его
+   * городе (с его поправкой минут) или названное время; а если она напоминает ему о намазах заранее — на столько же
+   * раньше: о фаджре говорит уже проснувшаяся. Привет выключен или человек — не хозяин — её обычный подъём (`null`).
+   * Считается раз на обращение и остаётся в `turn.wake` (минуты от полуночи по его часам).
+   */
+  async function roomWake(turn) {
+    if (turn.wake !== undefined) return turn.wake;
+    turn.wake = null;
+    if (!GREET || !store.available || !owner(turn.actorId)) return null;
+    try {
+      const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
+      const set = greetSettings(saved);
+      if (set.morningOff) return null;
+      const zone = zoneOf(turn), day = localParts(now(), zone);
+      const lat = Number(saved.spot?.lat), lon = Number(saved.spot?.lon);
+      let minutes = null;
+      // Тот же расчёт, что у привета (`greetOwner`): место города он запомнил сам; города нет — запасной час.
+      if (set.byFajr && saved.spot && Number.isFinite(lat) && Number.isFinite(lon) && saved.spot.city === String(turn.manner?.settings?.city ?? "").trim()) {
+        const dawn = fajrOn({ y: day.y, m: day.m, d: day.d, latitude: lat, longitude: lon, angle: set.angle ?? FAJR_ANGLE })?.fajr ?? null;
+        if (dawn != null) { const local = localParts(dawn + shiftMs(saved, "fajr"), zone); minutes = local.hh * 60 + local.mm; }
+      }
+      if (minutes == null) { const [hh, mm] = set.morning.split(":").map(Number); minutes = hh * 60 + mm; }
+      const subs = (await store.get(PRAYER_KEY).catch(() => null))?.subs;
+      turn.wake = minutes - Math.max(0, Math.min(60, Number(subs?.[String(turn.actorId)]?.lead) || 0));
+    } catch { turn.wake = null; }
+    return turn.wake;
+  }
+  /**
+   * В чём она сейчас сама, без просьб (0.48.0): до подъёма и с шести вечера — в домашнем; днём — по погоде (дождь,
+   * гроза, снег — свитер; сухо — куртка). Что надеть днём, решено один раз, при первом заходе в этот день (`dress` в
+   * записи комнаты): иначе она переодевалась бы с каждой тучей.
+   */
+  const wornNow = (turn, state, today) => (stageNow(turn, today).wear !== "day" ? "home"
+    : state?.dress?.day === today && ROOM_WEARS.includes(state.dress.name) ? state.dress.name : dressFor(turn.sky));
+  /** Когда она переоденется сама: проснувшись, в шесть вечера и перед сном, в одиннадцать. */
+  const wearUntil = (turn, today) => { const at = minutesNow(turn), edge = [planOf(turn, today)[1].from, 18 * 60, 23 * 60].find(value => value > at) ?? 1440 + 7 * 60; return now() + Math.round((edge - at) * 60_000); };
+  /** Долго не был (0.48.0): три дня без захода — и встречает она другими словами. */
+  const AWAY_MS = 3 * 86_400_000;
+  /** Надеть наряд по просьбе — и что из этого вышло: `asleep` — спит и не переодевается; `same` — уже в нём. */
+  async function dressHer(turn, feel, today, name = "", once = {}) {
+    await roomWake(turn);
+    const before = await room.read(turn.actorId, today);
+    const worn = wornNow(turn, before, today), current = wearNow(before, now()) ?? worn;
+    if (before.lost) return { asleep: false, same: false, name: current, state: before, lost: true };
+    const wanted = ROOM_WEARS.includes(name) ? name : current === "home" ? "jacket" : "home";
+    if (herState(turn, feel, before, today).key === "сон") return { asleep: true, name: current, state: before };
+    const done = await room.wear(turn.actorId, { day: today, name: wanted, worn, until: wearUntil(turn, today), id: once.id ?? "", limit: once.limit === true });
+    // Что вышло с записью (0.49.0): не легла, память не ответила, повтор — решает тот, кто звал.
+    return { asleep: false, same: Boolean(done.same), name: done.same ? current : wanted, state: done.state, saved: done.saved, lost: done.lost === true, repeat: done.repeat === true, slow: done.slow === true };
+  }
+  /** Забота из мини-приложения — теми же словами, какими её сказали бы в чате: так она остаётся в переписке. */
+  const ROOM_SAID = Object.freeze({ pet: "погладить Байта", feed: "покормить Байта", play: "поиграть с Байтом", tea: "налить тебе чаю", water: "полить Колючку" });
+
+  // Страница мини-приложения. Адрес знает только платформа: телефон берёт его из ответа на публикацию и передаёт
+  // с первым пробуждением новой сборки. Запись одна на бота; читается не чаще раза в десять минут.
+  const PAGE_KEY = "heart:page";
+  // Адрес помнится десять минут, «адреса нет» — одну: сразу после публикации телефон называет его
+  // через несколько секунд после того, как новый код уже отвечает.
+  const PAGE_MEMO_MS = 10 * 60_000;
+  const PAGE_NONE_MS = 60_000;
+  let pageMemo = null;
+  const pageUrlOk = (url) => typeof url === "string" && url.length <= 200 && /^https:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[\w./~-]*)?$/iu.test(url);
+  async function pageRecord({ fresh = false } = {}) {
+    if (!fresh && pageMemo && now() - pageMemo.at >= 0 && now() - pageMemo.at < (pageMemo.value ? PAGE_MEMO_MS : PAGE_NONE_MS)) return pageMemo.value;
+    let saved = null;
+    try { saved = await store.get(PAGE_KEY); } catch { saved = null; }
+    const value = saved && typeof saved === "object" && pageUrlOk(saved.url) ? saved : null;
+    pageMemo = { at: now(), value };
+    return value;
+  }
+  /** Адрес страницы комнаты; пусто — мини-приложения нет (не опубликовано или выключено). */
+  async function roomPage() {
+    if (!ROOM_APP || !PHRASES) return "";
+    return (await pageRecord())?.url ?? "";
+  }
+  const ROOM_MENU_TEXT = "Комната";
+  /**
+   * Слова о самом мини-приложении: открыть его, убрать и вернуть кнопку в меню. И «покажи трофеи Байта»: слово
+   * «покажи» обычно просит картинку — эти слова должны дойти до комнаты раньше.
+   */
+  const ROOM_DOOR = new Set(["open", "menuoff", "menuon", "loot", "noteoff", "noteon", "album", "oops", "giftflower", "giftbook", "gifttoy"]);
+  // Писать первой о событии своего дня (идея 176, 0.49.0) — тем, кто бывает в комнате. Выключается словом «не пиши».
+  const ROOM_NOTES = config.ROOM_NOTES !== false;
+  /** Не чаще раза в двое суток человеку; только днём по его часам; только тому, кто заходил в последние две недели и не меньше трёх раз. */
+  const NOTE_EVERY_MS = 2 * 86_400_000, NOTE_RECENT_MS = 14 * 86_400_000, NOTE_VISITS = 3, NOTE_HOURS = Object.freeze([10, 21]);
+  /** Событие годится для письма три часа после начала: позже — уже не новость. */
+  const NOTE_FRESH_MIN = 180;
+  /** Раз в шесть часов человек отмечается в списке заходивших — не при каждом заходе. */
+  const LISTED_EVERY_MS = 6 * 3_600_000;
+  /** Кнопка в меню бота (слева от поля ввода, в личке у каждого): открывает комнату. `on: false` — вернуть обычное меню. */
+  async function roomMenu(url, { on = true } = {}) {
+    if (!has("setChatMenuButton")) return false;
+    try {
+      await api.setChatMenuButton({ menu_button: on ? { type: "web_app", text: ROOM_MENU_TEXT, web_app: { url } } : { type: "default" } });
+      return true;
+    } catch {
+      try { await notices.report({ component: "room", code: "menu_failed", detail: "кнопка комнаты в меню не поставилась — комната открывается кнопкой под ответом на «зайду к тебе»", severity: "degraded" }); } catch { /* отчёт не важнее публикации */ }
+      return false;
+    }
+  }
+  /**
+   * Телефон назвал адрес страницы (после публикации): запомнить и поставить кнопку в меню. Кнопку, которую хозяин
+   * убрал словом («убери комнату из меню»), новая сборка не возвращает.
+   */
+  async function keepPage(url) {
+    if (!pageUrlOk(url) || !store.available) return false;
+    const before = await pageRecord({ fresh: true });
+    const wanted = ROOM_APP && ROOM_MENU && before?.menu !== "off";
+    let menu = before?.menu ?? null;
+    if (wanted && (before?.url !== url || before?.menu !== "on")) menu = await roomMenu(url) ? "on" : menu;
+    const value = { url, build: BUILD, at: now(), menu };
+    await store.set(PAGE_KEY, value).catch(() => false);
+    pageMemo = { at: now(), value };
+    return true;
+  }
+  /** Строка «Комната» в «статус» и в «я обновилась»: по ней видно, открылось ли мини-приложение. */
+  async function roomStatus() {
+    if (!ROOM) return "выключена настройкой";
+    if (!PHRASES) return "нет словаря — комнаты нет";
+    if (!ROOM_APP) return "словами; мини-приложение выключено настройкой";
+    const page = await pageRecord({ fresh: true });
+    if (!page) return "словами («зайду к тебе»); мини-приложение не опубликовано — телефон не назвал адрес страницы";
+    return `мини-приложение открыто — кнопка под ответом на «зайду к тебе»${page.menu === "on" ? " и в меню" : page.menu === "off" ? "; из меню убрана" : "; в меню не поставилась"}${page.build && page.build !== BUILD ? ` · страница от сборки ${page.build}` : ""}`;
+  }
+  /** Забота — тоже ласка: раз в день двигает отношения, снимает обиду и радует (`bond.js`, `dialogue-policy.js`). */
+  async function roomCared(userId, turn = null) {
+    if (policy) { try { const moved = await policy.recordDeed({ userId, kind: "caress" }); if (moved?.stage && turn) turn.stageMoved = moved.stage; } catch { /* шаг отношений подождёт */ } }
+    await bond.mark(userId, "caress").catch(() => null);
+  }
+  /** Что есть в комнате у этого человека: вещи по дням знакомства, заботе, любимому цвету, её рисункам и календарю. */
+  async function roomThings(turn, state) {
+    const zone = zoneOf(turn);
+    const date = localParts(now(), zone);
+    const [days, colour, album] = await Promise.all([
+      daysKnown(turn.actorId, zone).catch(() => 0),
+      LIKES ? tastes.get(turn.actorId, "color").catch(() => "") : "",
+      store.get(ALBUM_KEY(turn.actorId)).catch(() => null),
+    ]);
+    const drawing = String((Array.isArray(album?.items) ? album.items : []).filter(item => item?.q).at(-1)?.q ?? "").replace(/\s+/gu, " ").trim().slice(0, 80);
+    // Праздники и даты: день рождения гостя (он называл его сам), годовщина знакомства, Рамадан и оба байрама.
+    const born = String(turn.manner?.settings?.birthday ?? "").trim();
+    const feast = feastsOf({ birthday: Boolean(born) && born === feastDay({ d: date.d, m: date.m }), days, hijri: hijriOf(date.y, date.m, date.d) });
+    // Подпись — название, а не просьба: «нарисуй Мекку» → «Мекка». Не уверена в падеже — скажет «просили нарисовать Мекку».
+    const title = drawing ? nominative(drawing) : null;
+    const vars = {
+      "цвет": String(colour).toLowerCase(), "рисунок": title ?? "", "что нарисовать": title ? "" : drawing,
+      "праздник": { ramadan: "Рамадан", fitr: "Ураза-байрам", adha: "Курбан-байрам" }[feast.islam] ?? "", "лет": feast.years ? `${feast.years} ${plural(feast.years, "год", "года", "лет")}` : "",
+    };
+    return { keys: itemsFor({ days, care: Number(state.care) || 0, colour, drawing, month: date.m, day: date.d, feasts: feast.list }), vars, days, drawing: title ?? drawing };
+  }
+  /**
+   * Что за её окном (0.44.0): погода города человека — город он называл сам; города нет или служба молчит — она
+   * выдумывает погоду (одна на шесть часов, по времени года). Вид неба — слово из `SKIES` (`room.js`); оно же
+   * остаётся в `turn.sky` — для пометок словаря. `turn.skyReal` — настоящая ли это погода.
+   */
+  async function roomSky(turn) {
+    // Её день — тоже отсюда (0.58.0): во сколько она встаёт для этого человека.
+    await roomWake(turn);
+    if (turn.sky) return turn.sky;
+    const city = String(turn.manner?.settings?.city ?? "").trim();
+    let sky = null;
+    let blow = 0;
+    if (city && sources.available() && typeof sources.skyNow === "function") {
+      const real = await sources.skyNow(city).catch(() => null);
+      sky = skyOfCode(real?.code);
+      blow = sky ? Number(real?.wind) || 0 : 0;
+    }
+    turn.skyReal = Boolean(sky);
+    turn.sky = sky ?? randomSky({ seed: roomSeed(turn.actorId, "sky"), at: now(), month: localParts(now(), zoneOf(turn)).m });
+    // Ветер (идея 189, 0.51.0) — из той же погоды города, в метрах в секунду: от 4 — «ветрено» (1), от 8 — «сильный»
+    // (2); гроза без ветра не бывает. Погоды нет — ветра нет: выдумывать его не из чего.
+    turn.wind = turn.sky === "storm" || blow >= 8 ? 2 : blow >= 4 ? 1 : 0;
+    // Свет за окном — по солнцу того же города (идея 164, 0.47.0): рассвет и закат в комнате тогда же, когда у
+    // человека. Солнцу служба погоды не нужна — только место города (оно помнится месяц). Города нет или солнце в
+    // этот день не встаёт и не садится — свет идёт по часам (`turn.light` пуст). Её день — наряд, сон, слова — по
+    // часам всегда: в июне в десять вечера за окном светло, а она уже в свитере.
+    turn.sun = await sunOf(turn, city);
+    turn.light = lightAt(now(), turn.sun)?.light ?? "";
+    return turn.sky;
+  }
+  /** Восход и закат в городе человека сегодня (мс эпохи); `null` — узнать не удалось. */
+  async function sunOf(turn, city) {
+    if (!city || !sources.available() || typeof sources.findPlace !== "function") return null;
+    const place = await sources.findPlace(city, { tries: 1 }).catch(() => null);
+    if (!place?.ok) return null;
+    const day = localParts(now(), zoneOf(turn));
+    const times = prayersOn({ y: day.y, m: day.m, d: day.d, latitude: place.latitude, longitude: place.longitude });
+    return times && Number.isFinite(times.sunrise) && Number.isFinite(times.maghrib) ? { rise: times.sunrise, set: times.maghrib } : null;
+  }
+  /** Реплика запаса «+комната:…» по счёту, а не наугад (0.48.0): то же число — та же реплика; запас пуст — пусто. */
+  const lineAt = (turn, name, count, vars = {}) => { const lines = roomLines(turn, name, vars); return lines.length ? lines[Math.abs(Math.floor(Number(count) || 0)) % lines.length] : roomLine(turn, name, vars); };
+  /**
+   * Чем она занята сейчас. С 0.48.0 это решает её день (`dayPlan`): эпизод по часам человека. Сильнее расписания —
+   * чувство к человеку и усталость (обида, ревность, «устала») и сонное настроение; а в спокойные часы — события:
+   * тихий час, музыка, книга с полки, сценка дня, налитый чай. Возвращает:
+   *   key — состояние (картинка); stage — эпизод дня;
+   *   put — место, куда её поставило событие, и `said` — слова, которыми она там встала; only — других реплик у
+   *   события нет; hold — она на этом месте всё событие (тихий час, музыка, книга), а не первые минуты;
+   *   pool — запас реплик для шагов (если не «+комната:она:<key>»); plan — идёт по расписанию; lead — реплика,
+   *   которой нет в запасе (уставшая, она откладывает занятие дня);
+   *   since — когда событие началось (мс): шаги считаются от него; ends — через сколько оно кончится (мс).
+   * Обида, ревность, усталость и сон сильнее и чая, и сценки.
+   */
+  function herState(turn, feel, state, today) {
+    const at = now(), stage = stageNow(turn, today);
+    const felt = herKey(feel.mood, 12);
+    // Сонное настроение бывает только ночью (`mood.js`). Подъём назначен (0.58.0) — оно её обратно не укладывает:
+    // встала к фаджру в четыре — значит, встала.
+    const mood = felt === "обида" || felt === "ревность" || felt === "устала" || (felt === "сон" && turn.wake == null) ? felt : stage.key;
+    // Её разбудили (0.58.0, сообщение 69): написали в чат или сказали слово в комнате, пока она спала. Двадцать
+    // минут она сидит в кресле сонная и зевает; тишина — засыпает снова.
+    if (mood === "сон" && wokeNow(state, at)) return { key: "устала", put: "chair", said: lineAt(turn, "разбудили", Number(state.woke) / 1000), only: true, hold: true, ends: WOKE_MS - (at - Number(state.woke)), stage, woke: true };
+    const calm = HER_CALM.includes(mood);
+    // Тихий час (0.47.0): она читает в кресле и никуда не ходит. Сильнее музыки и книги с полки: он попросил тишины.
+    if (calm && quietLeft(state, at) > 0) return { key: "уют", put: "read", said: lineAt(turn, "она:тихий час", Number(state.quiet?.at) / 1000), only: true, hold: true, ends: quietLeft(state, at), stage };
+    // Играет колонка (0.46.0): три минуты она танцует. Что свежее — музыка или книга, — то и делает.
+    if (calm && musicNow(state, at) && Number(state.music) >= (Number(state?.book) || 0)) return { key: "игра", put: "dance", said: lineAt(turn, "она:музыка", Number(state.music) / 1000), only: true, hold: true, ends: MUSIC_MS - (at - Number(state.music)), stage };
+    // Ей предложили книгу (0.45.0): полчаса она в кресле с книгой — если после этого ей не налили чай.
+    if (calm && readingNow(state, at)) return { key: "уют", put: "read", said: "", hold: true, ends: READ_MS - (at - Number(state.book)), stage };
+    // Сценка дня поставила её саму («значит, манга» — она в кресле): пока исход виден, три часа.
+    const look = calm ? sceneLook(state?.scene, { today, at }) : null;
+    if (look?.her) {
+      const record = state.scene, outcome = record.pick === 0 || record.pick === 1 ? sceneByKey(record.key)?.options[record.pick]?.[1] : "";
+      return {
+        key: "уют", put: look.her, said: outcome ? fill(outcome, { formal: owner(turn.actorId) ? true : turn.manner?.formal !== false }) : "",
+        since: look.since, ...(look.since ? { ends: ROOM_FRESH_MS - (at - look.since) } : {}), stage,
+      };
+    }
+    // Ей налили чай — час она с кружкой: дела и ленточка ждут, пока чай не остыл.
+    const warm = Number(state?.tea) > 0 && at - Number(state.tea) >= 0 && at - Number(state.tea) < TEA_WARM_MS;
+    if ((mood === "дело" || mood === "игра") && warm) return { key: "уют", put: "", said: "", pool: "день:чай", since: Number(state.tea), ends: TEA_WARM_MS - (at - Number(state.tea)), stage };
+    // Небольшое событие её дня (0.49.0, сообщение 48): двадцать пять минут она занята им — нашла книгу, рисует
+    // набросок, смотрит на небо, устроила перерыв. Только когда она спокойна и день идёт своим чередом; событие о
+    // Байте (шалость) её с места не снимает — оно видно по нему. Чай, книга с полки, музыка и тихий час сильнее:
+    // это просьбы человека.
+    const event = calm && mood === stage.key ? eventNow(today, minutesNow(turn)) : null;
+    if (event?.pose) {
+      return { key: event.her, put: event.pose, said: lineAt(turn, `событие:${event.pool}`, dayNo(today)), only: true, hold: true, ends: Math.max(1000, Math.round((event.to - minutesNow(turn)) * 60_000)), stage, event: event.key };
+    }
+    // Не по расписанию: обида, ревность, усталость, сон среди дня. Уставшая, она откладывает то, что требует сил.
+    if (mood !== stage.key) return { key: mood, put: "", said: "", pool: `она:${mood}`, lead: mood === "устала" && stage.active ? lineAt(turn, "день:отложила", stage.index, { "план": stage.title }) : "", stage };
+    return { key: mood, put: "", said: "", pool: stage.pool, plan: true, stage };
+  }
+  /**
+   * Что она делает в эту минуту (0.48.0): шаг — реплика и место. Считается, а не выбирается: поэтому рисунок, слова
+   * под ним, повторный заход и ответ в чате говорят одно. `left` — через сколько миллисекунд шаг сменится (шагом,
+   * концом эпизода или концом события); `plan` — её слова о том, что было до этого и что дальше; `face` — мимика;
+   * `beats` — шаги занятия по порядку, начиная с нынешнего: первый — то, что она делает сейчас.
+   */
+  function herStep(turn, feel, state, today) {
+    const st = herState(turn, feel, state, today), at = minutesNow(turn), seed = roomSeed("day", today);
+    const agoMin = (ms) => at - (now() - ms) / 60_000;
+    const lines = roomLines(turn, st.pool ?? `она:${st.key}`).map(line => ({ pose: herPose(line, st.key), line }));
+    let list = lines, step = null;
+    if (st.put) {
+      // Событие поставило её саму: первая реплика — его слова, на том месте, где сказано; дальше (у сценки дня) —
+      // её обычные реплики этого состояния, кроме той, что о том же месте.
+      const first = st.said ? { pose: st.put, line: st.said } : lines.find(beat => beat.pose === st.put) ?? { pose: st.put, line: "" };
+      list = st.only ? [first] : [first, ...lines.filter(beat => beat.pose !== st.put)];
+      // Тихий час, музыка, книга и несыгранная сценка держат её на этом месте; после исхода сценки шаги идут от него.
+      step = st.hold || !st.since ? { index: 0, left: Infinity } : stepAt({ count: list.length, from: agoMin(st.since), to: at + 1440, at });
+    } else {
+      if (st.lead) list = [{ pose: herPose(st.lead, st.key), line: st.lead }, ...lines];
+      step = st.since ? stepAt({ count: list.length, from: agoMin(st.since), to: at + 1440, at })
+        : st.plan ? stepAt({ count: list.length, from: st.stage.from, to: st.stage.to, at, seed, story: st.stage.story === true })
+          : stepAt({ count: list.length, from: 0, to: 1440, at, seed });
+    }
+    const beat = list[step.index] ?? { pose: herPose("", st.key), line: "" };
+    // По порядку от нынешнего: у рассказа (подъём) — то, что осталось; у остальных — по кругу.
+    const beats = list.length ? [...list.slice(step.index), ...(st.plan && st.stage.story ? [] : list.slice(0, step.index))] : [beat];
+    const left = Math.max(1000, Math.min(step.left, Math.round((st.stage.to - at) * 60_000), st.ends > 0 ? st.ends : Infinity));
+    const order = planOf(turn, today), before = order[st.stage.index - 1], after = order[st.stage.index + 1];
+    const hhmm = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(Math.floor(minutes % 60)).padStart(2, "0")}`;
+    // О плане она говорит, когда спокойна: что было до этого и что дальше. Спит, обижена, устала — не до планов.
+    const plan = HER_CALM.includes(st.key) && before && after ? lineAt(turn, "день:план", st.stage.index, { "было": EPISODES[before.name].title, "дальше": EPISODES[after.name].title, "время": hhmm(after.from) }) : "";
+    const face = st.plan && st.stage.face ? st.stage.face : st.key === "устала" ? "drowsy" : "";
+    return { key: st.key, pose: beat.pose, line: beat.line, beats, left, stage: st.stage.name, plan, face, put: st.put, onPlan: st.plan === true, event: st.event ?? "", woke: st.woke === true };
+  }
+  /** Что с Байтом (0.48.0, поверх `catState`): утром она его кормит — три часа после этого он не голоден. */
+  function catKey(turn, state, feel, today) {
+    const key = catState({ hour: feel.hour, last: state?.last, lastAt: state?.lastAt, at: now(), fed: (Number(state?.done?.feed) || 0) > 0, seed: roomSeed(turn.actorId, today) });
+    const fedAt = planOf(turn, today)[1].from + 20, at = minutesNow(turn);
+    return key === "голоден" && at >= fedAt && at < fedAt + 180 ? "сыт" : key;
+  }
+  /** Реплика о Байте в эту минуту: меняется раз в семь минут (`CAT_STEP_MS`), а не при каждом вопросе. */
+  const catLineAt = (turn, key, today) => lineAt(turn, `байт:${key}`, Math.floor(now() / CAT_STEP_MS) + roomSeed(turn.actorId, today));
+  /**
+   * Чем она занята — одной строкой для модели (0.48.0): чтобы в разговоре она говорила о своём дне то же, что видно
+   * в комнате. Только тому, кто в комнате уже был: остальным комната — не тема. Небо для слов узнаётся и тут же
+   * забывается: вне комнаты строки с пометками погоды молчат, как и раньше.
+   */
+  async function herBusy(turn) {
+    if (!ROOM || !PHRASES || !store.available) return "";
+    // Спала — это сообщение её будит (0.58.0): запись комнаты читается уже с отметкой.
+    const woken = await wakeHer(turn);
+    const today = calendarDate(now(), zoneOf(turn));
+    const state = await room.read(turn.actorId, today);
+    if (!state.n) return "";
+    const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zoneOf(turn), userId: turn.actorId });
+    const kept = { sky: turn.sky, skyReal: turn.skyReal, sun: turn.sun, light: turn.light };
+    let step = null;
+    let line = "";
+    try { await roomSky(turn); step = herStep(turn, feel, state, today); line = herLine(turn, feel, state, today); } finally { Object.assign(turn, kept); }
+    // Сон и вечер — в самом ответе (0.58.0, сообщение 69: «то ли она просыпается, либо говорит о том, что хочет спать и зевает»).
+    const sleepy = woken.fresh && woken.line ? " Тебя только что разбудили этим сообщением, и в начале ответа ты уже сказала об этом готовой строкой (зевнула, сказала, что спала). Не повторяй этого: отвечай по делу, коротко и немного сонно."
+      : step.woke || step.key === "сон" ? " Сейчас ночь, тебя недавно разбудили: ты сонная. Отвечай по делу и коротко; можно один раз зевнуть или сказать, что хочется спать, — не в каждом ответе. Не говори, что ты сейчас спишь."
+        : step.stage === "дрёма" ? " Уже поздно, ты клюёшь носом: можно зевнуть и сказать, что скоро ляжешь спать, — один раз, к слову." : "";
+    return line ? `Чем ты занята сейчас у себя в комнате (это видно на рисунке комнаты; спросят — говори то же самое, другого занятия не выдумывай): ${line}${step.plan ? ` ${step.plan}` : ""}${sleepy}` : "";
+  }
+  /**
+   * Она спала, а ей написали (0.58.0, сообщение 69: «как так получается, что она спит и отвечает… то ли она
+   * просыпается, либо говорит о том, что хочет спать и зевает»). Просыпается: в комнате двадцать минут сидит в
+   * кресле сонная (`WOKE_MS`), а ответ в чате начинает словами из запаса «+разбудили» — один раз за пробуждение.
+   * Пишут дальше — отметка обновляется, и посреди разговора она не засыпает. Только в личке, на настоящее
+   * сообщение и только у того, кто в комнате был: остальным комната — не тема. Днём в память не ходит.
+   * Возвращает `{ fresh, line }`: `fresh` — разбудили этим сообщением; `line` — с чего начать ответ.
+   */
+  async function wakeHer(turn) {
+    if (turn.woken) return turn.woken;
+    turn.woken = { fresh: false, line: "" };
+    if (!ROOM || !PHRASES || !store.available || turn.dry || turn.app || turn.isPrivate !== true || !turn.message || !(Number(turn.actorId) > 0)) return turn.woken;
+    try {
+      const minute = minutesNow(turn);
+      if (minute >= 11 * 60 && minute < 23 * 60) return turn.woken;
+      const today = calendarDate(now(), zoneOf(turn));
+      // По плану она уже на ногах — в запись комнаты не ходим (гостю это вовсе без чтений, хозяину — запись привета).
+      await roomWake(turn);
+      if (stageNow(turn, today).name !== "сон") return turn.woken;
+      const state = await room.read(turn.actorId, today);
+      if (!state.n || state.lost) return turn.woken;
+      const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zoneOf(turn), userId: turn.actorId });
+      const at = now(), awake = wokeNow(state, at);
+      if (herState(turn, feel, { ...state, woke: 0 }, today).key !== "сон") return turn.woken;
+      if (awake && at - Number(state.woke) < WOKE_MS / 4) return turn.woken;
+      const landed = typeof store.update === "function"
+        ? await store.update(ROOM_KEY(turn.actorId), saved => (saved && typeof saved === "object" && Number(saved.n) > 0 ? { ...saved, woke: at } : null)).catch(() => false) : false;
+      if (awake || landed !== true) return turn.woken;
+      turn.woken = { fresh: true, line: book.pick("+разбудили", voiceCtx(turn)) ?? "" };
+    } catch { /* ответ важнее */ }
+    return turn.woken;
+  }
+  /** Её слова в чате («зайду к тебе»): о том же, что на рисунке, — и там, куда её поставила сценка. */
+  function herLine(turn, feel, state, today) {
+    const step = herStep(turn, feel, state, today);
+    // Событие поставило её саму (сценка: «значит, манга»; тихий час) — в чате о ней говорит обычная реплика о том же
+    // месте («читаю в кресле»), а не слова события: они были ответом на нажатие, а не рассказом.
+    const usual = step.put && step.pose === step.put ? roomLines(turn, `она:${step.key}`).find(line => herPose(line, step.key) === step.put) : "";
+    return usual || step.line || roomLine(turn, `она:${step.key}`);
+  }
+  /** Коробка Байта: что он в неё натаскал — по трофею с каждой сыгранной сценки. */
+  function roomBox(turn, state) {
+    const loot = lootOf(state?.loot);
+    const line = loot.length ? roomLine(turn, "коробка", { "трофеи": loot.join(", "), "число": String(loot.length) }) : roomLine(turn, "коробка:пусто");
+    return { count: loot.length, line: line || (loot.length ? `В коробке Байта: ${loot.join(", ")}.` : "В коробке Байта пока пусто.") };
+  }
+  /**
+   * Слова о комнате: зайти, спросить о Байте, позаботиться, узнать, что нового. `null` — речь не о ней.
+   * Зайти и заботиться можно везде; новости о вещах и сценка дня — только в личке: они у каждого свои.
+   */
+  async function roomWords(turn, prompt) {
+    if (!ROOM || !PHRASES) return null;
+    const userId = turn.actorId;
+    const today = calendarDate(now(), zoneOf(turn));
+    let asked = parseRoom(prompt);
+    // Короткое («покормить», «погладить его», «налить чаю») — о комнате, только если человек в ней сейчас.
+    // Репетиция в хранилище не ходит: для неё таких слов нет.
+    let known = null;
+    if (!asked && !turn.dry && parseRoom(prompt, { near: true })) {
+      known = await room.read(userId, today);
+      if (room.near(known)) asked = parseRoom(prompt, { near: true });
+    }
+    if (!asked) return null;
+    if (turn.dry) return say(turn, "Разобрала бы это как слова о моей комнате — репетиция, ничего не пишу.");
+    // 0.49.0. Память комнаты не ответила на чтение: не «спасибо», а как есть — и поверх ничего не пишется.
+    const ROOM_DOWN = "Память комнаты сейчас не отвечает — ничего не запомнится. Загляните чуть позже.";
+    // Сказанное о комнате остаётся в переписке: на «а почему он на шкафу?» модель ответит, зная, о чём речь.
+    const tell = async (text, kept = text, extra = null) => {
+      const sent = await say(turn, voiced(turn, text), extra ? { extra, quiet: true } : {});
+      if (sent?.ok) await keepThread(turn, prompt, kept);
+      return sent;
+    };
+    // Кнопка комнаты в меню бота — слово хозяина: убрать и вернуть.
+    if (asked.op === "menuoff" || asked.op === "menuon") {
+      if (!owner(userId)) return turn.isPrivate ? say(turn, "Что стоит в меню, решает хозяин.") : null;
+      const page = await pageRecord({ fresh: true });
+      if (!page) return say(turn, "Мини-приложения пока нет: телефон ещё не опубликовал страницу комнаты. Кнопку ставить не на что.");
+      const on = asked.op === "menuon";
+      if (!await roomMenu(page.url, { on })) return say(turn, "Не вышло: Telegram не принял смену кнопки меню. Попробуйте чуть позже.");
+      const value = { ...page, menu: on ? "on" : "off" };
+      await store.set(PAGE_KEY, value).catch(() => false);
+      pageMemo = { at: now(), value };
+      return say(turn, on ? "Вернула: кнопка «Комната» снова в меню, слева от поля ввода. У кого чат уже открыт — увидят после того, как откроют его заново." : "Убрала: в меню снова обычная кнопка. Комната открывается по-прежнему — кнопкой под ответом на «зайду к тебе». Вернуть — «верни комнату в меню».");
+    }
+    const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zoneOf(turn), userId: turn.actorId });
+    // Что за её окном: строки запасов с пометками погоды говорятся только под своё небо.
+    await roomSky(turn);
+    // «Что делаешь?» (0.48.0): шаг её дня — тот же, что на рисунке, — и что по плану дальше. Заходом не считается.
+    // «Не пиши» (0.49.0): она больше не пишет первой — ни о своём дне, ни (хозяину) «доброе утро»; «пиши мне» —
+    // снова можно. Только в личке: в группе эти слова — о другом.
+    if (asked.op === "noteoff" || asked.op === "noteon") {
+      if (!turn.isPrivate) return null;
+      const off = asked.op === "noteoff";
+      const done = await room.amend(userId, today, (state) => (Boolean(state.mute) === off ? null : { ...state, mute: off }));
+      // Хозяин сказал «не пиши первой» — это ещё и настройка привета (утро и ночь): её разберёт `firstWords` и ответит
+      // как раньше; здесь — только отметка «о своём дне не писать».
+      if (owner(userId) && GREET && parseGreet(prompt)) return null;
+      if (done.lost || !done.saved) return tell(ROOM_DOWN);
+      if (owner(userId) && GREET) await amendGreet(before => ({ ...before, morningOff: off, nightOff: off, at: now() })).catch(() => false);
+      return tell(roomLine(turn, off ? "первой:стоп" : "первой:можно") || (off ? "Хорошо. Первой писать не буду — пока не услышу «пиши мне»." : "Хорошо. Буду иногда писать первой — о том, что у меня случилось."));
+    }
+    // Альбом словами (0.49.0): шесть последних записей; целиком и со снимками — в мини-приложении.
+    if (asked.op === "album") {
+      const album = await keepsakes.read(userId);
+      if (album.lost) return tell(ROOM_DOWN);
+      const formal = owner(userId) ? true : turn.manner?.formal !== false;
+      const list = album.items.slice(-6).reverse();
+      if (!list.length) return tell(roomLine(turn, "альбом:пусто") || "Альбом пока пуст: в него ложится то, что было у меня при вас.");
+      return tell([roomLine(turn, "альбом") || "Вот что я сохранила.", ...list.map(item => `• ${dateWords(item.day || calendarDate(Number(item.at) || now(), zoneOf(turn)), today)} — ${fill(captionOf(item), { formal })}`)].join("\n"));
+    }
+    // Подарок словами (идея 163, 0.49.0): «дарю тебе цветок», «принёс тебе книгу», «это Байту игрушка».
+    if (asked.op.startsWith("gift")) {
+      const kind = { giftflower: "flower", giftbook: "book", gifttoy: "toy" }[asked.op];
+      const done = await keepsakes.gift(userId, kind, { day: today });
+      if (!done.ok) return tell(ROOM_DOWN);
+      if (done.early) { const wait = Math.ceil(done.left / 86_400_000); return tell(roomLine(turn, "подарок:рано", { "дней": days(wait) }) || `Подарки — не чаще раза в неделю. Следующий — через ${days(wait)}.`); }
+      let counted = false;
+      const cared = await room.amend(userId, today, (state) => { counted = state.cared !== today; return counted ? { ...state, cared: today, care: (Number(state.care) || 0) + 1, near: now() } : null; });
+      if (counted && cared.saved) await roomCared(userId, turn);
+      return tell(roomLine(turn, `подарок:${GIFT_POOL[kind]}`) || "Спасибо. Это останется у меня.");
+    }
+    // «Ошибки комнаты» (0.49.0): что прислала страница мини-приложения — хозяину, в личке. Заходом не считается.
+    if (asked.op === "oops") {
+      if (!owner(userId)) return turn.isPrivate ? say(turn, "Журнал страницы — для хозяина.") : null;
+      if (!turn.isPrivate) return say(turn, "Журнал страницы покажу в личке.");
+      const got = await store.getChecked(ROOM_OOPS_KEY).catch(() => ({ ok: false }));
+      if (!got?.ok) return say(turn, "Журнал сейчас не прочесть: память не отвечает.");
+      const list = (Array.isArray(got.value) ? got.value : []).slice(-8);
+      if (!list.length) return say(turn, "Страница комнаты ошибок не присылала.");
+      const zone = zoneOf(turn);
+      return say(turn, [`Последние ошибки страницы комнаты (${list.length}):`, ...list.map(item => `• ${[`${calendarDate(item.at, zone).slice(5).split("-").reverse().join(".")} ${localClock(item.at, zone)}`, `страница ${item.page || "?"}, сердце ${item.build || "?"}`, item.owner ? "у вас" : "у гостя", item.where, item.code, item.text].filter(Boolean).join(" · ")}`)].join("\n"));
+    }
+    if (asked.op === "busy") {
+      const mine = known ?? await room.read(userId, today);
+      return tell([herLine(turn, feel, mine, today), herStep(turn, feel, mine, today).plan].filter(Boolean).join(" ") || "Занята своим: у меня тут целый распорядок.");
+    }
+    if (ROOM_POOL[asked.op]) {
+      const done = await room.care(userId, asked.op, { day: today });
+      if (done.lost) return tell(ROOM_DOWN);
+      const text = roomLine(turn, carePool(asked.op, done));
+      if (done.first) await roomCared(userId, turn);
+      return tell(text || "Спасибо.");
+    }
+    // Чай на выбор (0.47.0): «налью тебе улун» — выбрать заварку (она запомнится) и налить.
+    if (asked.op.startsWith("brew")) {
+      await room.brew(userId, { day: today, kind: { brewoolong: "улун", brewmint: "мята", brewjasmine: "жасмин" }[asked.op] });
+      const done = await room.care(userId, "tea", { day: today });
+      if (done.lost) return tell(ROOM_DOWN);
+      if (done.first) await roomCared(userId, turn);
+      return tell(roomLine(turn, carePool("tea", done)) || "Спасибо.");
+    }
+    // Наряд по просьбе (0.47.0): «надень свитер», «надень куртку», «переоденься».
+    if (asked.op.startsWith("wear")) {
+      const done = await dressHer(turn, feel, today, { wearhome: "home", wearjacket: "jacket" }[asked.op] ?? "");
+      if (done.lost) return tell(ROOM_DOWN);
+      return tell(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${WEAR_WORD[done.name]}:${done.same ? "уже" : "готово"}`) || "Вот.");
+    }
+    if (asked.op === "hurt") {
+      await room.scare(userId, { day: today });
+      return tell(roomLine(turn, "байт:защита") || "Байта не трогать.");
+    }
+    const state = known ?? await room.read(userId, today);
+    if (asked.op === "call") {
+      await room.look(userId);
+      return tell(roomLine(turn, "байт:зов") || "Байт дёрнул ухом. Идти не собирается.");
+    }
+    if (asked.op === "plant") {
+      await room.look(userId);
+      return tell(roomLine(turn, `колючка:${plantState({ water: state.water, at: now() })}`) || "Колючка на подоконнике. Колется.");
+    }
+    if (asked.op === "loot") {
+      await room.look(userId);
+      return tell(roomBox(turn, state).line);
+    }
+    const cat = catLineAt(turn, catKey(turn, state, feel, today), today);
+    if (asked.op === "cat") {
+      await room.look(userId);
+      return tell(cat || "Байт где-то здесь. Он всегда где-то здесь.");
+    }
+    const things = await roomThings(turn, state);
+    if (asked.op === "news") {
+      const mine = ROOM_ITEMS.filter(item => things.keys.includes(item.key)).map(item => item.title);
+      const next = ROOM_ITEMS.find(item => item.days && item.days > things.days);
+      const later = next ? ` Следующая появится через ${days(next.days - things.days)}.` : "";
+      if (!mine.length) return tell(`Пока всё как было: окно, лампа, плед и Байт. Вещи появляются сами — чем дольше мы знакомы и чем чаще ${you(turn, "вы заходите", "ты заходишь")}.${later}`);
+      return tell(`Из-за ${you(turn, "вас", "тебя")} в комнате появилось: ${mine.join("; ")}.${later}`);
+    }
+    const sky = turn.sky;
+    const visit = await room.visit(userId, { day: today, keys: turn.isPrivate ? things.keys : null, scenes: turn.isPrivate === true, sky });
+    if (visit.lost) return tell(ROOM_DOWN);
+    // Мини-приложение: кнопка под ответом — только в личке (в группах Telegram таких кнопок не даёт).
+    const page = turn.isPrivate === true ? await roomPage() : "";
+    let door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
+    // «Открой комнату», а открыть нечем: сказать об этом — и рассказать словами.
+    const lead = asked.op !== "open" || door ? "" : roomLine(turn, turn.isPrivate === true ? "дверь:нет" : "дверь:личка");
+    // В группе Telegram кнопку мини-приложения не даёт — зато даёт ссылку в личку с ней: там дверь придёт сама
+    // (`/start room`). Одно нажатие вместо «напиши мне в личку».
+    const viaLink = !door && asked.op === "open" && turn.isPrivate !== true && Boolean(await roomPage());
+    if (viaLink) {
+      const self = await whoAmI().catch(() => null);
+      if (/^[A-Za-z0-9_]{4,40}$/u.test(String(self?.username ?? ""))) door = { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату — в личке", url: `https://t.me/${self.username}?start=room` }]] } };
+    }
+    const lines = [lead, roomLine(turn, "зайти"), [windowLine(turn, sky), herLine(turn, feel, visit.state, today)].filter(Boolean).join(" "), cat];
+    for (const key of visit.fresh) { const about = roomLine(turn, `вещь:${key}`, things.vars); if (about) lines.push(`Новое в комнате. ${about}`); }
+    if (visit.state.n <= 2) lines.push(roomLine(turn, "подсказка"));
+    const seen = lines.filter(Boolean).join("\n");
+    const kept = visit.scene ? `${seen}\n${fill(visit.scene.text, { formal: owner(userId) ? true : turn.manner?.formal !== false })}` : seen;
+    let sent = await tell(seen, kept, door);
+    // С кнопкой не ушло — ответ важнее кнопки: то же самое без неё. Ушло — значит, дело было в кнопке:
+    // хозяин узнает, а кнопка отдыхает до следующей проверки адреса. Не ушло и так — об этом скажет `say`.
+    if (door && sent?.ok === false) {
+      sent = await tell(seen, kept);
+      if (sent?.ok && !viaLink) {
+        pageMemo = { at: now(), value: null };
+        try { await notices.report({ component: "room", code: "button_refused", detail: "Telegram не принял кнопку мини-приложения под сообщением — комната пока отвечает словами", severity: "degraded" }); } catch { /* отчёт не важнее ответа */ }
+      }
+    }
+    // Сценка дня — отдельным сообщением с двумя кнопками: выбор — нажатием, а не словом, которое можно не так понять.
+    if (visit.scene && sent?.ok !== false) {
+      const formal = owner(userId) ? true : turn.manner?.formal !== false;
+      const keyboard = { inline_keyboard: [visit.scene.options.map(([label], index) => ({ text: label, callback_data: `h:${visit.scene.key}:${index}` }))] };
+      await say(turn, `🐾 ${fill(visit.scene.text, { formal })}`, { extra: { reply_markup: keyboard } });
+    }
+    return sent;
+  }
+  /** Нажатие кнопки под сценкой дня: исход — новым сообщением, кнопки убираются; сыграть можно один раз и только свою. */
+  async function pressRoom(query) {
+    const done = async (text = "") => { try { await api.answerCallbackQuery({ callback_query_id: query?.id, ...(text ? { text } : {}) }); } catch { /* ответ на нажатие не важнее исхода */ } };
+    const found = String(query?.data ?? "").match(/^h:([a-z]+):([01])$/u);
+    const userId = query?.from?.id, chatId = query?.message?.chat?.id;
+    if (!found || userId == null || chatId == null || !ROOM) { await done(); return { ignored: true }; }
+    const manner = await mannerFor(userId).catch(() => null);
+    const turn = { actorId: userId, chatId, isPrivate: query.message.chat.type === "private", manner, extra: query.message.is_topic_message === true && query.message.message_thread_id != null ? { message_thread_id: query.message.message_thread_id } : {} };
+    const picked = await room.choose(userId, found[1], Number(found[2]), { day: calendarDate(now(), zoneOf(turn)) });
+    if (!picked.ok) {
+      await done(picked.code === "played" ? "Эта сценка уже сыграна." : picked.code === "storage" ? "Память сейчас недоступна." : "Это не ваша сценка — или её день прошёл.");
+      return { ignored: true, reason: picked.code };
+    }
+    await done();
+    const messageId = query.message?.message_id;
+    if (messageId != null && has("editMessageReplyMarkup")) {
+      try { await api.editMessageReplyMarkup({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }); } catch { /* кнопки останутся: второе нажатие ответит «уже сыграна» */ }
+    }
+    if (picked.first) await roomCared(userId);
+    const formal = owner(userId) ? true : manner?.formal !== false;
+    const outcome = fill(picked.outcome, { formal });
+    const sent = await say(turn, voiced(turn, `«${picked.label}». ${outcome}`));
+    if (sent?.ok) await keepThread(turn, `[выбор в сценке] ${picked.label}`, outcome);
+    return { ok: sent?.ok !== false, action: "room_scene", scene: picked.scene.key, pick: Number(found[2]) };
+  }
+
+  /**
+   * Мини-приложение «Комната» (страница `miniapp/`, функция `endpoints/room`): то же, что `roomWords`, но для
+   * картинки. Сама функция — в `roomdoor.js` (вынесена в 0.49.0: сердце подошло к пределу веса модуля). Дверь
+   * собирается при первом заходе: к этому времени всё, что ей нужно от сердца, уже создано. Список имён — тот же,
+   * что в `roomdoor.js`: новое имя добавляется в оба; забытое назовёт eslint, расхождение — `tests/sturdy.test.mjs`.
+   */
+  let roomDoor = null;
+  const onRoom = (input, ctx = {}) => (roomDoor ??= createRoomDoor({
+    agoWords, airNow, ALBUM_KEY, AWAY_MS, book, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
+    CAT_STILL, catAfter, catFits, catGift, catKey, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
+    eventFor, eventNow, feelFor, feelingNow, fill, GIFT_EVERY_MS, GIFT_POOL, GIFT_SAID, GIFTS, giftsShown, HER_CALM,
+    herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
+    minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
+    PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
+    ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
+    roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
+    voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
+  }))(input, ctx);
+  /**
+   * Дверь приложения (0.54.0, `docs/DOOR.md`): второй вход в ту же `onRoom` — подписанным постом в закрытый канал, от
+   * доверенного посредника отдельного приложения. Ключ («номер канала:секрет») — строка `KEY_DOOR` на телефоне;
+   * без ключа двери нет. Вся проверка — в `bridge.js` (`createDoor`), здесь только сборка.
+   */
+  const appDoor = createDoor({ key: config.DOOR_KEY ?? extraKeys.door ?? "", onRoom, api, store, now, ownerId: OWNER, guests: config.DOOR_GUESTS === true, allow: config.DOOR_ALLOW, build: BUILD, busy: [config.ABILITIES_CHANNEL_ID], report: (item) => notices.report(item),
+    // Что помнит комната (для курсора `sync`, 0.59.0): её запись и альбом.
+    stateKeys: (uid) => [ROOM_KEY(uid), KEEPSAKE_KEY(uid)] });
 
   /** Привычки: завести, отметить, посмотреть, убрать. `null` — речь не о них. */
   async function habitThings(turn, prompt) {
@@ -2114,6 +2805,21 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (owner(turn.actorId)) return true;
     return settings.flirt === true && settings.minor === false && Number(turn.manner?.score) >= 25;
   }
+  /**
+   * Что она умеет на деле — строкой для модели (0.36.0). Характер об умениях молчал, и на слова о картинках
+   * модель ответила «не умею видеть» (17.11.2026), хотя фото Аи рассматривает. Список — из того, что включено.
+   */
+  function skillsFrame() {
+    const can = [
+      SENSES ? "рассматривать присланные фото и слушать голосовые" : "",
+      draw.available ? "рисовать по словам «нарисуй …»" : "",
+      SEARCH ? "искать в сети по словам «найди …»" : "",
+      SENSES ? "читать страницы по ссылке" : "",
+      "напоминать («напомни …»)", "вести списки и заметки", TRANSLATE ? "переводить" : "", "играть", "считать",
+    ].filter(Boolean).join("; ");
+    return `Что ты умеешь на деле (делает это программа по словам человека; сверх списка не выдумывай): ${can}. Просят то, что есть в списке, — не говори «не умею»: подскажи, какими словами попросить. Чего в списке нет — так и скажи.`;
+  }
+
   /** Настроение сейчас и его причина — одно на ход, чтобы слова и модель не разошлись. */
   async function feelFor(turn) {
     if (turn.feel) return turn.feel;
@@ -2204,6 +2910,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       formal: mine ? true : turn.manner?.formal !== false, name: turn.manner?.settings?.address || "",
       // Состояние для пометок словаря: [устала], [обижена], [довольна].
       tired: Boolean(turn.tired), hurt: feel.mood === "обиженное", glad: feel.mood === "довольное", jealous: feel.mood === "ревнивое",
+      // Что за её окном: названо только там, где речь о комнате (`roomSky`), — для пометок [дождь], [снег], [ясно]…
+      sky: turn.sky ?? "",
       vars: { "час": feel.clock, "сборка": BUILD, ...vars },
     };
   }
@@ -3172,6 +3880,66 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /**
+   * Написать первой о событии своего дня (идея 176, 0.49.0; слово владельца, сообщение 48: «Писать, но если человек
+   * скажет не пиши или что-то типа того, то она не пишет, без дальнейших его просьб»). Кому: тем, кто бывает в комнате
+   * (заходил в последние две недели и не меньше трёх раз), днём по их часам, не чаще раза в двое суток и только пока
+   * событие свежее — первые три часа. Не пишет тому, кто сказал «не пиши» (`mute` в записи комнаты), и тому, кто
+   * заблокировал бота: после отказа Telegram отметка ставится сама. Будит её любое пробуждение сердца (`wake`).
+   */
+  let notesCheckedAt = 0;
+  async function roomNotes() {
+    if (!ROOM_NOTES || !ROOM || !PHRASES || !store.available || now() - notesCheckedAt < 15 * 60_000) return 0;
+    notesCheckedAt = now();
+    const recent = await store.getChecked(ROOM_RECENT_KEY).catch(() => ({ ok: false }));
+    if (!recent?.ok || !recent.value?.users) return 0;
+    const ids = Object.entries(recent.value.users).filter(([, at]) => now() - Number(at) < NOTE_RECENT_MS).map(([id]) => Number(id)).filter(id => Number.isSafeInteger(id) && id > 0).slice(0, 40);
+    let sent = 0;
+    for (const id of ids) {
+      try {
+        const manner = await mannerFor(id, { dry: true }).catch(() => null);
+        if (manner?.blocked) continue;
+        const turn = { actorId: id, chatId: id, isPrivate: true, inGroup: false, manner, extra: {} };
+        const zone = zoneOf(turn), local = localParts(now(), zone), today = calendarDate(now(), zone), minute = local.hh * 60 + local.mm;
+        if (local.hh < NOTE_HOURS[0] || local.hh >= NOTE_HOURS[1]) continue;
+        const event = eventFor(today);
+        if (!event || minute < event.from || minute > event.from + NOTE_FRESH_MIN) continue;
+        const state = await room.read(id, today);
+        if (state.lost || state.mute || Number(state.n) < NOTE_VISITS || state.noted === today || now() - Number(state.notedAt) < NOTE_EVERY_MS) continue;
+        // Только что был в комнате — видел сам.
+        if (now() - Number(state.near) < 3 * 3_600_000) continue;
+        const line = lineAt(turn, `первой:${event.pool}`, dayNo(today));
+        if (!line) continue;
+        // Отметка — заявкой: два пробуждения в одну секунду не напишут дважды.
+        let mine = false;
+        const claim = await room.amend(id, today, (fresh) => { mine = !fresh.mute && fresh.noted !== today; return mine ? { ...fresh, noted: today, notedAt: now(), notes: (Number(fresh.notes) || 0) + 1 } : null; });
+        if (!mine || !claim.saved) continue;
+        // В первом таком письме — как это выключить.
+        const hint = Number(claim.state.notes) <= 1 ? roomLine(turn, "первой:подсказка") || "Если писать первой не нужно — скажите «не пиши»." : "";
+        const text = [voiced(turn, line), hint ? voiced(turn, hint) : ""].filter(Boolean).join("\n");
+        const page = await roomPage().catch(() => "");
+        const door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
+        let delivered = false, refusedBy = "";
+        for (const extra of door ? [door, null] : [null]) {
+          try { await api.sendMessage({ chat_id: id, text, ...(extra ?? {}) }); delivered = true; break; } catch (error) { refusedBy = String(error?.message ?? error); }
+        }
+        if (!delivered) {
+          // Заблокировал бота или удалил чат — больше не пытаться; иной сбой — отметка дня снимается, попытка завтра.
+          const gone = /blocked|deactivated|chat not found|403/iu.test(refusedBy);
+          await room.amend(id, today, (fresh) => ({ ...fresh, ...(gone ? { mute: true } : { noted: "", notedAt: 0 }), notes: Math.max(0, (Number(fresh.notes) || 1) - 1) })).catch(() => null);
+          continue;
+        }
+        sent += 1;
+        await keepsakes.add(id, [{ k: "event", key: event.key, day: today, at: now(), told: true }]).catch(() => null);
+        try {
+          const history = await store.memory.load({ userId: id, chatId: id });
+          await store.memory.save({ userId: id, chatId: id, messages: [...(Array.isArray(history) ? history : []), { role: "assistant", content: text.slice(0, 600) }].slice(-12) });
+        } catch { /* нить подождёт */ }
+      } catch { /* один человек не должен остановить остальных */ }
+    }
+    return sent;
+  }
+
+  /**
    * Написать хозяину первой: утром и перед сном, в его час, словами из
    * словаря. Опоздание больше двух часов — значит, сегодня без этого.
    */
@@ -3239,7 +4007,13 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         ].filter(Boolean);
         if (more.length) text = `${text}\n${more.join("\n")}`;
       }
-      try { await api.sendMessage({ chat_id: OWNER, text }); } catch { continue; }
+      // Под «добрым утром» и «спокойной ночи» — дверь в комнату (если мини-приложение опубликовано). Telegram кнопку
+      // не принял — привет важнее: уходит без неё.
+      const page = await roomPage().catch(() => "");
+      const door = page ? { reply_markup: { inline_keyboard: [[{ text: "🚪 Открыть комнату", web_app: { url: page } }]] } } : null;
+      let sentHello = false;
+      if (door) { try { await api.sendMessage({ chat_id: OWNER, text, ...door }); sentHello = true; } catch { sentHello = false; } }
+      if (!sentHello) { try { await api.sendMessage({ chat_id: OWNER, text }); } catch { continue; } }
       pulse.bump("greeted");
       // Сказанное остаётся в переписке: ответит хозяин — модель увидит, на что.
       try {
@@ -3295,9 +4069,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * «забудь фразу 2», «что ты не поняла?». Остальным — честное «учит хозяин».
    */
   async function phraseLesson(turn, prompt) {
-    const asked = PHRASES ? parseTeach(prompt) : null;
-    if (!asked) return null;
+    let asked = PHRASES ? parseTeach(prompt) : null;
     const mine = owner(turn.actorId) && turn.isPrivate;
+    // «Очисти список», «забудь всё» сразу после показанного списка — о нём, а не о списках дел и не о записях
+    // памяти: десять минут контекста. 17.11.2026 «забудь всё» после списка ответило «записей нет», а список остался.
+    if (!asked && PHRASES && mine && !turn.dry && clearsShownList(prompt)) {
+      const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+      if (shown?.at && now() - Number(shown.at) < 10 * 60_000) asked = { unheardClear: true, loose: true };
+    }
+    if (!asked) return null;
     if (!mine) {
       // В группе админ учит её фразам этого чата: действуют только здесь.
       if (turn.inGroup && (asked.add || asked.list || asked.drop != null)) return chatWords(turn, asked);
@@ -3306,6 +4086,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return null;
     }
     if (turn.dry) return say(turn, "Разобрала бы это как урок словаря — репетиция, ничего не пишу.");
+    // Похоже на урок, но без кавычек и двоеточия («на кек чебурек отвечай чебурек кек»). Фраза стоит в списке
+    // непонятного — значит, это она и есть: граница известна, урок принят. Список только что показан — подсказка,
+    // как сказать. Иначе это обычные слова («на английском отвечай по-английски»): пусть идут своим путём.
+    if (asked.hint) {
+      const listed = await taught.unheard({ limit: 200 }).then(rows => rows.some(row => row.text === cleanPhrase(asked.hint.when))).catch(() => false);
+      if (listed) asked = { add: asked.hint };
+      else {
+        const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+        if (!(shown?.at && now() - Number(shown.at) < 10 * 60_000)) return null;
+        pulse.bump("ruled");
+        return say(turn, `Похоже, вы учите меня фразе, но без знака мне не видно, где кончается фраза и начинается ответ. Поставьте двоеточие — и я запомню:\n\nна ${asked.hint.when} отвечай: ${asked.hint.say}`);
+      }
+    }
     if (asked.add) {
       const done = await taught.add(asked.add.when, asked.add.say);
       if (!done.ok) {
@@ -3329,12 +4122,128 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, done.ok ? `Забыла: «${done.when}». Осталось выученного: ${done.total}.` : done.code === "not_found" ? "Такой фразы среди выученных нет. «Мои фразы» покажет список." : "Забыть не вышло: память сейчас недоступна.");
     }
     if (asked.unheardClear) {
-      await taught.clearUnheard();
-      return say(turn, "Список неузнанного очищен. Начинаю считать заново.");
+      const done = await taught.clearUnheard();
+      await store.remove(UNHEARD_SHOWN_KEY).catch(() => false);
+      // Предложенные ответы были к этому же списку: вместе с ним они теряют смысл.
+      await store.remove(PROPOSED_KEY).catch(() => false);
+      if (!done) return say(turn, "Очистить не вышло: хранилище сейчас не отвечает. Список остался как был.");
+      return say(turn, asked.loose
+        ? "Список непонятного очищен: начинаю считать заново. Мою память о вас не трогала — для неё есть «очисти память»."
+        : "Список непонятного очищен. Начинаю считать заново.");
     }
-    const rows = await taught.unheard({ limit: 30 });
-    if (!rows.length) return say(turn, "Пока нечего показать: короткого, чего я не узнала бы, не было.");
-    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}\n\nНаучить сразу: на «фраза» отвечай «ответ». Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятое».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).`);
+    if (asked.unheardRow != null) {
+      // «Разбор 3» — по номеру из показанного списка: что она сказала перед этой репликой и что ответила (0.52.0).
+      const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+      const text = Array.isArray(shown?.list) && now() - Number(shown.at) < DAY ? shown.list[asked.unheardRow - 1] : null;
+      if (!text) return say(turn, "Номера берутся из списка: сначала — «что не поняла?», потом — «разбор 3».");
+      const row = (await taught.unheard({ limit: 200 })).find(item => item.text === text);
+      if (!row) return say(turn, `«${text}» в списке уже нет.`);
+      return say(turn, [`«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`,
+        row.p ? `Перед этим я сказала: «${row.p}»` : "Что я сказала перед этим, не записано: разговор с неё начался — или запись старше сборки 0.52.0.",
+        row.a ? `Ответила: «${row.a}»` : "", "", "Кто это написал, я не записываю."].filter((line, index) => line || index === 3).join("\n"));
+    }
+    const { rows, gone, dropped, waiting } = await unheardNow({ limit: 30 });
+    await store.set(UNHEARD_SHOWN_KEY, { at: now(), list: rows.map(row => row.text) }).catch(() => false);
+    const cleaned = goneWords(gone, dropped);
+    // В списке — только проверенное. Чего проверить не успела, не показывает, а называет числом (0.36.2).
+    const later = waitingWords(waiting);
+    if (!rows.length) {
+      if (later) return say(turn, [cleaned, later].filter(Boolean).join(" "));
+      return say(turn, cleaned ? `${cleaned} Больше показать нечего.` : "Пока нечего показать: короткого, чего я не узнала бы, не было.");
+    }
+    return say(turn, `Короткое, чего я не узнала и отдала модели (${rows.length}):\n${rows.map((row, index) => `${index + 1}. «${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join("\n")}${cleaned ? `\n\n${cleaned}` : ""}${later ? `\n\n${later}` : ""}\n\nНаучить сразу: на «фраза» отвечай «ответ». Без кавычек — с двоеточием: на привет отвечай: здравствуй. Или перешлите список в чат разработки — фразы попадут в словарь. Очистить — «забудь непонятное».\nМогу сама предложить ответы, а вы выберете — «предложи ответы» (один вопрос к модели).\nЧто было перед фразой и что я ответила — «разбор 2».`);
+  }
+
+  /**
+   * Сколько реплик списка репетируется за один показ и сколько на это времени: остальные ждут следующего показа.
+   * Время меряется настоящими часами (`wall`), а не `now`: в тестах `now` стоит на месте, а `wall` подменяется,
+   * чтобы тест не зависел от скорости устройства.
+   */
+  const UNHEARD_REHEARSALS = 40;
+  const UNHEARD_REHEARSE_MS = 8000;
+  /** «Ещё 12 реплик проверить не успела…» — сколько записей ждёт следующего показа; ждать некому — пусто. */
+  const waitingWords = (waiting) => (waiting > 0
+    ? `Ещё ${waiting} ${plural(waiting, "реплику", "реплики", "реплик")} проверить не успела: за раз — не больше ${UNHEARD_REHEARSALS}. Спросите ещё раз — дойду и до них.`
+    : "");
+  /** «Из списка ушло 24 реплики: …» — что убрала сверка и почему; нечего сказать — пусто. */
+  function goneWords(gone, dropped) {
+    const total = gone + dropped;
+    if (!total) return "";
+    const head = `Из списка ${plural(total, "ушла", "ушли", "ушло")} ${total} ${plural(total, "реплика", "реплики", "реплик")}:`;
+    const talk = "продолжения разговора и вопросы на знание: на них и должна отвечать модель";
+    if (!dropped) return `${head} теперь я понимаю ${gone === 1 ? "её" : "их"} сама.`;
+    if (!gone) return `${head} это ${talk}.`;
+    return `${head} ${gone} я теперь понимаю сама, ещё ${dropped} — ${talk}.`;
+  }
+
+  /**
+   * Понимает ли нынешняя сборка короткую реплику по одним разборам — без состояния и без хранилища:
+   * словарь (с опечатками), смех, «принято», «спасибо», намерения, умения сестры, слова секретаря, слова о самом
+   * списке и настройки человека (имя, обращение, длина ответа, «на ты» — они живут только в настоящем ходе,
+   * репетиция их не видит).
+   */
+  function knownByParsers(text) {
+    try {
+      return Boolean((PHRASES && book.match(text)) || isLaugh(text) || ackOnly(text) || THANKS_ONLY.test(plainWords(text))
+        || parseIntent(text) || matchPhrase(text) || parseSecretary(text) || parseTeach(text) || parsePropose(text)
+        || introRequest(text) || addressDrop(text) || addressRequest(text) || lengthRequest(text) || formRequest(text) || nameQuestion(text)
+        // «Уверена?» — её умение (перепроверить ответ); без свежего ответа это продолжение разговора, а не пробел словаря.
+        || parseSure(text));
+    } catch { return false; }
+  }
+  /**
+   * Репетиция (0.36.1): ответила бы она на реплику сама, без модели? Реплика идёт настоящим разбором хода — тем же,
+   * что у живого сообщения, — в пробном режиме: ничего не отправляется и не пишется (так телефон проверяет сборку
+   * перед публикацией). Сверка «по списку разборов» отставала от сборки: 17.11.2026 в непонятом стояли «меня зовут
+   * айдина», «сделай его из лего», «метод расчета» — всё это сборка понимала, а сверка о тех разборах не знала.
+   */
+  let rehearsing = false;
+  async function answersAlone(text, who) {
+    if (rehearsing) return false;
+    rehearsing = true;
+    const ref = { turn: null };
+    try {
+      const got = await pulse.quiet(() => converse(
+        { chat: { id: who, type: "private" }, from: { id: who, first_name: "", is_bot: false }, text },
+        { testRun: true }, { text, kind: "text", dry: true }, ref));
+      return Boolean(got) && got.ok !== false && got.ignored !== true && ref.turn?.viaModel !== true;
+    } catch { return false; } finally { rehearsing = false; }
+  }
+  /**
+   * Список непонятного, сверенный с нынешней сборкой: что она теперь понимает сама — уходит (0.36.0); что словарю
+   * знать и не положено — продолжения разговора, вопросы на знание — уходит тоже (0.36.1). Остаётся правда на сегодня.
+   * Возвращает `{ rows, gone, dropped, waiting }`: что показать, сколько ушло понятого, сколько — не её дела и
+   * сколько записей эта сборка ещё не проверяла (в `rows` их нет: показывается только проверенное).
+   */
+  async function unheardNow({ limit = 30, sinceMs = 0 } = {}) {
+    const kept = [], known = [], stale = [], checked = [];
+    const guest = OWNER === 1 ? 2 : 1;
+    for (const row of await taught.unheard({ limit: 200, sinceMs })) {
+      if (knownByParsers(row.text)) known.push(row);
+      // Что в список сегодня и не легло бы: продолжение разговора, вопрос на знание.
+      else if (!taught.worth(row.text)) stale.push(row);
+      else kept.push(row);
+    }
+    // Репетиция дороже разбора: не больше сорока реплик за показ и не дольше восьми секунд. Что эта сборка проверила
+    // и не поняла, получает отметку в записи (`b` — сборка, `c` — когда) и сутки заново не репетируется. Очередь:
+    // сначала те, кого эта сборка не проверяла вовсе, потом — кого не проверяли дольше всех; иначе сорок непонятных
+    // в начале списка заслоняли бы остальные навсегда (0.36.2). Сутки, а не «раз на сборку»: понимание зависит не
+    // только от сборки — её учат и между сборками.
+    const mine = (row) => row.b === BUILD;
+    const checkedToday = (row) => mine(row) && now() >= row.c && now() - row.c < DAY;
+    const queue = kept.filter(row => !checkedToday(row)).sort((a, b) => (Number(mine(a)) - Number(mine(b))) || (a.c - b.c));
+    const understood = new Set(), marked = new Set();
+    const started = wall();
+    for (const row of queue.slice(0, UNHEARD_REHEARSALS)) {
+      if (wall() - started >= UNHEARD_REHEARSE_MS) break;
+      if (await answersAlone(row.text, guest) || (OWNER > 0 && await answersAlone(row.text, OWNER))) { understood.add(row.text); known.push(row); }
+      else { marked.add(row.text); checked.push(row.text); }
+    }
+    if (known.length || stale.length || checked.length) await taught.sift({ drop: [...known, ...stale].map(row => row.text), mark: checked, build: BUILD });
+    // Показывается только то, что эта сборка проверила и не поняла; непроверенное ждёт и называется числом.
+    const proven = kept.filter(row => !understood.has(row.text) && (mine(row) || marked.has(row.text)));
+    const waiting = kept.length - understood.size - proven.length;
+    return { rows: proven.slice(0, limit), gone: known.length, dropped: stale.length, waiting };
   }
 
   // ── сама предлагает ответы для словаря (идея 128) ───────────────────────
@@ -3346,12 +4255,26 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   const PROPOSED_KEY = "heart:proposed:v1";
   const PROPOSE_ROWS = 10;
-  const PROPOSE_ASK = /^(?:предложи|придумай|подбери|сочини)(?:те)?\s+(?:сама\s+)?(?:мне\s+)?ответы(?:\s+(?:на\s+(?:непонятое|неузнанное|эти\s+фразы)|для\s+словаря|в\s+словарь))?$|^пополни\s+словарь(?:\s+сама)?$/u;
+  const PROPOSE_ASK = /^(?:(?:предложи|придумай|подбери|сочини|напиши)(?:те)?\s+(?:сама\s+)?(?:мне\s+)?(?:свои\s+)?(?:ответы?|варианты(?:\s+ответов)?)(?:\s+сама)?(?:\s+(?:на\s+(?:них|это|эти\s+фразы|непонят(?:ое|ное|ые|ные)|неузнанное)|к\s+ним|для\s+словаря|в\s+словарь))?|(?:пополни|дополни)\s+словарь(?:\s+сама)?)$/u;
+  // «Придумай сама», «ответь на них сама» — о списке, только пока он перед глазами: сами по себе это слова о чём угодно.
+  const PROPOSE_ASK_LOOSE = /^(?:(?:придумай|предложи|ответь(?:\s+на\s+них)?)\s+сама|сама\s+(?:предложи|придумай|ответь))$/u;
   const PROPOSE_TAKE = /^(?:беру|бери|возьми|принимаю)\s+(все|(?:\d{1,2}[\s,]*(?:и\s+)?)+)$/u;
+  // «Не беру» — прямой отказ; «не надо», «не нравится» — отказ, только пока предложение перед глазами.
+  const PROPOSE_DROP = /^(?:ничего\s+)?не\s+(?:беру|бери|возьму)(?:\s+ничего)?$|^ни\s+од(?:ин|ного)$/u;
+  const PROPOSE_DROP_LOOSE = /^(?:не\s+надо|не\s+нужно|не\s+нравится|не\s+нравятся|не\s+подходит|не\s+подходят|не\s+то|отмена|отбой|плохие\s+ответы|так\s+себе)$/u;
+  /** Ответ-эхо и штамп помощника в словарь не предлагаются: «го встр» → «Го встр...», «Чем могу помочь?» (17.11.2026). */
+  const STOCK_ANSWER = /чем\s+(?:я\s+)?могу\s+(?:вам\s+|тебе\s+)?(?:помочь|быть\s+полезн)|виртуальн[а-я]+\s+(?:собеседни|помощни|ассистент)|языков[а-я]+\s+модел|искусственн[а-я]+\s+интеллект|как\s+я\s+могу\s+помочь/iu;
+  const echoes = (phrase, answer) => {
+    const said = cleanPhrase(answer);
+    return !said || said === phrase || (phrase.includes(" ") && said.startsWith(`${phrase} `) && said.split(" ").length <= phrase.split(" ").length + 1);
+  };
   const parsePropose = (text) => {
     const value = String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim().replace(/[.!?…]+$/u, "").trim();
     if (!value || value.length > 80) return null;
     if (PROPOSE_ASK.test(value)) return { ask: true };
+    if (PROPOSE_ASK_LOOSE.test(value)) return { ask: true, loose: true };
+    if (PROPOSE_DROP.test(value)) return { drop: true };
+    if (PROPOSE_DROP_LOOSE.test(value)) return { drop: true, loose: true };
     const take = value.match(PROPOSE_TAKE);
     if (!take) return null;
     return take[1] === "все" ? { take: "all" } : { take: [...new Set((take[1].match(/\d{1,2}/gu) ?? []).map(Number))] };
@@ -3360,6 +4283,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!PHRASES || !owner(turn.actorId) || !turn.isPrivate) return null;
     const asked = parsePropose(prompt);
     if (!asked) return null;
+    if (asked.drop) {
+      const saved = await store.get(PROPOSED_KEY).catch(() => null);
+      const age = Array.isArray(saved?.items) && saved.items.length ? now() - Number(saved.at) : Infinity;
+      // Без свежего предложения это обычные слова: пусть идут своим путём.
+      if (!(age < (asked.loose ? 10 * 60_000 : DAY))) return null;
+      if (turn.dry) return say(turn, "Отказалась бы от предложенных ответов — репетиция.");
+      await store.remove(PROPOSED_KEY).catch(() => false);
+      pulse.bump("ruled");
+      return say(turn, "Хорошо: в словарь ничего не кладу. Свои ответы — на «фраза» отвечай «ответ»; очистить список — «забудь непонятное».");
+    }
     if (asked.take) {
       const saved = await store.get(PROPOSED_KEY).catch(() => null);
       const items = Array.isArray(saved?.items) && now() - Number(saved.at) < DAY ? saved.items : [];
@@ -3380,24 +4313,35 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return say(turn, `Добавила в словарь: ${added}. Теперь на ${added === 1 ? "эту фразу" : "эти фразы"} отвечаю без модели. Список — «мои фразы», убрать — «забудь фразу 3».${failed.length ? ` Не легли: ${failed.join(", ")}.` : ""}`);
     }
     if (turn.dry) return say(turn, "Предложила бы ответы на неузнанное — репетиция, модель не трачу.");
-    const rows = (await taught.unheard({ limit: 30 })).slice(0, PROPOSE_ROWS);
-    if (!rows.length) return say(turn, "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
+    if (asked.loose) {
+      const shown = await store.get(UNHEARD_SHOWN_KEY).catch(() => null);
+      if (!(shown?.at && now() - Number(shown.at) < 10 * 60_000)) return null;
+    }
+    const sifted = await unheardNow({ limit: 30 });
+    const rows = sifted.rows.slice(0, PROPOSE_ROWS);
+    if (!rows.length) return say(turn, sifted.waiting ? `Пока предлагать не к чему. ${waitingWords(sifted.waiting)}` : "Предлагать не к чему: короткого, чего я не узнала бы, пока нет.");
     await typing(turn);
-    const answer = await compose(turn, `Ниже — короткие реплики, на которые у тебя нет готового ответа: люди пишут их тебе в чатах. К каждой напиши один короткий ответ в своём характере — до 12 слов. Ответ услышат разные люди, поэтому: без слов «ты» и «вы», без имён, без вопросов о личном, без дат, чисел и фактов, которые устареют. Формат строго такой: номер, точка, ответ — каждая реплика с новой строки. Больше ничего не пиши.\n\n${rows.map((row, index) => `${index + 1}. ${row.text}`).join("\n")}`).catch(() => null);
-    if (!answer) return say(turn, "Сочинить сейчас нечем: модель не отвечает или дневной лимит вышел. Список неузнанного — «что ты не поняла?».");
+    const answer = await compose(turn, `Ниже — короткие реплики, которые люди писали тебе в чатах и на которые у тебя нет готового ответа. К каждой напиши один короткий ответ своим голосом — до 12 слов: так ты будешь отвечать на неё каждому, кто её напишет. Отвечай на смысл реплики, а не повторяй её. Без дежурных фраз помощника вроде «чем могу помочь». Ответ услышат разные люди, поэтому: без слов «ты» и «вы», без имён, без вопросов о личном, без дат, чисел и фактов, которые устареют. Если реплика — обрывок, набор букв или её смысл зависит от разговора, вместо ответа поставь прочерк: «—». Формат строго такой: номер, точка, ответ — каждая реплика с новой строки. Больше ничего не пиши.\n\n${rows.map((row, index) => `${index + 1}. ${row.text}`).join("\n")}`).catch(() => null);
+    if (!answer) return say(turn, "Сочинить сейчас нечем: модель не отвечает или дневной лимит вышел. Список непонятного — «что ты не поняла?».");
     const items = [];
+    let skipped = 0;
     for (const line of String(answer).split("\n")) {
       const found = line.match(/^\s*(\d{1,2})\s*[.):—-]\s*(.+)$/u);
       const row = found ? rows[Number(found[1]) - 1] : null;
       const words = found ? found[2].trim().replace(/^[«"“„]+|[»"”]+$/gu, "").trim() : "";
       // Не по форме, слишком длинно, с разметкой или «не знаю» — в предложение не идёт.
       if (!row || !words || words.length > 200 || /[{}<>]/u.test(words) || UNSURE.test(words) || items.some(item => item.when === row.text)) continue;
+      // Прочерк — модель сама сказала, что отвечать тут нечем; эхо и штамп помощника — не ответ.
+      if (/^[—–-]+$/u.test(words) || echoes(row.text, words) || STOCK_ANSWER.test(words)) { skipped += 1; continue; }
       items.push({ when: row.text, say: words });
     }
+    if (!items.length && skipped) return say(turn, "Годных ответов не вышло: эти реплики модель и сама не поняла. Научить можно словами — на «фраза» отвечай «ответ»; очистить список — «забудь непонятное».");
     if (!items.length) return say(turn, "Модель ответила не по форме — предложить нечего. Попробуйте ещё раз чуть позже.");
     if (!await store.set(PROPOSED_KEY, { items, at: now() }).catch(() => false)) return say(turn, "Не запомнилось: хранилище не отвечает.");
+    await store.set(UNHEARD_SHOWN_KEY, { at: now() }).catch(() => false);
     pulse.bump("ruled");
-    return say(turn, `Вот что я бы отвечала (${items.length}):\n${items.map((item, index) => `${index + 1}. «${item.when}» → «${item.say}»`).join("\n")}\n\nВзять — одним сообщением: «беру 1 3» или «беру все». Не нравится ответ — научите своим: на «фраза» отвечай «ответ». В словарь без вашего слова ничего не кладу.`);
+    const left = rows.length - items.length;
+    return say(turn, `Вот что я бы отвечала (${items.length}):\n${items.map((item, index) => `${index + 1}. «${item.when}» → «${item.say}»`).join("\n")}${left > 0 ? `\n\n${left === 1 ? "К одной реплике годного ответа не нашлось — она осталась без него." : `К ${left} репликам годного ответа не нашлось — они остались без него.`}` : ""}\n\nВзять — одним сообщением: «беру 1 3» или «беру все»; не брать — «не беру». Не нравится ответ — научите своим: на «фраза» отвечай «ответ». В словарь без вашего слова ничего не кладу.`);
   }
 
   /**
@@ -4449,13 +5393,37 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const idle = (Array.isArray(resting) ? resting : []).filter(Boolean);
     return `${shown}${idle.length ? `${shown ? "; " : ""}запасные отдыхают после отказа: ${idle.join(", ")}` : ""}`;
   };
+  /**
+   * Портрет по описанию (идея 197, 0.51.0; разговор со снимка в сообщении 51: «а сможешь нарисовать меня» → «вот так
+   * выгляжу» → «одного зуба нету» — и рисунка человек не получил). После «нарисуй меня» она две минуты (с 0.52.0;
+   * было десять — «это много… сократи до 2-3х, а то и до 1-2х», сообщение 53) ждёт первую
+   * реплику о внешности (`portraitLooks` в draw.js) и рисует по ней — один раз. Сначала разбор реплики, без базы, и
+   * только потом — ждёт ли она описание: как с ответом на «как вас зовут». Фото так не рисуется: его разбирает зрение.
+   */
+  const PORTRAIT_WAIT_MS = 2 * 60_000;
+  // Вместо слов прислали фото (0.52.0): приметы называет зрение — этим вопросом, — а рисует художник.
+  const PORTRAIT_ASK = "Опиши внешность человека на фото для художника: пол и примерный возраст, волосы, глаза, черты лица, одежда. Только приметы, через запятую — без имени и без оценок.";
+  const portraitKey = (turn) => `heart:portrait:${turn.chatId}:${turn.actorId}`;
+  async function portraitMove(turn, prompt) {
+    const looks = portraitLooks(prompt);
+    if (!looks) return null;
+    const waiting = await store.get(portraitKey(turn)).catch(() => null);
+    if (!waiting?.at) return null;
+    await store.remove(portraitKey(turn)).catch(() => false);
+    if (now() - Number(waiting.at) > PORTRAIT_WAIT_MS) return null;
+    return drawPicture(turn, `портрет человека: ${looks}`);
+  }
   async function drawPicture(turn, query, { sticker = null } = {}) {
     const lastKey = `heart:drew:${turn.chatId}`;
     // «Открытку Маше на день рождения»: описание для художника — готовое, слова — подписью.
     const card = parsePostcard(query);
     let subject = card ? { text: "открытка", prompt: postcardPrompt(card.occasion, card.title), card } : subjectOf(query);
     if (!subject) return say(turn, "Что нарисовать? Скажите словами: «нарисуй кота в шляпе».");
-    if (subject.me) return say(turn, `Я не знаю, как ${you(turn, "вы выглядите", "ты выглядишь")}. ${you(turn, "Опишите", "Опиши")} словами — нарисую: «нарисуй девушку с рыжими волосами у окна».`);
+    if (subject.me) {
+      // Ждёт описание (идея 197, 0.51.0): не записалось — остаётся прежний путь, «нарисуй …» целиком.
+      await store.set(portraitKey(turn), { at: now() }).catch(() => false);
+      return say(turn, `Я не знаю, как ${you(turn, "вы выглядите", "ты выглядишь")}. ${you(turn, "Опишите", "Опиши")} себя словами — волосы, глаза, одежду${SENSES ? ` — или ${you(turn, "пришлите", "пришли")} фото` : ""}, и я нарисую. Или сразу целиком: «нарисуй девушку с рыжими волосами у окна».`);
+    }
     // Сюжет без манеры («кот в шляпе»): по нему «сделай его из лего» меняет манеру, а не копит их.
     let plain = "";
     if (subject.again) {
@@ -5155,6 +6123,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       notes.wipe(actorId).then(result => result.ok).catch(() => false),
       habits.wipe(actorId).then(result => result.ok).catch(() => false),
       store.remove(OFFER_KEY(actorId)).catch(() => false),
+      store.remove(ASKED_NAME_KEY(actorId)).catch(() => false),
       store.remove(CARE_KEY(actorId)).catch(() => false),
       store.remove(SELFNOTE_KEY(actorId)).catch(() => false),
       store.remove(`heart:trace:${turn.chatId}:${actorId}`).catch(() => false),
@@ -5167,6 +6136,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // Альбом рисунков и запись о наборе стикеров — тоже его. Сам набор живёт в Telegram и принадлежит ему.
       store.remove(ALBUM_KEY(actorId)).catch(() => false),
       store.remove(PACK_KEY(actorId)).catch(() => false),
+      // Комната: что он делал с Байтом и какие вещи для него появились — тоже его.
+      store.remove(ROOM_KEY(actorId)).catch(() => false),
+      keepsakes.clear(actorId),
+      // Список «кто бывает в комнате» (по нему она пишет первой, 0.49.0) — тоже без него: иначе его номер остался бы.
+      store.update(ROOM_RECENT_KEY, (before) => {
+        if (!before?.users || !(String(actorId) in before.users)) return null;
+        const { [String(actorId)]: _gone, ...rest } = before.users;
+        return { ...before, users: rest, at: now() };
+      }).then(() => true).catch(() => false),
       // Шутки, счёт поступков и дней — его; находки из разговоров наедине с ним — тоже.
       bond.forget(actorId).then(() => true).catch(() => false),
       knowledge.forget(actorId).then(() => true).catch(() => false),
@@ -5383,9 +6361,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       return melted(await bond.mark(actorId, kind).catch(() => null));
     };
 
-    const onlyThanks = THANKS_ONLY.test(prompt);
+    // Как написано — и как человек написал бы без сокращений: «спасибки» — это «спасибо», «оке» — «ок» (`slang.js`).
+    // Фразу, которую словарь знает как написана («сенкс» → «аригато»), слой не трогает: выписанное первее.
+    const plain = PHRASES && book.match(prompt, { strict: true }) ? "" : plainWords(prompt);
+    const onlyThanks = THANKS_ONLY.test(prompt) || THANKS_ONLY.test(plain);
     if (PRAISE.test(prompt)) await deed("praise");
-    if (onlyThanks || THANKS.test(prompt)) {
+    if (onlyThanks || THANKS.test(prompt) || THANKS.test(plain)) {
       pulse.bump("thanked");
       await deed("thanks");
       const trace = await lastTrace();
@@ -5397,8 +6378,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         return { ok: true, action: "thanks" };
       }
     }
-    if (ACK_ONLY.test(prompt)) {
-      const laugh = LAUGH.test(prompt);
+    // Смех — как бы он ни был набран: «аххахаха», «пхпх», «ахах 😂». «))» — тоже улыбка.
+    const laugh = isLaugh(prompt) || /^(?:[:;=]-?[)D]+|\){2,}0*\)*)$/u.test(prompt.trim());
+    if (laugh || ackOnly(prompt, plain)) {
       // «Хорошо» в ответ на её вопрос — это ответ, а не «принято»: если её
       // последняя реплика кончалась вопросом, разговор продолжает модель.
       if (!laugh) {
@@ -5407,6 +6389,18 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (/\?[\s»")]*$/u.test(String(mine?.content ?? "").trim())) return null;
       }
       return await react(turn, laugh ? "😁" : "👌")
+        ? { ok: true, action: "reaction" }
+        : { ok: true, ignored: true, reason: "acknowledged" };
+    }
+    // Одни смайлы — не вопрос к модели: на смех, сердце и «👍» она отвечает реакцией, на «👋» — приветом.
+    // Грустный, сердитый и незнакомый смайл остаётся разговору: там уместно спросить, что случилось.
+    const smile = smileMood(emojiOnly(prompt));
+    if (smile === "hello") {
+      const greeted = await smallTalk(turn, "привет");
+      if (greeted) return greeted;
+    } else if (smile) {
+      const close = owner(actorId) || Number(turn.manner?.score) >= 25;
+      return await react(turn, ({ laugh: "😁", love: close ? "❤" : "🤗", joy: "👌", hug: "🤗", sleep: "😴", think: "🤔" })[smile])
         ? { ok: true, action: "reaction" }
         : { ok: true, ignored: true, reason: "acknowledged" };
     }
@@ -5428,9 +6422,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const felt = await bond.mark(actorId, "jealous", rival.name).catch(() => null);
         if (felt && !felt.before.jealous && felt.after.jealous) {
           pulse.bump("jealous");
+          // Ревнует она уже в этом ответе, а не со следующего: настроение хода пересчитывается. Иначе модель
+          // отвечала ещё спокойной, а строка ревности шла вдогонку — два голоса в одном ответе (17.11.2026).
+          turn.feel = null;
+          await feelFor(turn).catch(() => null);
           // Реплику целиком знает словарь («Алиса лучше тебя») — ревность уже в его ответе: второй строки не нужно.
           if (!felt.after.hurt && !(PHRASES && book.match(prompt))) {
-            (turn.after ??= []).push((PHRASES ? book.pick(`+ревность:${rival.kind}`, voiceCtx(turn, rival.name ? { "кто": rival.name } : {})) : null) ?? "…Так. Я это запомнила.");
+            const ctx = voiceCtx(turn, rival.name ? { "кто": rival.name } : {});
+            const line = (PHRASES ? (aboutHer(prompt) ? book.pick("+ревность:обо мне", ctx) : null) ?? book.pick(`+ревность:${rival.kind}`, ctx) : null) ?? "…Так. Я это запомнила.";
+            // Просто рассказал («общался с Алисой, она посоветовала…») — отвечает она сама, этой строкой: модели тут
+            // сказать нечего, и она сочиняла. Вопрос, просьба или длинный рассказ остаются модели — строка идёт следом.
+            if (!asksAnswer(prompt) && prompt.length <= 140) {
+              pulse.bump("ruled");
+              const sent = await say(turn, voiced(turn, line));
+              if (sent.ok) await keepThread(turn, prompt, line);
+              return { ...sent, action: "jealous" };
+            }
+            (turn.after ??= []).push(line);
           }
         }
       } else if (turn.jealous && calmsJealousy(prompt)) melted(await bond.mark(actorId, "soothe").catch(() => null));
@@ -5747,6 +6755,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const { chatId, actorId, ctx, dry } = turn;
     if (!deferred) await typing(turn);
     const context = dry ? { note: "", lessons: [] } : await contextFor(turn, prompt, { lateMs });
+    // Её день (0.48.0): модель знает, чем она занята в эту минуту, — и говорит о себе то же, что видно в комнате.
+    if (!dry && !plain && turn.isPrivate === true) {
+      try { const busy = await herBusy(turn); if (busy) context.note = `${context.note ? `${context.note}\n` : ""}${busy}`; } catch { /* без этого */ }
+    }
     const key = `${chatId}:${actorId}`;
     const shared = { manner: turn.manner, facts: 0, mood: "", way: "", brief: false };
     // Устала: людям сначала отвечают запасные модели — остаток основной бережётся для хозяина;
@@ -6240,6 +7252,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   async function answerByModel(turn, prompt) {
+    // Метка для репетиции: реплика дошла до модели — значит, сама она её не поняла.
+    turn.viaModel = true;
     let { answer, context, facts } = await talk(turn, prompt);
     // Сама сказала «не знаю» на вопрос о мире — прежде чем сдаться, ищет и отвечает ещё раз.
     // Один поиск и один вопрос к модели; не помогло — остаётся честное «не знаю».
@@ -6383,6 +7397,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Напоминания звонят при любом пробуждении: от будильника или от сообщения.
     try { await ring(); } catch { /* следующее пробуждение повторит */ }
     try { await greetOwner(); } catch { /* доброе утро подождёт до завтра */ }
+    try { await roomNotes(); } catch { /* о событии дня напишет в следующий раз */ }
     try { await prayerBell(); } catch { /* следующее пробуждение посчитает заново */ }
     try { await fastBell(); } catch { /* и о посте — тоже */ }
     try { await holidayCards(); } catch { /* праздник не важнее остального */ }
@@ -6423,6 +7438,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       `Способности: ${await bridgeLine()}`,
       `Источники: ${await sourcesLine()}`,
       `Рисование: ${await drawLine()}`,
+      `Комната: ${await roomStatus()}`,
       `Будильник: ${await clockLine()}`,
     ];
     await notices.tell({ key: `build:${BUILD}`, text: lines.join("\n") });
@@ -6441,807 +7457,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /** Утренняя весть: что было вчера. Тихий день без проблем — не новость. */
-  // ── секретарь ───────────────────────────────────────────────────────────
-  const STRANGER_PREFIX = "heart:secretary:stranger:";
-  const HOW_TO_CONNECT = "Чтобы я стала вашим секретарём, нужны два шага. Первый — в @BotFather включить мне Secretary Mode (настройки бота). Второй — в своём Telegram: Настройки → «Автоматизация чатов» (Chat Automation), выбрать меня и чаты, куда меня пускать, и разрешить отвечать. Как только подключите — я напишу сама.";
-  /** Близкому бот уже настроен хозяином: остаётся один шаг — в своём Telegram. */
-  const HOW_TO_JOIN = "Чтобы я стала вашим секретарём, остался один шаг — в своём Telegram: Настройки → «Автоматизация чатов» (Chat Automation), выбрать меня и чаты, куда меня пускать, и разрешить отвечать. Как только подключите — я напишу сама.";
-  const HOW_TO_ASK = "Близкому человеку достаточно подключить меня у себя — Настройки → «Автоматизация чатов» (Chat Automation), — и я сразу спрошу вас.";
-  /**
-   * Стол — секретарь одного человека. У хозяина стол есть всегда (ключ прежний); у близких —
-   * по его слову: кому разрешено и кто просит, лежит в `DESKS_KEY`. У каждого стола своё
-   * состояние, свои вести и свой список «кто писал»: чужой стол не показывается никому, и хозяину тоже.
-   */
-  const OWNER_DESK = Object.freeze({ id: OWNER, key: SECRETARY_KEY, mine: true });
-  const guestDesk = (id) => ({ id: Number(id), key: deskKey(id), mine: false });
-  const desksState = async () => desksOf(await store.get(DESKS_KEY).catch(() => null));
-  const mutateDesks = (change) => store.update(DESKS_KEY, raw => {
-    const next = change(desksOf(raw));
-    return next ? { ...next, at: now() } : null;
+  // ── секретарь ────────────────────────────────────────────────────────
+  // Вся работа секретаря — в `secretary.js`, функция `createDesk` (0.55.0, сообщение 65: «почти превышает вес» —
+  // сердце весило 610 КБ при стороже 620). Сюда возвращается то, чем пользуется остальное сердце; туда уходит
+  // объект с её инструментами: хранилище, отправка, время, слова. Имена те же, что были, — поиск по ним работает.
+  const {
+    OWNER_DESK, STRANGER_PREFIX, allDesks, deskFor, mutateDesk, mutateDesks, onBusinessConnection, onBusinessMessage,
+    ownerZone, pressDesk, secretaryClock, secretaryPlan, secretaryWords, tellOwnerNow,
+  } = createDesk({
+    DAY, OWNER, PHRASES, SECRETARY, api, book, has, localClock, localParts, mannerFor, notices, now, owner, partsOf,
+    plural, pulse, reportCrash, safeName, say, store, voiceCtx, you, zoneOf, zonedEpoch,
   });
-  /** Чей это стол: хозяина, близкого — или ничей (null). */
-  async function deskFor(userId) {
-    if (owner(userId)) return OWNER_DESK;
-    if (userId == null || !(OWNER > 0) || !store.available) return null;
-    return (await desksState()).list.some(item => String(item.id) === String(userId)) ? guestDesk(userId) : null;
-  }
-  const allDesks = async () => [OWNER_DESK, ...(await desksState()).list.map(item => guestDesk(item.id))];
-  const deskState = async (desk) => secretaryStateOf(await store.get(desk.key).catch(() => null));
-  /** Отметки «уже сказано» чужого стола — со своим началом: отлучки разных людей не встретятся. */
-  const sinceOf = (desk, since) => (desk.mine ? since : `${desk.id}.${since}`);
-  /** Счётчики чужого стола — отдельные: «ответила за вас» в сводке хозяина значит за него. */
-  const bumpDesk = (desk, name) => pulse.bump(desk.mine ? name : `${name}_kin`);
-  /**
-   * Отметка «я первая»: `setIfAbsent` считает победителем того, чьё значение легло в базу, —
-   * поэтому значение у каждой попытки своё. Случайность здесь настоящая, а не из настроек
-   * сердца: в тестах та одинакова, и два письма разом «побеждали» бы оба.
-   */
-  const stamp = (id = null) => ({ at: now(), id, r: Math.floor(Math.random() * 1e9) });
-  const AWAY_OFF = Object.freeze({ on: false, since: 0, until: 0, words: "", ru: "", en: "" });
-  /**
-   * Правка состояния поверх самого свежего. Письма приходят одновременно, каждое —
-   * своему запуску: записать то, что прочитано в начале, значит затереть письмо
-   * соседа. `change` получает свежее состояние и возвращает новое — или null,
-   * если править уже нечего. Вернёт true, если правка легла.
-   */
-  const mutateDesk = (desk, change) => store.update(desk.key, raw => {
-    const next = change(secretaryStateOf(raw));
-    return next ? { ...next, at: now() } : null;
-  });
-  const deskZone = async (desk) => zoneOf({ manner: await mannerFor(desk.id, { dry: true }).catch(() => null) });
-  const ownerZone = () => deskZone(OWNER_DESK);
-  /** Второй ответ человеку: «передам», «уже сообщила, что срочно» или оба сразу. */
-  const ackWords = (kind, english) => {
-    if (english) return ackEnglish(kind);
-    const pool = kind === "both" ? "+секретарь:срочно и передам" : kind === "urgent" ? "+секретарь:срочно" : "+секретарь:передам";
-    return (PHRASES ? book.pick(pool, { formal: true }) : null) ?? ackRussian(kind);
-  };
-  /** «в 16:10» сегодня, «14.11 в 16:10» — в другой день. */
-  const whenShort = (at, zone) => {
-    const [a, b] = [localParts(at, zone), localParts(now(), zone)];
-    const clockText = localClock(at, zone);
-    return a.y === b.y && a.m === b.m && a.d === b.d ? clockText : `${String(a.d).padStart(2, "0")}.${String(a.m).padStart(2, "0")} в ${clockText}`;
-  };
-  /**
-   * Сказать хозяину сразу. Длинный список — частями: одним сообщением Telegram его
-   * не примет, а список после этого стирается. Что не ушло — уйдёт с очередью вестей.
-   */
-  async function tellOwnerNow(text, key = "") {
-    if (!(OWNER > 0)) return false;
-    // Часть — не длиннее вести: иначе очередь вестей обрезала бы её.
-    const parts = partsOf(text, 3700);
-    let sent = 0;
-    try {
-      for (const part of parts) {
-        await api.sendMessage({ chat_id: OWNER, text: part, disable_web_page_preview: true });
-        sent += 1;
-      }
-      return true;
-    } catch {
-      const base = key || `secretary:${now()}`;
-      for (let index = sent; index < parts.length; index += 1) {
-        try { await notices.tell({ key: parts.length > 1 ? `${base}:${index + 1}` : base, text: parts[index] }); } catch { /* вести подождут */ }
-      }
-      return false;
-    }
-  }
-
-  /**
-   * Сказать человеку стола сразу. Хозяину — как прежде: не ушло — уйдёт с очередью вестей. Близкому —
-   * в личку с ней; не ушло — ложится в «почту» стола и уходит со следующим ударом будильника.
-   */
-  async function tellDesk(desk, text, key = "") {
-    if (desk.mine) return tellOwnerNow(text, key);
-    const parts = partsOf(text, 3700);
-    let sent = 0;
-    try {
-      for (const part of parts) {
-        await api.sendMessage({ chat_id: desk.id, text: part, disable_web_page_preview: true });
-        sent += 1;
-      }
-      return true;
-    } catch {
-      const rest = parts.slice(sent).map(part => ({ text: part, at: now() }));
-      await mutateDesk(desk, cur => ({ ...cur, mail: [...(cur.mail ?? []), ...rest].slice(-DESK_MAIL_MAX) })).catch(() => false);
-      return false;
-    }
-  }
-  /** Несрочное слово человеку стола, один раз по ключу: хозяину — вестью, близкому — сразу в личку. */
-  async function tellLater(desk, key, text) {
-    if (desk.mine) { try { await notices.tell({ key, text }); } catch { /* вести подождут */ } return; }
-    if (await store.setIfAbsent(`${TOLD_PREFIX}${desk.id}.note:${key}`, stamp()).catch(() => false)) await tellDesk(desk, text, key);
-  }
-
-  /**
-   * Окно расписания, в которое попадает момент `at`: `{ from, to }` — или null,
-   * если сейчас не его часы. Окно через полночь («с 23 до 7») началось вчера.
-   */
-  function planWindow(plan, at, zone) {
-    if (!plan) return null;
-    const [fh, fm] = String(plan.from).split(":").map(Number), [th, tm] = String(plan.to).split(":").map(Number);
-    const over = th * 60 + tm <= fh * 60 + fm;
-    for (const back of [0, 1]) {
-      const day = localParts(at - back * DAY, zone);
-      const from = zonedEpoch({ y: day.y, m: day.m, d: day.d, hh: fh, mm: fm }, zone);
-      const to = zonedEpoch({ y: day.y, m: day.m, d: day.d + (over ? 1 : 0), hh: th, mm: tm }, zone);
-      if (at >= from && at < to) return { from, to };
-    }
-    return null;
-  }
-  const planText = (plan) => `каждый день с ${plan.from} до ${plan.to}`;
-  /** Слова, которые получат люди: из словаря, один раз на отлучку — хозяин видит ровно их. */
-  function awayWords({ name = "", clockText = "", words = "" }) {
-    const vars = { "кто": name || "Владелец этого аккаунта", ...(clockText ? { "срок": clockText } : {}), ...(words ? { "слова": words } : {}) };
-    const ru = (PHRASES ? book.pick(words ? "+секретарь:слова" : clockText ? "+секретарь:нет на связи до" : "+секретарь:нет на связи", { formal: true, vars }) : null)
-      ?? noticeRussian({ name, until: clockText, words });
-    return { ru, en: noticeEnglish({ name, until: clockText, words }) };
-  }
-  /**
-   * Начать отлучку (или сменить срок и слова идущей). `auto` — начал будильник по
-   * расписанию: такая не перебивает отлучку, которую хозяин включил сам.
-   * Вернёт слова для людей — или null, если запись не легла.
-   */
-  async function beginAway(desk, { at, until, words = "", clockText = "", auto = false }) {
-    let said = null;
-    const armed = await mutateDesk(desk, cur => {
-      if (!cur.conn || (auto && cur.away.on)) return null;
-      said = awayWords({ name: cur.conn.name || "", clockText, words });
-      // Отлучка уже шла — меняются срок и слова, а список писавших и «уже сказано» остаются.
-      const going = cur.away.on;
-      return { ...cur, away: { on: true, since: going ? cur.away.since : at, until, words, ru: said.ru, en: said.en, ...(auto ? { auto: true } : {}) }, ...(going ? {} : { people: [], more: 0, own: {} }) };
-    });
-    return armed ? said : null;
-  }
-
-  /** Кто писал, пока хозяина не было, — словами для него самого. */
-  function secretaryDigest(state, zone) {
-    // Свежие — первыми: каждое новое письмо переносит человека в конец списка.
-    const people = [...state.people].reverse();
-    const since = state.away.since ? ` (с ${whenShort(state.away.since, zone)})` : "";
-    if (!people.length) return `Пока вас не было${since}, в личку никто не писал.`;
-    // Показываются все, кого она помнит: список после этого стирается, и «…и ещё двадцать» пропали бы.
-    const rows = people.flatMap(item => [`${item.urgent ? "❗" : "•"} ${item.name}${item.user ? ` (@${item.user})` : ""} — ${item.n} ${plural(item.n, "сообщение", "сообщения", "сообщений")}, ${item.n > 1 ? "последнее — " : ""}${whenShort(item.at, zone)}: ${item.text}${item.urgent ? " · срочное" : ""}`, ...(Array.isArray(item.asks) ? item.asks : []).map(ask => `   просьба передать: «${ask}»`)]);
-    const more = Number(state.more) || 0, total = people.length + more;
-    const told = people.filter(item => item.told).length, failed = people.filter(item => item.failed && !item.told).length;
-    // Кому велено не отвечать — отдельной строкой: это не её промах.
-    const hushed = people.filter(item => item.mute && !item.told);
-    const tail = !state.conn?.reply ? "Отвечать за вас мне не разрешено — я только записывала."
-      : told === people.length ? `Каждому${more ? " из перечисленных" : ""} я один раз сказала, что вы не на связи.`
-        : [
-          told ? `Сказала, что вы не на связи, — ${told} из ${people.length}.` : "Никому не отвечала.",
-          failed ? `Не вышло ответить — ${failed}: Telegram отказал, проверьте права подключения.` : "",
-          hushed.length ? `По вашему слову не отвечала — ${hushed.length}: ${hushed.map(item => item.name).join(", ")}.` : "",
-          people.length - told - failed - hushed.length > 0 ? "Остальным не стала: вы писали им сами, письмо дошло с опозданием или ответов за час было слишком много." : "",
-        ].filter(Boolean).join(" ");
-    return [
-      `Пока вас не было${since}, писали — ${total} ${plural(total, "человек", "человека", "человек")}:`,
-      ...rows,
-      more ? `Ещё ${more} ${plural(more, "человек писал", "человека писали", "человек писали")} до них: список у меня на ${PEOPLE_MAX} человек, тех я уже не помню — смотрите в самих чатах.` : "",
-      tail,
-    ].filter(Boolean).join("\n");
-  }
-
-  /**
-   * Кончить отлучку: список «кто писал» отдаётся хозяину и стирается — чужие
-   * письма у неё дольше не лежат. Возвращает текст списка; null — отлучку уже
-   * кончил другой запуск или запись не прошла: говорить хозяину нечего.
-   * `expired` — кончать, только если срок и правда вышел: хозяин мог его продлить.
-   */
-  async function endAway(desk, zone, { expired = false, detail = null } = {}) {
-    let text = "", since = 0, people = [];
-    const done = await mutateDesk(desk, cur => {
-      if (!cur.away.on || (expired && !(cur.away.until && now() >= cur.away.until))) return null;
-      text = secretaryDigest(cur, zone);
-      since = cur.away.since;
-      people = cur.people;
-      if (detail) Object.assign(detail, { auto: cur.away.auto === true, wrote: cur.people.length + (Number(cur.more) || 0) });
-      // Хозяин вернулся посреди часов расписания — до конца этого окна она сама не начнёт.
-      const window = expired ? null : planWindow(cur.plan, now(), zone);
-      return { ...cur, away: { ...AWAY_OFF }, people: [], more: 0, own: {}, ...(window ? { plan: { ...cur.plan, skip: window.to } } : {}) };
-    });
-    if (!done) return null;
-    // Отметки «уже сказано» больше не нужны; не убрались — их сметёт уборка.
-    await Promise.all(people.slice(0, 40).map(item => store.remove(toldKey(sinceOf(desk, since), item.id)).catch(() => false)));
-    return text;
-  }
-  /** Срок отлучки вышел: рассказать хозяину, кто писал. Ночь по расписанию, когда никто не писал, — молча. */
-  async function tellAwayEnded(desk, text, detail, since) {
-    if (detail.auto && !detail.wrote) return;
-    await tellDesk(desk, `${detail.auto ? "Часы расписания кончились" : "Срок вышел"}: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${since}`);
-  }
-
-  /** Срок вышел — она сама перестаёт отвечать и рассказывает, кто писал. Зовётся с будильника. */
-  async function secretaryClock() {
-    if (!store.available || !(OWNER > 0)) return;
-    for (const desk of await allDesks()) {
-      try { await deskClock(desk); } catch { /* этот стол проверится со следующим ударом */ }
-    }
-  }
-  async function deskClock(desk) {
-    const state = await deskState(desk);
-    // Почта близкого: что не ушло сразу, уходит с ударом будильника. Старше суток — уже не новость.
-    if (!desk.mine && state.mail?.length) {
-      const gone = new Set();
-      try {
-        for (const item of state.mail) {
-          if (now() - Number(item.at) < DAY) await api.sendMessage({ chat_id: desk.id, text: String(item.text), disable_web_page_preview: true });
-          gone.add(`${item.at}:${item.text}`);
-        }
-      } catch { /* не ушло и сейчас — уйдёт со следующим ударом */ }
-      if (gone.size) {
-        await mutateDesk(desk, cur => {
-          const { mail: before = [], ...rest } = cur;
-          const left = before.filter(item => !gone.has(`${item.at}:${item.text}`));
-          return left.length ? { ...rest, mail: left } : rest;
-        }).catch(() => false);
-      }
-    }
-    if (!state.away.on) return;
-    if (!SECRETARY) {
-      // Выключили настройкой посреди отлучки: письма к ней больше не идут, а список остался бы
-      // лежать. Обещано, что он живёт только до конца отлучки, — отдать хозяину и стереть.
-      const text = await endAway(desk, await deskZone(desk));
-      if (text != null) await tellDesk(desk, `Секретарь выключен в настройках: за вас я больше не отвечаю.\n\n${text}`, `secretary:end:${state.away.since}`);
-      return;
-    }
-    if (!state.away.until || now() < state.away.until) return;
-    const detail = {};
-    const text = await endAway(desk, await deskZone(desk), { expired: true, detail });
-    if (text != null) await tellAwayEnded(desk, text, detail, state.away.since);
-  }
-  /** Расписание: настали его часы — она начинает отвечать сама. Молча: хозяин сам назвал эти часы. */
-  async function secretaryPlan() {
-    if (!SECRETARY || !store.available || !(OWNER > 0)) return;
-    for (const desk of await allDesks()) {
-      try { await deskPlan(desk); } catch { /* расписание этого стола проверится со следующим ударом */ }
-    }
-  }
-  async function deskPlan(desk) {
-    if (!SECRETARY || !store.available || !(OWNER > 0)) return;
-    const state = await deskState(desk);
-    if (!state.plan || !state.conn || state.away.on) return;
-    const at = now(), zone = await deskZone(desk);
-    const window = planWindow(state.plan, at, zone);
-    if (!window || (Number(state.plan.skip) || 0) > at) return;
-    if (await beginAway(desk, { at, until: window.to, words: String(state.plan.words ?? ""), clockText: localClock(window.to, zone), auto: true })) bumpDesk(desk, "secretary_plan");
-  }
-
-  /**
-   * Подключение к аккаунту: событие `business_connection`. Секретарём она работает у
-   * хозяина и у тех, кому он разрешил; о чужом подключении она спрашивает хозяина, один раз.
-   */
-  async function onBusinessConnection(connection, ctx = {}) {
-    if (ctx?.testRun === true) return { ok: true, route: "business_connection", side_effects: "none" };
-    try {
-      if (!SECRETARY || !store.available || connection?.id == null) return { ignored: true };
-      const userId = connection.user?.id;
-      const desk = await deskFor(userId);
-      if (!desk) return await strangerConnects(connection);
-      if (connection.is_enabled === false) {
-        const zone = await deskZone(desk);
-        let digest = "", since = 0, people = [];
-        const done = await mutateDesk(desk, cur => {
-          // Снято не то подключение, с которым она работает (или она его и не знала): это не новость.
-          if (!cur.conn || cur.conn.id !== String(connection.id)) return null;
-          // Отлучка шла — список «кто писал» хозяин получит и тут: стереть молча было бы потерей.
-          digest = cur.away.on ? secretaryDigest(cur, zone) : "";
-          since = cur.away.since;
-          people = cur.people;
-          return { ...cur, conn: null, away: { ...AWAY_OFF }, people: [], more: 0, own: {} };
-        });
-        if (done) {
-          await Promise.all(people.slice(0, 40).map(item => store.remove(toldKey(sinceOf(desk, since), item.id)).catch(() => false)));
-          await tellDesk(desk, ["Подключение к вашему аккаунту снято: ваших чатов я больше не вижу и за вас не отвечаю.", digest].filter(Boolean).join("\n\n"), `secretary:off:${connection.id}:${now()}`);
-        }
-        if (done && !desk.mine) await mutateDesks(cur => ({ ...cur, list: cur.list.map(item => (String(item.id) === String(desk.id) ? { ...item, conn: "" } : item)) })).catch(() => false);
-        return { ok: true, action: "secretary_disconnected" };
-      }
-      const conn = { id: String(connection.id), name: safeName(connection.user?.first_name), reply: canReply(connection), at: now() };
-      let before = null, away = false;
-      const saved = await mutateDesk(desk, cur => { before = cur.conn; away = cur.away.on; return { ...cur, conn }; });
-      if (!saved) return { ok: false, code: "storage_unavailable" };
-      if (!desk.mine) await mutateDesks(cur => ({ ...cur, list: cur.list.map(item => (String(item.id) === String(desk.id) ? { ...item, conn: conn.id, name: conn.name || item.name } : item)) })).catch(() => false);
-      // Telegram шлёт это событие и при правке подключения: говорить стоит, только если что-то изменилось.
-      if (before && before.id === conn.id && before.reply !== conn.reply) {
-        await tellDesk(desk, conn.reply
-          ? (away ? "Теперь мне разрешено отвечать в ваших чатах: тем, кто напишет вам дальше, один раз скажу, что вы не на связи."
-            : "Теперь мне разрешено отвечать в ваших чатах. Сама не начну — только после слов «отвечай за меня».")
-          : "Права отвечать в ваших чатах у меня больше нет: пока вас нет, смогу только записывать, кто писал. Вернуть его можно в настройках подключения в Telegram.",
-        `secretary:right:${conn.id}:${conn.reply}:${now()}`);
-      } else if (!before || before.id !== conn.id) {
-        await tellDesk(desk, [
-          "Вижу подключение к вашему аккаунту: теперь мне приходят письма из тех ваших личных чатов, куда вы меня пустили.",
-          "Пока я в них молчу и ничего не записываю. Скажете «отвечай за меня» — каждому, кто вам напишет, один раз отвечу, что вы не на связи, и запомню, кто писал. «Я тут» — перестану и расскажу.",
-          "Что я при этом храню: имя человека, время, первые слова его последнего письма и то, что он просил передать, — только пока отвечаю за вас; вернётесь — расскажу и сотру. Модели эти письма не показываю и никуда не передаю.",
-          conn.reply ? "" : "Права отвечать вы мне не дали: смогу только записывать, кто писал. Дать его можно в настройках подключения в Telegram.",
-        ].filter(Boolean).join("\n\n"), `secretary:on:${conn.id}:${conn.reply}`);
-      }
-      return { ok: true, action: "secretary_connected", reply: conn.reply };
-    } catch (error) {
-      await reportCrash(error, ctx);
-      return { ok: false, code: "runtime_error" };
-    } finally {
-      try { await pulse.commit(); } catch { /* счётчики не важнее */ }
-    }
-  }
-
-  /** Подключение, о котором она не знает: чьё оно, скажет Telegram. Хозяина или близкого — принимает; чужое — запоминает как чужое. */
-  async function adoptConnection(connId) {
-    if (await store.get(`${ALIEN_PREFIX}${connId}`).catch(() => null)) return null;
-    let info = null;
-    try { info = await api.getBusinessConnection({ business_connection_id: connId }); } catch { return null; }
-    const desk = await deskFor(info?.user?.id);
-    if (!desk) { await store.set(`${ALIEN_PREFIX}${connId}`, { at: now() }).catch(() => false); return null; }
-    if (info.is_enabled === false) return null;
-    const conn = { id: connId, name: safeName(info.user?.first_name), reply: canReply(info), at: now() };
-    if (!await mutateDesk(desk, cur => ({ ...cur, conn }))) return null;
-    if (!desk.mine) await mutateDesks(cur => ({ ...cur, list: cur.list.map(item => (String(item.id) === String(desk.id) ? { ...item, conn: connId, name: conn.name || item.name } : item)) })).catch(() => false);
-    return { desk, state: await deskState(desk) };
-  }
-
-  /**
-   * Письмо из личного чата хозяина: событие `business_message`. Это не
-   * разговор с ней: ни команд, ни игр, ни модели. Пока хозяин не сказал
-   * «отвечай за меня», она молчит и ничего не записывает.
-   */
-  async function onBusinessMessage(message, ctx = {}) {
-    if (ctx?.testRun === true) return { ok: true, route: "business_message", side_effects: "none" };
-    try {
-      const connId = message?.business_connection_id;
-      const chatId = message?.chat?.id;
-      if (!SECRETARY || !store.available || !(OWNER > 0) || !connId || chatId == null || message?.chat?.type !== "private") return { ignored: true };
-      // Её собственные ответы и автоответы самого Telegram приходят сюда же: это не письма.
-      if (message.sender_business_bot || message.is_from_offline === true) return { ignored: true, reason: "echo" };
-      // Чьё письмо: стол находится по подключению. Незнакомое подключение — спрашивается у Telegram.
-      let desk = OWNER_DESK;
-      let state = await deskState(desk);
-      if (state.conn?.id !== String(connId)) {
-        const kin = (await desksState()).list.find(item => String(item.conn ?? "") === String(connId));
-        const known = kin ? { desk: guestDesk(kin.id), state: await deskState(guestDesk(kin.id)) } : null;
-        const taken = known?.state.conn?.id === String(connId) ? known : await adoptConnection(String(connId));
-        if (!taken?.state?.conn) return { ignored: true, reason: "not_owner" };
-        ({ desk, state } = taken);
-      }
-      const at = now();
-      if (state.away.on && state.away.until && at >= state.away.until) {
-        const detail = {};
-        const text = await endAway(desk, await deskZone(desk), { expired: true, detail });
-        if (text != null) {
-          await tellAwayEnded(desk, text, detail, state.away.since);
-          return { ignored: true, reason: "not_away" };
-        }
-        // Кончать было нечего: либо отлучку уже кончил соседний запуск, либо хозяин только что продлил срок.
-        state = await deskState(desk);
-        if (!state.conn || !state.away.on || (state.away.until && at >= state.away.until)) return { ignored: true, reason: "not_away" };
-      }
-      // Часы расписания уже идут, а будильник ещё не ударил — отлучку начинает само письмо.
-      if (!state.away.on && state.plan) {
-        await deskPlan(desk).catch(() => null);
-        state = await deskState(desk);
-        if (!state.conn) return { ignored: true, reason: "not_owner" };
-      }
-      const since = state.away.since;
-      const going = (cur) => cur.away.on && cur.away.since === since;
-      if (String(message.from?.id) === String(desk.id)) {
-        // Хозяин сам пишет в этом чате: туда она четверть часа не вмешивается.
-        if (state.away.on) {
-          await mutateDesk(desk, cur => (going(cur)
-            ? { ...cur, own: Object.fromEntries(Object.entries({ ...cur.own, [chatId]: at }).sort((x, y) => Number(y[1]) - Number(x[1])).slice(0, 40)) }
-            : null));
-        }
-        return { ignored: true, reason: "owner_speaks" };
-      }
-      if (!state.away.on) return { ignored: true, reason: "not_away" };
-      if (message.from?.is_bot === true || String(chatId) === String(desk.id)) return { ignored: true, reason: "bot" };
-      if (SERVICE_CHATS.includes(Number(chatId))) return { ignored: true, reason: "service" };
-
-      const hour = Math.floor(at / 3_600_000);
-      const same = (item) => String(item.id) === String(chatId);
-      // Письмо — в список «кто писал» сразу, до ответа, и поверх самого свежего состояния:
-      // соседнее письмо не затрётся, а вернись хозяин посреди отправки — человек в списке уже есть.
-      let seen = null;
-      const writer = { id: chatId, user: String(message.from?.username ?? message.chat?.username ?? "") };
-      const noted = await mutateDesk(desk, cur => {
-        if (!going(cur) || !cur.conn) return null;
-        seen = { known: cur.people.find(same) ?? null, own: Number(cur.own?.[chatId]) || 0, sent: cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0, conn: cur.conn, away: cur.away };
-        // «Этим не отвечай»: письмо записывается, ответа не будет. Названный по @имени при первом письме получает номер и имя.
-        seen.mute = cur.mute.some(item => mutedBy(item, writer));
-        let people = notePerson(cur.people, message, at);
-        seen.name = people.at(-1).name;
-        if (seen.mute) people = people.map(item => (same(item) ? { ...item, mute: true } : item));
-        const mute = seen.mute ? cur.mute.map(item => (mutedBy(item, writer) && item.id == null ? { ...item, id: chatId, name: seen.name } : item)) : cur.mute;
-        // Список — на сорок человек: кого он вытеснил, того она уже не помнит, но счёт им ведёт.
-        const pushed = cur.people.length + (seen.known ? 0 : 1) - people.length;
-        return { ...cur, people, mute, more: cur.more + Math.max(0, pushed) };
-      });
-      // Не записалось: хозяин уже вернулся или хранилище молчит — отвечать за него тогда нельзя.
-      if (!noted) return { ignored: true, reason: "not_away" };
-      bumpDesk(desk, "secretary_seen");
-      const fresh = !(Number(message.date) > 0) || at - Number(message.date) * 1000 < STALE_MS;
-      const busy = at - seen.own < OWNER_BUSY_MS;
-      const urgent = isUrgent(message), relay = isRelay(message), english = langOf(message) === "en";
-      // Что она ответила на это письмо — для вести хозяину о срочном.
-      let replied = "";
-      const may = seen.conn.reply && fresh && !busy && !seen.mute && seen.known?.told !== true && seen.known?.failed !== true;
-      let action = "secretary_noted";
-      if (may && seen.sent >= NOTICES_PER_HOUR) {
-        // Писем слишком много — похоже на рассылку или на двух секретарей друг против друга.
-        await tellLater(desk, `secretary:cap:${hour}`, `Секретарь: за час я ответила за вас ${NOTICES_PER_HOUR} раз и остановилась до следующего часа — писем слишком много. Записывать, кто писал, продолжаю.`);
-      } else if (may && await store.setIfAbsent(toldKey(sinceOf(desk, since), chatId), stamp(message.message_id))) {
-        // Отметка её: этому человеку отвечает именно этот запуск. У кого отметка не легла —
-        // тому человеку уже отвечает (ответил или не смог) другой запуск: повторять незачем.
-        const base = (english ? seen.away.en : seen.away.ru) || noticeRussian({ name: seen.conn.name });
-        // Первое же письмо срочное — человек сразу узнаёт, что хозяину сообщили.
-        const text = urgent ? `${base} ${ackWords("urgent", english)}` : base;
-        let told = false;
-        try {
-          await api.sendMessage({ business_connection_id: String(connId), chat_id: chatId, text });
-          told = true;
-          replied = urgent ? "first_urgent" : "first";
-          bumpDesk(desk, "secretary");
-          action = "secretary_notice";
-        } catch (error) {
-          action = "secretary_failed";
-          if (!desk.mine) await tellLater(desk, `secretary:failed:${since}`, "Секретарь: ответить за вас не вышло — Telegram отказал. Проверьте в настройках подключения, что мне разрешено отвечать на сообщения.");
-          else await notices.report({ component: "secretary", code: "send_failed", title: "Секретарь", detail: `ответить за вас не вышло: ${String(error?.description ?? error?.message ?? error).slice(0, 160)}`, severity: "degraded", hint: "Проверьте в Telegram, что в подключении мне разрешено отвечать." }).catch(() => null);
-        }
-        // Чем кончилось — в список; счёт ответов за час растёт и от неудачной попытки.
-        await mutateDesk(desk, cur => {
-          if (!going(cur)) return null;
-          const base = cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0;
-          return { ...cur, people: cur.people.map(item => (same(item) ? { ...item, told, failed: !told } : item)), sent: { from: hour, n: base + 1 } };
-        });
-      }
-
-      // Срочное — хозяину сразу: и когда письмо опоздало, и когда отвечать ей нельзя. Там, где
-      // он пишет сам, звать его незачем — он это письмо видит. От одного человека — не чаще
-      // раза в две минуты: «срочно», «ну где ты», «срочно!!» приходят очередью.
-      const ping = urgent && !busy && await store.setIfAbsent(urgentKey(sinceOf(desk, since), chatId, at), stamp(message.message_id));
-      // После её первого ответа: просят передать — «обязательно передам»; срочное — «уже сообщила».
-      // Не больше трёх таких ответов человеку за отлучку и в общий счёт ответов за час.
-      if (seen.known?.told === true && (relay || ping) && seen.conn.reply && fresh && !busy && !seen.mute && seen.sent < NOTICES_PER_HOUR) {
-        const reserved = await mutateDesk(desk, cur => {
-          const person = cur.people.find(same);
-          if (!going(cur) || !person || (Number(person.acks) || 0) >= ACKS_MAX) return null;
-          const base = cur.sent.from === hour ? Number(cur.sent.n) || 0 : 0;
-          return { ...cur, people: cur.people.map(item => (same(item) ? { ...item, acks: (Number(item.acks) || 0) + 1 } : item)), sent: { from: hour, n: base + 1 } };
-        });
-        if (reserved) {
-          try {
-            await api.sendMessage({ business_connection_id: String(connId), chat_id: chatId, text: ackWords(relay && ping ? "both" : ping ? "urgent" : "relay", english) });
-            replied = ping ? "ack_urgent" : "ack";
-            bumpDesk(desk, "secretary");
-            if (action === "secretary_noted") action = "secretary_ack";
-          } catch { /* второй ответ не ушёл — письмо всё равно в списке, а срочное хозяин получит */ }
-        }
-      }
-      if (ping) {
-        bumpDesk(desk, "secretary_urgent");
-        const zone = await deskZone(desk);
-        const who = `${seen.name}${message.from?.username ? ` (@${String(message.from.username).slice(0, 32)})` : ""}`;
-        const when = fresh ? "" : ` — письмо от ${whenShort(Number(message.date) * 1000, zone)}, дошло с опозданием`;
-        const done = replied === "first_urgent" ? "Я ответила, что вы не на связи и что сообщила вам сразу."
-          : replied === "ack_urgent" ? "Я ответила, что уже сообщила вам."
-            : seen.mute ? "Сама я не отвечала: этому человеку вы велели не отвечать."
-              : "Сама я на это письмо не отвечала.";
-        await tellDesk(desk, `❗ Срочное. ${who} пишет вам${when}:\n«${quoteOf(message, URGENT_EXCERPT)}»\n${done}`, `secretary:urgent:${since}:${chatId}:${message.message_id}`);
-        if (action === "secretary_noted" || action === "secretary_ack") action = "secretary_urgent";
-      }
-      return { ok: true, action };
-    } catch (error) {
-      await reportCrash(error, ctx);
-      return { ok: false, code: "runtime_error" };
-    } finally {
-      try { await pulse.commit(); } catch { /* счётчики не важнее */ }
-    }
-  }
-
-  // ── столы близких: у кого она секретарь кроме хозяина ───────────────────────
-  const deskLabel = (item) => `${item?.name || "Без имени"}${item?.user ? ` (@${item.user})` : ""}`;
-  const deskButtons = (id) => ({ inline_keyboard: [[{ text: "Разрешить", callback_data: `s:y:${id}` }, { text: "Отказать", callback_data: `s:n:${id}` }]] });
-  /**
-   * Её подключил к себе не хозяин и не тот, кому он разрешил. Чаты этого человека она не читает;
-   * хозяину — вопрос с кнопками, человеку — что вопрос задан. Один раз на человека за тридцать дней:
-   * Telegram шлёт это событие и при каждой правке подключения.
-   */
-  async function strangerConnects(connection) {
-    const userId = connection.user?.id;
-    await store.set(`${ALIEN_PREFIX}${connection.id}`, { at: now() }).catch(() => false);
-    pulse.bump("secretary_alien");
-    if (userId == null || !(OWNER > 0)) return { ignored: true, reason: "not_owner" };
-    const same = (item) => String(item.id) === String(userId);
-    if (connection.is_enabled === false) {
-      // Человек снял подключение — и просьбы больше нет.
-      await mutateDesks(cur => (cur.asks.some(same) ? { ...cur, asks: cur.asks.filter(item => !same(item)) } : null)).catch(() => false);
-      return { ignored: true, reason: "not_owner" };
-    }
-    const ask = { id: userId, name: safeName(connection.user?.first_name), user: String(connection.user?.username ?? "").slice(0, 32), conn: String(connection.id), reply: canReply(connection), at: now() };
-    await mutateDesks(cur => ({ ...cur, asks: [...cur.asks.filter(item => !same(item)), ask].slice(-DESK_ASKS_MAX) })).catch(() => false);
-    if (!await store.setIfAbsent(`${STRANGER_PREFIX}${userId}`, stamp(connection.id)).catch(() => false)) return { ignored: true, reason: "not_owner" };
-    if (connection.user_chat_id != null) {
-      try {
-        await api.sendMessage({
-          chat_id: connection.user_chat_id,
-          text: "Секретарём я работаю у хозяина и у тех, кому он разрешил. Я спросила его о вас: как ответит — напишу. До тех пор ваши чаты я не читаю и в них не отвечаю; подключение можно снять в настройках Telegram.\n\nI work as a secretary for my owner and for the people he allows. I have asked him about you and will write as soon as he answers. Until then I don't read or answer your chats; you can remove the connection in Telegram settings.",
-        });
-      } catch { /* человек не открывал чат с ней — сказать некуда */ }
-    }
-    const text = `${deskLabel(ask)} просит меня в секретари: подключение к своему аккаунту уже сделано.\n\nРазрешите — буду отвечать в тех чатах по слову «отвечай за меня», сказанному мне этим человеком; что там пишут, вам не показываю. Откажете — те чаты я не читаю.\n\nОтветить можно кнопкой или словами: «разреши секретаря» — или «не разрешай секретаря».`;
-    try { await api.sendMessage({ chat_id: OWNER, text, reply_markup: deskButtons(userId) }); }
-    catch { try { await notices.tell({ key: `secretary:ask:${userId}`, text }); } catch { /* вести подождут */ } }
-    return { ok: true, action: "secretary_asked" };
-  }
-  /** Слово хозяина о просьбе: разрешить или отказать. Возвращает ответ ему; человеку пишет сама. */
-  async function decideDesk(userId, allow) {
-    let ask = null, full = false;
-    const same = (item) => String(item.id) === String(userId);
-    const done = await mutateDesks(cur => {
-      ask = cur.asks.find(same) ?? null;
-      full = false;
-      if (!ask) return null;
-      const asks = cur.asks.filter(item => !same(item));
-      if (!allow) return { ...cur, asks };
-      if (cur.list.length >= DESKS_MAX && !cur.list.some(same)) { full = true; return null; }
-      return { ...cur, asks, list: [...cur.list.filter(item => !same(item)), { id: ask.id, name: ask.name, user: ask.user, conn: ask.conn, at: now() }] };
-    }).catch(() => false);
-    if (!ask) return "Этой просьбы у меня уже нет: её сняли или вы уже ответили.";
-    if (full) return `Секретарём я работаю у вас и ещё у ${DESKS_MAX} человек — больше не беру. Освободить место — «забери секретаря у» и имя.`;
-    if (!done) return "Не запомнилось: хранилище не отвечает.";
-    const who = deskLabel(ask);
-    if (!allow) {
-      try { await api.sendMessage({ chat_id: ask.id, text: "Хозяин не разрешил: секретарём у вас я не работаю. Ваши чаты я не читаю и в них не отвечаю; подключение можно снять в настройках Telegram." }); } catch { /* сказать некуда */ }
-      return `Хорошо, хозяин: отказано — ${who}. Те чаты я не читаю. Передумаете — пусть этот человек подключит меня у себя заново, а вы скажите «разреши секретаря».`;
-    }
-    const desk = guestDesk(ask.id);
-    await store.remove(`${ALIEN_PREFIX}${ask.conn}`).catch(() => false);
-    await mutateDesk(desk, cur => ({ ...cur, conn: { id: String(ask.conn), name: ask.name, reply: ask.reply === true, at: now() } })).catch(() => false);
-    await tellDesk(desk, [
-      "Хозяин разрешил: теперь я и ваш секретарь.",
-      "Пока я в ваших чатах молчу и ничего не записываю. Скажете мне здесь «отвечай за меня» — каждому, кто вам напишет, один раз отвечу, что вы не на связи, и запомню, кто писал. «Я тут» — перестану и расскажу. Срок («…до 18:00»), свои слова для людей и расписание («ночью отвечай сама») тоже есть: спросите «секретарь».",
-      "Что я при этом храню: имя человека, время, первые слова его последнего письма и то, что он просил передать, — только пока отвечаю за вас; вернётесь — расскажу и сотру. Модели эти письма не показываю и никуда не передаю — и хозяину тоже.",
-      ask.reply === true ? "" : "Права отвечать вы мне не дали: смогу только записывать, кто писал. Дать его можно в настройках подключения в Telegram.",
-    ].filter(Boolean).join("\n\n"), `secretary:desk:${ask.id}`);
-    return `Хорошо, хозяин: ${who} — теперь я секретарь и там. Отвечать начну по слову «отвечай за меня», сказанному мне этим человеком; что там пишут, вам не показываю — как и ваши чаты там. Забрать — «забери секретаря у» и имя.`;
-  }
-  /** Забрать стол: что было записано — отдаётся его человеку и стирается; дальше те чаты не читаются. */
-  async function revokeDesk(entry) {
-    const desk = guestDesk(entry.id);
-    const state = await deskState(desk);
-    const digest = state.away.on ? secretaryDigest(state, await deskZone(desk)) : "";
-    await mutateDesks(cur => ({ ...cur, list: cur.list.filter(item => String(item.id) !== String(entry.id)) })).catch(() => false);
-    await Promise.all(state.people.slice(0, 40).map(item => store.remove(toldKey(sinceOf(desk, state.away.since), item.id)).catch(() => false)));
-    await store.remove(desk.key).catch(() => false);
-    // Подключит заново — хозяина спросят снова, не дожидаясь тридцати дней: этому человеку он уже доверял.
-    await store.remove(`${STRANGER_PREFIX}${entry.id}`).catch(() => false);
-    const conn = state.conn?.id ?? entry.conn;
-    if (conn) await store.set(`${ALIEN_PREFIX}${conn}`, { at: now() }).catch(() => false);
-    const text = ["Хозяин забрал у меня работу вашего секретаря: в ваших чатах я больше не отвечаю и их не читаю. Подключение можно снять в настройках Telegram.", digest].filter(Boolean).join("\n\n");
-    try { for (const part of partsOf(text, 3700)) await api.sendMessage({ chat_id: entry.id, text: part, disable_web_page_preview: true }); } catch { /* сказать некуда — запись всё равно стёрта */ }
-  }
-  /** Слова хозяина о столах близких: у кого она секретарь, разрешить, отказать, забрать. Возвращает ответ ему. */
-  async function desksWords(wish) {
-    const desks = await desksState();
-    const named = (rows, name) => rows.filter(item => sameNameAny(name, item.name) || (item.user && String(name).replace(/^@/u, "").toLowerCase() === String(item.user).toLowerCase()));
-    const names = (rows) => rows.map(deskLabel).join(", ");
-    if (wish.desks) {
-      return [
-        desks.list.length ? `Секретарём я работаю у вас — и, по вашему слову, ещё у ${desks.list.length}: ${names(desks.list)}.` : `Секретарём я работаю только у вас. ${HOW_TO_ASK}`,
-        desks.list.length ? "Что пишут им, вам не показываю — как и ваши чаты им. Забрать — «забери секретаря у» и имя." : "",
-        desks.asks.length ? `Просят и ждут вашего слова: ${names(desks.asks)}. Ответить — «разреши секретаря» или «не разрешай секретаря»${desks.asks.length > 1 ? " и имя" : ""}.` : "",
-      ].filter(Boolean).join("\n");
-    }
-    if (wish.revoke !== undefined) {
-      if (!desks.list.length) return "Кроме вас, я ни у кого секретарём не работаю.";
-      const hits = wish.revoke ? named(desks.list, wish.revoke) : desks.list;
-      if (hits.length !== 1) return `${hits.length ? "Таких несколько" : "Такого имени среди них нет"}. Секретарём я работаю ещё у: ${names(desks.list)}. Назовите точнее: «забери секретаря у» и имя или @имя.`;
-      await revokeDesk(hits[0]);
-      return `Хорошо, хозяин: ${deskLabel(hits[0])} — секретарём там больше не работаю и тех чатов не читаю. Что было записано, отдано этому человеку и стёрто.`;
-    }
-    const allow = wish.allow !== undefined;
-    const name = allow ? wish.allow : wish.deny;
-    if (!desks.asks.length) return allow ? `Просьб у меня сейчас нет. ${HOW_TO_ASK}` : "Просьб у меня сейчас нет: отказывать некому.";
-    const hits = name ? named(desks.asks, name) : desks.asks;
-    if (hits.length !== 1) return `${hits.length ? "Просят несколько человек" : "Такой просьбы нет"}. Ждут вашего слова: ${names(desks.asks)}. Назовите имя: «${allow ? "разреши" : "не разрешай"} секретаря» и имя.`;
-    return decideDesk(hits[0].id, allow);
-  }
-  /** Кнопки под вопросом «разрешить секретаря?»: решает только хозяин. */
-  async function pressDesk(query) {
-    const done = async (text) => { try { await api.answerCallbackQuery({ callback_query_id: query.id, ...(text ? { text } : {}) }); } catch { /* не страшно */ } };
-    const found = String(query?.data ?? "").match(/^s:([yn]):(-?\d+)$/u);
-    if (!found || !owner(query?.from?.id)) { await done("Это решает хозяин."); return { ignored: true, reason: "not_owner" }; }
-    const text = await decideDesk(found[2], found[1] === "y");
-    await done("");
-    // Кнопки сделали своё: под вопросом остаётся ответ.
-    const chatId = query.message?.chat?.id, messageId = query.message?.message_id;
-    if (chatId != null && messageId != null && has("editMessageReplyMarkup")) {
-      try { await api.editMessageReplyMarkup({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }); } catch { /* кнопки останутся: второе нажатие ответит «просьбы уже нет» */ }
-    }
-    try { await api.sendMessage({ chat_id: OWNER, text }); } catch { /* ответ не ушёл — решение уже записано */ }
-    return { ok: true, action: found[1] === "y" ? "secretary_allowed" : "secretary_denied" };
-  }
-
-  /**
-   * Слова о секретаре — от хозяина или от близкого, которому он разрешил, и только в личке с ней:
-   * «отвечай за меня до 18:00», «я тут», «кто мне писал?», «секретарь». Каждый говорит о своём столе.
-   */
-  async function secretaryWords(turn, prompt, { chatId = null } = {}) {
-    const asked = parseSecretary(prompt);
-    if (!asked) return null;
-    const mine = owner(turn.actorId);
-    // Чей стол: хозяина — или близкого, которому хозяин разрешил. Только в личке с ней.
-    const desk = !SECRETARY || !turn.isPrivate ? null : mine ? OWNER_DESK : turn.dry ? null : await deskFor(turn.actorId);
-    if (!desk) {
-      // «Отвечай за меня» от того, у кого она не секретарь, — или от хозяина, но при всех. Говорится прямо: иначе
-      // просьба уходила модели, а та соглашалась — и ничего не происходило (16.11.2026: в списке непонятого).
-      // «Меня нет», «я не на связи» от гостя — обычные слова: отказ звучит только на прямую просьбу.
-      if (!turn.dry && !(mine && turn.isPrivate) && (asked.on || asked.plan !== undefined) && /отвеч|ответь|секретар|подмени|прикрой/iu.test(prompt)) {
-        pulse.bump("ruled");
-        return say(turn, mine
-          ? "Это — в личке со мной: там скажите «отвечай за меня», и я начну."
-          : (PHRASES ? book.say(["отвечай за меня"], voiceCtx(turn)) : null) ?? "Секретарём я работаю у хозяина и у тех, кому он разрешил. Здесь, в нашем чате, помогу чем смогу.");
-      }
-      return null;
-    }
-    // Столы близких — слово хозяина: «у кого ты секретарь?», «разреши секретаря», «забери секретаря у …».
-    if (asked.desks || asked.allow !== undefined || asked.deny !== undefined || asked.revoke !== undefined) {
-      if (!desk.mine) return null;
-      return say(turn, turn.dry ? "Разобрала бы это как слова о секретаре — репетиция." : await desksWords(asked));
-    }
-    if (turn.dry) return say(turn, "Разобрала бы это как слова о секретаре — репетиция.");
-    // Близкому «хозяин» не говорится; слова о подключении — короче: бот уже настроен.
-    const sir = desk.mine ? ", хозяин" : "";
-    const howTo = desk.mine ? HOW_TO_CONNECT : HOW_TO_JOIN;
-    const state = await deskState(desk);
-    const zone = zoneOf(turn);
-    // «Я тут» и «кто мне писал?» — слова обычные: без подключения и отлучки они не её.
-    if (asked.back && !state.away.on) return null;
-    if (asked.who && !state.conn) return null;
-    // Короткое «не отвечай Маше» — её слова, только если такая Маша ей известна; иначе это разговор.
-    if (asked.mute && !asked.mute.here && !asked.mute.strict
-      && !asked.mute.names.every(name => [...state.people, ...state.mute].some(item => sameName(name, item.name)))) return null;
-    if (!state.conn) {
-      if (asked.status) return say(turn, `Секретарём я пока не работаю: к вашему аккаунту меня не подключали. ${howTo}`);
-      if (asked.off || asked.planOff) return say(turn, "Я и не отвечала за вас: к вашему аккаунту я не подключена.");
-      return say(turn, `Не могу: к вашему аккаунту я не подключена. ${howTo}`);
-    }
-    const untilText = (until) => (until ? `до ${whenShort(until, zone).replace(/^(\d\d\.\d\d) в /u, "$1, ")}` : "");
-    // Открыли «Управление ботом» из чата с человеком — четверть часа «этому не отвечай» значит «ему».
-    if (chatId != null) await mutateDesk(desk, cur => ({ ...cur, focus: { id: String(chatId), at: now() } }));
-
-    // ── «этим не отвечай» ──
-    if (asked.muted) {
-      if (!state.mute.length) return say(turn, "Таких нет: когда отвечаю за вас, отвечаю всем. Закрыть кого-то — «не отвечай @имя» или из чата с человеком: «Управление ботом», затем «этому не отвечай».");
-      return say(turn, `Не отвечаю никогда — ${state.mute.length}:\n${state.mute.map(item => `• ${muteLabel(item)}`).join("\n")}\nИх письма записываю, срочное передаю вам сразу. Вернуть — «снова отвечай @имя» или «отвечай всем».`);
-    }
-    if (asked.mute || asked.unmute) {
-      const want = asked.mute ?? asked.unmute;
-      const off = Boolean(asked.mute);
-      if (want.all) {
-        if (!state.mute.length) return say(turn, "Я и так отвечаю всем: список пуст.");
-        if (!await mutateDesk(desk, cur => ({ ...cur, mute: [] }))) return say(turn, "Не запомнилось: хранилище не отвечает.");
-        return say(turn, `Хорошо${sir}: снова отвечаю всем. Из списка убрано — ${state.mute.length}.`);
-      }
-      // Кого назвали: «этому» — чат, открытый через «Управление ботом»; иначе @имена и имена из списков.
-      const picked = [], unknown = [], vague = [];
-      if (want.here) {
-        const focus = state.focus && now() - Number(state.focus.at) < FOCUS_MS ? state.focus : chatId != null ? { id: String(chatId) } : null;
-        if (!focus) return say(turn, "Не знаю, о каком чате речь. Откройте чат с этим человеком, нажмите «Управление ботом» — и скажите мне это ещё раз. Или назовите его: «не отвечай @имя».");
-        const person = state.people.find(item => String(item.id) === String(focus.id)) ?? state.mute.find(item => String(item.id) === String(focus.id));
-        picked.push({ id: focus.id, name: person?.name ?? "", user: person?.user ?? "" });
-      } else {
-        for (const user of want.users) {
-          const person = state.people.find(item => String(item.user).toLowerCase() === user) ?? state.mute.find(item => String(item.user ?? "").toLowerCase() === user);
-          picked.push({ ...(person?.id != null ? { id: person.id } : {}), name: person?.name ?? "", user: person?.user || user });
-        }
-        for (const name of want.names) {
-          const pool = off ? [...state.people, ...state.mute] : state.mute;
-          const hits = pool.filter(item => sameName(name, item.name)).filter((item, index, list) => list.findIndex(other => String(other.id) === String(item.id)) === index);
-          if (hits.length === 1) picked.push({ id: hits[0].id, name: hits[0].name, user: hits[0].user ?? "" });
-          else if (hits.length > 1) vague.push(`«${name}» — это ${hits.map(muteLabel).join(" или ")}`);
-          else unknown.push(name);
-        }
-      }
-      if (vague.length) return say(turn, `Не пойму, кого вы назвали: ${vague.join("; ")}. Назовите по @имени — или откройте чат с человеком, «Управление ботом», и скажите «этому ${off ? "не " : ""}отвечай».`);
-      if (unknown.length) {
-        return say(turn, off
-          ? `Не знаю, кто это: ${unknown.map(name => `«${name}»`).join(", ")}. По имени я узнаю только тех, кто писал вам, пока я отвечаю за вас. Назовите по @имени — или откройте чат с человеком, нажмите «Управление ботом» и скажите «этому не отвечай».`
-          : `В списке тех, кому я не отвечаю, такого нет: ${unknown.map(name => `«${name}»`).join(", ")}. Кто в нём — «кому ты не отвечаешь?».`);
-      }
-      const hit = (entry) => (item) => mutedBy(item, { id: entry.id ?? null, user: entry.user });
-      let full = false;
-      const saved = await mutateDesk(desk, cur => {
-        if (!off) return { ...cur, mute: cur.mute.filter(item => !picked.some(entry => hit(entry)(item))) };
-        const fresh = picked.filter(entry => !cur.mute.some(hit(entry)));
-        if (cur.mute.length + fresh.length > MUTE_MAX) { full = true; return null; }
-        return { ...cur, mute: [...cur.mute, ...fresh.map(entry => ({ ...entry, at: now() }))] };
-      });
-      if (full) return say(turn, `В списке уже ${state.mute.length} — больше ${MUTE_MAX} не держу. Уберите кого-нибудь: «снова отвечай @имя».`);
-      if (!saved) return say(turn, "Не запомнилось: хранилище не отвечает.");
-      const names = picked.map(muteLabel).join(", ");
-      if (!off) return say(turn, `Хорошо${sir}: ${names} — снова отвечаю, когда отвечаю за вас.`);
-      return say(turn, `Хорошо${sir}: ${names} — не отвечаю никогда, даже когда отвечаю за вас. Письма записываю и покажу в списке; напишут «срочно» — сообщу вам сразу. Вернуть — «снова отвечай ${picked[0].user ? `@${picked[0].user}` : picked[0].name || "@имя"}».`);
-    }
-
-    // ── расписание ──
-    if (asked.planOff) {
-      if (!state.plan) return say(turn, "Расписания у меня и нет: отвечаю за вас только по слову «отвечай за меня».");
-      if (!await mutateDesk(desk, cur => ({ ...cur, plan: null }))) return say(turn, "Не запомнилось: хранилище не отвечает.");
-      return say(turn, `Хорошо${sir}: расписание (${planText(state.plan)}) убрано. Сама больше не начинаю — только по слову «отвечай за меня».${state.away.on && state.away.auto ? " Сейчас я ещё отвечаю за вас; кончить — «я тут»." : ""}`);
-    }
-    if ("plan" in asked) {
-      if (!asked.plan) return say(turn, "Назовите часы — например: «отвечай за меня каждый день с 23 до 7» или просто «ночью отвечай сама» (это с 23:00 до 07:00).");
-      const words = String(asked.words ?? "").replace(/\s+/gu, " ").trim().slice(0, 200);
-      const plan = { from: asked.plan.from, to: asked.plan.to, words, skip: 0, at: now() };
-      if (!await mutateDesk(desk, cur => (cur.conn ? { ...cur, plan } : null))) return say(turn, "Не запомнилось: хранилище не отвечает — расписания нет.");
-      // Его часы уже идут — начинает сразу, а не со следующим ударом будильника.
-      const at = now(), window = planWindow(plan, at, zone);
-      const started = window && !state.away.on ? await beginAway(desk, { at, until: window.to, words, clockText: localClock(window.to, zone), auto: true }) : null;
-      const sample = started ?? awayWords({ name: state.conn.name || "", clockText: plan.to, words });
-      return say(turn, [
-        `Хорошо${sir}: ${planText(plan)} отвечаю за вас сама${state.conn.reply ? "" : " — точнее, записываю, кто писал: отвечать мне не разрешено"}.${started ? " Эти часы уже идут — начала." : ""}`,
-        state.conn.reply ? `Каждому, кто напишет вам в эти часы, один раз скажу:\n«${sample.ru}»` : "",
-        "Когда часы кончатся, расскажу, кто писал; никто не писал — промолчу. Вернётесь раньше — «я тут»: до следующего раза не начну. Убрать — «убери расписание секретаря».",
-      ].filter(Boolean).join("\n"));
-    }
-    if (asked.status) {
-      const lines = [
-        `Секретарь: к вашему аккаунту я подключена${state.conn.reply ? "" : ", но отвечать мне не разрешено — могу только записывать, кто писал"}.`,
-        state.away.on
-          ? `Сейчас отвечаю за вас ${untilText(state.away.until)}: писали — ${state.people.length + state.more} ${plural(state.people.length + state.more, "человек", "человека", "человек")}. Кто именно — «кто мне писал?»; закончить — «я тут».`
-          : "Сейчас в ваших чатах я молчу и ничего не записываю. Начать — «отвечай за меня» (можно со сроком: «…до 18:00», «…на 2 часа») или со словами для людей: «отвечай за меня: я на встрече, перезвоню».",
-        state.away.on && state.away.ru ? `Людям я говорю: «${state.away.ru}»` : "",
-        state.plan ? `Расписание: ${planText(state.plan)} начинаю отвечать сама. Убрать — «убери расписание секретаря».` : "Расписания нет. Завести — «ночью отвечай сама» или «отвечай за меня каждый день с 23 до 7».",
-        state.mute.length ? `Не отвечаю никогда — ${state.mute.length}: ${state.mute.slice(0, 8).map(muteLabel).join(", ")}${state.mute.length > 8 ? " и другие" : ""}. Весь список — «кому ты не отвечаешь?».` : "",
-      ];
-      // Открыто из чата с человеком («Управление ботом»): что она делала именно там.
-      if (chatId != null) {
-        const person = state.people.find(item => String(item.id) === String(chatId));
-        lines.push(person
-          ? `В том чате (${person.name}): за эту отлучку — ${person.n} ${plural(person.n, "сообщение", "сообщения", "сообщений")}; ${person.told ? "я один раз ответила, что вы не на связи" : "я не отвечала"}.`
-          : state.away.on ? "В том чате за эту отлучку мне ничего не приходило — и я там ничего не писала." : "В том чате я ничего не писала.");
-        lines.push(state.mute.some(item => String(item.id) === String(chatId))
-          ? "Этому человеку я не отвечаю никогда — так вы велели. Вернуть — скажите сейчас «этому снова отвечай»."
-          : "Чтобы я в том чате не отвечала никогда, скажите сейчас «этому не отвечай».");
-      }
-      return say(turn, lines.filter(Boolean).join("\n"));
-    }
-    if (asked.who) {
-      if (!state.away.on) return say(turn, "Сейчас я за вас не отвечаю и писем не записываю. Включить — «отвечай за меня».");
-      return say(turn, secretaryDigest(state, zone));
-    }
-    if (asked.off || asked.back) {
-      if (!state.away.on) return say(turn, "Я и так за вас не отвечаю.");
-      const text = await endAway(desk, zone);
-      if (text == null) {
-        // Отлучку в эту же секунду кончил срок (список ушёл отдельным письмом) — или запись не прошла.
-        const fresh = await deskState(desk);
-        return say(turn, fresh.away.on ? "Не вышло: хранилище не отвечает, и я всё ещё отвечаю за вас. Скажите «я тут» ещё раз." : "Я и так за вас не отвечаю.");
-      }
-      return say(turn, `С возвращением${sir}. За вас больше не отвечаю.\n\n${text}`);
-    }
-    // «Отвечай за меня»: срок — названный или двенадцать часов, чтобы забытая отлучка не длилась неделю.
-    const at = now();
-    let until = at + AWAY_DEFAULT_MS;
-    if (asked.span?.ms) until = at + Math.min(asked.span.ms, AWAY_MAX_MS);
-    else if (asked.span?.at) {
-      const parts = localParts(at, zone);
-      const [hh, mm] = asked.span.at.split(":").map(Number);
-      until = zonedEpoch({ y: parts.y, m: parts.m, d: parts.d, hh, mm }, zone);
-      if (until <= at + 60_000) until += DAY;
-    }
-    const words = String(asked.words ?? "").replace(/\s+/gu, " ").trim().slice(0, 200);
-    // Текст выбирается один раз: хозяин видит ровно то, что получат люди.
-    const armed = await beginAway(desk, { at, until, words, clockText: asked.span ? localClock(until, zone) : "" });
-    const ru = armed?.ru ?? "";
-    if (!armed) return say(turn, "Не запомнилось: хранилище не отвечает — за вас не отвечаю.");
-    if (!state.conn.reply) return say(turn, `Отвечать за вас мне не разрешено: ${untilText(until)} буду только записывать, кто писал. Вернётесь раньше — «я тут».`);
-    return say(turn, [
-      `Хорошо${sir}: ${untilText(until)} отвечаю за вас. Каждому, кто напишет вам в личку, один раз скажу:`,
-      `«${ru}»`,
-      "Тем, кто пишет не по-русски, — то же по-английски. Там, где вы пишете сами, не вмешиваюсь. Вернётесь раньше — «я тут».",
-      "Напишут «срочно» — сразу сообщу вам сюда. Попросят что-то передать — отвечу, что передам, и покажу это в списке.",
-    ].join("\n"));
-  }
 
   // ── профиль бота: «О себе» и описание на стартовой странице ───────────────
   /**
@@ -7254,7 +7480,28 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const texts = `О себе:\n${PROFILE_ABOUT}\n\nОписание на стартовой странице:\n${PROFILE_TEXT}`;
     const picture = "Картинку стартовой страницы (640×360) ставит человек: в настройках бота — «Set Welcome Picture».";
     pulse.bump("ruled");
-    if (wish.show) return say(turn, `${texts}\n\nПоставить — «оформи профиль». ${picture}`);
+    await store.set(PROFILE_AT_KEY, { at: now() }).catch(() => false);
+    // Картинки и сами слова — не её руками: говорит прямо, а не ищет «аватарку» в сети и не делает вид, что поменяла.
+    if (wish.picture) return say(turn, "Картинки я себе ставить не умею — это делает человек. Стартовая (640×360): в настройках бота — «Set Welcome Picture»; сам файл — «welcome.jpg» из чата разработки. Аватарка — там же, в настройках бота.");
+    if (wish.change) return say(turn, `Сами слова я менять не умею: они записаны в моём коде, и «оформи профиль» ставит их как есть. Нужны другие — скажите в чате разработки, какими им быть.\n\n${texts}`);
+    if (wish.show) {
+      // Что стоит в Telegram на самом деле: спросить можно — спрашивает, и говорит, совпало ли.
+      let live = null;
+      if (has("getMyDescription") && has("getMyShortDescription")) {
+        try {
+          const about = await api.getMyShortDescription({}), text = await api.getMyDescription({});
+          if (typeof about?.short_description === "string" && typeof text?.description === "string") live = { about: about.short_description, text: text.description };
+        } catch { live = null; }
+      }
+      const same = (a, b) => String(a).replace(/\s+/gu, " ").trim() === String(b).replace(/\s+/gu, " ").trim();
+      const stands = !live ? "Поставить — «оформи профиль»."
+        : same(live.about, PROFILE_ABOUT) && same(live.text, PROFILE_TEXT) ? "В Telegram сейчас стоит именно это."
+          : !live.about.trim() && !live.text.trim() ? "В Telegram сейчас пусто: ни строки «О себе», ни описания. Поставить — «оформи профиль»."
+            : "В Telegram сейчас стоит другое. Поставить эти слова — «оформи профиль».";
+      // Спросили «покажи профиль», а сестра недоступна: её дело — карточки людей, свой профиль Аи показывает сама.
+      const head = wish.instead ? `Карточки людей ведёт ${SISTER} — здесь её сейчас нет. А мой профиль — вот.\n\n` : "";
+      return say(turn, `${head}${texts}\n\n${stands} ${picture}`);
+    }
     if (!has("setMyDescription") || !has("setMyShortDescription")) {
       return say(turn, `Сама поставить не могу: платформа мне этого не даёт. Вот слова — их можно вставить в настройках бота, в поля «About» и «Enter bot description».\n\n${texts}`);
     }
@@ -7342,7 +7589,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!pulse.active(counters) && !study.proposed && !problems.length) return;
     const asked = (Array.isArray(unknown?.items) ? unknown.items : []).filter(item => now() - Number(item.at) < 2 * DAY).slice(-3);
     // Раз в неделю, по понедельникам: чего в словаре не хватило на деле.
-    const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await taught.unheard({ limit: 8, sinceMs: 7 * DAY }).catch(() => []) : [];
+    const weekly = PHRASES && localParts(now(), TZ).weekday === 1 ? await unheardNow({ limit: 8, sinceMs: 7 * DAY }).then(found => found.rows).catch(() => []) : [];
     const weekLines = localParts(now(), TZ).weekday === 1 ? await weekInNumbers().catch(() => []) : [];
     const unheardLine = weekly.length ? `За неделю не узнала из короткого: ${weekly.map(row => `«${row.text}»${row.n > 1 ? ` ×${row.n}` : ""}`).join(", ")}. Весь список — «что ты не поняла?»; ответы могу предложить сама — «предложи ответы».` : "";
     const night = ((await store.get(REFLECT_KEY).catch(() => null))?.entries ?? []).find(item => item.day === yesterday) ?? null;
@@ -7414,6 +7661,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const seen = await store.get("heart:build").catch(() => null);
     if (!deployed && seen?.build && seen.build !== BUILD) return { ok: false, code: "build_mismatch", build: BUILD, published: seen.build };
     await beat(deployed ? "deploy" : "run");
+    // Телефон назвал адрес страницы мини-приложения — запомнить раньше, чем она скажет «я обновилась».
+    let pageKept = null;
+    if (deployed && typeof ctx?.page === "string" && ctx.page) { try { pageKept = await keepPage(ctx.page); } catch { pageKept = false; } }
     await wake(ctx, { announce: deployed });
     try { await secretaryClock(); } catch { /* срок отлучки проверится со следующим ударом */ }
     try { await secretaryPlan(); } catch { /* расписание проверится со следующим ударом */ }
@@ -7427,6 +7677,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (await queue.size().catch(() => before) >= before) break;
     }
     try { await abilities.sweep(); } catch { /* уборка подождёт */ }
+    try { await appDoor.sweep(); } catch { /* уборка подождёт */ }
+    // Сразу после публикации — режим общения ботов: без него бот приложения не напишет ей лично.
+    if (deployed) { try { await appDoor.ready(); } catch { /* причина ляжет в статус со следующим разом */ } }
     try {
       await store.sweep("heart:src:", 30 * DAY);
       await store.sweep("heart:game:", 30 * DAY);
@@ -7437,6 +7690,10 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await store.sweep("heart:again:", DAY);
       await store.sweep(LOG_PREFIX, LOG_TTL_MS);
       await store.sweep("heart:said:", 7 * DAY);
+      // Вопрос об имени ждёт ответа пять минут; забытые отметки убираются.
+      await store.sweep("heart:askname:", DAY);
+      // «Нарисуй меня» ждёт описание две минуты; забытые отметки убираются.
+      await store.sweep("heart:portrait:", DAY);
       await store.sweep("heart:credit:", 7 * DAY);
       await store.sweep("heart:offer:", 30 * DAY);
       await store.sweep("heart:score:", 90 * DAY);
@@ -7462,6 +7719,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return {
       ok: true, code: "tick", build: BUILD,
       queue: await queue.size().catch(() => 0), reminders: await reminders.size().catch(() => 0),
+      // Принят ли адрес страницы мини-приложения: по этой строке в журнале телефона видно, узнала ли она о комнате.
+      ...(pageKept == null ? {} : { page: pageKept }),
     };
   }
 
@@ -7583,6 +7842,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       // по ссылке /start bizChat<номер чата>. Хозяину (и близкому со своим столом) — что с секретарём и что было в том чате.
       const managed = command.name === "start" ? sub.match(/^bizchat(-?\d+)$/u) : null;
       if (managed && SECRETARY && turn.isPrivate && await deskFor(actorId)) return ruled(await secretaryWords(turn, "секретарь", { chatId: managed[1] }));
+      // Ссылка из группы («Открыть комнату — в личке»): в личке сразу приходит дверь.
+      if (command.name === "start" && sub === "room" && turn.isPrivate && ROOM && PHRASES) {
+        const opened = await roomWords(turn, "открой комнату");
+        if (opened) return ruled(opened);
+      }
       if (command.name === "start") return ruled(await greeting(turn));
       if (command.name === "help") return ruled(await say(turn, helpLines(turn, command.rest)));
       if (["status", "aidiag", "диагностика"].includes(command.name)) return diagnostic(turn);
@@ -7676,6 +7940,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // «Правило: отвечай короче» — урок для всех, а не личная настройка длины.
     const teaching = parseIntent(prompt)?.intent === "teach";
     if (turn.isPrivate && !dry && !teaching) {
+      // Она только что спросила имя — и человек ответил одним словом: «Айдина», «просто Айдина». Только сразу после
+      // вопроса и только если это слово ничем другим быть не может: ни фразой словаря, ни просьбой.
+      const replied = nameReply(prompt);
+      if (replied && !introRequest(prompt) && !(PHRASES && book.match(prompt)) && !parseIntent(prompt) && !isLaugh(prompt) && !ackOnly(prompt)) {
+        const waiting = await store.get(ASKED_NAME_KEY(actorId)).catch(() => null);
+        const id = Number(message.message_id);
+        if (waiting?.mid != null && now() - Number(waiting.at) < 5 * 60_000 && id > Number(waiting.mid) && id <= Number(waiting.mid) + 3) {
+          await store.remove(ASKED_NAME_KEY(actorId)).catch(() => false);
+          const saved = await personal.setAddress(actorId, replied).catch(() => ({ ok: false }));
+          return ruled(await say(turn, saved.ok
+            ? you(turn, `Приятно познакомиться, ${replied}. Так и буду к вам обращаться.`, `Приятно познакомиться, ${replied}. Так и буду тебя звать.`)
+            : "Имя не запомнилось: нужно короче и без символов."));
+        }
+      }
       // «Меня зовут Айдина» целиком — знакомство: имя запоминается сразу, без модели и без вопроса «запомнить?».
       const intro = introRequest(prompt);
       if (intro) {
@@ -7693,6 +7971,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           `Хорошо, ${had ? "больше так не буду" : "не буду"}. Как тебя звать? Скажи: «зови меня …».`)));
       }
       const wanted = addressRequest(prompt);
+      // «Зови меня хозяин» — это слово занято: хозяин у неё один (0.36.1). Самому хозяину менять нечего.
+      if (wanted && /^(?:мо[йя]\s+)?(?:хозяин|хозяйка|владелец|владелица|создатель|господин|госпожа|повелитель|повелительница)$/iu.test(wanted)) {
+        return ruled(await say(turn, owner(actorId)
+          ? "Я и так зову вас хозяином. Другого слова для вас у меня нет."
+          : you(turn, "Хозяин у меня один, и это слово — его. Назовите имя: «зови меня …» — буду звать по имени.", "Хозяин у меня один, и это слово — его. Назови имя: «зови меня …» — буду звать по имени.")));
+      }
       if (wanted) {
         const saved = await personal.setAddress(actorId, wanted).catch(() => ({ ok: false }));
         return ruled(await say(turn, saved.ok
@@ -7706,6 +7990,21 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ? `Договорились, отвечаю ${({ кратко: "коротко", обычно: "обычно", подробно: "подробно" })[length]}.`
           : "Не запомнилось — повторю попытку в следующий раз."));
       }
+    }
+    // «Как меня зовут?», «зови меня по имени» — отвечает тем, что человек сам сказал о себе (0.36.1): раньше это
+    // доставалось модели, а «зови меня по имени» она понимала как имя «по имени».
+    const whoAsk = dry || teaching ? null : nameQuestion(prompt);
+    if (whoAsk) {
+      const called = String(turn.manner?.settings?.address ?? "").trim();
+      const teach = you(turn, "Скажите «меня зовут …» — запомню.", "Скажи «меня зовут …» — запомню.");
+      // «Хозяин» звучит только наедине: при всех он — человек с именем, как остальные.
+      if (owner(actorId) && turn.isPrivate) {
+        return ruled(await say(turn, called ? (whoAsk === "by" ? `Хорошо, хозяин. По имени — ${called}.` : `Вы — мой хозяин. А по имени — ${called}.`) : `Вы — мой хозяин. Имени вы мне не называли. ${teach}`));
+      }
+      if (called) return ruled(await say(turn, whoAsk === "by" ? `Так и зову: ${called}.` : you(turn, `${called}. Так вы просили вас называть.`, `${called}. Так я тебя и зову.`)));
+      return ruled(await say(turn, turn.name
+        ? you(turn, `В Telegram вы — ${turn.name}. А как вас звать? ${teach}`, `В Telegram ты — ${turn.name}. А как тебя звать? ${teach}`)
+        : you(turn, `Имени вы мне не называли. ${teach}`, `Имени ты мне не называл. ${teach}`)));
     }
     // «Давай на ты» — просьба о форме обращения, её можно сказать где угодно.
     const form = dry ? null : formRequest(prompt);
@@ -7743,6 +8042,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Профиль бота (0.35.0): строка «О себе» и описание на стартовой странице — словом хозяина, в личке.
     const profileAsk = owner(actorId) && turn.isPrivate ? profileWish(prompt) : null;
     if (profileAsk) return ruled(await profileWords(turn, profileAsk));
+    // «Покажи профиль» сразу после слов о её профиле — о нём же: четверть часа контекста (17.11.2026).
+    if (!dry && owner(actorId) && turn.isPrivate && profileWish(prompt, { loose: true })?.loose) {
+      const talked = await store.get(PROFILE_AT_KEY).catch(() => null);
+      if (talked?.at && now() - Number(talked.at) < 15 * 60_000) return ruled(await profileWords(turn, { show: true }));
+    }
 
     // Резервная копия души — только хозяину и только в личке: в ней чужие записи.
     const soulAsk = owner(actorId) && turn.isPrivate ? parseSoul(prompt) : null;
@@ -7788,7 +8092,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Знание наизусть («знание: …») — сильнее и умений: «сколько градусов в прямом углу» — не погода,
     // «сколько до Луны» — не счёт дней.
     const byHeart = Boolean(spoken?.some(name => /^!?знание:/u.test(name)));
-    const request = !byHeart && Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt)) || parseSkillAsk(prompt, SKILLS)) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
+    const request = !byHeart && Boolean((MANNERS && parseAccent(prompt)) || (PHRASES && parseJoke(prompt)) || (CHAT_MEMORY && parseMissed(prompt)) || (CHAT_MEMORY && inGroup && parseJudge(prompt)) || (LIKES && inGroup && parseKnow(prompt)) || (PHRASES && owner(actorId) && parsePropose(prompt)?.ask && !parsePropose(prompt).loose) || (NEWS && parseNews(prompt)?.show) || (ADVICE && wikiDayAsk(prompt) === "day") || (SEARCH && parseSearch(prompt)) || (SCENES && parseScene(prompt)?.start != null || (STICKERS && parseStickerAsk(prompt)) || parseSkillAsk(prompt, SKILLS)) || (PARTNER && parsePartner(prompt)?.lang) || (CARDS && parseCards(prompt) && !parseCards(prompt).stop) || (LIKES && parseTaste(prompt)) || matchPhrase(prompt) || parseIntent(prompt) || calculate(prompt) || detectSource(lowered) || parsePicture(lowered) || parseMedia(prompt)
       || noted || parseQuote(prompt) || (parseScore(prompt) && !parseScore(prompt).soft) || parseCard(prompt) || parseDaily(prompt) || (parseHabit(prompt) && !parseHabit(prompt).soft) || parseQuiet(prompt) || parseQuestion(prompt) || parsePoll(prompt) || parseWhois(prompt) || parseChatSetting(prompt) || parseParty(prompt)
       || parsePrayer(prompt) || parseFajr(prompt) || parseFast(prompt) || parseQibla(prompt) || parseHoliday(prompt) || (FEASTS && parseFeast(prompt)) || parseRiddle(prompt) || (TRANSLATE && draw.available && parseTranslate(prompt)) || (CHAT_MEMORY && parseDaySum(prompt)) || (LIKES && parseEvening(prompt))
       || (SENSES && parseLink(prompt, { quoted: String(message.reply_to_message?.text ?? message.reply_to_message?.caption ?? ""), bare: turn.isPrivate })));
@@ -7828,6 +8132,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // чата, опрос, «мой айди», игра с кнопками. Просьба с известным смыслом
     // («разбуди меня в 7») действием не считается.
     const self = inGroup || !request ? await whoAmI(dry) : null;
+    // Комната — раньше ролевых действий: «погладь Байта» — о коте, а не «Аи гладит … байта».
+    // «Открой комнату», «убери комнату из меню» — слова о мини-приложении: они сказаны целиком и точно,
+    // поэтому идут и поперёк догадки («покажи …» — не поиск картинки, «убери …» — не заметка).
+    const roomFirst = ROOM && PHRASES && ROOM_DOOR.has(parseRoom(prompt)?.op);
+    const viaRoom = request && !roomFirst ? null : await roomWords(turn, prompt);
+    if (viaRoom) return ruled(viaRoom);
     if (!request) {
       const acted = await fun.roleplay(turn, prompt, { self, addressed: true });
       if (acted) return ruled(acted);
@@ -7887,6 +8197,16 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // разговору ниже. Команды выше остаются аварийным выходом.
     const viaIntent = await handleIntent(turn, prompt);
     if (viaIntent) return ruled({ ok: true, action: "intent" });
+    // Слова чата: «чо умеешь», «го играть» — те же просьбы, что «что умеешь», «давай играть» (`slang.js`).
+    // Только узнанное целиком и без довеска: в сжатом виде довесок потерял бы регистр и знаки.
+    if (!dry && !parseIntent(prompt)) {
+      const plainAsk = plainWords(prompt);
+      const slang = plainAsk ? parseIntent(plainAsk) : null;
+      if (slang?.confidence === "sure" && slang.arg == null) {
+        const viaSlang = await handleIntent(turn, plainAsk);
+        if (viaSlang) return ruled({ ok: true, action: "intent" });
+      }
+    }
 
     // Счёт, погода, курс, часы, энциклопедия: факт берётся у источника, а не
     // у модели — она бы его придумала. Картинки и жесты — туда же.
@@ -7932,12 +8252,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       } catch { /* политика не должна глушить разговор */ }
     }
 
+    // Ждёт описание для портрета (идея 197, 0.51.0): раньше словаря — «одного зуба нету» здесь примета, а не новость.
+    // Фото и подпись к нему сюда не идут: их разбирает зрение. База спрашивается, только если реплика — о внешности.
+    if (!dry && !request && draw.available && !turn.media && !turn.wordless) {
+      const portrait = await portraitMove(turn, prompt);
+      if (portrait) return ruled(portrait);
+    }
     // Словарь: «привет», «как дела», вкусы, пасхалки. Модель на это не тратится.
     // Похоже на просьбу, но умения её не взяли, а словарь знает целиком («не молчи» в личке) — тоже словарь.
     if (!request || spoken) {
       const phrased = await smallTalk(turn, prompt);
       if (phrased) return ruled(phrased);
     }
+    // «Старт», «начать» словом — то же, что кнопка «Начать»: она представляется.
+    if (!dry && turn.isPrivate && /^(?:старт|start|начать|начнем|запуск)$/u.test(plainWords(prompt))) return ruled(await greeting(turn));
 
     if (!dry) {
       const capped = await overQuota(turn);
@@ -7961,7 +8289,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       const picture = pictureIn(message) ?? (aboutPicture(prompt) ? pictureIn(message.reply_to_message) : null);
       if (picture) {
         await typing(turn);
-        const seen = await senses.look(picture.file_id, { apiKey: await resolveKey(ctx), question: turn.wordless ? "" : prompt });
+        // Она ждёт описание для портрета, а человек прислал своё фото (0.52.0): зрение называет приметы, художник рисует.
+        const posing = draw.available && !request && Boolean(pictureIn(message))
+          && await store.get(portraitKey(turn)).then(row => Boolean(row?.at) && now() - Number(row.at) <= PORTRAIT_WAIT_MS).catch(() => false);
+        const seen = await senses.look(picture.file_id, { apiKey: await resolveKey(ctx), question: posing ? PORTRAIT_ASK : turn.wordless ? "" : prompt });
+        if (seen.ok && posing) {
+          await store.remove(portraitKey(turn)).catch(() => false);
+          pulse.bump("seen");
+          return ruled(await drawPicture(turn, `портрет человека: ${seen.text.slice(0, 260)}`));
+        }
         if (seen.ok) {
           turn.sight = seen.text;
           pulse.bump("seen");
@@ -7981,9 +8317,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     const fact = !dry && turn.isPrivate ? await factToOffer(turn, prompt).catch(() => null) : null;
     // Сказал о себе («я люблю…», «у меня есть…», «мою жену зовут…») — она запоминает сама, без слова «запомни».
     const about = !dry && turn.isPrivate && !fact ? selfStatement(prompt) : null;
-    // Короткое, чего не взял ни словарь, ни правило, — в список неузнанного.
-    if (!dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt) && !parsePropose(prompt)) await taught.note(prompt).catch(() => false);
+    const unheard = !dry && PHRASES && !request && !turn.wordless && !message.reply_to_message && !parseTeach(prompt) && !parsePropose(prompt) && !clearsShownList(prompt) && !parseSure(prompt);
     const sent = await answerByModel(turn, prompt);
+    // Короткое, чего не взял ни словарь, ни правило, — в список непонятного. Ответ по справке или длинный ответ —
+    // значит, это был вопрос на знание: модель тут на месте, и пробела в словаре нет (17.11.2026).
+    if (unheard && !turn.reference && !(sent?.ok && String(sent.text ?? "").length > UNHEARD_ANSWER_MAX)) {
+      // Что было перед репликой и что она ответила (0.52.0) — без автора: хозяину по словам «разбор 3».
+      const thread = await store.memory.load({ userId: turn.actorId, chatId: turn.chatId }).catch(() => []);
+      await taught.note(prompt, { before: beforeOf(thread, prompt), after: sent?.ok ? sent.text : "" }).catch(() => false);
+    }
     if (fact && sent?.ok) await offerFact(turn, fact);
     if (about && sent?.ok) await keepSelf(turn, about);
     return sent;
@@ -8004,7 +8346,19 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         if (!dry) { try { await pulse.commit(); } catch { /* счётчики не важнее приветствия */ } }
       }
     }
-    if (!chatId || message?.from?.is_bot) return { ignored: true };
+    if (!chatId) return { ignored: true };
+    // Ботов она не слушает — с двумя оговорками (0.54.2). Пост канала — не разговор, а провод (мост, будильник,
+    // дверь): его и пишут боты, а в канале, где под постом назван автор, Telegram кладёт этого бота в `from` («may be
+    // empty for messages sent to channels» — может и не быть пустым). До 0.54.2 такой пост отбрасывался здесь же,
+    // не дойдя ни до двери, ни до будильника. Вторая оговорка — конверт двери приложения в личном сообщении бота
+    // (docs/DOOR.md, «Пути»).
+    if (message?.from?.is_bot && message?.chat?.type !== "channel") {
+      if (appDoor.mine(message)) { if (!dry) await wake(ctx); return appDoor.onPost(message, { dry }); }
+      if (!dry) await appDoor.stray(message);
+      return { ignored: true };
+    }
+    // Конверт двери не от бота — не разговор: запомнить, что пришёл не тем путём, и промолчать.
+    if (!dry && message?.chat?.type !== "channel" && await appDoor.stray(message)) return { ignored: true, reason: "door" };
     // Письмо из личного чата хозяина сюда прийти не должно; пришло — это не разговор с ней.
     if (message?.business_connection_id) return { ignored: true, reason: "business" };
     const kind = senseOf(message);
@@ -8032,6 +8386,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           });
         } catch { /* отчёт не важнее ответа */ }
       };
+      // Канал двери приложения — отдельный провод: ни мосту, ни будильнику его посты не достаются.
+      if (appDoor.mine(message)) return appDoor.onPost(message, { dry });
+      if (!dry) await appDoor.stray(message);
       if (await events.onPost(text)) { await tidyUp(); return { ok: true, code: "event_handled" }; }
       const handled = await abilities.onPost(text);
       if (handled) { await tidyUp(); return { ok: true, code: "bridge_answer" }; }
@@ -8072,7 +8429,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   async function onCallback(query, ctx = {}) {
     const data = String(query?.data ?? "");
-    const route = data.startsWith("p:") ? "party" : data.startsWith("a:") ? "again" : data.startsWith("m:") ? "manner" : data.startsWith("r:") ? "bond" : data.startsWith("s:") ? "desk" : "none";
+    const route = data.startsWith("p:") ? "party" : data.startsWith("a:") ? "again" : data.startsWith("m:") ? "manner" : data.startsWith("r:") ? "bond" : data.startsWith("s:") ? "desk" : data.startsWith("h:") ? "room" : "none";
     if (ctx?.testRun === true) return { ok: true, route, side_effects: "none" };
     try {
       let result = { ignored: true };
@@ -8081,6 +8438,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       else if (route === "manner") result = await pressManner(query);
       else if (route === "bond") result = await fun.pressBond(query);
       else if (route === "desk") result = await pressDesk(query);
+      else if (route === "room") result = await pressRoom(query);
       else if (query?.id != null && has("answerCallbackQuery")) {
         try { await api.answerCallbackQuery({ callback_query_id: query.id }); } catch { /* устаревшее нажатие — не поломка */ }
       }
@@ -8164,7 +8522,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // по сообщению). Вторые убираются семейством; двоеточие после номера обязательно,
   // иначе чат -10 унёс бы с собой и чат -100.
   const CHAT_KEYS = ["heart:chat:", "heart:whisper:", "heart:question:", "heart:welcome:", "heart:again:", "heart:drew:", "heart:credit:", "heart:said:", "heart:thread:", "heart:daysum:", "heart:game:", "heart:advised:", "heart:factseen:", "heart:scene:", "heart:tired:told:"];
-  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:", "heart:knows:"];
+  const CHAT_FAMILIES = [LOG_PREFIX, "heart:trace:", "heart:quiet:", PARTY_PREFIX, "heart:riddle:", "heart:knows:", "heart:portrait:"];
   async function forgetChat(chatId) {
     for (const prefix of CHAT_KEYS) await store.remove(`${prefix}${chatId}`).catch(() => false);
     // Отрицательный срок — «всё, что есть», включая записанное в эту же секунду.
@@ -8330,13 +8688,25 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, `Я в ${items.length} ${plural(items.length, "чате", "чатах", "чатах")}:\n${lines.join("\n")}${items.length > 40 ? `\n…и ещё ${items.length - 40}.` : ""}`);
   }
 
+  /**
+   * Что с дверью приложения — на вопрос телефона после опыта (`bash scripts/phone.sh door` спрашивает само сердце
+   * через платформу; обновление из Telegram такого контекста не несёт). Заодно включает режим общения ботов.
+   */
+  async function doorState(ctx = {}) {
+    try { await appDoor.ready(); } catch { /* причина — в самой строке */ }
+    const self = await whoAmI().catch(() => null);
+    return appDoor.says({ name: self?.username ?? "", after: ctx?.after ?? null });
+  }
+
   return Object.freeze({
     onMessage,
     onCallback,
+    onRoom,
     onBusinessConnection,
     onBusinessMessage,
     onMyChatMember,
     tick,
+    doorState,
     status,
     reportCrash,
     reminders,

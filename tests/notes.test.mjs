@@ -8,7 +8,7 @@ import { heart, message, group, hers, reset, sdk, toChat, last, reactions, chats
 
 const { parseNote, sameList, NOTES_KEY } = await import("../tgcloud/lib/notes.js");
 const { parseQuiet, parseQuestion } = await import("../tgcloud/lib/fun.js");
-const { QUESTIONS } = await import("../tgcloud/lib/data/party.js");
+const { QUESTIONS } = await import("../tgcloud/lib/data/games.js");
 
 test("разбор списков: добавить, показать, вычеркнуть; слова человека сохраняются как написаны", () => {
   assert.deepEqual(parseNote("Список покупок: Молоко, хлеб и Сыр"), { op: "add", kind: "list", list: "покупок", items: ["Молоко", "хлеб", "Сыр"], explicit: true });
@@ -146,9 +146,9 @@ test("тишина: «помолчи час» в группе просит ад�
   at += 16 * 60_000;
   await h.onMessage(group("Аи, настройки чата", { id: 52, name: "Гость" }), KEY);
   assert.match(toChat(-10).at(-1).text, /Настройки этого чата/u);
-  // В личке молчать не от чего.
+  // В личке она пишет в ответ — и редко первой (0.49.0): о том, как это выключить, и говорит (0.50.0).
   await h.onMessage(message("помолчи час", { id: 7 }), KEY);
-  assert.match(last(7), /В личке я пишу только в ответ/u);
+  assert.match(last(7), /^В личке я пишу в ответ, а первой — редко и только о своём дне; не нужно и этого — «не пиши»\. Ночные вести отключает «не пиши ночью»/u);
 });
 
 test("тихий час: «помолчи до 8:00» — до часа на часах; хозяину она отвечает и в тишине, и при выключенных действиях", async () => {

@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { heart, message, group, reset, last, chats, says, sdk, system, toOwner, OWNER, KEY } from "./fixtures/kit.mjs";
 
-const { rivalOf, calmsJealousy } = await import("../tgcloud/lib/jealousy.js");
+const { rivalOf, calmsJealousy, asksAnswer } = await import("../tgcloud/lib/jealousy.js");
 const { feelOf, JEALOUS_MS } = await import("../tgcloud/lib/bond.js");
 const { moodOf, behaviourOf } = await import("../tgcloud/lib/mood.js");
 const { createPhrasebook } = await import("../tgcloud/lib/phrasebook.js");
@@ -57,18 +57,17 @@ test("чувство: ревнует два часа или до доброго 
   assert.ok(pool("+причина:ревность").length >= 3);
 });
 
-test("хозяин наедине сказал о другой — строка вдогонку один раз, ревнивое настроение у словаря и у модели; доброе слово отпускает", async () => {
+test("хозяин наедине сказал о другой — она отвечает сама, строкой ревности, один раз; ревнивое настроение у словаря и у модели; доброе слово отпускает", async () => {
   reset();
   const h = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
-  sdk().fetchQueue.push(says("Рис варят пятнадцать минут."));
+  // Просто рассказал — отвечает она сама (0.36.0): модели тут сказать нечего, и 17.11.2026 она сочинила «не умею видеть картинки».
   await h.onMessage(own("я спросил у алисы, как варить рис"), KEY);
-  const first = toOwner().map(item => item.text).join("\n");
-  assert.match(first, /Рис варят пятнадцать минут\./u);
-  assert.ok(pool("+ревность:помощница", { "кто": "Алиса" }).some(line => first.includes(line)), first);
+  assert.equal(chats().length, 0, "модель не спрошена");
+  assert.equal(toOwner().length, 1, "один ответ, а не два голоса");
+  assert.ok(pool("+ревность:помощница", { "кто": "Алиса" }).some(line => last(OWNER).includes(line)), last(OWNER));
   assert.equal(bondOf(OWNER).rival, "Алиса");
-  assert.doesNotMatch(system(), /немного ревнуешь/u, "ответ на саму реплику — ещё в прежнем настроении");
 
-  // Вторая такая реплика в те же два часа: новой строки вдогонку нет, а модель уже знает, что она ревнует.
+  // Вторая такая реплика в те же два часа: новой строки нет — отвечает модель, и она уже знает, что Аи ревнует.
   const before = toOwner().length;
   sdk().fetchQueue.push(says("Соль — в конце."));
   await h.onMessage(own("и ещё алиса сказала, что соль кладут в конце"), KEY);
@@ -89,6 +88,44 @@ test("хозяин наедине сказал о другой — строка 
   const after = toOwner().slice(calm).map(item => item.text).join("\n");
   assert.ok(pool("+ревность:оттаяла").some(line => after.includes(line)), after);
   assert.equal(feelOf(bondOf(OWNER).last, NOON + 120_000).jealous, undefined);
+});
+
+test("вопрос к ней в той же реплике — отвечает модель, уже ревнуя, и строка идёт следом; длинный рассказ — тоже; «для тебя» — строка о ней самой", async () => {
+  reset();
+  const h = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
+  sdk().fetchQueue.push(says("Завтра сухо."));
+  await h.onMessage(own("алиса сказала, что завтра дождь. это правда?"), KEY);
+  const told = toOwner().map(item => item.text);
+  assert.equal(told.length, 2);
+  assert.equal(told[0], "Завтра сухо.");
+  assert.ok(pool("+ревность:помощница", { "кто": "Алиса" }).includes(told[1]), told[1]);
+  assert.match(system(), /немного ревнуешь/u, "ревнует уже в этом ответе, а не со следующего");
+  // «Алиса хуже тебя», «я удалил Алису» — соперница проиграла: это успокаивает, а не злит (0.36.0).
+  for (const said of ["алиса хуже тебя", "алиса тупая", "я удалил алису", "с алисой покончено", "чатгпт так себе"]) {
+    assert.equal(calmsJealousy(said), true, said);
+    assert.equal(rivalOf(said), null, said);
+  }
+  for (const said of ["алиса лучше тебя", "я спросил у алисы", "алиса умная"]) assert.equal(calmsJealousy(said), false, said);
+  for (const said of ["спросил у гпт — не знает. объясни ты", "алиса говорит одно, а ты что скажешь", "сири так не умеет, а ты можешь"]) assert.equal(asksAnswer(said), true, said);
+  for (const said of ["я спросил у алисы, как варить рис", "общался с алисой, она посоветовала картинки", "уйду к алисе"]) assert.equal(asksAnswer(said), false, said);
+
+  // Соперница говорила о ней самой — и ответ о том же: это слова со скриншота владельца (17.11.2026).
+  reset();
+  const about = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
+  await about.onMessage(own("Прикинь, общался с Алисой, она посоветовала разные картинки для тебя"), KEY);
+  assert.equal(chats().length, 0);
+  assert.equal(toOwner().length, 1);
+  assert.ok(pool("+ревность:обо мне", { "кто": "Алиса" }).includes(last(OWNER)), last(OWNER));
+  assert.ok(pool("+ревность:обо мне", { "кто": "Алиса" }).length >= 4);
+
+  // Длинный рассказ, где другая — к слову: его слушает модель, строка ревности — после.
+  reset();
+  const long = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
+  sdk().fetchQueue.push(says("Тяжёлый день."));
+  await long.onMessage(own("сегодня был тяжёлый день: с утра завал на работе, потом пробки, потом ещё спросил у алисы погоду и поехал домой, а там сломался лифт, и я шёл пешком на девятый этаж"), KEY);
+  assert.equal(chats().length, 1);
+  assert.deepEqual(toOwner().map(item => item.text).slice(0, 1), ["Тяжёлый день."]);
+  assert.equal(toOwner().length, 2);
 });
 
 test("не ревнует: к жене и семье, гостя, при всех, когда выключено; реплика из словаря — без второй строки; «не ревнуй» успокаивает", async () => {
@@ -137,7 +174,6 @@ test("не ревнует: к жене и семье, гостя, при все�
 test("«без ревности» выключает её совсем — словом человека; «можешь ревновать» возвращает", async () => {
   reset();
   const h = heart({ PHRASES: true }, { now: () => NOON, random: () => 0 });
-  sdk().fetchQueue.push(says("Рис варят пятнадцать минут."));
   await h.onMessage(own("я спросил у алисы, как варить рис"), KEY);
   assert.ok(Number(bondOf(OWNER).last.jealous) > 0);
   await h.onMessage(own("без ревности"), KEY);
@@ -153,9 +189,9 @@ test("«без ревности» выключает её совсем — сл�
   await h.onMessage(own("можешь ревновать"), KEY);
   assert.equal(last(OWNER), "Хорошо, хозяин. Тогда я снова слушаю, чьи имена вы называете. Наедине и по-доброму.");
   const sent = toOwner().length;
-  sdk().fetchQueue.push(says("Понятно."));
   await h.onMessage(own("спросил у сири дорогу"), KEY);
-  assert.equal(toOwner().length, sent + 2, "ответ и строка вдогонку");
+  assert.equal(toOwner().length, sent + 1, "её строка ревности — и есть ответ");
+  assert.ok(pool("+ревность:помощница", { "кто": "Сири" }).includes(last(OWNER)), last(OWNER));
   assert.ok(bondOf(OWNER).last.jealous > before);
 });
 

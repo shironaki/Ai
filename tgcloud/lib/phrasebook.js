@@ -2,7 +2,9 @@
  * Словарный запас: разговор без модели.
  *
  * Фразы лежат в текстовом документе PHRASES.txt в корне проекта; из него
- * командой «npm run phrases» собирается data/phrases.js — его и читает сердце.
+ * командой «npm run phrases» собираются data/phrases-1.js и data/phrases-2.js —
+ * их и читает сердце. Модулей два, чтобы ни один не был слишком тяжёл для облака.
+ * В модулях текст упакован (`pack.js`: буква — один байт), здесь он распаковывается — один раз, при загрузке.
  * Модель на «привет», «как дела» и «какой твой любимый цвет» не тратится:
  * реплика узнаётся целиком, ответ берётся из каталога.
  *
@@ -11,10 +13,16 @@
  * модели; ошибка в сторону «не узнала» стоит одного запроса, ошибка в сторону
  * «узнала не то» стоит доверия.
  */
-import { SECTIONS } from "./data/phrases.js";
-import { EXCLUSIVES, clean } from "./catalogue.js";
+import { PART as FIRST } from "./data/phrases-1.js";
+import { PART as SECOND } from "./data/phrases-2.js";
+import { EXCLUSIVES, SKY_TAGS, clean } from "./catalogue.js";
+import { unpack } from "./pack.js";
+import { plainWords, squeezed } from "./slang.js";
 
 export { TAGS, parseCatalogue, expandTrigger } from "./catalogue.js";
+
+/** Весь словарь: темы в порядке документа. */
+export const SECTIONS = Object.freeze([...unpack(FIRST), ...unpack(SECOND)]);
 
 const LEAD = /^(?:ну|а|и|о|ой|эй|слушай|слушайте|кстати|так|ладно|блин|хм|эх|ах|вот|давай|скажи|скажите|ответь|ответьте|расскажи|расскажите)\s+(?=\S)/u;
 const TRAIL = /\s+(?:пожалуйста|плиз|пж|а|же|то|ж|вообще|сейчас|сегодня|там|мне|нам|ка|если не секрет|интересно)$/u;
@@ -78,21 +86,38 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
     }
     return null;
   }
+  // Запасной слой (0.36.0, `slang.js`): как написано — не нашлось; тогда «чо делаеш» читается как
+  // «что делаешь», а «привееет» — как «привет». Точное совпадение всегда первее: слой ничего не
+  // отнимает у выписанных фраз и ничего не угадывает «по похожести».
+  function loose(value) {
+    const plain = plainWords(value);
+    if (plain && plain !== value) {
+      const found = lookup(plain);
+      if (found) return found;
+    }
+    for (const candidate of squeezed(plain || value)) {
+      const again = plainWords(candidate);
+      const found = lookup(candidate) ?? (again && again !== candidate ? lookup(again) : null);
+      if (found) return found;
+    }
+    return null;
+  }
 
   /** Реплика целиком → названия тем по порядку, или null: это не из словаря. */
-  function match(text) {
+  function match(text, { strict = false } = {}) {
     const raw = String(text ?? "").trim();
     if (!raw || raw.length > 140) return null;
     const whole = clean(raw);
     if (!whole) return null;
-    const single = lookup(whole);
+    // `strict` — только как написано, без слоя опечаток: так спрашивают «знает ли словарь эту фразу сам».
+    const single = lookup(whole) ?? (strict ? null : loose(whole));
     if (single) return [single];
     // «Привет! Как дела?» — две темы подряд. Узнаны должны быть все части.
     const parts = raw.split(/[.!?;,]+|\s+[—–]\s+/u).map(clean).filter(Boolean);
     if (parts.length < 2 || parts.length > 3) return null;
     const names = [];
     for (const part of parts) {
-      const name = lookup(part);
+      const name = lookup(part) ?? (strict ? null : loose(part));
       if (!name) return null;
       if (names.at(-1) !== name) names.push(name);
     }
@@ -100,7 +125,9 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
   }
 
   const fits = (tag, ctx) => (
-    tag === "хозяин" ? ctx.owner === true
+    // Небо за её окном: пометка годится, только когда небо названо (в комнате) и оно такое.
+    Object.hasOwn(SKY_TAGS, tag) ? SKY_TAGS[tag].includes(ctx.sky)
+    : tag === "хозяин" ? ctx.owner === true
       : tag === "не хозяин" ? ctx.owner !== true
         : tag === "близко" ? ctx.owner === true || ctx.level === "close"
           : tag === "тепло" ? ctx.owner === true || ctx.level === "close" || ctx.level === "warm"
@@ -137,6 +164,24 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
     return pool.at(-1).text;
   }
 
+  /**
+   * Все строки запаса, годные этому человеку сейчас, — по одной на каждую (0.44.0): из них комната собирает
+   * распорядок, где у каждой реплики своя картинка. Отбор тот же, что у `pick`; порядок — как в словаре.
+   */
+  function all(name, ctx = {}) {
+    const section = byName.get(keyOf(name));
+    if (!section) return [];
+    let found = [];
+    for (const [tagText, body] of section.l) {
+      const tags = tagText ? tagText.split(",") : [];
+      if (!tags.every(tag => fits(tag, ctx))) continue;
+      const text = fill(body, ctx);
+      if (text) found.push({ text, exclusive: tags.some(tag => EXCLUSIVES.includes(tag)) });
+    }
+    if (found.some(item => item.exclusive)) found = found.filter(item => item.exclusive);
+    return [...new Set(found.map(item => item.text))];
+  }
+
   /** Все строки запаса как есть (для манер и канона): без пометок и подстановок имени. */
   function pool(name, ctx = {}) {
     const section = byName.get(keyOf(name));
@@ -160,5 +205,5 @@ export function createPhrasebook({ sections = SECTIONS, random = Math.random } =
     lines: sections.reduce((sum, section) => sum + section.l.length, 0),
   });
 
-  return Object.freeze({ match, pick, pool, say, stats, has: (name) => byName.has(keyOf(name)), names: () => [...byName.keys()] });
+  return Object.freeze({ match, pick, all, pool, say, stats, has: (name) => byName.has(keyOf(name)), names: () => [...byName.keys()] });
 }

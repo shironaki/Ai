@@ -297,7 +297,8 @@ test("memory survives between messages through the same store", async () => {
   const h = heart();
   // Знакомство одним сообщением («меня зовут Ли») она с 0.34.0 принимает сама, без модели; здесь нужен разговор.
   await h.onMessage(message("меня зовут Ли, а тебя как?"), KEY);
-  await h.onMessage(message("как меня зовут?"), KEY);
+  // «Как меня зовут?» она с 0.36.1 тоже отвечает сама; для истории нужна реплика, которая дойдёт до модели.
+  await h.onMessage(message("и что ты об этом думаешь?"), KEY);
   const body = JSON.parse(sdk().fetches.at(-1).options.body);
   assert.ok(body.messages.some(item => item.role === "assistant"), "the first answer is in history");
 });

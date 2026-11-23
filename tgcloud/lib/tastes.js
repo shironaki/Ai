@@ -10,7 +10,7 @@
  * Здесь разбор фраз и хранение. Что и когда сказать — решает сердце.
  */
 import { fold, knownCity } from "./sources.js";
-import { ANIMALS } from "./data/animals.js";
+import { ANIMALS } from "./data/games.js";
 
 export const TASTE_KEY = (userId) => `heart:tastes:${userId}`;
 /** Отдельная приставка: вопрос, на который она ждёт ответа, в копию души не идёт. */

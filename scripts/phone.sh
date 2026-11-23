@@ -14,6 +14,9 @@
 #   bash scripts/phone.sh once      один круг цикла — для cron и для тестов
 #   bash scripts/phone.sh events    спросить платформу, какие события она отдаёт
 #                                   (нужно для «секретаря»); ничего не публикует
+#   bash scripts/phone.sh door      дверь отдельного приложения (docs/DOOR.md): по
+#                                   шагам — бот двери, канал, ключ, публикация
+#                                   сердца с ключом, опыт; потом снова работает дом
 #
 # Ключи живут вне репозитория, в файле ~/.heart.env — строки «ИМЯ=значение»,
 # кавычки не нужны. Читаются один раз, при запуске. Подробно — docs/PHONE.md.
@@ -26,6 +29,10 @@
 #   KEY_TAVILY=…            поиск в интернете; ещё KEY_EXA и KEY_YOU — спрашиваются
 #                           в этом порядке, без ключей остаётся Википедия
 #   KEY_CLOUDFLARE=ID:токен  рисование и запасной мозг: ID аккаунта, двоеточие, токен
+#   KEY_DOOR=канал:секрет   дверь отдельного приложения (docs/DOOR.md): номер закрытого
+#                           канала двери, двоеточие, секрет от 32 знаков
+#   DOOR_BOT_TOKEN=…        токен бота двери — своего, от @BotFather: не Аи и не бота,
+#                           который живёт на сервере. Обе строки пишет «phone.sh door»
 #   HEART_BRANCH=…          за какой веткой следить (без строки — ветка, с
 #                           которой склонирована папка)
 #   ALARM_BOT_TOKEN=…       токен любого бота, кроме Аи, — минутный будильник
@@ -39,6 +46,13 @@
 #   ALARM_EVERY=60          период будильника через канал, секунд
 #   ALARM_RUN_EVERY=600     период будильника без второго бота, секунд
 #   HEART_RETRY_EVERY=3600  как часто повторять публикацию, не вышедшую трижды
+#   HEART_CALL_LIMIT=420    сколько секунд ждать ответа платформы на один запрос
+#   HEART_DOOR_WAIT=600     сколько секунд «door» ждёт, пока бота двери сделают
+#                           администратором канала
+#
+# В облако уходит не папка с Аи, а копия коммита (~/.heart/stage): в неё
+# вписываются ключи, из неё убираются комментарии (scripts/slim.mjs) — код легче
+# на пятую часть. Папка с Аи при публикации не меняется.
 #
 # Весь файл — одна функция: bash читает её целиком до запуска, поэтому
 # обновление самого скрипта из GitHub не ломает идущий процесс.
@@ -46,6 +60,8 @@ set -u
 
 main() {
   local MODE="${1:-run}"
+  # Второе слово режима «door» — токен нового бота двери (можно и без него: спросят).
+  local DOOR_ARG="${2:-}"
   # REPO, LIVE, LIVE_CLEAN, LOCK, LOCKED, NAP — не local: ими пользуется уборка
   # при выходе, а она срабатывает уже после main, когда local-переменных нет.
   local SELF
@@ -126,6 +142,11 @@ main() {
   local EVERY="${ALARM_EVERY:-60}"
   local RUN_EVERY="${ALARM_RUN_EVERY:-600}"
   local RETRY_EVERY="${HEART_RETRY_EVERY:-3600}"
+  # Сколько ждать ответа платформы на один запрос и сколько выждать перед повтором оборванного.
+  local CALL_LIMIT="${HEART_CALL_LIMIT:-420}" RETRY_PAUSE="${HEART_RETRY_PAUSE:-20}"
+  case "$CALL_LIMIT" in ''|*[!0-9]*) CALL_LIMIT=420 ;; esac
+  [ "$CALL_LIMIT" -lt 5 ] && CALL_LIMIT=5
+  case "$RETRY_PAUSE" in ''|*[!0-9]*) RETRY_PAUSE=20 ;; esac
   case "$SYNC_EVERY" in ''|*[!0-9]*) SYNC_EVERY=180 ;; esac
   case "$EVERY" in ''|*[!0-9]*) EVERY=60 ;; esac
   case "$RUN_EVERY" in ''|*[!0-9]*) RUN_EVERY=600 ;; esac
@@ -199,13 +220,28 @@ main() {
   # Инструмент ищет проект вверх по дереву — по папке .tgcloud — и работает из
   # найденного места. Своя такая папка прямо здесь (она в .gitignore) — и
   # чужая, оставшаяся где-нибудь выше, его не уведёт.
-  tg() { ( cd "$REPO" && mkdir -p .tgcloud && TGCLOUD_TOKEN="$TOKEN" node "$CLI" "$@" ) < /dev/null; }
+  # WORK — откуда он работает: при публикации это копия коммита, у удара через
+  # платформу — слепок опубликованного, в остальных случаях — сама папка.
+  # У каждого запроса предел времени: зависшее соединение иначе держит дом,
+  # пока его не бросит сама система (17.11.2026 — двадцать с лишним минут).
+  # Предел стоит внутри самого процесса: Ctrl+C доходит до него, как и раньше.
+  WORK=""
+  tg() {
+    local code
+    ( cd "${WORK:-$REPO}" && mkdir -p .tgcloud && TGCLOUD_TOKEN="$TOKEN" node --import "data:text/javascript,setTimeout(function(){process.exit(124)},${CALL_LIMIT}000).unref()" "$CLI" "$@" ) < /dev/null
+    code=$?
+    [ "$code" = 124 ] && echo "✗ Платформа не ответила за $CALL_LIMIT с — запрос снят."
+    return "$code"
+  }
   voice() { curl -sS --max-time 20 "$TG_API/$1" "${@:2}" 2>/dev/null; }
+  # Прежние версии скрипта вписывали ключи прямо в папку: после них остаётся уборка.
   restore() { git -C "$REPO" checkout -q -- tgcloud/lib/secrets.js 2>/dev/null; }
-  inject() { ( cd "$REPO" && node scripts/inject-secrets.mjs "$@" ) < /dev/null; }
+  inject() { ( cd "${WORK:-$REPO}" && node scripts/inject-secrets.mjs "$@" ) < /dev/null; }
 
   # Слово владельцу — от имени того же бота, что говорит в канал. Нет его —
-  # останется строка в журнале; об удачной публикации Аи пишет сама.
+  # останется строка в журнале; об удачной публикации Аи пишет сама. Весть
+  # начинается словом «Телефон»: 17.11.2026 владелец спросил, почему второй бот
+  # пишет ему про новую сборку, — из вести не было видно, кто говорит.
   tell_owner() {
     [ -n "$VOICE" ] && [ -n "${OWNER_TG_ID:-}" ] || return 0
     voice sendMessage -d "chat_id=${OWNER_TG_ID}" --data-urlencode "text=$1" > /dev/null
@@ -228,7 +264,7 @@ main() {
       local name
       for name in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
         case "$name" in
-          HEART_*|ALARM_*|TGCLOUD_*|KEY_*|AI_PROVIDER_KEY|AI_EXTRA_KEYS|OWNER_TG_ID) unset "$name" ;;
+          HEART_*|ALARM_*|TGCLOUD_*|KEY_*|DOOR_*|AI_PROVIDER_KEY|AI_EXTRA_KEYS|OWNER_TG_ID) unset "$name" ;;
         esac
       done
       npm run ci
@@ -282,17 +318,58 @@ main() {
   # в момент публикации. Нет слепка — этот телефон ещё ничего не публиковал,
   # и бить нечем.
   LIVE="$HOME_DIR/live"; LIVE_CLEAN="$HOME_DIR/live.secrets.js"
-  local NO_LIVE_SAID=0
+  local NO_LIVE_SAID=0 SLIM_SAYS=""
+  # Комментарии облаку не нужны, а весят пятую часть кода; инструмент же шлёт
+  # весь код одним запросом (scripts/slim.mjs — зачем и как). Нет скрипта в
+  # коммите (сборка до 0.36.3) — код уходит как есть. Итог — в SLIM_SAYS.
+  slim() {
+    SLIM_SAYS=""
+    [ -f "$1/scripts/slim.mjs" ] || return 0
+    local out
+    out="$( ( cd "$1" && node scripts/slim.mjs ) 2>&1 < /dev/null )" || { printf '%s\n' "$out"; return 1; }
+    SLIM_SAYS="$out"
+    printf '%s\n' "$out"
+  }
+  # Число из итога облегчения («body» — вес запроса репетиции) и байты словами.
+  slim_number() { printf '%s' "$SLIM_SAYS" | sed -n "s/.*\"$1\":\([0-9][0-9]*\).*/\1/p" | head -n 1; }
+  kb() { case "${1:-}" in ''|*[!0-9]*) echo "? КБ" ;; *) echo "$(( ($1 + 512) / 1024 )) КБ" ;; esac; }
   snapshot() {
     rm -rf "$LIVE.new" 2>/dev/null
     mkdir -p "$LIVE.new" || return 1
     if git -C "$REPO" archive "$1" tgcloud scripts package.json 2>/dev/null | tar -x -C "$LIVE.new" 2>/dev/null \
       && [ -f "$LIVE.new/tgcloud/handlers/message.js" ] && [ -f "$LIVE.new/tgcloud/lib/secrets.js" ] \
       && mkdir -p "$LIVE.new/.tgcloud"; then
+      slim "$LIVE.new" > /dev/null 2>&1 || true
       rm -rf "$LIVE" && mv "$LIVE.new" "$LIVE" && cp "$LIVE/tgcloud/lib/secrets.js" "$LIVE_CLEAN" && return 0
     fi
     rm -rf "$LIVE.new" 2>/dev/null
     return 1
+  }
+  # Копия для облака: чистый коммит, без комментариев; пустой файл ключей
+  # откладывается рядом — им копия закроется, когда станет слепком.
+  stage() {
+    unstage
+    mkdir -p "$STAGE" || return 1
+    # Настройки проекта для инструмента (tgcloud.jsonc) и страница мини-приложения
+    # (miniapp/) — если они есть в коммите.
+    local extra=""
+    git -C "$REPO" cat-file -e "$1:tgcloud.jsonc" 2>/dev/null && extra="tgcloud.jsonc"
+    git -C "$REPO" cat-file -e "$1:miniapp/index.html" 2>/dev/null && extra="$extra miniapp"
+    # shellcheck disable=SC2086
+    git -C "$REPO" archive "$1" tgcloud scripts package.json $extra 2>/dev/null | tar -x -C "$STAGE" 2>/dev/null || return 1
+    [ -f "$STAGE/tgcloud/handlers/message.js" ] && [ -f "$STAGE/tgcloud/lib/secrets.js" ] || { echo "в коммите нет tgcloud/handlers/message.js или tgcloud/lib/secrets.js"; return 1; }
+    mkdir -p "$STAGE/.tgcloud" || return 1
+    if ! slim "$STAGE"; then SLIM_SAYS=""; echo "Комментарии убрать не вышло: код уйдёт как есть."; fi
+    cp "$STAGE/tgcloud/lib/secrets.js" "$STAGE/.secrets.clean"
+  }
+  # Опубликованное становится слепком: удар через платформу и контрольная
+  # репетиция идут ровно тем кодом, что в боте, — и без ключей.
+  promote() {
+    [ -f "$STAGE/.secrets.clean" ] && [ -f "$STAGE/tgcloud/handlers/message.js" ] || return 1
+    cp "$STAGE/.secrets.clean" "$STAGE/tgcloud/lib/secrets.js" || return 1
+    rm -rf "$LIVE" 2>/dev/null
+    mv "$STAGE" "$LIVE" || return 1
+    mv "$LIVE/.secrets.clean" "$LIVE_CLEAN" 2>/dev/null || cp "$LIVE/tgcloud/lib/secrets.js" "$LIVE_CLEAN"
   }
   # Ключи в слепке — только на время удара.
   restore_live() {
@@ -302,6 +379,15 @@ main() {
 
   # ── один процесс на телефон ──────────────────────────────────────────────
   LOCK="$HOME_DIR/lock"; LOCKED=0; NAP=""
+  # Копия для облака (в ней на время публикации лежат ключи) и помощник, который
+  # бьёт в канал, пока идёт публикация: уборка при выходе знает обоих.
+  STAGE="$HOME_DIR/stage"; TICKER=""
+  unstage() { rm -rf "$STAGE" 2>/dev/null; return 0; }
+  ticker_off() {
+    [ -n "$TICKER" ] && { kill "$TICKER" 2>/dev/null; wait "$TICKER" 2>/dev/null; }
+    TICKER=""
+    return 0
+  }
   take_lock() {
     if mkdir "$LOCK" 2>/dev/null; then echo $$ > "$LOCK/pid"; LOCKED=1; return 0; fi
     local other
@@ -321,12 +407,13 @@ main() {
   leave() {
     [ -n "$NAP" ] && kill "$NAP" 2>/dev/null
     NAP=""
-    if [ "$LOCKED" = 1 ]; then restore; restore_live; fi
+    ticker_off
+    if [ "$LOCKED" = 1 ]; then restore; restore_live; unstage; fi
     drop_lock
   }
   # Замок взят — значит, других нет: ключи, оставшиеся в файлах после процесса,
   # который убили без предупреждения, убираются сразу.
-  enter() { take_lock || return 1; restore; restore_live; return 0; }
+  enter() { take_lock || return 1; restore; restore_live; unstage; return 0; }
   trap 'leave; exit 0' INT TERM
   trap 'leave' EXIT
 
@@ -334,6 +421,17 @@ main() {
   local PUBLISHED="$HOME_DIR/published" FAILED="$HOME_DIR/failed"
   published_commit() { sed -n '1p' "$PUBLISHED" 2>/dev/null; }
   published_build() { sed -n '2p' "$PUBLISHED" 2>/dev/null; }
+  # С каким ключом двери сердце опубликовано: не сам ключ, а его контрольная
+  # сумма — четвёртой строкой. По ней «door» видит, нужна ли новая публикация.
+  published_door() { sed -n '4p' "$PUBLISHED" 2>/dev/null; }
+  door_mark() {
+    local mark
+    [ -n "${KEY_DOOR:-}" ] || { echo "-"; return 0; }
+    mark="$(printf '%s' "$KEY_DOOR" | cksum 2>/dev/null | tr -s ' \t' '-')"
+    # Нет cksum — метка ни с чем не совпадёт, и публикация пройдёт заново: лишняя минута, а не закрытая дверь.
+    [ -n "$mark" ] || mark="без-суммы-$$-$(date +%s)"
+    echo "$mark"
+  }
   failed_commit() { sed -n '1p' "$FAILED" 2>/dev/null; }
   failed_count() { local n; n="$(sed -n '2p' "$FAILED" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; echo "$n"; }
   failed_at() { local n; n="$(sed -n '3p' "$FAILED" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; echo "$n"; }
@@ -378,17 +476,23 @@ main() {
     git -C "$REPO" checkout -q --detach "$remote" 2>/dev/null || { log "Не получилось перейти на $(short "$remote")."; return 1; }
     log "Пришёл коммит $(short "$remote"), сборка $(build_of)."
     after="$(git -C "$REPO" rev-parse -q --verify "HEAD:scripts/phone.sh" 2>/dev/null)"
-    if [ "$before" != "$after" ] && [ "$MODE" = "run" ]; then
+    if [ "$before" != "$after" ] && { [ "$MODE" = "run" ] || [ "$MODE" = "door" ]; }; then
       log "Сам скрипт обновился — перезапускаюсь."
       leave
       trap - EXIT INT TERM
+      # Дверь продолжает дверью — с тем же словом после «door», если оно было.
+      [ "$MODE" = "door" ] && exec bash "$SELF" door ${DOOR_ARG:+"$DOOR_ARG"}
       exec bash "$SELF" run
     fi
     return 0
   }
 
   # ── публикация ───────────────────────────────────────────────────────────
-  local WHY="" LACK_SAID=""
+  local WHY="" LACK_SAID="" CAUSE="" CLOUD_SAID=0
+  # Ответ последнего шага — отдельным файлом: по нему видно, что именно не вышло.
+  local STEP_OUT="$HOME_DIR/step.out"
+  # Какой коммит уже прошёл тесты на этом телефоне и с какого коммита нет связи с платформой.
+  local TESTED="$HOME_DIR/tested" WAITING="$HOME_DIR/waiting"
   # Чего не хватает, чтобы публиковать; пусто — всё на месте. Попыткой это не
   # считается: чинится не новым коммитом, а строкой в файле ключей.
   lacking() {
@@ -400,17 +504,130 @@ main() {
     return 0
   }
   step() {
-    local title="$1"; shift
+    local title="$1" code; shift
     printf '\n== %s ==\n' "$title" >> "$DEPLOY_LOG"
-    if "$@" >> "$DEPLOY_LOG" 2>&1; then return 0; fi
+    "$@" > "$STEP_OUT" 2>&1; code=$?
+    cat "$STEP_OUT" >> "$DEPLOY_LOG" 2>/dev/null
+    [ "$code" = 0 ] && return 0
     WHY="$title"
     return 1
   }
-  # Почему шаг не вышел, если это видно по журналу: связь, токен — или сам код.
+  # Передача оборвалась или платформа не ответила в срок — а не «код плох».
+  cut_off() { grep -Eq "Could not reach|не ответила за" "$STEP_OUT" 2>/dev/null; }
+  # Шаг, который можно повторить без вреда (репетиция ничего не меняет): обрыв
+  # бывает минутным, и один повтор дешевле новой попытки целиком.
+  retry_step() {
+    step "$@" && return 0
+    cut_off || return 1
+    sleep "$RETRY_PAUSE"
+    printf '\n(обрыв — повторяю шаг)\n' >> "$DEPLOY_LOG"
+    step "$@"
+  }
+  # Почему не вышла публикация, если это видно по ответу: связь или токен.
   hint() {
-    if grep -q "Could not reach" "$DEPLOY_LOG" 2>/dev/null; then echo " Причина: нет связи с платформой Telegram."
-    elif grep -q "TGCLOUD_TOKEN" "$DEPLOY_LOG" 2>/dev/null; then echo " Причина: платформа не приняла токен публикации."
+    if cut_off; then echo " Причина: нет связи с платформой Telegram."
+    elif grep -q "TGCLOUD_TOKEN" "$STEP_OUT" 2>/dev/null; then echo " Причина: платформа не приняла токен публикации."
     fi
+  }
+  # Ключи на экран не попадают: в строке, которая печатается, их значения заменены.
+  scrub() {
+    local line name value
+    while IFS= read -r line || [ -n "$line" ]; do
+      for name in TGCLOUD_HEART_TOKEN AI_PROVIDER_KEY ALARM_BOT_TOKEN AI_EXTRA_KEYS $(env | sed -n 's/^\(KEY_[A-Za-z0-9_]*\)=.*/\1/p'); do
+        value="${!name:-}"
+        [ "${#value}" -ge 6 ] && line="${line//"$value"/***}"
+        value="${value#*:}"
+        [ "${#value}" -ge 6 ] && line="${line//"$value"/***}"
+      done
+      # Запасные ключи одной строкой JSON: каждое значение в кавычках — тоже ключ.
+      for value in $(printf '%s' "${AI_EXTRA_KEYS:-}" | grep -o '"[^"]\{6,\}"' | tr -d '"'); do line="${line//"$value"/***}"; done
+      printf '%s\n' "$line"
+    done
+  }
+  # Что ответила платформа — на экран: по этим строкам видно, в чём дело, без
+  # похода в журнал. Адрес вебхука и ключи не печатаются.
+  # Файл ответа — первым словом; без него — ответ последнего шага.
+  show_error() {
+    local file="${1:-$STEP_OUT}" line
+    [ -f "$file" ] || return 0
+    sed $'s/\033\\[[0-9;]*m//g' "$file" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -v -E '://|^[[:space:]]*(expected[[:space:]]+)?url:' | tail -n 4 | scrub | while IFS= read -r line; do log "   ${line:0:300}"; done
+  }
+  # Главная строка ответа платформы — для вести владельцу: последняя, где есть слово об отказе («Error», «✗»,
+  # «limit», «too many»…), а нет такой — просто последняя. Без цвета, адресов и ключей; не длиннее 240 знаков.
+  last_word() {
+    local file="${1:-$STEP_OUT}" text line
+    [ -f "$file" ] || return 0
+    text="$(sed $'s/\033\\[[0-9;]*m//g' "$file" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -v -E '://|^[[:space:]]*(expected[[:space:]]+)?url:')"
+    line="$({ printf '%s\n' "$text" | grep -E -i 'error|✗|✖|refus|reject|denied|invalid|limit|too (many|large)' | tail -n 1; printf '%s\n' "$text" | tail -n 1; } | head -n 1 | scrub)"
+    # Пробелы по краям — прочь: строка встанет в кавычки посреди предложения.
+    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
+    printf '%s' "${line:0:240}"
+  }
+  # Малый запрос к платформе: есть ли связь и принят ли токен. Кода он не шлёт.
+  # 0 — да; 1 — связи нет; 2 — токен не принят; 3 — платформа ответила иначе.
+  reach() {
+    local out code
+    out="$(tg webhook 2>&1)"; code=$?
+    # Адрес вебхука в журнал не пишется (строки «url:» и «expected url:»); остальное — как есть.
+    printf '%s\n' "$out" | grep -v -i -E '^[[:space:]]*(expected[[:space:]]+)?url:' >> "$DEPLOY_LOG" 2>/dev/null
+    [ "$code" = 0 ] && return 0
+    case "$out" in
+      *"Could not reach"*|*"не ответила за"*) return 1 ;;
+      *"TGCLOUD_TOKEN"*) return 2 ;;
+    esac
+    return 3
+  }
+  # Связи с платформой нет: это не неудача сборки — ни тестов, ни счёта попыток.
+  # В журнал — один раз; владельцу — если связи нет уже четверть часа.
+  no_cloud() {
+    local head="$1" first told now
+    [ "$CLOUD_SAID" = 0 ] && log "Платформа Telegram (cloud.telegram.org) не отвечает — публикация подождёт связи. Бот на прежней сборке."
+    CLOUD_SAID=1
+    now="$(date +%s)"
+    if [ "$(sed -n '1p' "$WAITING" 2>/dev/null)" != "$head" ]; then printf '%s\n%s\n0\n' "$head" "$now" > "$WAITING"; return 0; fi
+    first="$(sed -n '2p' "$WAITING" 2>/dev/null)"; told="$(sed -n '3p' "$WAITING" 2>/dev/null)"
+    case "$first" in ''|*[!0-9]*) first="$now" ;; esac
+    if [ "$told" != 1 ] && [ $((now - first)) -ge 900 ]; then
+      printf '%s\n%s\n1\n' "$head" "$first" > "$WAITING"
+      tell_owner "⚠️ Телефон: сборку $(build_of) пока не опубликовать — уже четверть часа нет связи с платформой Telegram. Повторю сам, когда связь вернётся. Аи пока на прежней сборке."
+    fi
+    return 0
+  }
+  # Контрольная репетиция: тот же запрос, но кодом, который уже в боте (слепок).
+  # Она отвечает на вопрос «берёт ли платформа сейчас хоть какой-то код».
+  # 0 — прошла; 1 — нет; 2 — слепка нет, проверить нечем.
+  control() {
+    [ -f "$LIVE/tgcloud/handlers/message.js" ] && [ -f "$LIVE/scripts/inject-secrets.mjs" ] || return 2
+    local out code
+    ( cd "$LIVE" && node scripts/inject-secrets.mjs ) > /dev/null 2>&1 < /dev/null
+    out="$(WORK="$LIVE" tg run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }' 2>&1)"; code=$?
+    restore_live
+    printf '%s\n' "$out" >> "$DEPLOY_LOG" 2>/dev/null
+    [ "$code" = 0 ]
+  }
+  # Почему не вышла отправка кода. Оборвалась передача — телефон выясняет сам:
+  # малый запрос (есть ли связь), затем контрольная репетиция опубликованной
+  # сборки (берёт ли платформа прежний код). Причина словами — в CAUSE.
+  # 2 — связи нет: это не неудача сборки; 1 — всё остальное.
+  diagnose() {
+    CAUSE=""
+    if grep -q "TGCLOUD_TOKEN" "$STEP_OUT" 2>/dev/null; then CAUSE="платформа не приняла токен публикации"; return 1; fi
+    cut_off || return 1
+    local sent=""
+    [ -n "$SLIM_SAYS" ] && sent=" ($(kb "$(slim_number body)"))"
+    printf '\n== после обрыва: связь с платформой ==\n' >> "$DEPLOY_LOG"
+    reach
+    if [ $? = 1 ]; then CAUSE="нет связи с платформой Telegram"; return 2; fi
+    # Оборвалась не отправка кода, а другой запрос (состояние облака): сравнивать сборки незачем.
+    case "$WHY" in репетиция*) ;; *) CAUSE="связь есть, но этот запрос платформа оборвала"; return 1 ;; esac
+    printf '\n== после обрыва: контрольная репетиция опубликованной сборки ==\n' >> "$DEPLOY_LOG"
+    control
+    case $? in
+      0) CAUSE="связь есть, и прежняя сборка в облаке репетируется, а эта$sent — нет: дело в самой сборке" ;;
+      1) CAUSE="связь есть, но платформа сейчас обрывает отправку любого кода — и прежней сборки тоже: дело не в этой сборке" ;;
+      *) CAUSE="связь есть, а отправку кода$sent платформа обрывает" ;;
+    esac
+    return 1
   }
   # Каких событий нет в подписке бота, хотя обработчик для них опубликован.
   WEBHOOK_MISSING=""
@@ -429,7 +646,7 @@ main() {
     # Строки такой в ответе нет — проверять нечего, и тревоги нет.
     words="$(printf '%s\n' "$out" | sed "s/$(printf '\033')\[[0-9;]*m//g" | sed -n 's/^[[:space:]]*allowed updates:[[:space:]]*//p' | head -n 1 | tr ',' ' ')"
     if [ -n "$words" ]; then
-      for file in "$REPO"/tgcloud/handlers/*.js; do
+      for file in "${WORK:-$REPO}"/tgcloud/handlers/*.js; do
         [ -f "$file" ] || continue
         name="$(basename "$file" .js)"
         case "$name" in _*) continue ;; esac
@@ -439,19 +656,108 @@ main() {
     fi
     return 0
   }
+  # Мини-приложение «Комната» — надстройка над ботом: что бы с ним ни вышло,
+  # сам бот публикуется. APP — функция комнаты прошла репетицию и уходит вместе
+  # с кодом; APP_WHY — почему мини-приложения в этой публикации нет (пусто —
+  # всё на месте); PAGE_URL — адрес страницы, каким его назвала платформа.
+  local APP=0 APP_WHY="" PAGE_URL=""
+  # Адрес страницы знает только платформа: инструмент кладёт её ответ в
+  # .tgcloud/static.json копии. В адрес попадают только безопасные знаки — он
+  # уходит сердцу внутри строки настроек.
+  page_url() {
+    local url
+    url="$(sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${WORK:-$REPO}/.tgcloud/static.json" 2>/dev/null | head -n 1)"
+    case "$url" in https://*) ;; *) return 0 ;; esac
+    case "$url" in *[!A-Za-z0-9._~:/-]*) return 0 ;; esac
+    [ "${#url}" -le 200 ] || return 0
+    printf '%s' "$url"
+  }
+  # Комната не идёт — её функции в копии для облака не место: инструмент
+  # проверяет все модули копии, а не только отправляемые. Бот важнее комнаты.
+  drop_room() { rm -rf "$STAGE/tgcloud/endpoints" 2>/dev/null; return 0; }
+  # Лишние модули облака (0.49.1). Отправка с целями («push handlers lib schema») из облака ничего не убирает:
+  # модуль, удалённый или переименованный в коде, остаётся там навсегда. Так с 0.36.3 в облаке лежал прежний
+  # словарь (lib/data/phrases), счёт модулей дошёл до ста, и сборка 0.49.0 — с двумя новыми — публиковаться
+  # перестала: репетиции проходили, а отправку платформа не принимала. Что дело в числе модулей — вывод из
+  # совпадения чисел, ответа платформы никто не видел (docs/JOURNAL.md, «Сообщение 50»).
+  # Что хранит платформа, видно после шага «состояние облака»: инструмент кладёт слепок облака в .tgcloud/remote
+  # копии, модуль «lib/x» — файлом lib/x.js. CLOUD_COUNT — сколько модулей в облаке; STALE — те из них, которых в
+  # копии коммита нет; LOCAL_COUNT — сколько модулей в самой копии; MIRROR=1 — отправка пойдёт без целей и
+  # уберёт лишние.
+  local CLOUD_COUNT="" LOCAL_COUNT="" STALE="" MIRROR=0 APP_WORD=""
+  local PUSH_OUT="$HOME_DIR/push.out"
+  cloud_modules() {
+    CLOUD_COUNT=""; LOCAL_COUNT=""; STALE=""
+    local remote="$STAGE/.tgcloud/remote" path
+    [ -d "$remote" ] || return 0
+    CLOUD_COUNT=0
+    LOCAL_COUNT="$(find "$STAGE/tgcloud" -type f -name '*.js' 2>/dev/null | wc -l | tr -d ' ')"
+    # Имена модулей — латиница, цифры, «_», «-» и «/»: пробелов в них нет, цикл по словам безопасен.
+    # shellcheck disable=SC2044
+    for path in $(cd "$remote" 2>/dev/null && find . -type f -name '*.js' 2>/dev/null | sed 's#^\./##' | sort); do
+      CLOUD_COUNT=$((CLOUD_COUNT + 1))
+      [ -f "$STAGE/tgcloud/$path" ] && continue
+      # Функцию комнаты из копии убрал сам скрипт (не прошла репетицию): в облаке она не «лишняя».
+      case "$path" in endpoints/*) [ -d "$STAGE/tgcloud/endpoints" ] || continue ;; esac
+      STALE="${STALE:+$STALE }${path%.js}"
+    done
+    return 0
+  }
+  # Имена через запятую, не больше шести: остальные — числом.
+  few() {
+    local all=$# shown=""
+    while [ $# -gt 0 ] && [ $((all - $#)) -lt 6 ]; do shown="${shown:+$shown, }$1"; shift; done
+    [ $# -gt 0 ] && shown="$shown и ещё $#"
+    printf '%s' "$shown"
+  }
+  # Отправка кода. Лишнего в облаке нет — как всегда, с целями: страница при этом не трогается. Лишнее есть —
+  # без целей: только такая отправка убирает из облака то, чего нет в копии (так устроен инструмент: «a full push
+  # deletes remote modules that are absent locally»). Без целей инструмент отправил бы заодно и страницу комнаты,
+  # а она идёт отдельным шагом и бота держать не должна, — поэтому настройки проекта (tgcloud.jsonc, из них
+  # инструмент узнаёт о странице) на время этой отправки из копии убираются: без них страница не трогается.
+  # Запасные пути после неудачи идут мимо этой функции — прежней отправкой с целями (`publish_steps`).
+  push_code() {
+    [ "$MIRROR" = 1 ] || { tg push "$@"; return $?; }
+    local code name hidden=""
+    for name in tgcloud.jsonc tgcloud.json; do
+      [ -f "$STAGE/$name" ] && mv "$STAGE/$name" "$STAGE/$name.off" 2>/dev/null && hidden="$hidden $name"
+    done
+    tg push; code=$?
+    for name in $hidden; do mv "$STAGE/$name.off" "$STAGE/$name" 2>/dev/null; done
+    return "$code"
+  }
+  # Отправку кода платформа не приняла. Её слова — на экран и владельцу: до 0.49.1 они оставались только в
+  # журнале телефона, и по снимку экрана причину было не узнать (сообщение 50). Связь или токен — как раньше.
+  refused() {
+    local why word counts=""
+    why="$(hint)"
+    if [ -n "$why" ]; then log "✗ Публикация не прошла.$why Подробности: $DEPLOY_LOG"; return 0; fi
+    log "✗ Публикация не прошла: платформа не приняла код. Подробности: $DEPLOY_LOG"
+    show_error "$PUSH_OUT"
+    [ -z "$CLOUD_COUNT" ] || counts=" Модулей в коммите: $LOCAL_COUNT, в облаке до отправки: $CLOUD_COUNT."
+    [ -z "$counts" ] || log "  $counts"
+    word="$(last_word "$PUSH_OUT")"
+    WHY="платформа не приняла код"
+    [ -z "$word" ] || WHY="$WHY. Её ответ: «$word»"
+    WHY="$WHY.$counts Перешлите эту строку в чат разработки"
+    return 0
+  }
   wake_new_build() {
-    local out
-    out="$(tg run handlers/message '{}' --ctx '{ tick: true, deployed: true }' 2>&1)"
+    local out ctx='{ tick: true, deployed: true }'
+    # Адрес страницы комнаты сердце узнаёт отсюда: по нему ставятся кнопки.
+    [ -z "$PAGE_URL" ] || ctx="{ tick: true, deployed: true, page: \"$PAGE_URL\" }"
+    out="$(tg run handlers/message '{}' --ctx "$ctx" 2>&1)"
     printf '%s\n' "$out"
     printf '%s' "$out" | grep -Eq "ok: ?true"
   }
 
-  # 0 — опубликовано; 1 — попытка не вышла; 2 — не хватает настроек, попытки
-  # не было.
-  publish() {
-    local head build lack
+  # 0 — опубликовано; 1 — попытка не вышла; 2 — попытки не было: не хватает
+  # настроек или нет связи с платформой.
+  publish_steps() {
+    local head build lack kind
     head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)"; build="$(build_of)"
-    WHY=""
+    WHY=""; CAUSE=""; WORK=""; APP=0; APP_WHY=""; PAGE_URL=""; CLOUD_COUNT=""; LOCAL_COUNT=""; STALE=""; MIRROR=0; APP_WORD=""
+    rm -f "$PUSH_OUT" 2>/dev/null
     lack="$(lacking)"
     if [ -n "$lack" ]; then
       [ "$lack" = "$LACK_SAID" ] || log "✗ Публикации нет, бот на прежней сборке: $lack."
@@ -461,59 +767,183 @@ main() {
     LACK_SAID=""
     ensure_cli || { WHY="инструмент публикации не поставился"; return 2; }
     : > "$DEPLOY_LOG"
+    # Сначала — малый запрос: есть ли связь с платформой. Нет — тесты гонять
+    # незачем, и сборка в этом не виновата.
+    printf '\n== связь с платформой ==\n' >> "$DEPLOY_LOG"
+    reach
+    case $? in
+      1) no_cloud "$head"; WHY="нет связи с платформой Telegram"; return 2 ;;
+      2) log "✗ Публикации нет, бот на прежней сборке. Причина: платформа не приняла токен публикации."; WHY="платформа не приняла токен публикации"; return 1 ;;
+    esac
+    CLOUD_SAID=0
+    rm -f "$WAITING"
     log "Публикую сборку $build ($(short "$head"))…"
     if [ "$TESTS" = "on" ]; then
-      log "Проверяю сборку тестами — на телефоне это несколько минут."
-      if ! run_tests; then
-        WHY="тесты"
-        log "✗ Тесты не прошли — публикации нет, бот на прежней сборке. Журнал: $TEST_LOG"
-        # Какие именно и почему — сразу на экран: по этим строкам видно, код
-        # это или телефон. Не тесты, а что-то раньше них — хвост журнала.
-        local reasons
-        reasons="$(why_tests)"
-        [ -n "$reasons" ] || reasons="$(grep -v '^[[:space:]]*$' "$TEST_LOG" 2>/dev/null | tail -n 5)"
-        printf '%s\n' "$reasons" | while IFS= read -r line; do log "   $line"; done
-        log "   Если дело в самом телефоне, а не в коде: строка HEART_TESTS=off в $ENV_FILE."
-        return 1
+      # Тесты одного коммита на одном телефоне дают один и тот же ответ: второй раз их гонять незачем.
+      if [ "$(sed -n '1p' "$TESTED" 2>/dev/null)" = "$head" ]; then
+        log "Тесты этой сборки здесь уже прошли — второй раз не гоняю."
+      else
+        log "Проверяю сборку тестами — на телефоне это несколько минут."
+        if ! run_tests; then
+          WHY="тесты"
+          log "✗ Тесты не прошли — публикации нет, бот на прежней сборке. Журнал: $TEST_LOG"
+          # Какие именно и почему — сразу на экран: по этим строкам видно, код
+          # это или телефон. Не тесты, а что-то раньше них — хвост журнала.
+          local reasons
+          reasons="$(why_tests)"
+          [ -n "$reasons" ] || reasons="$(grep -v '^[[:space:]]*$' "$TEST_LOG" 2>/dev/null | tail -n 5)"
+          printf '%s\n' "$reasons" | while IFS= read -r line; do log "   $line"; done
+          log "   Если дело в самом телефоне, а не в коде: строка HEART_TESTS=off в $ENV_FILE."
+          return 1
+        fi
+        printf '%s\n' "$head" > "$TESTED"
       fi
     fi
-    if ! step "ключи" inject --require-key; then restore; log "✗ Нет ключа модели (AI_PROVIDER_KEY) в $ENV_FILE."; return 1; fi
+    # В облако уходит копия коммита — без комментариев и с ключами. Папка с Аи не меняется.
+    if ! step "копия для облака" stage "$head"; then
+      WHY="копия кода для облака не собралась"
+      log "✗ Не прошло: $WHY — публикации нет, бот на прежней сборке. Подробности: $DEPLOY_LOG"
+      return 1
+    fi
+    WORK="$STAGE"
+    if [ -n "$SLIM_SAYS" ]; then log "Код для облака: $(kb "$(slim_number body)") одним запросом (с комментариями было бы $(kb "$(slim_number bodyBefore)"))."
+    elif [ -f "$STAGE/scripts/slim.mjs" ]; then log "Комментарии из кода убрать не вышло — отправляю как есть. Подробности: $DEPLOY_LOG"; fi
+    # Страница комнаты уходит тоже без комментариев (0.51.0): scripts/slim.mjs облегчает её в той же копии.
+    # Не вышло — она уйдёт как лежит: бота это не держит.
+    if [ -n "$(slim_number page)" ] && [ "$(slim_number page)" != "$(slim_number pageBefore)" ]; then log "Страница комнаты: $(kb "$(slim_number page)") без картинок (с комментариями было бы $(kb "$(slim_number pageBefore)"))."; fi
+    case "$SLIM_SAYS" in *'"pageError"'*) log "Комментарии из страницы комнаты убрать не вышло — она уйдёт как лежит. Подробности: $DEPLOY_LOG" ;; esac
+    if ! step "ключи" inject --require-key; then WHY="нет ключа модели"; log "✗ Нет ключа модели (AI_PROVIDER_KEY) в $ENV_FILE."; return 1; fi
     # Репетиция в облаке: код там не собирается — живой бот не тронут.
-    step "репетиция: сообщение" tg run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }' \
-      && step "репетиция: пост канала" tg run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }' \
-      && { [ ! -f "$REPO/tgcloud/handlers/callback_query.js" ] || step "репетиция: кнопка" tg run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'; } \
-      && { [ ! -f "$REPO/tgcloud/handlers/business_connection.js" ] || step "репетиция: подключение секретаря" tg run handlers/business_connection '{ id: "x", user: { id: 1 }, user_chat_id: 1, is_enabled: true }' --ctx '{ testRun: true }'; } \
-      && { [ ! -f "$REPO/tgcloud/handlers/business_message.js" ] || step "репетиция: письмо секретарю" tg run handlers/business_message '{ business_connection_id: "x", chat: { id: 1, type: "private" }, from: { id: 1 }, text: "hi" }' --ctx '{ testRun: true }'; } \
-      && { [ ! -f "$REPO/tgcloud/handlers/my_chat_member.js" ] || step "репетиция: её добавили в чат" tg run handlers/my_chat_member '{ chat: { id: -1, type: "supergroup", title: "x" }, from: { id: 1 }, old_chat_member: { status: "left" }, new_chat_member: { status: "member" } }' --ctx '{ testRun: true }'; } \
-      && step "состояние облака" tg fetch \
-      || { restore; log "✗ Не прошло: $WHY — публикации нет, бот на прежней сборке.$(hint) Подробности: $DEPLOY_LOG"; return 1; }
-    if ! step "публикация" tg push handlers lib schema; then
-      restore; log "✗ Публикация не прошла.$(hint) Подробности: $DEPLOY_LOG"; return 1
+    retry_step "репетиция: сообщение" tg run handlers/message '{ chat: { id: 1, type: "private" }, from: { id: 1 }, text: "/start" }' --ctx '{ testRun: true }' \
+      && retry_step "репетиция: пост канала" tg run handlers/channel_post '{ chat: { id: -1, type: "channel" }, text: "tick" }' --ctx '{ testRun: true }' \
+      && { [ ! -f "$STAGE/tgcloud/handlers/callback_query.js" ] || retry_step "репетиция: кнопка" tg run handlers/callback_query '{ id: "1", from: { id: 1 }, data: "noop" }' --ctx '{ testRun: true }'; } \
+      && { [ ! -f "$STAGE/tgcloud/handlers/business_connection.js" ] || retry_step "репетиция: подключение секретаря" tg run handlers/business_connection '{ id: "x", user: { id: 1 }, user_chat_id: 1, is_enabled: true }' --ctx '{ testRun: true }'; } \
+      && { [ ! -f "$STAGE/tgcloud/handlers/business_message.js" ] || retry_step "репетиция: письмо секретарю" tg run handlers/business_message '{ business_connection_id: "x", chat: { id: 1, type: "private" }, from: { id: 1 }, text: "hi" }' --ctx '{ testRun: true }'; } \
+      && { [ ! -f "$STAGE/tgcloud/handlers/my_chat_member.js" ] || retry_step "репетиция: её добавили в чат" tg run handlers/my_chat_member '{ chat: { id: -1, type: "supergroup", title: "x" }, from: { id: 1 }, old_chat_member: { status: "left" }, new_chat_member: { status: "member" } }' --ctx '{ testRun: true }'; } \
+      && retry_step "состояние облака" tg fetch \
+      || {
+        diagnose; kind=$?
+        # Связь пропала посреди отправки — это тоже не неудача сборки: тесты уже пройдены, повтор будет скорым.
+        if [ "$kind" = 2 ]; then no_cloud "$head"; WHY="нет связи с платформой Telegram"; return 2; fi
+        if [ -n "$CAUSE" ]; then
+          log "✗ Не прошло: $WHY — публикации нет, бот на прежней сборке. Причина: $CAUSE. Подробности: $DEPLOY_LOG"
+          WHY="$WHY. Причина: $CAUSE"
+        else
+          log "✗ Не прошло: $WHY — публикации нет, бот на прежней сборке. Подробности: $DEPLOY_LOG"
+          show_error
+        fi
+        return 1
+      }
+    # Функция комнаты (её зовёт страница мини-приложения) — мягкая репетиция:
+    # обрыв связи — как у прочих репетиций, а отказ платформы оставляет комнату
+    # словами и публикации не мешает.
+    if [ -f "$STAGE/tgcloud/endpoints/room.js" ]; then
+      if retry_step "репетиция: комната" tg run endpoints/room '{ do: "look" }' --ctx '{ testRun: true }'; then
+        APP=1
+      elif cut_off; then
+        no_cloud "$head"; WHY="нет связи с платформой Telegram"; return 2
+      else
+        APP_WHY="функция комнаты не прошла репетицию в облаке"; WHY=""
+        drop_room
+      fi
+    fi
+    local targets="handlers lib schema"
+    [ "$APP" = 1 ] && targets="$targets endpoints"
+    # Что платформа хранит сверх коммита. Есть лишнее — отправка пойдёт без целей и уберёт его.
+    cloud_modules
+    if [ -n "$STALE" ]; then
+      MIRROR=1
+      # shellcheck disable=SC2086
+      log "В облаке модулей: $CLOUD_COUNT, из них лишних (в коде их уже нет): $(set -- $STALE; echo $#) — $(few $STALE). Убираю их этой публикацией."
+    fi
+    local stale_word=""
+    # shellcheck disable=SC2086
+    if ! step "публикация" push_code $targets; then
+      # Ответ на первую отправку — главный: остальные — запасные пути.
+      cp "$STEP_OUT" "$PUSH_OUT" 2>/dev/null
+      # Запасные пути — прежние, с целями: что бы ни вышло с отправкой без целей, скрипт публикует не хуже, чем до
+      # 0.49.1. Сначала — как всегда, с функцией комнаты (лишнее тогда остаётся в облаке до следующего раза); не
+      # вышло — без неё: бот важнее комнаты. Пропала связь — запасные пути не при чём.
+      # shellcheck disable=SC2086
+      if [ "$MIRROR" = 1 ] && ! cut_off && step "публикация с целями" tg push $targets; then
+        stale_word="$(last_word "$PUSH_OUT")"; WHY=""
+      elif [ "$APP" = 1 ] && ! cut_off && drop_room && step "публикация без комнаты" tg push handlers lib schema; then
+        APP=0; APP_WHY="платформа не приняла функцию комнаты"; WHY=""; APP_WORD="$(last_word "$PUSH_OUT")"
+      else
+        refused; return 1
+      fi
     fi
     # С этой строки новый код уже в боте: дальнейшие неудачи — не «откат».
     local warn=""
-    step "схема базы" tg migrate --yes || warn="схема базы не применилась"
+    # Лишнее из облака убрать не вышло, а обычная отправка прошла: бот на новой сборке, но счёт модулей в облаке
+    # прежний — об этом должен узнать тот, кто пишет код.
+    if [ -n "$stale_word" ]; then
+      warn="лишние модули из облака убрать не вышло (ответ платформы: «$stale_word»); перешлите эту строку в чат разработки"
+    fi
+    step "схема базы" tg migrate --yes || warn="${warn:+$warn; }схема базы не применилась"
     step "вебхук" webhook_check || true
     if [ -n "$WEBHOOK_MISSING" ]; then
       log "⚠ Бот не подписан на события:$WEBHOOK_MISSING — то, что на них держится (кнопки, секретарь, список её чатов), работать не будет. Пришлите эту строку в чат разработки."
-      tell_owner "⚠️ Сборка $build опубликована, но бот не подписан на события:$WEBHOOK_MISSING. То, что на них держится (кнопки, секретарь, список её чатов), работать не будет. Перешлите эту строку в чат разработки."
+      tell_owner "⚠️ Телефон: сборка $build опубликована, но бот не подписан на события:$WEBHOOK_MISSING. То, что на них держится (кнопки, секретарь, список её чатов), работать не будет. Перешлите эту строку в чат разработки."
+    fi
+    # Страница комнаты — отдельной отправкой и после кода: её неудача бота не
+    # трогает. Адрес берётся из ответа платформы; не вышло отправить, а прежняя
+    # страница есть — сердцу называется она.
+    if [ "$APP" = 1 ]; then
+      if [ -f "$STAGE/tgcloud.jsonc" ] && [ -f "$STAGE/miniapp/index.html" ]; then
+        if retry_step "страница комнаты" tg push miniapp; then
+          PAGE_URL="$(page_url)"
+          [ -n "$PAGE_URL" ] || APP_WHY="платформа приняла страницу комнаты, но не назвала её адрес"
+        else
+          PAGE_URL="$(page_url)"
+          if cut_off; then APP_WHY="страница комнаты не отправилась: пропала связь с платформой"
+          else APP_WHY="платформа не приняла страницу комнаты"; APP_WORD="$(last_word)"; fi
+        fi
+        WHY=""
+      else
+        APP_WHY="в коммите нет страницы комнаты (miniapp/index.html и tgcloud.jsonc)"
+      fi
     fi
     if step "пробуждение" wake_new_build; then :; else [ -z "$warn" ] && warn="пробуждение не подтвердилось"; fi
-    restore
-    if ! snapshot "$head"; then
+    WORK=""
+    if ! promote; then
+      unstage
       rm -rf "$LIVE" 2>/dev/null
       log "Слепок опубликованного не снялся: будильник через платформу подождёт следующей публикации."
     fi
-    printf '%s\n%s\n%s\n' "$head" "$build" "$(date '+%F %T')" > "$PUBLISHED"
+    printf '%s\n%s\n%s\n%s\n' "$head" "$build" "$(date '+%F %T')" "$(door_mark)" > "$PUBLISHED"
     rm -f "$FAILED"
     if [ -n "$warn" ]; then
       log "Сборка $build опубликована, но $warn. Проверьте «статус» в боте. Подробности: $DEPLOY_LOG"
-      tell_owner "⚠️ Сборка $build опубликована с телефона, но $warn. Скажите Аи «статус»."
+      tell_owner "⚠️ Телефон: сборка $build опубликована, но $warn. Скажите Аи «статус»."
     else
       log "✓ Сборка $build опубликована. Аи сама напишет «я обновилась»."
     fi
+    if [ -n "$APP_WHY" ]; then
+      # Прежняя страница жива — кнопки открывают её; нет — комната отвечает словами, как в 0.37.0.
+      local rest="Комната пока отвечает словами."
+      [ -z "$PAGE_URL" ] || rest="Кнопки открывают прежнюю страницу."
+      log "⚠ Мини-приложение «Комната» не опубликовано: $APP_WHY. Сам бот на сборке $build. $rest Подробности: $DEPLOY_LOG"
+      # Что именно ответила платформа (0.49.1): по этой строке причину видно без похода в журнал телефона.
+      [ -z "$APP_WORD" ] || log "   Ответ платформы: $APP_WORD"
+      tell_owner "⚠️ Телефон: сборка $build опубликована, но мини-приложение «Комната» — нет: $APP_WHY. $rest Перешлите эту строку в чат разработки.${APP_WORD:+ Ответ платформы: «$APP_WORD».}"
+    elif [ -n "$PAGE_URL" ]; then
+      log "✓ Мини-приложение «Комната» опубликовано: кнопка под ответом на «зайду к тебе» и в меню бота."
+    fi
     WHY=""
     return 0
+  }
+  # Публикация идёт минутами (тесты, отправка кода), а цикл один: на это время
+  # удары в канал берёт на себя помощник. Что бы ни вышло — копия с ключами
+  # убирается.
+  publish() {
+    local code
+    ticker_on
+    publish_steps; code=$?
+    ticker_off
+    WORK=""
+    unstage
+    return "$code"
   }
 
   failed() {
@@ -523,7 +953,7 @@ main() {
     count=$((count + 1))
     printf '%s\n%s\n%s\n' "$head" "$count" "$(date +%s)" > "$FAILED"
     if [ "$count" = 1 ]; then
-      tell_owner "⚠️ Сборка $(build_of) не опубликована: ${WHY:-причина в журнале}. Бот на прежней сборке."
+      tell_owner "⚠️ Телефон: сборка $(build_of) не опубликована — ${WHY:-причина в журнале телефона}. Аи осталась на прежней сборке."
     fi
     # Причина бывает и временной (связь), поэтому не «никогда», а «реже».
     if [ "$count" = 3 ]; then
@@ -594,7 +1024,7 @@ main() {
     ensure_cli || return 1
     local out
     ( cd "$LIVE" && node scripts/inject-secrets.mjs ) > /dev/null 2>&1 < /dev/null
-    out="$( ( cd "$LIVE" && TGCLOUD_TOKEN="$TOKEN" node "$CLI" run handlers/message '{}' --ctx '{ tick: true }' ) 2>&1 < /dev/null )"
+    out="$(WORK="$LIVE" tg run handlers/message '{}' --ctx '{ tick: true }' 2>&1)"
     restore_live
     if printf '%s' "$out" | grep -q "build_mismatch"; then
       log "Будильник: в боте другая сборка, чем опубликована с этого телефона, — удар ничего не тронул."
@@ -611,6 +1041,30 @@ main() {
       LAST_RUN_TICK="$now"
       tick_run || true
     fi
+    return 0
+  }
+
+  # Пока идёт публикация, цикл занят: тесты на телефоне — пять-шесть минут, и
+  # отправка кода — ещё до нескольких. Вечером 17.11.2026 девять попыток заняли
+  # около двух часов, и всё это время будильник молчал. Теперь на время
+  # публикации удары в канал — в те же начала минут — шлёт помощник в фоне.
+  # Будильник без второго бота (через платформу) помощнику не доверен: он сам
+  # шлёт в облако весь код.
+  ticker_on() {
+    [ "$CHANNEL_ALARM" = 1 ] && [ -z "$TICKER" ] || return 0
+    (
+      nap=""
+      trap '[ -n "$nap" ] && kill "$nap" 2>/dev/null; exit 0' TERM INT
+      while :; do
+        now="$(date +%s)"
+        sleep $((EVERY - now % EVERY)) &
+        nap=$!
+        wait "$nap" 2>/dev/null
+        nap=""
+        tick_channel
+      done
+    ) &
+    TICKER=$!
     return 0
   }
 
@@ -646,6 +1100,10 @@ HEART_BRANCH=$BRANCH
 # Минутный будильник — токен любого бота, кроме Аи, и числовой ID канала «Мост»:
 # ALARM_BOT_TOKEN=
 # ALARM_CHAT_ID=
+# Дверь отдельного приложения (docs/DOOR.md). Обе строки пишет сама команда
+# «bash scripts/phone.sh door»: токен своего бота двери и «номер канала:секрет».
+# DOOR_BOT_TOKEN=
+# KEY_DOOR=
 EOF
     ) 2>/dev/null
   }
@@ -694,6 +1152,8 @@ EOF
       # Ключи поисковиков — не мозги: о них отдельная строка.
       case "$name" in
         KEY_TAVILY|KEY_EXA|KEY_YOU) seek="$seek$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') " ;;
+        # Ключ двери приложения — тоже не мозг: о нём своя строка ниже.
+        KEY_DOOR) ;;
         *) extra="$extra$(printf '%s' "${name#KEY_}" | tr 'A-Z' 'a-z') " ;;
       esac
     done
@@ -702,6 +1162,13 @@ EOF
     if [ -n "${KEY_CLOUDFLARE:-}" ]; then
       if printf '%s' "$KEY_CLOUDFLARE" | grep -Eq '^[0-9a-fA-F]{32}:[!-~]{20,}$'; then echo "✓ рисование: ключ Cloudflare записан верно"
       else echo "• KEY_CLOUDFLARE записан не так: нужен вид «ID аккаунта:токен» — 32 знака ID, двоеточие, токен, без пробелов. Пока так — рисования не будет"; fi
+    fi
+    if [ -n "${DOOR_BOT_TOKEN:-}" ] && ! printf '%s' "$DOOR_BOT_TOKEN" | LC_ALL=C grep -Eq '^[0-9]+:[A-Za-z0-9_-]+$'; then
+      echo "• DOOR_BOT_TOKEN не похож на токен бота (цифры, двоеточие, буквы) — дверь приложения с ним не открыть: bash scripts/phone.sh door"
+    fi
+    if [ -n "${KEY_DOOR:-}" ]; then
+      if printf '%s' "$KEY_DOOR" | grep -Eq '^-100[0-9]{5,15}:[!-~]{32,}$'; then echo "✓ дверь приложения: ключ записан верно$([ -n "${DOOR_BOT_TOKEN:-}" ] || echo '; своего бота двери на телефоне нет — проверить её отсюда: bash scripts/phone.sh door')"
+      else echo "• KEY_DOOR записан не так: нужен вид «номер канала:секрет» — номер начинается с -100, двоеточие, секрет от 32 знаков, без пробелов. Пока так — дверь приложения закрыта"; fi
     fi
     [ -n "${AI_EXTRA_KEYS:-}" ] && echo "✓ запасные мозги: строка AI_EXTRA_KEYS есть"
     if fetch_branch; then
@@ -762,8 +1229,221 @@ EOF
   }
 
   # ── режимы ───────────────────────────────────────────────────────────────
+  # ── дверь приложения ─────────────────────────────────────────────────────
+  # Одной командой и по шагам (docs/DOOR.md, раздел 9): бот двери → канал → ключ →
+  # сердце с ключом → опыт. 22.11.2026 владелец выполнил те же шаги пятью
+  # отдельными строками: первая не вышла (бот будильника живёт на сервере), а
+  # остальные всё равно отработали — сердце опубликовалось второй раз впустую.
+  # Здесь шаг, который не вышел, останавливает остальные.
+  # Номер бота Аи — число после «app» в токене публикации: по нему посредник
+  # называет её права в канале и не даёт взять для двери её же. Что это один и
+  # тот же номер — предположение о платформе (как у будильника выше). Поэтому
+  # посредник на нём ничего не обрывает: не сошлось — скажет «не вижу Аи среди
+  # администраторов» и всё равно сделает опыт.
+  # DOOR_EACH — сколько секунд ждать ответа каждым из трёх путей опыта; AI_NAME — имя бота Аи (его называет сердце);
+  # DOOR_SEQ — номер последнего, что дверь слышала до опыта: после опыта сердце назовёт только то, что пришло за него.
+  # DOOR_OPEN — сердце само сказало, что дверь у него открыта (ключ на месте, код новый): молчит опыт — дело не в ключе.
+  local AI_ID="" AI_NAME="" DOOR_SAID="" DOOR_NOW="" DOOR_SEQ="" DOOR_OPEN="" DOOR_WAIT="${HEART_DOOR_WAIT:-600}" DOOR_EACH="${HEART_DOOR_TRY:-15}"
+  case "${TOKEN%%:*}" in app[0-9]*) AI_ID="${TOKEN%%:*}"; AI_ID="${AI_ID#app}" ;; esac
+  case "$AI_ID" in ''|*[!0-9]*) AI_ID="" ;; esac
+  door_client() { DOOR_AI_ID="$AI_ID" DOOR_AI_NAME="$AI_NAME" DOOR_FLOW=1 HEART_ENV="$ENV_FILE" node "$REPO/scripts/door-client.mjs" "$@"; }
+  # Вопрос самому сердцу — через платформу, как удар будильника без второго бота: что дверь слышала за последние
+  # минуты. Первый живой опыт (22.11.2026) кончился словами «ответа нет», и по экрану было не узнать, дошёл ли
+  # запрос до Аи. Заодно сердце включает у себя режим общения ботов и называет имя своего бота.
+  # Первым словом команды — номер, после которого считать («что слышала за этот опыт»); без него — за четверть часа.
+  # 0 — ответило: слова в DOOR_SAID, имя — в AI_NAME, номер последнего услышанного — в DOOR_NOW.
+  door_state() {
+    DOOR_SAID=""; DOOR_NOW=""; DOOR_OPEN=""
+    [ -f "$LIVE/tgcloud/handlers/message.js" ] && [ -f "$LIVE/scripts/inject-secrets.mjs" ] || return 1
+    ensure_cli > /dev/null 2>&1 || return 1
+    local out name head ctx='{ door: "state" }'
+    case "${1:-}" in ''|*[!0-9]*) ;; *) ctx="{ door: \"state\", after: $1 }" ;; esac
+    ( cd "$LIVE" && node scripts/inject-secrets.mjs ) > /dev/null 2>&1 < /dev/null
+    out="$(WORK="$LIVE" tg run handlers/message '{}' --ctx "$ctx" 2>&1)"
+    restore_live
+    DOOR_SAID="$(printf '%s\n' "$out" | sed "s/$(printf '\033')\[[0-9;]*m//g" | sed -n 's/^.*DOOR-SAYS //p' | head -n 1 | sed 's/  *[0-9][0-9]*ms *$//')"
+    [ -n "$DOOR_SAID" ] || return 1
+    head="${DOOR_SAID%% | *}"
+    name="${head#name=}"; name="${name%% *}"
+    case "$name" in ''|-|*[!A-Za-z0-9_]*) ;; *) AI_NAME="$name" ;; esac
+    case "$head" in *' seq='*) DOOR_NOW="${head##* seq=}"; DOOR_NOW="${DOOR_NOW%% *}" ;; esac
+    case "$DOOR_NOW" in ''|*[!0-9]*) DOOR_NOW="" ;; esac
+    case "$DOOR_SAID" in *"Что слышала Аи"*) DOOR_OPEN=1 ;; esac
+    return 0
+  }
+  # Что слышала Аи — строками на экран: по ним видно, какой путь до неё доходит, даже когда ответа не было.
+  door_heard() {
+    if door_state "$DOOR_SEQ"; then
+      case "$DOOR_SAID" in *' | '*) printf '%s\n' "${DOOR_SAID#* | }" | tr '|' '\n' | sed 's/^ *//; s/ *$//' ;; esac
+      return 0
+    fi
+    echo "Что слышала Аи, спросить у сердца не вышло. Скажите ей «статус» и пришлите в чат разработки этот экран и её строку «Дверь приложения»."
+    return 1
+  }
+  # Слова платформы о вебхуке бота Аи — без цвета и без адреса (адрес ни на экран, ни в журнал не идёт).
+  door_hook() { tg webhook "$@" 2>&1 | sed "s/$(printf '\033')\[[0-9;]*m//g" | grep -v -i -E '^[[:space:]]*(expected[[:space:]]+)?url:'; }
+  # Каких событий двери нет в подписке. Личное сообщение бота приходит событием «message», пост канала —
+  # «channel_post», его правка — «edited_channel_post»; считаются те, для которых в опубликованном коде есть обработчик.
+  door_lacks() {
+    local words name dir="$REPO" lacks=""
+    words=" $(printf '%s' "$1" | tr ',' ' ' | tr -s '[:space:]' ' ') "
+    [ -d "$LIVE/tgcloud/handlers" ] && dir="$LIVE"
+    for name in message channel_post edited_channel_post; do
+      [ -f "$dir/tgcloud/handlers/$name.js" ] || continue
+      case "$words" in *" $name "*) ;; *) lacks="$lacks $name" ;; esac
+    done
+    printf '%s' "$lacks"
+  }
+  # Подписка бота Аи на события Telegram — строкой на экран, до опыта. Нет события в подписке — Telegram не отдаёт его
+  # сердцу вовсе, а на экране это то же «ответа нет» и «не слышала» (опыт 22.11.2026 этого не различал). Нет нужного —
+  # подписка чинится тут же.
+  door_events() {
+    local out words lacks
+    ensure_cli > /dev/null 2>&1 || return 0
+    out="$(door_hook)"
+    words="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*allowed updates:[[:space:]]*//p' | head -n 1)"
+    if [ -z "$words" ]; then echo "Подписку Аи на события Telegram узнать не вышло — опыт идёт и без этого."; return 0; fi
+    lacks="$(door_lacks "$words")"
+    if [ -z "$lacks" ]; then echo "✓ Подписка Аи на события Telegram: личные сообщения, посты канала и их правки — на месте."; return 0; fi
+    echo "✗ Аи не подписана на события:$lacks — такие запросы Telegram ей не отдаёт вовсе. Чиню подписку…"
+    out="$(door_hook sync)"
+    words="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*allowed updates:[[:space:]]*//p' | head -n 1)"
+    lacks="$(door_lacks "$words")"
+    if [ -n "$words" ] && [ -z "$lacks" ]; then echo "✓ Подписка починена: теперь эти события до Аи доходят."
+    else echo "✗ Подписка не починилась${lacks:+ — нет событий:$lacks}. Пришлите этот экран в чат разработки."; fi
+    return 0
+  }
+  # Опыт не прошёл — что знает сам Telegram о доставке событий Аи: сколько их ждёт в очереди и чем кончилась
+  # последняя доставка. Сердце о недоставленном не знает; видно это только здесь.
+  door_delivery() {
+    local out pending last
+    ensure_cli > /dev/null 2>&1 || return 0
+    out="$(door_hook)"
+    pending="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*pending updates:[[:space:]]*//p' | head -n 1 | tr -cd '0-9')"
+    last="$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*last error:[[:space:]]*//p' | head -n 1 | sed 's#[A-Za-z][A-Za-z]*://[^ ]*#(адрес)#g' | scrub)"
+    [ -n "$pending" ] || [ -n "$last" ] || return 0
+    if [ -n "$last" ]; then echo "Telegram о доставке событий Аи: в очереди — ${pending:-0}; последняя ошибка доставки — «${last:0:200}»."
+    else echo "Telegram о доставке событий Аи: в очереди — ${pending:-0}; ошибок доставки нет."; fi
+    return 0
+  }
+  # Как у «deploy»: 0 — опубликовано; иначе причина уже названа строками публикации.
+  door_publish() {
+    local code
+    publish; code=$?
+    case "$code" in 0) return 0 ;; 2) return 1 ;; esac
+    failed
+    return 1
+  }
+  # Опыт — три пути по очереди (посредник, «ways»): личное сообщение бота, правка поста, новый пост.
+  # Сразу после публикации: когда именно платформа начинает отвечать новым кодом, неизвестно — первая проба
+  # без ответа ещё не приговор, через четверть минуты — вторая, и уже её слова — итог.
+  door_fresh() {
+    local code
+    door_client ways "--wait=$DOOR_EACH" --try; code=$?
+    # 5 — ответа нет; 7 — ответило сердце с другим ключом: прежний код ещё на месте.
+    case "$code" in 5|7) ;; *) return "$code" ;; esac
+    echo "Сердце только что опубликовано — возможно, новый код ещё не заработал. Пробую ещё раз…"
+    sleep "${HEART_DOOR_PAUSE:-15}"
+    door_client ways "--wait=$DOOR_EACH"
+  }
+  open_door() {
+    local given="${1:-}" code line more published=0
+    [ -f "$REPO/scripts/door-client.mjs" ] || { echo "В этой сборке двери приложения ещё нет."; return 1; }
+    command -v node > /dev/null 2>&1 || { echo "Нет node — проверить дверь нечем."; return 1; }
+    echo "Дверь приложения: бот двери → канал → ключ → сердце с ключом → опыт."
+    # 1. Бот двери: свой и без вебхука. Нет такого — спросить токен нового.
+    # Файл ключей перечитывается после каждой записи в него: ключи читались при
+    # запуске, а окружение у посредника главнее файла — без этого он взял бы прежний токен.
+    if [ -n "$given" ]; then
+      door_client bot "$given" || return 1
+      load_env "$ENV_FILE"
+    else
+      door_client bot; code=$?
+      case "$code" in
+        0) ;;
+        3|4|6)
+          # Не терминал (cron, тест) — спросить некого.
+          # HEART_DOOR_ASK=1 — спросить и без терминала: ответ придёт по трубе (тесты).
+          if [ ! -t 0 ] && [ "${HEART_DOOR_ASK:-}" != "1" ]; then echo "Когда токен будет: bash scripts/phone.sh door <токен нового бота>"; return 1; fi
+          # Без показа: токен не должен остаться на экране — экран потом шлют в чат.
+          printf 'Вставьте сюда токен нового бота (на экране он не покажется) и нажмите Enter: '
+          IFS= read -rs line || line=""
+          # Вставили всё сообщение @BotFather, а не одну строку, — дочитать остальное:
+          # токен где-то в нём, а непрочитанные строки достались бы оболочке как команды.
+          more=""
+          while IFS= read -rs -t 1 more; do line="$line $more"; more=""; done
+          # Последняя строка без Enter тоже прочитана — она в «more».
+          [ -n "$more" ] && line="$line $more"
+          echo
+          [ -n "$line" ] || { echo "Токена нет — дверь подождёт. Когда он будет: bash scripts/phone.sh door"; return 1; }
+          door_client bot "$line" || return 1
+          load_env "$ENV_FILE" ;;
+        *) return 1 ;;
+      esac
+    fi
+    # 2. Канал и ключ: посредник ждёт, пока бота добавят в канал, и пишет ключ в файл.
+    door_client setup "--wait=$DOOR_WAIT" || return 1
+    load_env "$ENV_FILE"
+    # 3. Сердце с этим ключом. Опубликовано с ним же и той же сборкой, что лежит в папке, — второй раз не нужно.
+    # (Сборка в папке новее опубликованной — дом ещё не успел: опыт со старым сердцем был бы впустую.)
+    if [ "$(published_door)" != "$(door_mark)" ] || [ "$(published_build)" != "$(build_of)" ]; then
+      echo "Публикую сердце с ключом двери — минута-другая…"
+      door_publish || { echo "✗ Сердце с ключом двери не опубликовалось — дверь пока закрыта. Причина — строками выше."; return 1; }
+      published=1
+    fi
+    # 4. Опыт. Сначала — подписка бота Аи на события: без неё запрос до сердца не дойдёт, каким путём его ни шли.
+    # Затем — вопрос сердцу: оно включает у себя режим общения ботов, называет имя своего бота и номер
+    # последнего, что слышала дверь, — после опыта по этому номеру видно, что пришло именно за него.
+    # Метка могла и обмануть (сердце публиковали не отсюда): молчит дверь или ключи разные — публикация и вторая попытка.
+    door_events
+    local open=""
+    door_state && { DOOR_SEQ="$DOOR_NOW"; open="$DOOR_OPEN"; }
+    if [ "$published" = 1 ]; then door_fresh; code=$?
+    else
+      door_client ways "--wait=$DOOR_EACH" --try; code=$?
+      # Ответа нет (5), а сердце перед опытом само сказало, что дверь у него открыта: ключ на месте и код новый —
+      # вторая публикация ничего не изменит, запрос теряется по дороге. Ключи разные (7) или сердце на вопрос
+      # о двери не ответило (прежняя сборка, публиковали не отсюда) — публикация и вторая попытка. Она же — когда
+      # запрос до сердца дошёл, но «не туда»: ключ у него от другого канала, и публикация с ключом из файла это правит.
+      if [ "$code" = 5 ] && [ "$open" = 1 ] && door_state "$DOOR_SEQ"; then
+        case "$DOOR_SAID" in *"пришёл не туда"*) open="" ;; esac
+      fi
+      if [ "$code" = 7 ] || { [ "$code" = 5 ] && [ "$open" != 1 ]; }; then
+        echo "Публикую сердце заново: в опубликованном, похоже, нет этого ключа двери…"
+        door_publish || { echo "✗ Сердце с ключом двери не опубликовалось — дверь пока закрыта. Причина — строками выше."; return 1; }
+        door_fresh; code=$?
+      fi
+    fi
+    # 5. Что слышала сама Аи: какой путь до неё дошёл — видно и тогда, когда ответа не было.
+    door_heard || true
+    # 6. Опыт не прошёл — что говорит Telegram о доставке её событий (очередь, последняя ошибка) и что делать с экраном.
+    if [ "$code" != 0 ]; then
+      door_delivery
+      echo "Пришлите этот экран целиком в чат разработки: по нему видно, где теряется запрос."
+    fi
+    return "$code"
+  }
+
   case "$MODE" in
     check) check "$@"; return $? ;;
+    door)
+      # Публикация вписывает ключи в копию кода: вдвоём с работающим домом нельзя.
+      if ! enter; then echo "Остановите дом (Ctrl+C в его окне) и повторите: bash scripts/phone.sh door" >&2; return 1; fi
+      command -v termux-wake-lock > /dev/null 2>&1 && termux-wake-lock
+      # Сначала — свежее из ветки: поправка к двери могла прийти, пока дом стоял.
+      # Не вышло (нет связи, правки в папке) — работать с тем, что есть.
+      sync || true
+      local door_code=0
+      open_door "$DOOR_ARG" || door_code=$?
+      # Что бы ни вышло с дверью, дом должен работать: будильник и публикации не
+      # ждут второй команды. HEART_AFTER_DOOR=stop — только опыт (тесты, cron).
+      if [ "${HEART_AFTER_DOOR:-home}" = "stop" ]; then
+        command -v termux-wake-unlock > /dev/null 2>&1 && termux-wake-unlock
+        return "$door_code"
+      fi
+      leave
+      trap - EXIT INT TERM
+      exec bash "$SELF" run ;;
     tick)
       if [ "$CHANNEL_ALARM" = 1 ]; then tick_channel && echo "Удар ушёл в канал." || { echo "Удар не ушёл."; return 1; }
       else
@@ -775,9 +1455,13 @@ EOF
       return 0 ;;
     deploy)
       enter || return 1
-      sync || { echo "С веткой «$BRANCH» в GitHub свериться не вышло — публикации нет." >&2; return 1; }
-      publish
-      case $? in 0) return 0 ;; 2) return 1 ;; esac
+      # Публикация руками идёт минутами, а Termux в это время обычно в фоне:
+      # телефон не должен усыпить его посреди отправки. Цикл берёт этот замок сам.
+      command -v termux-wake-lock > /dev/null 2>&1 && termux-wake-lock
+      sync || { echo "С веткой «$BRANCH» в GitHub свериться не вышло — публикации нет." >&2; command -v termux-wake-unlock > /dev/null 2>&1 && termux-wake-unlock; return 1; }
+      publish; local published=$?
+      command -v termux-wake-unlock > /dev/null 2>&1 && termux-wake-unlock
+      case "$published" in 0) return 0 ;; 2) return 1 ;; esac
       failed; return 1 ;;
     once)
       enter || return 1
@@ -823,7 +1507,7 @@ EOF
       esac
       return 0 ;;
     run) ;;
-    *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once, events." >&2; return 1 ;;
+    *) echo "Не знаю режима «$MODE». Есть: run, check, deploy, tick, once, events, door." >&2; return 1 ;;
   esac
 
   if [ -z "$TOKEN" ] && [ "$CHANNEL_ALARM" = 0 ]; then
