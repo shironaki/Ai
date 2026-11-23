@@ -2294,7 +2294,7 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   const shade = shadow(g, x + (low ? 0 : 2), feet - 2, low ? wide * 0.44 : kind === "stand" ? 36 : wide * 0.36, low ? 7 : 6, 0.34);
   const was = before ? `<g class="leave${up}">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>` : "";
   return {
-    y: feet, painted: name, walk: walk?.seconds ?? 0, walkShape: walk?.shape ?? "",
+    y: feet, painted: name, walk: walk?.seconds ?? 0, walkShape: walk?.shape ?? "", path: walk ? [ghost.x, x] : null,
     // Как проявляется новая поза и тает ли прежняя: так же появляется и уходит вечерняя тень на ней (`airOnHerMoving`).
     enter: walk ? `<g class="arrive late${down}" style="--t:${walk.seconds}s">` : before ? `<g class="arrive${down}">` : "", left: Boolean(before),
     front: walk
@@ -2348,7 +2348,7 @@ function changingNote(delay = 0) {
 function herLeaving(g, part, ghost, walker) {
   const before = spritePlace(ghost.name, ghost.sprite, ghost.x);
   const walk = walker ? herWalking(g, part, walker, ghost.x, DOOR_X) : null;
-  return { y: FEET, walk: walk?.seconds ?? 0.5, walkShape: walk?.shape ?? "", left: true, front: `<g class="leave">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>${walk?.svg ?? ""}`, note: changingNote(walk?.seconds ?? 0.5) };
+  return { y: FEET, walk: walk?.seconds ?? 0.5, walkShape: walk?.shape ?? "", path: walk ? [ghost.x, DOOR_X] : null, left: true, front: `<g class="leave">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>${walk?.svg ?? ""}`, note: changingNote(walk?.seconds ?? 0.5) };
 }
 
 // ── Байт ─────────────────────────────────────────────────────────────────────
@@ -2373,10 +2373,11 @@ function catLeg(f, x, y, far, turn) {
 }
 
 /**
- * Морда. Точка отсчёта — центр. `eyes` — open, closed, wide (круглые зрачки: просит), play (шалит: круглые зрачки,
- * кончик языка), sad (обижен: бровки домиком). Прищура — века с опущенным внутренним краем — больше нет (0.52.0,
+ * Морда. Точка отсчёта — центр. `eyes` — open, closed, wide (круглые зрачки: просит), play (шалит: круглые зрачки),
+ * sad (обижен: бровки домиком). Прищура — века с опущенным внутренним краем — больше нет (0.52.0,
  * сообщение 53: «не нравится вот эта вот хмурая или же хитрая морда кота, есть что-то приятное?»): он был у «шалит»,
- * а это самое частое его состояние, — и Байт хмурился почти всегда.
+ * а это самое частое его состояние, — и Байт хмурился почти всегда. Языка тоже больше нет (0.55.0, сообщение 65:
+ * «убери язык у кота, а то он на собаку похож»): рот у него один на все случаи — кошачий, и ничего розового под ним.
  */
 function catHead(g, f, eyes = "open") {
   const round = eyes === "wide" || eyes === "play" || eyes === "sad";
@@ -2395,7 +2396,7 @@ function catHead(g, f, eyes = "open") {
   };
   const ear = (s) => `<path d="M${s * 14.8} -4.6 L${s * 13.6} -22 L${s * 2.2} -12.6Z" fill="${f.cat}"/><path d="M${s * 12.6} -8.6 L${s * 12} -17.8 L${s * 5.6} -12.4Z" fill="${f.catEar}"/>`;
   const mouth = eyes === "sad" ? `<path d="M0 4.7 v1.6 M-2.6 8 q2.6 -2.2 5.2 0" fill="none" stroke="${f.ink}" stroke-width="0.85" stroke-linecap="round"/>`
-    : `${eyes === "play" ? `<path d="M-1.7 6.5 h3.4 v1.3 a1.7 1.9 0 0 1 -3.4 0z" fill="#f08aa8"/>` : ""}<path d="M0 4.7 v1.3 M0 6 q-2.4 2.2 -4.4 0.2 M0 6 q2.4 2.2 4.4 0.2" fill="none" stroke="${f.ink}" stroke-width="0.85" stroke-linecap="round"/>`;
+    : `<path d="M0 4.7 v1.3 M0 6 q-2.4 2.2 -4.4 0.2 M0 6 q2.4 2.2 4.4 0.2" fill="none" stroke="${f.ink}" stroke-width="0.85" stroke-linecap="round"/>`;
   return [
     ear(-1), ear(1),
     `<path d="M-15.4 -1 C-15.4 -10 -9 -13.8 0 -13.8 C9 -13.8 15.4 -10 15.4 -1 L19 3 L15.2 3.8 L17.4 7.6 L12.6 7.6 C9 10.8 5 12 0 12 C-5 12 -9 10.8 -12.6 7.6 L-17.4 7.6 L-15.2 3.8 L-19 3Z" fill="${fur(g, f)}"/>`,
@@ -2567,6 +2568,40 @@ const floorUnder = ({ x, y }) => ({ x: Math.max(24, Math.min(376, x)), y: Math.m
  * сто точек в секунду неподвижной фигурой, которая подпрыгивала, — владелец назвал это «прыг-прыг-прыг».
  */
 export const catSeconds = (from, to, runs = false) => Math.round(Math.max(runs ? 0.7 : 1, Math.min(runs ? 2.5 : 4.5, Math.hypot(to.x - from.x, to.y - from.y) / (runs ? 100 : 55))) * 10) / 10;
+/**
+ * Где она стоит на полу (0.55.0): её ноги — от `x0` до `x1`, `y` — глубина её ступней, `low` — лежит на полу, в пледе.
+ * Мерки те же, по каким Байт садится «рядом с ней» (`catAhead`).
+ */
+function herFloor(name, x, y) {
+  const kind = kindOf(name);
+  if (kind === "floor") return { x0: x - 92, x1: x + 92, y, low: true };
+  const [from, to] = kind === "seat" ? [-40, 40] : kind === "crouch" ? [-64, 64] : HER_SPRITES[name].legs ?? [-30, 30];
+  return { x0: x + from, x1: x + to, y, low: false };
+}
+/** Как далеко вглубь комнаты Байт обходит её ноги и где край пола перед ней, когда она лежит. */
+const ROUND_HER = 34, FLOOR_NEAR = 497, FLOOR_FAR = 452;
+/**
+ * Путь Байта мимо неё (0.55.0, сообщение 65: «он проходит через Аи, нельзя ли как синхронно это всё адаптировать?»).
+ * До 0.55.0 он шёл по прямой и рисовался поверх всей комнаты — значит, и поверх её ног: выходило, что он идёт сквозь
+ * неё. Теперь путь знает, где она. Её ступни ближе к зрителю, чем любая точка его пути, — он проходит ЗА ней и
+ * нарисован под ней (`behind`); а чтобы это читалось как обход, путь отгибается вглубь комнаты (`via` — точка
+ * поворота: она приходится за её ноги, и излома не видно). Она спит на полу — её не обойти сзади, не пропав за пледом:
+ * он идёт перед ней, по краю ковра. Он начинает или кончает путь прямо у её ног — слой решает это место: перед ней
+ * он (ест у её ног, лежит на подлокотнике) или за ней (на сиденье кресла, под креслом).
+ * `from`, `to` — точки на полу, `depth` у них — глубина места, если она задана отдельно; `her` — `herFloor` или null.
+ */
+export function catRoute(from, to, her = null) {
+  if (!her || ![her.x0, her.x1, her.y].every(Number.isFinite)) return { via: null, behind: false };
+  const depthOf = (point) => (Number.isFinite(point.depth) ? point.depth : point.y);
+  const a = Math.min(from.x, to.x), b = Math.max(from.x, to.x);
+  // Мимо неё не идёт вовсе: перед ней он, только если сам начал или кончил путь перед ней.
+  if (a >= her.x1 || b <= her.x0) return { via: null, behind: depthOf(from) <= her.y && depthOf(to) <= her.y };
+  const close = [from, to].filter(point => point.x > her.x0 && point.x < her.x1);
+  if (close.length) return { via: null, behind: !close.some(point => depthOf(point) > her.y) };
+  const front = her.low === true, x = (her.x0 + her.x1) / 2;
+  const line = from.y + (to.y - from.y) * (x - from.x) / (to.x - from.x), want = front ? FLOOR_NEAR : Math.max(FLOOR_FAR, her.y - ROUND_HER);
+  return { via: (front ? line < want - 4 : line > want + 4) ? { x, y: want } : null, behind: !front };
+}
 /** На сколько точек лапа уходит назад, пока стоит на полу (полкруга шага): длина лапы и размах — в `catLeg` и в стилях `legUp`. */
 const STEP_REACH = 13.5;
 /**
@@ -2578,10 +2613,13 @@ export const gaitSeconds = (distance, seconds) => Math.round(Math.max(0.32, Math
 /**
  * Байт. `given` — место, выбранное заранее (когда она стоит картинкой: `herStand`); иначе — по её позе. `was` — где
  * и каким он был на прежнем рисунке (`castOf`): перешёл на другое место — прежний тает, по полу идёт Байт, на новом
- * месте проявляется новый (стили страницы: `.leave`, `.stride`, `.late`, лапы — `.lg`). Сам шаг (`walk`) рисуется поверх всей
- * комнаты: по полу он идёт перед мебелью, куда бы ни шёл.
+ * месте проявляется новый (стили страницы: `.leave`, `.stride`, `.late`, лапы — `.lg`). Сам шаг (`walk`) рисуется поверх
+ * мебели: по полу он идёт перед ней, куда бы ни шёл. А вот с ней самой он считается (0.55.0): `around.her` — где она
+ * стоит на полу: он обходит её (`catRoute`) и, проходя за ней, нарисован под ней (`behind`); `around.passing` — она
+ * сама сейчас идёт (`{ from, to, seconds }`): пути пересекаются — Байт пропускает её и трогается, когда она дошла
+ * (`--w` — сколько ждёт; прежний Байт до тех пор сидит, где сидел).
  */
-function cat(g, f, view, pose, given = null, was = null) {
+function cat(g, f, view, pose, given = null, was = null, around = null) {
   const { asked, place } = catAsked(view);
   const spot = given ?? catSpot(place, asked, pose);
   const shape = catShapeAt(spot, asked, place);
@@ -2603,18 +2641,33 @@ function cat(g, f, view, pose, given = null, was = null) {
   const figure = (at0, kind, inner, mirror, scale) => at(at0.x, at0.y, `<g class="cat ${kind}">${inner}</g>`, `${mirror ? " scale(-1 1)" : ""}${scale === 1 ? "" : ` scale(${scale})`}`);
   const settled = under + figure(spot, shape, `${body}${extra}`, spot.mirror, k);
   const moved = was && CAT_SHAPES.includes(was.shape) && Number.isFinite(was.x) && Number.isFinite(was.y) && Math.hypot(was.x - spot.x, was.y - spot.y) >= 16;
-  let svg = settled, walk = "", seconds = 0;
+  let svg = settled, walk = "", seconds = 0, behind = false;
   if (moved) {
-    const from = floorUnder(was), to = floorUnder(spot);
+    const from = floorUnder(was), to = floorUnder(spot), far = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+    const route = catRoute({ ...from, depth: was.depth }, { ...to, depth: spot.depth }, around?.her ?? null), via = route.via;
+    const length = via ? far(from, via) + far(via, to) : far(from, to);
     // Бегом — за игрушкой и когда удирает (`run`, 0.47.0: позвали второй раз подряд).
-    seconds = catSeconds(from, to, key === "игра" || view?.run === true);
+    seconds = catSeconds({ x: 0, y: 0 }, { x: length, y: 0 }, key === "игра" || view?.run === true);
+    behind = route.behind;
+    // Она идёт через его путь — он ждёт, пока она дойдёт: полоса её шага шире её самой на его длину.
+    const pass = around?.passing ?? null, crossed = pass && Math.min(from.x, to.x) - 56 < Math.max(pass.from, pass.to) && Math.max(from.x, to.x) + 56 > Math.min(pass.from, pass.to);
+    const wait = crossed ? Math.max(0, Math.round((pass.seconds - 0.2) * 10) / 10) : 0, held = wait > 0 ? `;--w:${wait}s` : "";
     // Идёт мордой вперёд: фигура «идёт» нарисована мордой влево. Лапы шагают (`gait`), круг шага — по скорости (`--g`).
-    walk = `<g class="stride" style="--dx:${n(from.x - to.x)}px;--dy:${n(from.y - to.y)}px;--t:${seconds}s;--g:${gaitSeconds(Math.hypot(to.x - from.x, to.y - from.y), seconds)}s"><g class="pad">${figure(to, "walk", catShape(g, f, "walk", { eyes: "open", angry, gait: true }), to.x > from.x, 1)}</g></g>`;
+    const walker = `<g class="pad">${figure(to, "walk", catShape(g, f, "walk", { eyes: "open", angry, gait: true }), to.x > from.x, 1)}</g>`;
+    const gait = gaitSeconds(length, seconds);
+    if (via) {
+      // Путь в два отрезка: каждый — своя группа со своим сдвигом и сроком (`.seg`), вложены одна в другую — сдвиги
+      // складываются; `.stride` снаружи держит его на виду весь путь.
+      const first = Math.max(0.1, Math.min(seconds - 0.1, Math.round(seconds * far(from, via) / length * 10) / 10));
+      const seg = (a, b, t, w, body) => `<g class="seg" style="--dx:${n(a.x - b.x)}px;--dy:${n(a.y - b.y)}px;--t:${n(t)}s;--w:${n(w)}s">${body}</g>`;
+      walk = `<g class="stride" style="--t:${seconds}s;--g:${gait}s${held}">${seg(from, via, first, wait, seg(via, to, seconds - first, wait + first, walker))}</g>`;
+    } else walk = `<g class="stride" style="--dx:${n(from.x - to.x)}px;--dy:${n(from.y - to.y)}px;--t:${seconds}s;--g:${gait}s${held}">${walker}</g>`;
     const ghost = figure(was, was.shape, catShape(g, f, was.shape, { eyes, angry }), was.mirror === true, Number(was.k) > 0 ? Number(was.k) : 1);
-    svg = `<g class="leave">${ghost}</g><g class="arrive late" style="--t:${seconds}s">${settled}</g>`;
+    svg = `<g class="leave"${wait > 0 ? ` style="--w:${wait}s"` : ""}>${ghost}</g><g class="arrive late" style="--t:${n(wait + seconds)}s">${settled}</g>`;
+    seconds = Math.round((wait + seconds) * 10) / 10;
   }
   return {
-    layer: spot.layer, depth: spot.depth ?? spot.y, svg, walk, seconds,
+    layer: spot.layer, depth: spot.depth ?? spot.y, svg, walk, behind, seconds,
     // Область нажатия — в единицах рисунка; от миски, чайника, клубка и Колючки она отступает (`besideCare`).
     zone: besideCare(box, [spot.x, spot.y - (small ? 8 : 14 * k)]),
   };
@@ -2661,13 +2714,14 @@ function cast(view, options) {
 }
 /**
  * Для страницы: что сейчас нарисовано. `her` — `{ name, x }` (картинка и точка, где она стоит) или `null`;
- * `cat` — `{ x, y, shape, mirror, k }` или `null`. Отдаётся следующему рисунку как `options.was` и `options.catWas`.
+ * `cat` — `{ x, y, shape, mirror, k }` (и `depth`, если глубина места задана отдельно: он перед ней) или `null`.
+ * Отдаётся следующему рисунку как `options.was` и `options.catWas`.
  */
 export function castOf(view = {}, options = {}) {
   const { name, sprite, stand, spot, shape } = cast(view, options);
   return {
     her: sprite && stand ? { name, x: stand.x } : null,
-    cat: spot ? { x: spot.x, y: spot.y, shape, mirror: Boolean(spot.mirror), k: spot.k ?? 1 } : null,
+    cat: spot ? { x: spot.x, y: spot.y, shape, mirror: Boolean(spot.mirror), k: spot.k ?? 1, ...(Number.isFinite(spot.depth) ? { depth: spot.depth } : {}) } : null,
   };
 }
 
@@ -2685,9 +2739,6 @@ function insideOf(view = {}, options = {}) {
   // Каждая перемена от сценки — своей группой с именем: по нему её находят проверки страницы.
   const fxShown = (name, body, when = fx.has(name)) => (when ? `<g class="fx fx-${name}">${body()}</g>` : "");
   const { loaded, name, sprite, waits, ahead, pose, stand, spot, shape: petShape } = cast(view, options);
-  // Байт: `options.catWas` — где он был на прежнем рисунке: перешёл — дойдёт шагом.
-  const catWas = options?.catWas && typeof options.catWas === "object" ? options.catWas : null;
-  const pet = view.cat ? cat(g, f, view.cat, pose, spot, catWas) : null;
   // Прежняя поза тает, пока новая проявляется: `options.was` — имя прежней картинки и место, где она стояла.
   const before = loaded && options?.was && typeof options.was === "object" && Object.hasOwn(HER_SPRITES, options.was.name) && Number.isFinite(options.was.x)
     && Object.hasOwn(loaded, options.was.name) && fitsSprite(loaded[options.was.name]) ? { name: options.was.name, sprite: loaded[options.was.name], x: options.was.x } : null;
@@ -2708,6 +2759,12 @@ function insideOf(view = {}, options = {}) {
     : view.her?.away === true ? (before ? herLeaving(g, part, before, walker) : { note: changingNote() })
       // Картинка заказана и ещё не пришла — силуэт с точками (0.49.0); иначе она нарисована кодом.
       : pose ? her(g, c, f, pose, view.her.key, view) : waits && stand ? herComing(stand.x) : {};
+  // Байт: `options.catWas` — где он был на прежнем рисунке: перешёл — дойдёт шагом. Рисуется после неё (0.55.0): ему
+  // надо знать, где она стоит и идёт ли сама, — чтобы обойти её и не пойти ей наперерез.
+  const catWas = options?.catWas && typeof options.catWas === "object" ? options.catWas : null;
+  const herAt = sprite && Number.isFinite(she.y) ? herFloor(name, stand.x, she.y) : null;
+  const passing = she.path && she.walk > 0 ? { from: she.path[0], to: she.path[1], seconds: she.walk } : null;
+  const pet = view.cat ? cat(g, f, view.cat, pose, spot, catWas, { her: herAt, passing }) : null;
   // Плед на ней — значит, на кресле его нет: это картинки «устала» и «спит».
   const plaidOnHer = sprite ? plaidWorn(name) : pose === "lie" || pose === "nap" || pose === "chair" || pose === "read";
   // Байт замечает, что она подошла (0.48.0, «реакция Байта на приближение Аи»): она дошла шагом и встала рядом — он
@@ -2787,10 +2844,13 @@ function insideOf(view = {}, options = {}) {
     fxShown("sock", () => sock(c, ...sockAt)),
     pic ? painted("bed", { dx: ahead ? PILLOW_ASIDE : 0 }) : ahead ? at(PILLOW_ASIDE, 0, catPillow(g, c)) : catPillow(g, c),
     thing("тапочки", () => (pic ? painted("тапочки") : slippers(g, c))),
-    petBehind ? petOnFloor : "", she.front ?? "", petBehind ? "" : petOnFloor,
+    petBehind ? petOnFloor : "",
+    // Байт идёт за ней (0.55.0): эта часть — под ней, и её ноги его закрывают.
+    pet?.behind ? pet.walk : "",
+    she.front ?? "", petBehind ? "" : petOnFloor,
     boxNear ? box : "",
-    // Байт идёт на новое место: по полу, перед мебелью.
-    pet?.walk ?? "",
+    // Байт идёт на новое место: по полу, перед мебелью — и перед ней, когда его путь ближе к зрителю.
+    pet && !pet.behind ? pet.walk : "",
     thing("ёлка", () => tree(g, c, part)),
     fxShown("haze", () => haze(g, part)),
     airLight(g, part, dark), airOnHerMoving(g, part, dark, she), airOnWalker(g, part, dark, she.walkShape),

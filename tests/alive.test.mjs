@@ -1226,6 +1226,108 @@ test("0.46.0, Байт идёт лапами: четыре лапы из дву�
   assert.doesNotMatch(html, /\.trot\b/u);
 });
 
+test("0.55.0, Байт не идёт сквозь неё: путь знает, где она стоит, — мимо её ног он проходит за ней, отогнув путь вглубь комнаты; спит она на полу — перед ней", () => {
+  const her = { x0: 222, x1: 282, y: 500, low: false };
+  // Её нет — путь прямой и поверх всего, как до 0.55.0.
+  assert.deepEqual(scene.catRoute({ x: 60, y: 430 }, { x: 340, y: 470 }, null), { via: null, behind: false });
+  // Мимо неё не идёт вовсе: путь прямой; он за ней по глубине — и нарисован под ней.
+  assert.deepEqual(scene.catRoute({ x: 90, y: 424 }, { x: 176, y: 497 }, her), { via: null, behind: true });
+  // Насквозь, у самых её ног: точка поворота — за её ногами, на тридцать четыре точки глубже ступней.
+  assert.deepEqual(scene.catRoute({ x: 100, y: 497 }, { x: 330, y: 497 }, her), { via: { x: 252, y: 466 }, behind: true });
+  assert.deepEqual(scene.catRoute({ x: 330, y: 497 }, { x: 100, y: 497 }, her), { via: { x: 252, y: 466 }, behind: true }, "в обе стороны одинаково");
+  // Насквозь, но и так в глубине комнаты — гнуть нечего.
+  assert.deepEqual(scene.catRoute({ x: 100, y: 456 }, { x: 330, y: 460 }, her), { via: null, behind: true });
+  assert.deepEqual(scene.catRoute({ x: 90, y: 424 }, { x: 332, y: 485 }, her), { via: null, behind: true });
+  // Путь кончается у неё: за ней (сиденье кресла) — под ней; перед ней (ест у её ног) — поверх.
+  assert.deepEqual(scene.catRoute({ x: 90, y: 424 }, { x: 250, y: 452 }, her), { via: null, behind: true });
+  assert.deepEqual(scene.catRoute({ x: 90, y: 424 }, { x: 250, y: 497, depth: 501 }, her), { via: null, behind: false });
+  assert.deepEqual(scene.catRoute({ x: 300, y: 497, depth: 501 }, { x: 340, y: 470 }, her), { via: null, behind: false }, "был перед ней — и уходит перед ней");
+  // Она спит на полу, в пледе: сзади её не обойти, не пропав, — он идёт перед ней, по краю ковра.
+  const low = { x0: 126, x1: 310, y: 490, low: true };
+  assert.deepEqual(scene.catRoute({ x: 60, y: 430 }, { x: 340, y: 470 }, low), { via: { x: 218, y: 497 }, behind: false });
+  assert.deepEqual(scene.catRoute({ x: 60, y: 497 }, { x: 340, y: 496 }, low), { via: null, behind: false }, "и так идёт по краю");
+});
+
+test("0.55.0, Байт обходит её на рисунке: путь в два отрезка под её слоем, срок — по длине пути; она идёт ему наперерез — он ждёт, пока она дойдёт; язык убран", () => {
+  const room = (cat, her = { pose: "desk", key: "дело" }, part = "день") => ({ part, sky: "clear", her, cat, plant: "wet", things: [] });
+  const near = { shape: "sit", place: "near", key: "сыт" };
+  const stood = scene.castOf(room(near), PAINTED);
+  // Он был справа от неё, у самых ног, а место «рядом с ней» — слева: по прямой прошёл бы сквозь её ноги.
+  const was = { x: stood.her.x + 80, y: 497, shape: "sit", mirror: false, k: 1 };
+  assert.ok(stood.cat.x < stood.her.x && stood.cat.y === 497, JSON.stringify(stood));
+  const made = scene.drawParts(room(near), { ...PAINTED, was: stood.her, catWas: was });
+  const walkAt = made.parts.findIndex(piece => piece.includes('class="cat walk"')), herAt = made.parts.findIndex(piece => piece.includes(`#r-her-${stood.her.name}"`));
+  assert.ok(walkAt >= 0 && herAt >= 0 && walkAt < herAt, `идущий Байт — под ней: ${walkAt} и ${herAt}`);
+  const bent = /^<g class="stride" style="--t:([\d.]+)s;--g:([\d.]+)s"><g class="seg" style="--dx:(-?[\d.]+)px;--dy:(-?[\d.]+)px;--t:([\d.]+)s;--w:0s"><g class="seg" style="--dx:(-?[\d.]+)px;--dy:(-?[\d.]+)px;--t:([\d.]+)s;--w:([\d.]+)s"><g class="pad">/u.exec(made.parts[walkAt]);
+  assert.ok(bent, made.parts[walkAt].slice(0, 260));
+  const [whole, gait, dx1, dy1, t1, dx2, dy2, t2, w2] = bent.slice(1).map(Number);
+  // Два отрезка вместе — весь путь: от прежнего места до нового; поворот — за её ногами, в глубине.
+  assert.equal(dx1 + dx2, was.x - stood.cat.x);
+  assert.equal(dy1 + dy2, 0);
+  assert.equal(dy1, 34 - 3, "от её ступней — на тридцать четыре точки вглубь");
+  assert.equal(was.x - dx1, stood.her.x, "поворот — прямо за ней");
+  // Срок — по длине пути, а не по прямой; второй отрезок начинается, когда кончился первый.
+  const length = Math.hypot(dx1, dy1) + Math.hypot(dx2, dy2);
+  assert.equal(whole, scene.catSeconds({ x: 0, y: 0 }, { x: length, y: 0 }));
+  assert.equal(gait, scene.gaitSeconds(length, whole));
+  assert.equal(Math.round((t1 + t2) * 10) / 10, whole);
+  assert.equal(w2, t1);
+  assert.match(made.parts.join(""), new RegExp(`<g class="leave"><g transform="translate\\(${was.x} 497\\)"><g class="cat sit">`, "u"));
+  assert.match(made.parts.join(""), new RegExp(`<g class="arrive late" style="--t:${whole}s">`, "u"));
+  // Её часть рисунка при этом та же, что без его перехода: страница её не трогает, и её движения не начинаются заново.
+  assert.equal(made.parts[herAt], scene.drawParts(room(near), PAINTED).parts[herAt]);
+  // Мимо неё по прямой — разметка прежняя, один отрезок.
+  const aside = scene.drawInside(room({ shape: "sit", place: "bowl", key: "сыт" }), { ...PAINTED, was: stood.her, catWas: stood.cat });
+  assert.match(aside, /<g class="stride" style="--dx:-?[\d.]+px;--dy:-?[\d.]+px;--t:[\d.]+s;--g:[\d.]+s"><g class="pad">/u);
+  assert.doesNotMatch(aside, /class="seg"|--w:/u);
+
+  // Она сама идёт к столу — как раз через его путь: Байт сидит, где сидел, пока она не дойдёт, и только тогда идёт.
+  const cross = scene.drawInside(room(near), { ...PAINTED, was: { name: stood.her.name, x: 100 }, catWas: was });
+  const hers = scene.walkSeconds(100, stood.her.x), wait = Math.round((hers - 0.2) * 10) / 10;
+  assert.ok(wait >= 1, String(wait));
+  const held = new RegExp(`<g class="stride" style="--t:([\\d.]+)s;--g:[\\d.]+s;--w:${wait}s"><g class="seg" style="[^"]+;--w:${wait}s"><g class="seg" style="[^"]+;--w:([\\d.]+)s">`, "u").exec(cross);
+  assert.ok(held, "ждёт её");
+  assert.ok(Number(held[2]) > wait, "второй отрезок — после первого");
+  assert.match(cross, new RegExp(`<g class="leave" style="--w:${wait}s"><g transform="translate\\(${was.x} 497\\)"><g class="cat sit">`, "u"));
+  assert.match(cross, new RegExp(`<g class="arrive late" style="--t:${Math.round((wait + Number(held[1])) * 10) / 10}s"><(?:path|ellipse|g)[^>]*>(?:<[^>]+>)*?<g class="cat sit">`, "u"));
+  // Она идёт в стороне от его пути — ждать некого.
+  const sill = { shape: "sit", place: "sill", key: "сыт" }, shelf = { pose: "shelf", key: "дело" };
+  const apart = scene.castOf(room(sill, shelf), PAINTED);
+  assert.ok(apart.cat.x - 56 > apart.her.x, JSON.stringify(apart));
+  const free = scene.drawInside(room(sill, shelf), { ...PAINTED, was: { name: apart.her.name, x: 100 }, catWas: { x: 332, y: 485, shape: "sit", mirror: false, k: 1 } });
+  assert.match(free, /class="cat walk"/u);
+  assert.match(free, /class="step"/u, "она идёт");
+  assert.doesNotMatch(free, /--w:/u);
+  // Она ушла к шкафу через его путь — он пропускает её и идёт уже по пустой комнате, по прямой.
+  const gone = scene.drawInside({ ...room(near), her: { pose: "desk", key: "дело", away: true } }, { ...PAINTED, was: stood.her, catWas: was });
+  assert.match(gone, /<g class="stride" style="--dx:-?[\d.]+px;--dy:-?[\d.]+px;--t:[\d.]+s;--g:[\d.]+s;--w:[\d.]+s"><g class="pad">/u);
+
+  // Она спит на полу — он идёт перед ней: его часть — над её частью, путь отогнут к краю ковра.
+  const asleep = room({ shape: "curl", place: "pillow", key: "спит" }, { pose: "nap", key: "сон" }, "ночь");
+  const night = scene.castOf(asleep, PAINTED);
+  const lying = scene.drawParts(asleep, { ...PAINTED, was: night.her, catWas: { x: 60, y: 430, shape: "sit", mirror: false, k: 1 } });
+  const walkLow = lying.parts.findIndex(piece => piece.includes('class="cat walk"')), herLow = lying.parts.findIndex(piece => piece.includes(`#r-her-${night.her.name}"`));
+  assert.ok(herLow >= 0 && walkLow > herLow, `идущий Байт — над ней: ${walkLow} и ${herLow}`);
+  const low = /class="seg" style="--dx:(-?[\d.]+)px;--dy:(-?[\d.]+)px;/u.exec(lying.parts[walkLow]);
+  assert.ok(low && Number(low[2]) === 430 - 497, "первый отрезок — к краю ковра");
+
+  // Стили: отрезок пути, ожидание у идущего и у тающего; страница ждёт конца перехода вместе с ожиданием.
+  const html = read("miniapp/index.html");
+  assert.match(html, /#room \.seg \{ animation: seg var\(--t, 1s\) linear var\(--w, 0s\) backwards; \}/u);
+  assert.match(html, /@keyframes seg \{ from \{ transform: translate\(var\(--dx, 0px\), var\(--dy, 0px\)\); \} to \{ transform: translate\(0px, 0px\); \} \}/u);
+  assert.match(html, /#room \.stride \{ opacity: 0; animation: stride var\(--t, 1\.5s\) linear var\(--w, 0s\); \}/u);
+  assert.match(html, /#room \.leave \{ opacity: 0; animation: leave 0\.5s ease-in var\(--w, 0s\) backwards; \}/u);
+  assert.match(read("miniapp/app.js"), /getPropertyValue\("--t"\)\) \|\| 3\.5\) \+ \(Number\.parseFloat\(stride\.style\.getPropertyValue\("--w"\)\) \|\| 0\)/u);
+
+  // Язык (сообщение 65: «убери язык у кота, а то он на собаку похож»): розового под ртом нет ни у одной морды.
+  for (const key of ["шалит", "сыт", "голоден", "обижен", "игра", "ласка", "спит"]) for (const shape of ["sit", "lie", "play", "walk", "beg", "claw", "eat", "belly", "gift"]) {
+    const drawn = scene.drawInside(room({ shape, place: "rug", key }), PAINTED);
+    assert.doesNotMatch(drawn, /f08aa8/iu, `${key}, ${shape}`);
+    assert.doesNotMatch(drawn, /M-1\.7 6\.5 h3\.4/u, `${key}, ${shape}`);
+  }
+  assert.doesNotMatch(read("miniapp/scene.js"), /f08aa8/iu);
+});
+
 test("0.46.0, скорость Байта: шагом — 55 точек в секунду, от секунды до четырёх с половиной; бегом — сто; круг шага — такой, чтобы лапа не скользила", () => {
   const at = (x) => ({ x, y: 470 });
   // Шагом.

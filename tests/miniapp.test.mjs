@@ -1418,7 +1418,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "17");
+  assert.equal(logic.PAGE, "18");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1704,9 +1704,11 @@ test("страница: папка уходит на платформу файл
   gather({ part: "день", her: { pose: "shelf", key: "дело", beat: true }, cat: { shape: "sit", place: "bowl", key: "сыт" }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 }, catWas: { x: 300, y: 456, shape: "sit", mirror: false, k: 1 } });
   gather({ part: "вечер", her: { pose: "chair", key: "уют", beat: true }, things: [] }, { ...PAINTED, enter: true });
   gather({ part: "вечер", her: { pose: "desk", key: "дело", away: true }, things: [] }, { ...PAINTED, was: { name: "work", x: 252 } });
+  // С 0.55.0 Байт обходит её: шёл бы у самых её ног — путь в два отрезка (`seg`), за её ногами.
+  gather({ part: "день", her: { pose: "desk", key: "дело", beat: true }, cat: { shape: "sit", place: "near", key: "сыт" }, things: [] }, { ...PAINTED, catWas: { x: 330, y: 497, shape: "sit", mirror: false, k: 1 } });
   // С 0.46.0 Байт идёт лапами: `pad` — тело, `lg` — часть лапы (`up`, `low`), `p0`–`p3` — которой по счёту она ступает.
   // С 0.48.0 — «lower»: вошла и села — опускается в кресло.
-  assert.deepEqual([...classes].filter(name => !lived.has(name)).sort(), ["changing", "late", "lg", "low", "lower", "p0", "p1", "p2", "p3", "pad", "step", "stride", "up"]);
+  assert.deepEqual([...classes].filter(name => !lived.has(name)).sort(), ["changing", "late", "lg", "low", "lower", "p0", "p1", "p2", "p3", "pad", "seg", "step", "stride", "up"]);
   // Вторые кадры поз (0.45.0): слои кадров и вид их движения — когда кадр загружен.
   const framed = new Set(classes);
   const withFrames = { sprites: { ...SPRITES, ...FRAME_SPRITES } };

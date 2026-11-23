@@ -160,15 +160,20 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 @keyframes flipA { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
 @keyframes flipB { 0%, 49.9% { opacity: 0; } 50%, 100% { opacity: 1; } }
 @keyframes wink { 0% { opacity: 0; } 46% { opacity: 1; } 48.2% { opacity: 0; } 93% { opacity: 1; } 95.2% { opacity: 0; } }
-#room .leave { opacity: 0; animation: leave 0.5s ease-in; }
+#room .leave { opacity: 0; animation: leave 0.5s ease-in var(--w, 0s) backwards; }
 @keyframes leave { from { opacity: 1; } 45% { opacity: 1; } to { opacity: 0; } }
 #room .arrive { animation: arrive 0.5s ease-out; }
 @keyframes arrive { from { opacity: 0; } 70% { opacity: 1; } }
 /* Она и Байт идут (с 0.44.0): картинка «идёт» едет от прежнего места к новому (`--dx`, `--dy` — откуда, `--t` — за
    сколько секунд) и покачивается в такт шагам; новая поза проявляется, когда дошли (`.late`). Без движения идущего
    не видно вовсе, а новая поза стоит сразу. */
-#room .stride { opacity: 0; animation: stride var(--t, 1.5s) linear; }
+#room .stride { opacity: 0; animation: stride var(--t, 1.5s) linear var(--w, 0s); }
 @keyframes stride { from { transform: translate(var(--dx, 0px), var(--dy, 0px)); opacity: 1; } 90% { opacity: 1; } to { transform: translate(0px, 0px); opacity: 0; } }
+/* Байт обходит её (0.55.0): путь в два отрезка — две вложенные группы, у каждой свой сдвиг (`--dx`, `--dy`), срок
+   (`--t`) и начало (`--w`); до своего начала отрезок держит его в начале пути, после — в конце. `--w` у `.stride` и
+   `.leave` — сколько Байт ждёт, пока пройдёт она: до тех пор прежний Байт сидит на месте, а идущего не видно. */
+#room .seg { animation: seg var(--t, 1s) linear var(--w, 0s) backwards; }
+@keyframes seg { from { transform: translate(var(--dx, 0px), var(--dy, 0px)); } to { transform: translate(0px, 0px); } }
 #room .step { transform-box: fill-box; transform-origin: 50% 100%; animation: step 0.62s ease-in-out infinite; }
 @keyframes step { 0%, 50%, 100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-2.6px) rotate(-0.7deg); } 75% { transform: translateY(-2.6px) rotate(0.7deg); } }
 #room .arrive.late { animation: arrive 0.5s ease-out backwards; animation-delay: calc(var(--t, 1.5s) - 0.3s); }

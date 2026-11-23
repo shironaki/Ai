@@ -715,7 +715,8 @@ function paint() {
     // Идут и она, и Байт — ждём того, кто идёт дольше (с 0.46.0 Байт идёт шагом, до четырёх с половиной секунд).
     // Смотрим только в том, что сейчас заменено: в нетронутых частях переходы уже идут своим чередом.
     const strides = fresh.flatMap(node => [...node.querySelectorAll(".stride")]), moving = strides.length > 0 || fresh.some(node => node.querySelector(".leave, .arrive"));
-    if (moving) drawn.until = Date.now() + Math.max(0, ...strides.map(stride => Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5)) * 1000 + FADE_MS + 200;
+    // Байт, пропуская её, трогается позже (`--w`, 0.55.0): его переход длится ожидание и путь вместе.
+    if (moving) drawn.until = Date.now() + Math.max(0, ...strides.map(stride => (Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5) + (Number.parseFloat(stride.style.getPropertyValue("--w")) || 0))) * 1000 + FADE_MS + 200;
   }
   const say = $("say");
   if (say.textContent !== state.said) {

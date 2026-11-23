@@ -64,7 +64,7 @@ tgcloud/lib/heart.js           решения: к ней ли это, прави
         ├── lib/daysum.js      итоги дня в группе: разбор слов и счёт по памяти чата
         ├── lib/asked.js       «узнаю и вернусь»: вопросы без ответа и слова хозяина о них
         ├── lib/chatown.js     своё у чата: действия, гифки, пары и семьи — разбор и правила
-        ├── lib/secretary.js   секретарь: слова хозяина, язык и текст уведомления, список «кто писал»; столы близких
+        ├── lib/secretary.js   секретарь: слова хозяина, язык и текст уведомления, список «кто писал»; столы близких; с 0.55.0 — и вся его работа (createDesk)
         ├── lib/jealousy.js    ревность: слова, от которых она начинается и кончается
         ├── lib/room.js        её комната: слова о ней, правила (Байт, забота, вещи, сценки) и запись о каждом
         ├── lib/roomdoor.js    дверь мини-приложения: `onRoom` — что страница спрашивает у сердца (с 0.49.0 — своим модулем)
@@ -525,7 +525,7 @@ JPEG или PNG → `{ ok, bytes, width, height, cut }`. Сердце кладё
 
 | Что | Где |
 |---|---|
-| Столы: секретарь у хозяина и у тех, кому он разрешил | раздел секретаря в `lib/heart.js` от `STRANGER_PREFIX`: `deskFor`, `allDesks`, `tellDesk`, `strangerConnects`, `decideDesk`, `revokeDesk`, `desksWords`, `pressDesk` |
+| Столы: секретарь у хозяина и у тех, кому он разрешил | `createDesk` в `lib/secretary.js` (до 0.55.0 — раздел секретаря в `lib/heart.js`), от `STRANGER_PREFIX`: `deskFor`, `allDesks`, `tellDesk`, `strangerConnects`, `decideDesk`, `revokeDesk`, `desksWords`, `pressDesk` |
 | Слова хозяина о столах («разреши секретаря…») | `deskWish` в `lib/secretary.js` (часть `parseSecretary`) |
 | Ревность: что её будит и что успокаивает | `rivalOf`, `calmsJealousy` в `lib/jealousy.js` |
 | Чувство «ревнует» и его срок | `feelOf`, `JEALOUS_MS`, поступки `jealous` и `soothe` в `lib/bond.js` |
@@ -1120,6 +1120,17 @@ build, side_effects: "none" }` — без чтения и записи.
 Путь картинки: `paint()` → `fetchRoom(roomNameOf(view))` → модуль пришёл и читается → `storeRoom` кладёт определения
 в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
 `<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
+
+## Что добавила 0.55.0: где что лежит
+
+| Что | Где |
+|---|---|
+| Работа секретаря: подключение аккаунта, письма из чужих чатов, отлучка и расписание, столы близких, слова хозяина секретарю | `createDesk(H)` в `lib/secretary.js`. `H` — инструменты сердца одним объектом; сердце собирает его и получает функции обратно — `lib/heart.js`, раздел «секретарь» (десять строк) |
+| Путь Байта мимо неё: обход, слой, ожидание | `herFloor`, `catRoute`, `cat` в `miniapp/scene.js`; откуда и куда идёт она — `path` у `herPainted` и `herLeaving` |
+| Место «Байт идёт за ней» в списке частей | `insideOf` в `miniapp/scene.js`: перед её частью; «Байт идёт перед ней» — прежнее место, после неё |
+| Путь в два отрезка и ожидание | стили `.seg`, `--w` у `.stride` и `.leave` — `miniapp/index.html` |
+| Сколько длится переход с ожиданием | `drawn.until` в `miniapp/app.js` |
+| Морда Байта без языка | `catHead` в `miniapp/scene.js` |
 
 ## Что добавила 0.54.0: где что лежит
 
