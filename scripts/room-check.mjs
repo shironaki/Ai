@@ -313,6 +313,29 @@ try {
       }
     }
   }
+  // Слово ей (0.57.0): поле под её словами. Пустое поле ничего не шлёт; напечатали «Привет!», отправили — под
+  // рисунком её ответ, поле пустое.
+  {
+    const form = await page.evaluate(() => { const box = document.getElementById("words"); return box ? { hidden: box.hidden, max: document.getElementById("word")?.maxLength ?? 0 } : null; });
+    if (!form || form.hidden) fail("слово: поля для слов под её словами нет");
+    else {
+      if (form.max !== 200) fail(`слово: поле пускает ${form.max} знаков, а сердце берёт двести`);
+      for (let i = 0; i < 40 && !(await page.evaluate(() => document.getElementById("wordSend").disabled === false)); i += 1) await pause(250);
+      const before = await said();
+      await page.evaluate(() => { document.getElementById("word").value = "   "; document.getElementById("words").requestSubmit(); });
+      await pause(300);
+      if ((await said()) !== before) fail("слово: отправили пустое поле — а её слова сменились");
+      await page.evaluate(() => { document.getElementById("word").value = "Привет!"; document.getElementById("words").requestSubmit(); });
+      let answered = false;
+      for (let i = 0; i < 20 && !answered; i += 1) { await pause(150); answered = /^Привет\. Заходите/u.test(await said()); }
+      if (!answered) fail(`слово: сказали «Привет!» — а под рисунком «${await said()}»`);
+      const left = await page.evaluate(() => document.getElementById("word").value);
+      if (left !== "") fail(`слово: ответ пришёл — а в поле осталось «${left}»`);
+      const box = await page.evaluate(() => { const field = document.getElementById("word").getBoundingClientRect(), talk = document.getElementById("talk").getBoundingClientRect(); return { inside: field.left >= talk.left && field.right <= talk.right, wide: Math.round(field.width), font: parseFloat(getComputedStyle(document.getElementById("word")).fontSize) }; });
+      if (!box.inside || box.wide < 120) fail(`слово: поле не помещается под её словами (${JSON.stringify(box)})`);
+      if (box.font < 16) fail(`слово: шрифт поля ${box.font} — телефон приблизит страницу при вводе`);
+    }
+  }
   // Чайник, окно и она сама (0.48.0). Нажали на чайник — она спрашивает, какой чай налить, и под её словами три
   // кнопки; выбрали — налит этот чай, кнопки убраны. Нажали на окно — створка открыта; ещё раз — закрыта. Нажали на
   // неё — она поднимает глаза (страница ставит на рисунок слово «poked»).

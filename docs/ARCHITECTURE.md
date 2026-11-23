@@ -1121,6 +1121,25 @@ build, side_effects: "none" }` — без чтения и записи.
 в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
 `<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
 
+## Что добавила 0.57.0: где что лежит
+
+| Что | Где |
+|---|---|
+| Она с пакетом — у миски | `SPRITE_AT.feed` = 110; в `HER_SPRITES` у `feed` и `home-feed`: `feet: 440` (линия ступней), `pour` (угол пакета), `wait` (где ждёт Байт); поля `drop` больше нет (`miniapp/scene.js`) |
+| Линия ступней позы | `feetOf(name)` — общая 500, у спящей на полу своя, у позы в глубине комнаты — из таблицы; ею пользуются `spritePlace` и `spriteCovers` |
+| С пакетом она с места не уходит | `pours(name)` в `herStand`: уступает Байт |
+| Корм летит в миску | `kibble(c, from, to)`; место миски — `PIC.bowl` (картинка комнаты) или `BOWL` (комната кодом); в `insideOf`: `pour`, `mouth`, `bowlX`, `bowlY`, `poured`, `feed` |
+| Миска наполняется, пока она сыплет | `<g class="refill slow"><g class="heap">` в `insideOf`; стили `.refill.slow .heap`, `@keyframes heapSlow` (`miniapp/index.html`) |
+| Байт ждёт | `waitSpot(name, herX)`: `only: "sit"`, `waits`; `catAhead` — для «ест рядом» и для любого «у миски»; в `cat` — `tilt`, `gaze` (`catShape`, `catHead`) |
+| Шаг вглубь комнаты и обратно | `herWalking(..., lift)`: `--dy` у `.stride`, сдвиг картинки «идёт» на линию места |
+| Байт идёт мимо неё, когда она в глубине | `catRoute`: `her.y < FLOOR_FAR` — перед ней, по ближнему краю |
+| Слова сценки | `PHRASES.txt`: строка о корме в «+комната:день:подъём», запас «+комната:байт:завтрак»; витрина — `DEMO_DAY`, `DEMO_MEAL` (`miniapp/logic.js`) |
+| Поле для слов (204, шаг 2) | форма `#words` (поле `#word`, кнопка `#wordSend`) в блоке `#talk`, стили `.words` (`miniapp/index.html`) |
+| Отправка слова | `talk()`, `paintWords()`, обработчик `submit` (`miniapp/app.js`): `send({ do: "say", text })` |
+| Ответ и отказ | `applySay`, `wordsOf`, `SAY_MAX`; на витрине — `demoSay` (`miniapp/logic.js`) |
+| Проверка в браузере | блок «слово» в `scripts/room-check.mjs` |
+| Тесты | `tests/miniapp.test.mjs`: «0.57.0, корм рисует код…», «0.57.0, слово ей…»; `tests/alive.test.mjs`: её утро (фигура «сидит», слова о завтраке) |
+
 ## Что добавила 0.56.0: где что лежит
 
 | Что | Где |

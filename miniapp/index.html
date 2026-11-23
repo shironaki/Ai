@@ -59,6 +59,13 @@ main[data-state="loading"] .stage { filter: saturate(0.8) brightness(0.94); }
 .card h2::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .card p { margin: 0; }
 .choice { display: flex; gap: 8px; margin-top: 11px; }
+/* 0.57.0 — слово ей: поле под её словами и кнопка «Сказать». Шрифт поля — шестнадцать точек: мельче — телефон
+   приближает страницу, когда в поле печатают. */
+.words { display: flex; gap: 8px; margin-top: 11px; }
+.words input { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--ink); background: var(--btn); border: 1px solid var(--line); border-radius: 14px; padding: 9px 12px; }
+.words input::placeholder { color: var(--dim); }
+.words input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.words button { flex: none; padding: 10px 14px; }
 .choice button { flex: 1 1 0; }
 #scene .picked { margin-top: 8px; color: var(--dim); font-size: 13px; }
 
@@ -333,14 +340,16 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
 /* 0.49.0 — Байт просится на руки: лапы тянутся к ней. */
 #room .reach { animation: scratch 1.5s ease-in-out infinite alternate; }
 /* 0.56.0 — корм сыплется из пакета: кусочек летит от угла пакета (--ax, --ay) туда, куда она сыплет (--bx, --by), и
-   там пропадает — в лапах Байта или на полу. Байт под пакетом ловит: лапы ходят чаще, чем когда он просится на руки. */
+   там пропадает — в миске (0.57.0: она сидит у миски, Байт ждёт рядом). */
 #room .kibble { pointer-events: none; }
 #room .kib { transform-box: fill-box; transform-origin: 50% 50%; animation: kib 1.35s cubic-bezier(0.5, 0, 0.9, 0.7) infinite; animation-delay: var(--d, 0s); }
 @keyframes kib { from { transform: translate(var(--ax), var(--ay)); opacity: 0; } 9% { opacity: 1; } 90% { opacity: 1; } to { transform: translate(var(--bx), var(--by)) rotate(150deg); opacity: 0; } }
-#room .grabs .reach { animation-duration: 0.4s; }
 /* Миску наполнили: корм падает в неё сверху дважды и пропадает, горка растёт от дна — один раз. */
 #room .refill .kib { animation-iteration-count: 2; animation-fill-mode: both; }
 #room .refill .heap { transform-box: fill-box; transform-origin: 50% 100%; animation: heap 2.7s ease-out both; }
+/* 0.57.0 — она сама сыплет корм в миску: горка растёт медленнее, пока сыплется корм, и остаётся полной. */
+#room .refill.slow .heap { animation: heapSlow 8s ease-out 2.5s both; }
+@keyframes heapSlow { from { transform: scale(0.4, 0.05); opacity: 0; } 10% { opacity: 1; } to { transform: none; opacity: 1; } }
 @keyframes heap { from { transform: scale(0.45, 0.1); opacity: 0.3; } to { transform: none; opacity: 1; } }
 /* 0.49.0 — страница свёрнута: движение на рисунке стоит (.resting); её картинка ещё в пути — мягкий силуэт и три
    точки (.coming); журнал ошибок под строкой «страница N» (.oops). */
@@ -383,6 +392,11 @@ button.main { background: var(--accent); border-color: var(--accent); color: var
       <button type="button" class="main" data-tea="улун">Улун</button>
       <button type="button" class="main" data-tea="мята">Мята</button>
     </div>
+    <!-- Слово ей (0.57.0, идея 204, шаг второй): отвечает сердце — словарём, как в чате; в чат ничего не уходит. -->
+    <form class="words" id="words" hidden>
+      <input id="word" type="text" maxlength="200" placeholder="Сказать ей…" aria-label="Сказать Аи" autocomplete="off" enterkeyhint="send">
+      <button type="submit" class="main" id="wordSend">Сказать</button>
+    </form>
   </div>
   <section class="panel">
     <div class="choice" id="story" hidden><button type="button" class="main" id="storyNext">Что тут было без меня?</button></div>

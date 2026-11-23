@@ -758,6 +758,7 @@ function paint() {
   paintSound();
   paintChips();
   paintTeas();
+  paintWords();
   paintStory();
   soundScene();
   $("foot").textContent = [
@@ -1029,6 +1030,33 @@ async function dress() {
   state = before;
   await play(change);
   paint();
+}
+/**
+ * Слово ей (0.57.0; идея 204, шаг второй): поле под её словами. Отвечает сердце — словарём, как в чате (`say`); в чат
+ * ничего не уходит. Пока идёт запрос, гаснет кнопка, а не поле: погасшее поле закрыло бы клавиатуру. Ответ пришёл —
+ * поле пустое; не пришёл — слова остаются в нём, «Попробовать ещё раз» шлёт их же с тем же номером.
+ */
+async function talk() {
+  const field = $("word");
+  if (!field || !state.ready || state.busy || acting || typeof logic.applySay !== "function" || typeof logic.demoSay !== "function") return;
+  const words = logic.wordsOf(field.value);
+  if (!words) return;
+  scheduleTurn();
+  state = { ...state, busy: "say" };
+  paint();
+  const result = state.demo ? logic.demoSay(state, words) : await send({ do: "say", text: words }, () => talk());
+  // Повтор того же номера у слова — тот же её ответ, а не «комната как она есть»: `repeated` здесь не нужен.
+  state = logic.applySay(state, result);
+  if (result?.ok === true) field.value = "";
+  paint();
+  buzz(result?.ok === true ? "light" : "error");
+}
+/** Поле для слов видно, когда комната открыта и она не спрашивает про чай; кнопка гаснет, пока что-то делается. */
+function paintWords() {
+  const form = $("words"), button = $("wordSend");
+  if (!form || !button) return;
+  form.hidden = !state.ready || state.asking === "tea" || typeof logic.applySay !== "function";
+  button.disabled = Boolean(state.busy) || acting;
 }
 /** Выбрать чай (0.47.0): следующий по кругу — жасмин, улун, мята; сердце запоминает, какой наливать. */
 async function steep() {
@@ -1359,6 +1387,7 @@ $("album")?.addEventListener("click", () => album());
 $("storyNext")?.addEventListener("click", () => tell());
 $("wear")?.addEventListener("click", () => dress());
 $("brew")?.addEventListener("click", () => steep());
+$("words")?.addEventListener("submit", (event) => { event.preventDefault(); talk(); });
 $("teas")?.addEventListener("click", (event) => {
   const kind = event.target instanceof Element ? event.target.closest("[data-tea]")?.dataset.tea : null;
   if (kind && state.ready && !state.busy && !acting) care("tea", { kind });
