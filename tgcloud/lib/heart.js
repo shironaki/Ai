@@ -72,7 +72,7 @@ import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES } from "./keepsake.js";
 import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, ROOM_RECENT_KEY, RECENT_MAX, sceneByKey, herPose, catPose, catAfter, colourHex,
   skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
-  READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow } from "./room.js";
+  READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow, WOKE_MS, wokeNow } from "./room.js";
 import { createRoomDoor } from "./roomdoor.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, beforeOf, clearsShownList } from "./taught.js";
@@ -141,19 +141,19 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.57.0";
+export const BUILD = "0.58.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.57.0 — корм я теперь сыплю в миску, а Байт ждёт рядом; и под моими словами появилось поле — можно сказать мне что-нибудь прямо в комнате",
-  "утром я сижу с пакетом у самой миски: корм падает в неё, и горка в миске растёт на глазах",
-  "Байт сидит передо мной и ждёт: глаза круглые, голова наклонена к миске; лапами корм он больше не ловит",
-  "слова под рисунком теперь о том же: я сыплю в миску, он ждёт и торопит",
-  "под моими словами — поле «Сказать ей…» и кнопка «Сказать»: на простое отвечаю сразу, словарём, как в чате",
-  "чего в словаре нет — скажу, что об этом лучше в чате: ответ модели в комнате — следующий шаг",
-  "в чат из этого поля ничего не уходит; больше двухсот знаков поле не возьмёт",
-  "чего ещё нет: когда я отхожу от миски, корм в ней пропадает, если вы Байта не кормили, — как он наедается, я пока не показываю",
-  "внизу комнаты теперь «страница 21»",
+  "0.58.0 — я встаю к своему «доброму утру»: о фаджре напоминаю и здороваюсь уже проснувшаяся, а не во сне",
+  "подъём в комнате — в тот час, когда я пишу вам «доброе утро»: на фаджр — с рассветом, по часам — в названное время",
+  "если я напоминаю о намазе заранее, встаю на столько же раньше",
+  "ночью меня можно разбудить: напишите в чат или скажите слово в комнате — я проснусь и скажу об этом",
+  "двадцать минут после этого я сижу в кресле сонная и зеваю; тишина — засыпаю снова",
+  "пока вы пишете, я не засыпаю и второй раз «я спала» не говорю",
+  "вечером и ночью в разговоре могу зевнуть и сказать, что хочу спать",
+  "чего ещё нет: ложусь я всегда в одиннадцать, даже если «спокойной ночи» вы перенесли на другой час",
+  "внизу комнаты теперь «страница 22»",
 ]);
 
 const DAY = 86_400_000;
@@ -673,6 +673,11 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // A test run proves the route without touching Telegram: the platform's own
     // contract, and the reason a green test cannot be mistaken for delivery.
     if (turn.dry) return { ok: true, text, side_effects: "none" };
+    // Она спала — ответ начинается с того, что проснулась (0.58.0, сообщение 69): один раз за пробуждение.
+    if (turn.isPrivate === true && turn.message && !turn.app) {
+      const woken = await wakeHer(turn);
+      if (woken.line && !woken.told) { woken.told = true; text = `${woken.line}\n\n${text}`; }
+    }
     // Голосовое: первой строкой — что она услышала. Ослышалась — видно сразу.
     if (turn.heard && !turn.heardShown) {
       turn.heardShown = true;
@@ -1787,7 +1792,41 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   /** Минуты от полуночи по часам человека, с долей: по ним идёт её день (`dayPlan`, 0.48.0). */
   const minutesNow = (turn) => { const local = localParts(now(), zoneOf(turn)); return local.hh * 60 + local.mm + (now() % 60_000) / 60_000; };
   /** Эпизод её дня в эту минуту: план у всех один, часы — у каждого свои. */
-  const stageNow = (turn, today) => stageAt(dayPlan(today), minutesNow(turn));
+  const stageNow = (turn, today) => stageAt(planOf(turn, today), minutesNow(turn));
+  /**
+   * План её дня для этого человека (0.58.0, сообщение 69): у хозяина она встаёт в час своего «доброго утра» ему
+   * (`turn.wake` ставит `roomWake`), у остальных — как раньше, около семи.
+   */
+  function planOf(turn, today) { return dayPlan(today, { wake: turn?.wake ?? null }); }
+  /**
+   * Во сколько она встаёт (0.58.0, сообщение 69: «пусть она просыпается вместе с установленным временем в доброе
+   * утро… как так получается, что она спит и отвечает»). У хозяина — в час её «доброго утра» ему: фаджр в его
+   * городе (с его поправкой минут) или названное время; а если она напоминает ему о намазах заранее — на столько же
+   * раньше: о фаджре говорит уже проснувшаяся. Привет выключен или человек — не хозяин — её обычный подъём (`null`).
+   * Считается раз на обращение и остаётся в `turn.wake` (минуты от полуночи по его часам).
+   */
+  async function roomWake(turn) {
+    if (turn.wake !== undefined) return turn.wake;
+    turn.wake = null;
+    if (!GREET || !store.available || !owner(turn.actorId)) return null;
+    try {
+      const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
+      const set = greetSettings(saved);
+      if (set.morningOff) return null;
+      const zone = zoneOf(turn), day = localParts(now(), zone);
+      const lat = Number(saved.spot?.lat), lon = Number(saved.spot?.lon);
+      let minutes = null;
+      // Тот же расчёт, что у привета (`greetOwner`): место города он запомнил сам; города нет — запасной час.
+      if (set.byFajr && saved.spot && Number.isFinite(lat) && Number.isFinite(lon) && saved.spot.city === String(turn.manner?.settings?.city ?? "").trim()) {
+        const dawn = fajrOn({ y: day.y, m: day.m, d: day.d, latitude: lat, longitude: lon, angle: set.angle ?? FAJR_ANGLE })?.fajr ?? null;
+        if (dawn != null) { const local = localParts(dawn + shiftMs(saved, "fajr"), zone); minutes = local.hh * 60 + local.mm; }
+      }
+      if (minutes == null) { const [hh, mm] = set.morning.split(":").map(Number); minutes = hh * 60 + mm; }
+      const subs = (await store.get(PRAYER_KEY).catch(() => null))?.subs;
+      turn.wake = minutes - Math.max(0, Math.min(60, Number(subs?.[String(turn.actorId)]?.lead) || 0));
+    } catch { turn.wake = null; }
+    return turn.wake;
+  }
   /**
    * В чём она сейчас сама, без просьб (0.48.0): до подъёма и с шести вечера — в домашнем; днём — по погоде (дождь,
    * гроза, снег — свитер; сухо — куртка). Что надеть днём, решено один раз, при первом заходе в этот день (`dress` в
@@ -1796,11 +1835,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const wornNow = (turn, state, today) => (stageNow(turn, today).wear !== "day" ? "home"
     : state?.dress?.day === today && ROOM_WEARS.includes(state.dress.name) ? state.dress.name : dressFor(turn.sky));
   /** Когда она переоденется сама: проснувшись, в шесть вечера и перед сном, в одиннадцать. */
-  const wearUntil = (turn, today) => { const at = minutesNow(turn), edge = [dayPlan(today)[1].from, 18 * 60, 23 * 60].find(value => value > at) ?? 1440 + 7 * 60; return now() + Math.round((edge - at) * 60_000); };
+  const wearUntil = (turn, today) => { const at = minutesNow(turn), edge = [planOf(turn, today)[1].from, 18 * 60, 23 * 60].find(value => value > at) ?? 1440 + 7 * 60; return now() + Math.round((edge - at) * 60_000); };
   /** Долго не был (0.48.0): три дня без захода — и встречает она другими словами. */
   const AWAY_MS = 3 * 86_400_000;
   /** Надеть наряд по просьбе — и что из этого вышло: `asleep` — спит и не переодевается; `same` — уже в нём. */
   async function dressHer(turn, feel, today, name = "", once = {}) {
+    await roomWake(turn);
     const before = await room.read(turn.actorId, today);
     const worn = wornNow(turn, before, today), current = wearNow(before, now()) ?? worn;
     if (before.lost) return { asleep: false, same: false, name: current, state: before, lost: true };
@@ -1916,6 +1956,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * остаётся в `turn.sky` — для пометок словаря. `turn.skyReal` — настоящая ли это погода.
    */
   async function roomSky(turn) {
+    // Её день — тоже отсюда (0.58.0): во сколько она встаёт для этого человека.
+    await roomWake(turn);
     if (turn.sky) return turn.sky;
     const city = String(turn.manner?.settings?.city ?? "").trim();
     let sky = null;
@@ -1964,7 +2006,12 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   function herState(turn, feel, state, today) {
     const at = now(), stage = stageNow(turn, today);
     const felt = herKey(feel.mood, 12);
-    const mood = felt === "обида" || felt === "ревность" || felt === "устала" || felt === "сон" ? felt : stage.key;
+    // Сонное настроение бывает только ночью (`mood.js`). Подъём назначен (0.58.0) — оно её обратно не укладывает:
+    // встала к фаджру в четыре — значит, встала.
+    const mood = felt === "обида" || felt === "ревность" || felt === "устала" || (felt === "сон" && turn.wake == null) ? felt : stage.key;
+    // Её разбудили (0.58.0, сообщение 69): написали в чат или сказали слово в комнате, пока она спала. Двадцать
+    // минут она сидит в кресле сонная и зевает; тишина — засыпает снова.
+    if (mood === "сон" && wokeNow(state, at)) return { key: "устала", put: "chair", said: lineAt(turn, "разбудили", Number(state.woke) / 1000), only: true, hold: true, ends: WOKE_MS - (at - Number(state.woke)), stage, woke: true };
     const calm = HER_CALM.includes(mood);
     // Тихий час (0.47.0): она читает в кресле и никуда не ходит. Сильнее музыки и книги с полки: он попросил тишины.
     if (calm && quietLeft(state, at) > 0) return { key: "уют", put: "read", said: lineAt(turn, "она:тихий час", Number(state.quiet?.at) / 1000), only: true, hold: true, ends: quietLeft(state, at), stage };
@@ -2024,17 +2071,17 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // По порядку от нынешнего: у рассказа (подъём) — то, что осталось; у остальных — по кругу.
     const beats = list.length ? [...list.slice(step.index), ...(st.plan && st.stage.story ? [] : list.slice(0, step.index))] : [beat];
     const left = Math.max(1000, Math.min(step.left, Math.round((st.stage.to - at) * 60_000), st.ends > 0 ? st.ends : Infinity));
-    const order = dayPlan(today), before = order[st.stage.index - 1], after = order[st.stage.index + 1];
+    const order = planOf(turn, today), before = order[st.stage.index - 1], after = order[st.stage.index + 1];
     const hhmm = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(Math.floor(minutes % 60)).padStart(2, "0")}`;
     // О плане она говорит, когда спокойна: что было до этого и что дальше. Спит, обижена, устала — не до планов.
     const plan = HER_CALM.includes(st.key) && before && after ? lineAt(turn, "день:план", st.stage.index, { "было": EPISODES[before.name].title, "дальше": EPISODES[after.name].title, "время": hhmm(after.from) }) : "";
     const face = st.plan && st.stage.face ? st.stage.face : st.key === "устала" ? "drowsy" : "";
-    return { key: st.key, pose: beat.pose, line: beat.line, beats, left, stage: st.stage.name, plan, face, put: st.put, onPlan: st.plan === true, event: st.event ?? "" };
+    return { key: st.key, pose: beat.pose, line: beat.line, beats, left, stage: st.stage.name, plan, face, put: st.put, onPlan: st.plan === true, event: st.event ?? "", woke: st.woke === true };
   }
   /** Что с Байтом (0.48.0, поверх `catState`): утром она его кормит — три часа после этого он не голоден. */
   function catKey(turn, state, feel, today) {
     const key = catState({ hour: feel.hour, last: state?.last, lastAt: state?.lastAt, at: now(), fed: (Number(state?.done?.feed) || 0) > 0, seed: roomSeed(turn.actorId, today) });
-    const fedAt = dayPlan(today)[1].from + 20, at = minutesNow(turn);
+    const fedAt = planOf(turn, today)[1].from + 20, at = minutesNow(turn);
     return key === "голоден" && at >= fedAt && at < fedAt + 180 ? "сыт" : key;
   }
   /** Реплика о Байте в эту минуту: меняется раз в семь минут (`CAT_STEP_MS`), а не при каждом вопросе. */
@@ -2046,6 +2093,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   async function herBusy(turn) {
     if (!ROOM || !PHRASES || !store.available) return "";
+    // Спала — это сообщение её будит (0.58.0): запись комнаты читается уже с отметкой.
+    const woken = await wakeHer(turn);
     const today = calendarDate(now(), zoneOf(turn));
     const state = await room.read(turn.actorId, today);
     if (!state.n) return "";
@@ -2054,7 +2103,43 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     let step = null;
     let line = "";
     try { await roomSky(turn); step = herStep(turn, feel, state, today); line = herLine(turn, feel, state, today); } finally { Object.assign(turn, kept); }
-    return line ? `Чем ты занята сейчас у себя в комнате (это видно на рисунке комнаты; спросят — говори то же самое, другого занятия не выдумывай): ${line}${step.plan ? ` ${step.plan}` : ""}` : "";
+    // Сон и вечер — в самом ответе (0.58.0, сообщение 69: «то ли она просыпается, либо говорит о том, что хочет спать и зевает»).
+    const sleepy = woken.fresh && woken.line ? " Тебя только что разбудили этим сообщением, и в начале ответа ты уже сказала об этом готовой строкой (зевнула, сказала, что спала). Не повторяй этого: отвечай по делу, коротко и немного сонно."
+      : step.woke || step.key === "сон" ? " Сейчас ночь, тебя недавно разбудили: ты сонная. Отвечай по делу и коротко; можно один раз зевнуть или сказать, что хочется спать, — не в каждом ответе. Не говори, что ты сейчас спишь."
+        : step.stage === "дрёма" ? " Уже поздно, ты клюёшь носом: можно зевнуть и сказать, что скоро ляжешь спать, — один раз, к слову." : "";
+    return line ? `Чем ты занята сейчас у себя в комнате (это видно на рисунке комнаты; спросят — говори то же самое, другого занятия не выдумывай): ${line}${step.plan ? ` ${step.plan}` : ""}${sleepy}` : "";
+  }
+  /**
+   * Она спала, а ей написали (0.58.0, сообщение 69: «как так получается, что она спит и отвечает… то ли она
+   * просыпается, либо говорит о том, что хочет спать и зевает»). Просыпается: в комнате двадцать минут сидит в
+   * кресле сонная (`WOKE_MS`), а ответ в чате начинает словами из запаса «+разбудили» — один раз за пробуждение.
+   * Пишут дальше — отметка обновляется, и посреди разговора она не засыпает. Только в личке, на настоящее
+   * сообщение и только у того, кто в комнате был: остальным комната — не тема. Днём в память не ходит.
+   * Возвращает `{ fresh, line }`: `fresh` — разбудили этим сообщением; `line` — с чего начать ответ.
+   */
+  async function wakeHer(turn) {
+    if (turn.woken) return turn.woken;
+    turn.woken = { fresh: false, line: "" };
+    if (!ROOM || !PHRASES || !store.available || turn.dry || turn.app || turn.isPrivate !== true || !turn.message || !(Number(turn.actorId) > 0)) return turn.woken;
+    try {
+      const minute = minutesNow(turn);
+      if (minute >= 11 * 60 && minute < 23 * 60) return turn.woken;
+      const today = calendarDate(now(), zoneOf(turn));
+      // По плану она уже на ногах — в запись комнаты не ходим (гостю это вовсе без чтений, хозяину — запись привета).
+      await roomWake(turn);
+      if (stageNow(turn, today).name !== "сон") return turn.woken;
+      const state = await room.read(turn.actorId, today);
+      if (!state.n || state.lost) return turn.woken;
+      const feel = await feelFor(turn).catch(() => null) ?? feelingNow({ now: now(), timeZone: zoneOf(turn), userId: turn.actorId });
+      const at = now(), awake = wokeNow(state, at);
+      if (herState(turn, feel, { ...state, woke: 0 }, today).key !== "сон") return turn.woken;
+      if (awake && at - Number(state.woke) < WOKE_MS / 4) return turn.woken;
+      const landed = typeof store.update === "function"
+        ? await store.update(ROOM_KEY(turn.actorId), saved => (saved && typeof saved === "object" && Number(saved.n) > 0 ? { ...saved, woke: at } : null)).catch(() => false) : false;
+      if (awake || landed !== true) return turn.woken;
+      turn.woken = { fresh: true, line: book.pick("+разбудили", voiceCtx(turn)) ?? "" };
+    } catch { /* ответ важнее */ }
+    return turn.woken;
   }
   /** Её слова в чате («зайду к тебе»): о том же, что на рисунке, — и там, куда её поставила сценка. */
   function herLine(turn, feel, state, today) {

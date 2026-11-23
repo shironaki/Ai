@@ -516,16 +516,22 @@ export function createRoomDoor(deps) {
         vars["причина"] = book.pick(`+причина:${feel.reason}`, voiceCtx(turn, vars)) ?? "";
         const last = names ? await store.get(`heart:said:${userId}`).catch(() => null) : null;
         const found = (own ? fill(own, voiceCtx(turn)) ?? own : names ? book.say(names, voiceCtx(turn, vars), { avoid: String(last?.t ?? "") }) : "") || "";
-        const raw = found || roomLine(turn, "слово:мимо") || "Об этом лучше в чате: там я отвечу как следует.";
-        const done = await room.word(userId, { ...once, answer: raw });
+        const plain = found || roomLine(turn, "слово:мимо") || "Об этом лучше в чате: там я отвечу как следует.";
+        // Она спала (0.58.0, сообщение 69: «как так получается, что она спит и отвечает») — слово её будит: ответ
+        // начинается с этого, двадцать минут она не спит, а страница по отметке `woke` перечитывает рисунок.
+        const lay = await room.read(userId, today);
+        const slept = !lay.lost && herState(turn, feel, lay, today).key === "сон";
+        const yawn = slept ? book.pick("+разбудили", voiceCtx(turn)) ?? "" : "";
+        const raw = yawn ? `${yawn} ${plain}` : plain;
+        const done = await room.word(userId, { ...once, answer: raw, wake: slept });
         // Повтор того же номера: тот же ответ, без второй записи в нить.
         if (done.repeat) return { ok: true, do: op, build: BUILD, line: spoken(done.answer || raw), known: Boolean(found), repeat: true };
         { const other = await instead(done); if (other) return other; }
         if (found) {
           await keepThread(turn, words, raw);
-          if (names) await store.set(`heart:said:${userId}`, { t: raw, at: now() }).catch(() => false);
+          if (names) await store.set(`heart:said:${userId}`, { t: plain, at: now() }).catch(() => false);
         }
-        return { ok: true, do: op, build: BUILD, line: spoken(raw), known: Boolean(found) };
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), known: Boolean(found), ...(slept ? { woke: true } : {}) };
       }
       if (op === "oops") {
         // Журнал ошибок страницы (0.49.0): три последние записи за заход — место, код и короткий текст. Кто зашёл, не

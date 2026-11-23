@@ -507,9 +507,22 @@ const weekendOn = (day) => { const at = Date.parse(`${String(day).slice(0, 10)}T
  * границы точные: в шесть вечера она переодевается в домашнее, в одиннадцать ложится. Чай и игра с Байтом после
  * полудня идут в том порядке, какой выпал дню.
  */
-export function dayPlan(day = "") {
+/**
+ * В какие часы она может вставать (минуты от полуночи): от двух ночи до одиннадцати утра. Названное за этими
+ * пределами прижимается к ближнему краю — иначе день не сложить.
+ */
+export const WAKE_SPAN = Object.freeze([120, 660]);
+/** Её разбудили (0.58.0): двадцать минут после слова она не спит. Пишут дальше — отметка обновляется. */
+export const WOKE_MS = 20 * 60_000;
+/** Не спит ли она по этой записи: её разбудили меньше двадцати минут назад. */
+export const wokeNow = (state, at) => Number(state?.woke) > 0 && at - Number(state.woke) >= 0 && at - Number(state.woke) < WOKE_MS;
+/**
+ * План дня. `wake` (0.58.0, сообщение 69: «пусть она просыпается вместе с установленным временем в доброе утро») —
+ * во сколько она встаёт, минуты от полуночи: час её «доброго утра» хозяину. Не назван — около семи, в выходной позже.
+ */
+export function dayPlan(day = "", { wake: set = null } = {}) {
   const shift = (salt, span) => (hashOf(`day:${day}:${salt}`) % (span * 2 + 1)) - span;
-  const wake = 7 * 60 + shift("wake", 20) + (weekendOn(day) ? 50 : 0);
+  const wake = Number.isFinite(set) ? Math.max(WAKE_SPAN[0], Math.min(WAKE_SPAN[1], Math.round(set))) : 7 * 60 + shift("wake", 20) + (weekendOn(day) ? 50 : 0);
   const rest = 12 * 60 + 45 + shift("rest", 15);
   const [one, two] = hashOf(`day:${day}:order`) % 2 ? ["игра", "чай"] : ["чай", "игра"];
   const marks = [
@@ -924,8 +937,9 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
    * (страница не дождалась ответа) вернул его же, а не второй, другой. `answer` в ответе — что было сказано на
    * этот номер; пусто — такого номера запись уже не помнит.
    */
-  async function word(userId, { day, id = "", limit = false, answer = "" } = {}) {
-    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, word: { id, a: String(answer).slice(0, 600) } }));
+  async function word(userId, { day, id = "", limit = false, answer = "", wake = false } = {}) {
+    // `wake` (0.58.0) — слово её разбудило: двадцать минут она не спит (`wokeNow`).
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, word: { id, a: String(answer).slice(0, 600) }, ...(wake ? { woke: at } : {}) }));
     return { ok: true, answer: id && done.state?.word?.id === id ? String(done.state.word.a ?? "") : "", state: done.state, ...flags(done) };
   }
 

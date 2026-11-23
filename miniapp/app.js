@@ -1050,6 +1050,8 @@ async function talk() {
   if (result?.ok === true) field.value = "";
   paint();
   buzz(result?.ok === true ? "light" : "error");
+  // Слово её разбудило (0.58.0): рисунок перечитывается сразу — она уже не спит, а сидит в кресле сонная.
+  if (result?.ok === true && result.woke === true) tick();
 }
 /** Поле для слов видно, когда комната открыта и она не спрашивает про чай; кнопка гаснет, пока что-то делается. */
 function paintWords() {

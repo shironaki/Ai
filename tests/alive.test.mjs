@@ -2731,3 +2731,18 @@ test("0.48.0, словарь: о распорядке, наряде по пог�
   const told = { vars: { ...VARS, "было": "занятия", "дальше": "чай", "время": "13:00", "дней": "4 дня" } };
   assert.ok(pool("чай:предложить").length >= 2 && pool("день:план", told).length >= 2 && pool("зайти:давно", told).length >= 2);
 });
+
+test("0.58.0, она встаёт в назначенный час (сообщение 69: «пусть она просыпается вместе с установленным временем в доброе утро»): подъём плана — названная минута; не названа — день прежний", () => {
+  const usual = room.dayPlan(TODAY), early = room.dayPlan(TODAY, { wake: 6 * 60 + 12 });
+  assert.deepEqual(room.dayPlan(TODAY, {}), usual);
+  assert.deepEqual(room.dayPlan(TODAY, { wake: null }), usual);
+  assert.deepEqual([early[0].name, early[0].to, early[1].name, early[1].from, early[2].name, early[2].from], ["сон", 372, "подъём", 372, "занятия", 432]);
+  assert.deepEqual(early.slice(3), usual.slice(3), "остальной день — тот же");
+  assert.equal(early[2].to, usual[2].to);
+  // Названное за пределами «от двух ночи до одиннадцати утра» прижимается к краю: день должен сложиться.
+  assert.deepEqual([room.dayPlan(TODAY, { wake: 10 })[1].from, room.dayPlan(TODAY, { wake: 900 })[1].from], [...room.WAKE_SPAN]);
+  for (const wake of [120, 372, 660]) { const plan = room.dayPlan(TODAY, { wake }); assert.ok(plan.every(item => item.to > item.from), `${wake}: ${JSON.stringify(plan)}`); }
+  // Разбудили — двадцать минут она не спит.
+  assert.equal(room.WOKE_MS, 20 * 60_000);
+  assert.deepEqual([room.wokeNow({ woke: 1000 }, 1000), room.wokeNow({ woke: 1000 }, 999 + room.WOKE_MS), room.wokeNow({ woke: 1000 }, 1000 + room.WOKE_MS), room.wokeNow({}, 5), room.wokeNow({ woke: 2000 }, 1000), room.wokeNow(null, 5)], [true, true, false, false, false, false]);
+});

@@ -451,3 +451,84 @@ test("одновременно: будильник ударил дважды —
   assert.equal(kept.n, "2026-11-18", "вечерняя отметка легла");
   assert.equal(toOwner().filter(item => NIGHT.includes(item.text)).length, 1, "и «спокойной ночи» — одно");
 });
+
+test("0.58.0, она встаёт к своему «доброму утру», а ночью её будит слово (сообщение 69: «как так получается, что она спит и отвечает»)", async () => {
+  reset();
+  moscow();
+  let now = at("2026-11-13T09:00:00Z");
+  const h = heart({ ...ON, SOURCES: true }, { now: () => now });
+  const door = (id) => ({ ...KEY, initData: { user: { id, first_name: "Тест" } } });
+  const look = async (id = OWNER) => (await h.onRoom({ do: "look" }, door(id))).her;
+  const WOKE = book.pool("+разбудили", { formal: true }), UP = book.pool("+комната:разбудили", { formal: true });
+  assert.ok(WOKE.length >= 4 && UP.length >= 3);
+  await h.onMessage(own("мой город — Москва"), KEY);
+  assert.notEqual((await look()).key, "сон");
+  await look(5);
+
+  // Час ночи: она спит. Хозяин пишет — просыпается: ответ начинается с этого, в комнате она сидит в кресле сонная.
+  now = at("2026-11-13T22:00:00Z");
+  assert.equal((await look()).key, "сон");
+  let count = toOwner().length;
+  await h.onMessage(own("привет"), KEY);
+  assert.equal(toOwner().length, count + 1);
+  const first = toOwner().at(-1).text;
+  assert.ok(WOKE.some(line => first.startsWith(`${line}\n\n`)), first);
+  const woken = await look();
+  assert.deepEqual([woken.key, woken.pose, woken.face], ["устала", "chair", "drowsy"]);
+  assert.ok(UP.includes(woken.line), woken.line);
+  // Пишет дальше — она уже не спит: второй раз «я спала» не говорит.
+  now += 2 * 60_000;
+  await h.onMessage(own("как дела"), KEY);
+  assert.ok(!WOKE.some(line => toOwner().at(-1).text.startsWith(line)), toOwner().at(-1).text);
+  // Тишина двадцать минут — засыпает снова.
+  now += 25 * 60_000;
+  assert.equal((await look()).key, "сон");
+  // Слово в комнате будит так же: ответ начинается с пробуждения, а страница по `woke` перечитывает рисунок.
+  const said = await h.onRoom({ do: "say", text: "привет", id: "word690001" }, door(OWNER));
+  assert.equal(said.woke, true);
+  assert.ok(WOKE.some(line => said.line.startsWith(`${line} `)), said.line);
+  assert.equal((await look()).key, "устала");
+  // Тот, кто в комнате не был: ночной ответ прежний — комната ему не тема.
+  await h.onMessage(message("привет", { id: 6 }), KEY);
+  assert.ok(!WOKE.some(line => last(6).startsWith(line)), last(6));
+
+  // Утро. 14 ноября (суббота) фаджр в Москве — 05:52: до него она спит, с приветом — уже на ногах; у гостя день прежний.
+  now = at("2026-11-14T02:40:00Z");
+  await h.tick({});
+  assert.equal((await look()).key, "сон", "до фаджра спит");
+  count = toOwner().length;
+  now = at("2026-11-14T02:54:00Z");
+  await h.tick({});
+  assert.equal(toOwner().length, count + 1, "«доброе утро» ушло");
+  const up = await look();
+  assert.deepEqual([up.key, up.stage], ["дело", "подъём"]);
+  assert.match(up.line, /^Проснулась/u);
+  assert.equal((await look(5)).key, "сон", "у гостя она встаёт как раньше — около восьми в выходной");
+
+  // О намазе она напоминает заранее — значит, к этому времени уже не спит: встаёт на столько же раньше.
+  now = at("2026-11-14T09:00:00Z");
+  await h.onMessage(own("напоминай о намазе за 15 минут"), KEY);
+  assert.match(last(OWNER), /о каждом намазе напомню/u);
+  now = at("2026-11-15T02:30:00Z"); // 05:30: до фаджра (05:54) — 24 минуты
+  assert.equal((await look()).key, "сон");
+  now = at("2026-11-15T02:42:00Z"); // 05:42: до фаджра — 12 минут
+  count = toOwner().length;
+  await h.tick({});
+  assert.equal(toOwner().length, count + 1, "напомнила о фаджре");
+  assert.match(toOwner().at(-1).text, /фаджр/iu);
+  assert.equal((await look()).stage, "подъём", "напоминает уже проснувшаяся");
+
+  // Привет по часам — подъём по тем же часам; привет выключен — её обычное утро.
+  now = at("2026-11-15T09:00:00Z");
+  await h.onMessage(own("желай доброго утра в 04:40"), KEY);
+  await h.onMessage(own("не напоминай о намазе"), KEY);
+  now = at("2026-11-16T01:30:00Z"); // 04:30
+  assert.equal((await look()).key, "сон");
+  now = at("2026-11-16T01:45:00Z"); // 04:45
+  assert.equal((await look()).stage, "подъём");
+  now = at("2026-11-16T09:00:00Z");
+  await h.onMessage(own("не желай доброго утра"), KEY);
+  now = at("2026-11-17T01:45:00Z"); // 04:45
+  assert.equal((await look()).key, "сон", "привет выключен — встаёт как раньше");
+  assert.equal(chats().length, 0, "всё это — без модели");
+});
