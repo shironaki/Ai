@@ -2388,6 +2388,96 @@ test("0.48.0, её день: план из эпизодов по часам че
   assert.equal(room.parseRoom("что делаешь завтра вечером"), null);
 });
 
+/** Общие для двух реплик три слова подряд: «прямо из-под пакета». Так видно, что вторая повторяет первую. */
+const sameRuns = (one, other) => {
+  const runs = (text) => { const list = String(text ?? "").toLowerCase().replace(/ё/gu, "е").replace(/[^a-zа-я0-9\s-]/gu, " ").split(/\s+/u).filter(Boolean); return list.slice(0, -2).map((word, index) => `${word} ${list[index + 1]} ${list[index + 2]}`); };
+  const mine = new Set(runs(one));
+  return runs(other).filter(run => mine.has(run));
+};
+
+test("0.55.1, слова под рисунком не говорят одно и то же дважды: реплика Байта не повторяет её реплику — по всему её дню; о завтраке он добавляет своё", async () => {
+  // Экран владельца (сообщение 66): «Насыпаю Байту корм. Он уже тут: хрустит прямо из-под пакета, до миски не
+  // дотерпел.» — и следом: «Байт хрустит кормом прямо из-под пакета. До миски он не дотерпел.»
+  assert.deepEqual(sameRuns("Насыпаю Байту корм. Он уже тут: хрустит прямо из-под пакета, до миски не дотерпел.", "Байт хрустит кормом прямо из-под пакета. До миски он не дотерпел."), ["прямо из-под пакета", "из-под пакета до", "пакета до миски"]);
+  const meals = fitting("день:подъём").filter(line => /корм/u.test(line));
+  assert.ok(meals.length >= 1 && pool("байт:завтрак").length >= 3, "о завтраке Байта — не меньше трёх реплик");
+  for (const hers of meals) for (const his of pool("байт:завтрак")) assert.deepEqual(sameRuns(hers, plain(his)), [], `«${hers}» и «${his}»`);
+  for (const his of pool("байт:завтрак")) assert.doesNotMatch(his, /из-под пакета|до миски/u, his);
+  // Весь её день, каждые десять минут, как отвечает сердце странице: её слова и слова о Байте стоят рядом. Гостей
+  // несколько: у кого-то сценка дня весь день держит Байта на месте, и слов о нём тогда нет.
+  let pairs = 0, fed = 0;
+  for (const id of [5, 6, 7, 8, 9, 10]) {
+    reset();
+    const midnight = Date.parse(`${TODAY}T00:00:00+03:00`), time = clock(midnight);
+    const h = heart(ON, { now: time.now, random: () => 0 });
+    for (let minute = 0; minute < 24 * 60; minute += 10) {
+      time.set(midnight + minute * 60_000);
+      const seen = await h.onRoom({ do: "look" }, from(id));
+      if (!seen.her?.line || !seen.cat?.line) continue;
+      pairs += 1;
+      if (seen.her.pose === "feed") fed += 1;
+      assert.deepEqual(sameRuns(seen.her.line, seen.cat.line), [], `гость ${id}, ${Math.floor(minute / 60)}:${minute % 60} — «${seen.her.line}» и «${seen.cat.line}»`);
+    }
+  }
+  assert.ok(pairs > 300 && fed >= 2, `пар реплик: ${pairs}, из них за кормом: ${fed}`);
+  // Витрина страницы (без сердца) показывает ту же пару — и тоже без повтора.
+  const meal = logic.demoLook(7, { minute: 12 });
+  assert.deepEqual([meal.her.pose, meal.cat.shape], ["feed", "eat"]);
+  assert.deepEqual(sameRuns(meal.her.line, meal.cat.line), []);
+});
+
+test("0.55.1, слово ей прямо в комнате (204, шаг первый — сердце): отвечает сама, словарём и тем же голосом, что в чате; чего в словаре нет — «об этом в чате»; в чат ничего не уходит; повтор номера — тот же ответ", async () => {
+  reset();
+  const time = clock(NOON);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const { SAY_MAX } = await import("../tgcloud/lib/roomdoor.js");
+  const { DOOR_ALLOW, DOOR_NOT_ALLOWED } = await import("../tgcloud/lib/bridge.js");
+  const sent = () => sdk().calls.filter(item => /^send|^edit/u.test(item.method)).length;
+  await h.onRoom({ do: "look" }, from(5));
+  const quiet = sent(), asked = chats().length;
+  // Тема словаря — та же, что в чате: гостю — его ответ, хозяину — свой.
+  const written = read("PHRASES.txt"), at = written.indexOf("== язык байта ==\n"), lines = written.slice(at, written.indexOf("\n\n", at)).split("\n").slice(2);
+  const topic = lines.filter(line => !line.startsWith("[")).map(plain), mine = lines.filter(line => line.startsWith("[хозяин] ")).map(line => line.slice(9));
+  assert.ok(at > 0 && topic.length >= 3 && mine.length >= 1);
+  const guest = await h.onRoom({ do: "say", text: "  где язык   у Байта? ", id: "word000001" }, from(5));
+  assert.deepEqual([guest.ok, guest.do, guest.known, guest.build], [true, "say", true, BUILD]);
+  assert.ok(topic.includes(guest.line), guest.line);
+  const master = await h.onRoom({ do: "say", text: "где язык у Байта", id: "word000002" }, from(OWNER));
+  // Хозяину — из тех же строк темы и из его собственных («[хозяин]» — вес, а не замена), его голосом.
+  assert.ok(master.known && [...topic, ...mine].some(line => master.line.startsWith(line.replace(/[.!?]$/u, ""))), master.line);
+  // Второй раз подряд — другой ответ той же темы: что сказано последним, она помнит (и чат помнит то же).
+  const second = await h.onRoom({ do: "say", text: "где язык у Байта", id: "word000003" }, from(5));
+  assert.ok(topic.includes(second.line) && second.line !== guest.line, second.line);
+  assert.equal(JSON.parse(sdk().kv.get("heart:said:5")).t, second.line);
+  // Повтор запроса с тем же номером (страница не дождалась ответа): тот же ответ, а не третий.
+  const again = await h.onRoom({ do: "say", text: "где язык у Байта", id: "word000003" }, from(5));
+  assert.deepEqual([again.ok, again.repeat, again.line], [true, true, second.line]);
+  // Чего в словаре нет — не молчит и не выдумывает: «об этом — в чате». Модель не зовётся.
+  const past = await h.onRoom({ do: "say", text: "рассчитай траекторию полёта до Марса с тремя пересадками", id: "word000004" }, from(5));
+  assert.deepEqual([past.ok, past.known], [true, false]);
+  assert.ok(pool("слово:мимо").map(plain).includes(past.line), past.line);
+  assert.ok(pool("слово:мимо").length >= 3);
+  // Пусто и слишком длинно — отказ словами; предел — двести знаков.
+  assert.equal(SAY_MAX, 200);
+  assert.deepEqual([(await h.onRoom({ do: "say", text: "   " }, from(5))).code, (await h.onRoom({ do: "say" }, from(5))).code, (await h.onRoom({ do: "say", text: 42 }, from(5))).code], ["empty", "empty", "empty"]);
+  const long = await h.onRoom({ do: "say", text: "а".repeat(SAY_MAX + 1) }, from(5));
+  assert.deepEqual([long.ok, long.code], [false, "long"]);
+  assert.equal((await h.onRoom({ do: "say", text: `привет${" ".repeat(400)}` }, from(5))).ok, true, "пробелы в счёт не идут");
+  // В чат из комнаты ничего не ушло, и модель никто не спрашивал.
+  assert.equal(sent(), quiet);
+  assert.equal(chats().length, asked);
+  // Слишком часто — отказ, как у любого действия комнаты.
+  let slow = null;
+  for (let n = 0; n < 16 && !slow; n += 1) { const got = await h.onRoom({ do: "say", text: "привет", id: `rush0000${String(n).padStart(2, "0")}` }, from(6)); if (!got.ok) slow = got; }
+  assert.equal(slow?.code, "slow");
+  // Слова человека в записи комнаты не лежат: только её ответ на последний номер.
+  const kept = roomOf(5);
+  assert.deepEqual(Object.keys(kept.word).sort(), ["a", "id"]);
+  assert.doesNotMatch(JSON.stringify(kept), /Марса|где язык/u);
+  // Дверь приложения этого действия не пускает: она остаётся как была (сообщение 63).
+  assert.ok(!DOOR_ALLOW.includes("say") && DOOR_NOT_ALLOWED.includes("say"));
+});
+
 test("0.48.0, её день в комнате: шаг один и тот же — на рисунке, при повторном вопросе и в чате; утром она кормит Байта, и он ест рядом; ночью спит, и он у неё под боком", async () => {
   reset();
   const plan = room.dayPlan(TODAY), wake = plan[1].from, midnight = Date.parse(`${TODAY}T00:00:00+03:00`);

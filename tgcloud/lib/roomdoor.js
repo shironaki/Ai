@@ -8,17 +8,20 @@
  * новое имя из сердца — добавить его в оба списка (здесь и в `heart.js`, у `createRoomDoor`); eslint назовёт
  * забытое («is not defined»), а тест `tests/sturdy.test.mjs` сверяет списки между собой.
  */
+/** Сколько знаков в одном слове ей в комнате: длиннее — в чат. */
+export const SAY_MAX = 200;
+
 export function createRoomDoor(deps) {
   const {
-    agoWords, airNow, ALBUM_KEY, AWAY_MS, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
+    agoWords, airNow, ALBUM_KEY, AWAY_MS, book, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
     CAT_STILL, catAfter, catFits, catGift, catKey, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
     eventFor, eventNow, feelFor, feelingNow, fill, GIFT_EVERY_MS, GIFT_POOL, GIFT_SAID, GIFTS, giftsShown, HER_CALM,
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
-    roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, tidyNote, voiceCtx, voiced,
-    WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
+    roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
+    voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
   } = deps;
 
   /**
@@ -495,6 +498,33 @@ export function createRoomDoor(deps) {
         const done = await keepsakes.snap(userId, view, seen.her.line, { day: today });
         if (!done.ok) return refuse("storage", NOT_KEPT);
         return { ok: true, do: op, build: BUILD, taken: !done.early, line: spoken(roomLine(turn, done.early ? "снимок:рано" : "снимок") || (done.early ? "Снимок уже есть — следующий чуть позже." : "Запомнила этот момент.")) };
+      }
+      if (op === "say") {
+        // Слово ей прямо в комнате (0.55.1; идея 204, шаг первый — сторона сердца: поля для слов на странице ещё нет).
+        // Отвечает сама, словарём, как в чате: сначала выученным от хозяина, потом темами `PHRASES.txt` — тем же
+        // голосом, с той же памятью о последнем сказанном (`heart:said:`), и разговор ложится в ту же нить, что и
+        // чат (`keepThread`). Чего в словаре нет — говорит, что об этом лучше в чате: ответ модели не укладывается
+        // в срок запроса страницы, это следующий шаг. В чат отсюда ничего не уходит. Умения чата («напомни»,
+        // «нарисуй», «статус») здесь не работают: слова, которые словарь не знает, — тоже «в чат».
+        const words = (typeof input?.text === "string" ? input.text : "").replace(/\s+/gu, " ").trim();
+        if (!words) return refuse("empty", "Слов не вижу. Напишите — и я отвечу.");
+        if (words.length > SAY_MAX) return refuse("long", "Так много сразу я здесь не разберу. Длинное — в чате: там отвечу как следует.");
+        const own = await taught.match(words).catch(() => null);
+        const names = own ? null : book.match(words);
+        const vars = { "настроение": feel.mood ?? "", "дней": "" };
+        vars["причина"] = book.pick(`+причина:${feel.reason}`, voiceCtx(turn, vars)) ?? "";
+        const last = names ? await store.get(`heart:said:${userId}`).catch(() => null) : null;
+        const found = (own ? fill(own, voiceCtx(turn)) ?? own : names ? book.say(names, voiceCtx(turn, vars), { avoid: String(last?.t ?? "") }) : "") || "";
+        const raw = found || roomLine(turn, "слово:мимо") || "Об этом лучше в чате: там я отвечу как следует.";
+        const done = await room.word(userId, { ...once, answer: raw });
+        // Повтор того же номера: тот же ответ, без второй записи в нить.
+        if (done.repeat) return { ok: true, do: op, build: BUILD, line: spoken(done.answer || raw), known: Boolean(found), repeat: true };
+        { const other = await instead(done); if (other) return other; }
+        if (found) {
+          await keepThread(turn, words, raw);
+          if (names) await store.set(`heart:said:${userId}`, { t: raw, at: now() }).catch(() => false);
+        }
+        return { ok: true, do: op, build: BUILD, line: spoken(raw), known: Boolean(found) };
       }
       if (op === "oops") {
         // Журнал ошибок страницы (0.49.0): три последние записи за заход — место, код и короткий текст. Кто зашёл, не

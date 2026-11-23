@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "18";
+export const PAGE = "19";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -606,7 +606,7 @@ const DEMO_DAY = Object.freeze([
   [23, ...DEMO_HER["ночь"]],
 ]);
 /** Байт на витрине при её занятии: она насыпает корм — он ест рядом; она спит — он спит у неё под боком. */
-const DEMO_MEAL = Object.freeze({ shape: "eat", place: "near", key: "голоден", line: "Байт хрустит кормом прямо из-под пакета. До миски он не дотерпел.", beats: [], still: true });
+const DEMO_MEAL = Object.freeze({ shape: "eat", place: "near", key: "голоден", line: "Байт ест так, будто его не кормили с прошлого века. Кормили. Вчера.", beats: [], still: true });
 const DEMO_NIGHT = Object.freeze({ shape: "curl", place: "near", key: "спит", line: "Байт свернулся у меня под боком и сопит. Нас двое — не будите.", beats: [], still: true });
 const DEMO_OFFER = "Время чая. Что налить — жасмин, улун или мяту?";
 /** Чай на витрине — словами этого чая: как у сердца (запасы «+комната:чай:улун», «+комната:чай:мята»). */

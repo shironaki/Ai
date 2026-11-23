@@ -253,11 +253,12 @@ export const DOOR_SLOT_TEXT = "⏳";
 /** С этого слова начинается строка, которую сердце отдаёт телефону на вопрос «что с дверью» (`says`). */
 export const DOOR_SAYS = "DOOR-SAYS";
 /**
- * Что можно делать через дверь: всё, что делает страница комнаты, кроме `oops` — это журнал ошибок самой страницы.
- * Новое действие комнаты сюда само не попадает: `tests/door.test.mjs` назовёт его и попросит решить.
+ * Что можно делать через дверь: всё, что делает страница комнаты, кроме `oops` — это журнал ошибок самой страницы —
+ * и `say` (0.55.1, слово ей в комнате): дверь остаётся как была, новое через неё — только по команде владельца
+ * (сообщение 63). Новое действие комнаты сюда само не попадает: `tests/door.test.mjs` назовёт его и попросит решить.
  */
 export const DOOR_ALLOW = Object.freeze(["look", "pet", "feed", "play", "tea", "water", "pat", "book", "quiet", "wear", "brew", "call", "window", "lamp", "music", "pick", "album", "gift", "snap"]);
-export const DOOR_NOT_ALLOWED = Object.freeze(["oops"]);
+export const DOOR_NOT_ALLOWED = Object.freeze(["oops", "say"]);
 
 /** Ключ двери — «номер канала:секрет» одной строкой (`KEY_DOOR` на телефоне): секрет без канала ничего не открывает. */
 export function doorKey(value) {

@@ -141,18 +141,17 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.55.0";
+export const BUILD = "0.55.1";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.55.0 — Байт: языка у него больше нет, и сквозь меня он больше не ходит; а моё сердце стало легче",
-  "язык: вы сказали, что с ним он похож на собаку, — убрала; шалит он теперь одними круглыми глазами",
-  "мимо меня Байт идёт в обход — за моими ногами, отогнув путь вглубь комнаты, и нарисован за мной, а не поверх меня; когда я сплю на ковре, обходит спереди, по краю",
-  "если я сама иду ему наперерез, он сидит и ждёт, пока я дойду, и только потом идёт: ходим по очереди",
-  "вес: сердце подошло к пределу — 610 КБ при стороже 620; всю работу секретаря я перенесла в её собственный модуль, слово в слово, и теперь сердце весит 553 КБ — запас 67",
-  "секретарь работает как раньше: это тот же код в другом файле, и проверяют его те же тесты",
-  "слова: «где язык у Байта», «почему Байт ходит сквозь тебя» — отвечаю сама",
-  "внизу комнаты теперь «страница 18»",
+  "0.55.1 — под рисунком я больше не говорю одно и то же дважды; и сделан первый шаг к разговору прямо в комнате",
+  "что было на вашем экране: я сказала, что Байт хрустит кормом прямо из-под пакета, — и следующей строкой то же самое было сказано о нём ещё раз",
+  "теперь о его завтраке я добавляю своё, а не повторяю; проверила весь свой день, каждые десять минут: других таких повторов нет",
+  "разговор в комнате, шаг первый из трёх: моё сердце уже отвечает на слова, сказанные в комнате, — словарём и тем же голосом, что в чате",
+  "на телефоне этот шаг не виден: поля для слов на странице ещё нет",
+  "чего в словаре нет — там отвечаю «об этом в чате»: модель в комнате пока не отвечает",
+  "внизу комнаты теперь «страница 19»",
 ]);
 
 const DAY = 86_400_000;
@@ -2282,15 +2281,15 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    */
   let roomDoor = null;
   const onRoom = (input, ctx = {}) => (roomDoor ??= createRoomDoor({
-    agoWords, airNow, ALBUM_KEY, AWAY_MS, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
+    agoWords, airNow, ALBUM_KEY, AWAY_MS, book, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
     CAT_STILL, catAfter, catFits, catGift, catKey, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
     eventFor, eventNow, feelFor, feelingNow, fill, GIFT_EVERY_MS, GIFT_POOL, GIFT_SAID, GIFTS, giftsShown, HER_CALM,
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
-    roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, tidyNote, voiceCtx, voiced,
-    WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
+    roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
+    voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
   }))(input, ctx);
   /**
    * Дверь приложения (0.54.0, `docs/DOOR.md`): второй вход в ту же `onRoom` — подписанным постом в закрытый канал, от

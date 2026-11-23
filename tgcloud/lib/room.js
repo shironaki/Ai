@@ -918,6 +918,17 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
    * Лампа (нажали на неё, 0.46.0): свет гаснет — остаётся гирлянда — или загорается снова. Запоминается, пока не
    * нажмут ещё раз: `dark`. В отношения не идёт: это не забота.
    */
+  /**
+   * Слово ей в комнате (0.55.1, идея 204): счёт действия — как у любого нажатия (номер, предел частоты) — и её
+   * ответ на этот номер. Слов человека запись не хранит; ответ хранит, чтобы повтор запроса с тем же номером
+   * (страница не дождалась ответа) вернул его же, а не второй, другой. `answer` в ответе — что было сказано на
+   * этот номер; пусто — такого номера запись уже не помнит.
+   */
+  async function word(userId, { day, id = "", limit = false, answer = "" } = {}) {
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, word: { id, a: String(answer).slice(0, 600) } }));
+    return { ok: true, answer: id && done.state?.word?.id === id ? String(done.state.word.a ?? "") : "", state: done.state, ...flags(done) };
+  }
+
   async function lamp(userId, { day, id = "", limit = false } = {}) {
     const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, dark: state.dark !== true }));
     return { ok: true, dark: done.state.dark === true, state: done.state, ...flags(done) };
@@ -1022,5 +1033,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId) { return (await amend(userId, "", (state) => ({ ...state, at: state.at || now(), near: now() }))).saved; }
 
-  return { read, amend, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look };
+  return { read, amend, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look, word };
 }
