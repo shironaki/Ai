@@ -1420,7 +1420,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "22");
+  assert.equal(logic.PAGE, "23");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -2093,7 +2093,8 @@ test("0.57.0, слово ей: под её словами — поле и кно
   assert.deepEqual([lost.tone, lost.retry, lost.busy], ["warn", true, ""], "нет связи — под словами «Попробовать ещё раз»");
   // Витрина: словаря в ней нет — на приветствие она отвечает, об остальном говорит как сердце: «в чате».
   const hello = logic.demoSay(state, "  Привет! ");
-  assert.deepEqual([hello.ok, hello.do, hello.known, hello.line], [true, "say", true, "Привет. Заходите — только Байта не разбудите."]);
+  assert.deepEqual([hello.ok, hello.do, hello.known, hello.line], [true, "say", true, "Привет. Заходите — я вам рада."]);
+  assert.doesNotMatch(hello.line, /Байт/u, "о Байте витрина здесь не говорит: спит он или нет, она не знает (0.60.0)");
   const other = logic.demoSay(state, "что такое квазар?");
   assert.deepEqual([other.ok, other.known], [true, false]);
   assert.ok(readFileSync(new URL("../PHRASES.txt", import.meta.url), "utf8").includes(`\n${other.line}\n`), "слова «мимо» на витрине — из запаса «+комната:слово:мимо»");
@@ -2107,4 +2108,23 @@ test("0.57.0, слово ей: под её словами — поле и кно
   assert.match(page, /if \(result\?\.ok === true\) field\.value = "";/u);
   assert.match(page, /button\.disabled = Boolean\(state\.busy\) \|\| acting;/u);
   assert.doesNotMatch(page, /\$\("word"\)\.disabled|field\.disabled/u, "поле не гаснет: иначе закрылась бы клавиатура");
+});
+
+test("0.60.0, витрина: после корма Байт ест из полной миски — как у сердца («наедается»)", () => {
+  // Утро на витрине: шаги по десять минут — блокнот, корм, метёлка.
+  const pours = logic.demoLook(7, { minute: 12 });
+  assert.deepEqual([pours.her.pose, pours.cat.shape, pours.cat.place, pours.bowl], ["feed", "eat", "near", undefined]);
+  const meal = logic.demoLook(7, { minute: 22 });
+  assert.deepEqual([meal.her.pose, meal.cat.shape, meal.cat.place, meal.cat.key, meal.bowl], ["dust", "eat", "bowl", "сыт", "full"]);
+  assert.ok(readFileSync(new URL("../PHRASES.txt", import.meta.url), "utf8").includes(`\n${meal.cat.line}\n`), "слова о нём на витрине — из запаса «+комната:байт:ест»");
+  const state = logic.applyLook(logic.blank(7), meal, 0);
+  assert.deepEqual([logic.viewOf(state).fed, state.fed, state.served], [true, false, true]);
+  // Между сверками витрина помнит сделанную заботу, а миску после её корма берёт из свежего ответа: доел — пуста.
+  const later = logic.demoKept(state, logic.applyLook(logic.blank(7), logic.demoLook(7, { minute: 32 }), 0));
+  assert.deepEqual([later.served, logic.viewOf(later).fed], [false, false]);
+  // Забота посреди его завтрака на витрине корм из миски не убирает.
+  assert.equal(logic.viewOf(logic.applyCare(state, "tea", logic.demoCare(state, "tea"))).fed, true);
+  // Позу или Байта назвали в адресе (снимки) — никто ничего не ест сам.
+  assert.equal(logic.demoLook(7, { minute: 22, cat: "sit.rug" }).bowl, undefined);
+  assert.equal(logic.demoLook(8, { minute: 22 }).bowl, undefined);
 });

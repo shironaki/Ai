@@ -1115,6 +1115,9 @@ test("sync: что не так с пачкой целиком — отказ bad
   assert.deepEqual([full.ack.length, full.rejected, full.retry], [DOOR_SYNC_EVENTS, [], []]);
   const more = (await syncing(h, batch(full.cursor, Array.from({ length: DOOR_SYNC_EVENTS }, (_, index) => event(40 + index, index % 2 ? "lamp" : "music"))))).result;
   assert.deepEqual([more.ack.length, more.retry], [DOOR_SYNC_EVENTS, []], "и следующая пачка через семь секунд — тоже");
+  // 0.60.0. События очереди в счёт частоты страницы не идут: сразу после пачки открытая страница отвечает как обычно.
+  assert.deepEqual((kept().ops ?? []).filter(item => String(item[0]).startsWith("+")), []);
+  for (let index = 0; index < 5; index += 1) assert.equal((await room(h, { do: "lamp", id: `page0000${index}` })).ok, true, "страница после пачки — не «слишком часто»");
   // Частота самих пачек — как у одиночных действий: десять запросов человека в минуту. У отказа — `wait`, секунды:
   // `retry` у пачки — список событий.
   clock = Math.ceil(clock / 60_000) * 60_000 + 61_000;

@@ -559,6 +559,8 @@ export function stepAt({ count = 0, from = 0, to = 1440, at = 0, seed = 0, story
  * или снег — свитер, сухо — куртка. Вечером и ночью — домашнее, что бы ни было за окном.
  */
 export const dressFor = (sky) => (sky === "rain" || sky === "storm" || sky === "snow" ? "home" : "jacket");
+/** Сколько минут Байт ест то, что она насыпала утром (0.60.0, «наедается»): всё это время миска полна. */
+export const MEAL_MIN = 10;
 /** Сколько Байт остаётся на одном месте: семь минут — и следующая реплика его состояния (до 0.48.0 — полминуты). */
 export const CAT_STEP_MS = 7 * 60_000;
 /** Окно открыто час (0.48.0): «проветрила и закрыла»; нажали ещё раз — закрыла раньше. */
@@ -864,7 +866,9 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
       if (id && (ops.some(op => op[0] === id) || ids.includes(id))) { repeat = true; return null; }
       if (limit && ops.filter(op => at - Number(op[1]) < RUSH_MS).length >= RUSH_MAX) { slow = true; return null; }
       const next = change(state, at);
-      return next && (id || limit) ? { ...next, ops: [...ops, [id, at]].slice(-OPS_MAX), ...(lasting ? { ids: [...ids, id].slice(-IDS_MAX) } : {}) } : next;
+      // Событие очереди помнится в `ids` и в счёт частоты страницы (`ops`) не идёт (0.60.0): после пачки из двенадцати
+      // событий открытая страница двадцать секунд отвечала бы «не так быстро».
+      return next && (id || limit) ? { ...next, ops: lasting ? ops : [...ops, [id, at]].slice(-OPS_MAX), ...(lasting ? { ids: [...ids, id].slice(-IDS_MAX) } : {}) } : next;
     });
     return { ...done, repeat, slow };
   }

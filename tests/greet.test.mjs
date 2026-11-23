@@ -526,6 +526,15 @@ test("0.58.0, она встаёт к своему «доброму утру», �
   assert.equal((await look()).key, "сон");
   now = at("2026-11-16T01:45:00Z"); // 04:45
   assert.equal((await look()).stage, "подъём");
+  // 0.60.0. Встала в 04:40 — и Байт уже не спит (до 0.60.0 до шести утра он «спал» и при этом ждал корм): ждёт, потом ест.
+  now = at("2026-11-16T02:05:00Z"); // 05:05 — второй шаг подъёма: корм
+  const early = await h.onRoom({ do: "look" }, door(OWNER));
+  assert.equal(early.her.pose, "feed");
+  assert.notEqual(early.cat.key, "спит");
+  now = at("2026-11-16T02:22:00Z"); // 05:22 — отошла с метёлкой: он ест из миски
+  const eating = await h.onRoom({ do: "look" }, door(OWNER));
+  assert.equal(eating.bowl, "full");
+  assert.notEqual(eating.cat.key, "спит");
   now = at("2026-11-16T09:00:00Z");
   await h.onMessage(own("не желай доброго утра"), KEY);
   now = at("2026-11-17T01:45:00Z"); // 04:45

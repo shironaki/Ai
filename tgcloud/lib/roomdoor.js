@@ -14,7 +14,7 @@ export const SAY_MAX = 200;
 export function createRoomDoor(deps) {
   const {
     agoWords, airNow, ALBUM_KEY, AWAY_MS, book, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
-    CAT_STILL, catAfter, catFits, catGift, catKey, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
+    CAT_STILL, catAfter, catFits, catGift, catKey, catMeal, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
     eventFor, eventNow, feelFor, feelingNow, fill, GIFT_EVERY_MS, GIFT_POOL, GIFT_SAID, GIFTS, giftsShown, HER_CALM,
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
@@ -98,12 +98,16 @@ export function createRoomDoor(deps) {
         const she = herStep(turn, feel, state, today);
         const free = !after && !held && !hides && !naps && key !== "обижен";
         const eats = free && she.pose === "feed", beside = free && !eats && she.key === "сон" && key === "спит";
+        // 0.60.0, «наедается» (остаток идеи 208): она насыпала и отошла — десять минут корм лежит в миске (`bowl` в
+        // ответе: страница рисует миску полной), а Байт ест из неё, если ничем другим не занят. Срок — по плану её
+        // дня, а не по тому, чем она занята сейчас: налили ей чаю, попросили тишины — корм из миски не пропадает.
+        const served = catMeal(turn, today) > 0, dines = free && !eats && !beside && served;
         const count = Math.floor(now() / CAT_STEP_MS) + roomSeed(userId, today);
         // 0.49.0 (сообщение 48: «Байт не должен быть просто генератором случайных действий… его поведение должно
         // учитывать состояние Аи и происходящее в комнате»). По старшинству: шалость — событие её дня; только что
         // открыли окно — он уже на подоконнике; вечером приносит ей добычу; она сидит — приходит к ней (ложится у ног,
         // просится на руки). Она спит или клюёт носом — шумного он не затевает; спит сам — там, где сейчас уместно.
-        const minute = minutesNow(turn), sheSleeps = she.key === "сон", awake = free && !eats && !beside && key !== "спит";
+        const minute = minutesNow(turn), sheSleeps = she.key === "сон", awake = free && !eats && !dines && !beside && key !== "спит";
         const event = eventNow(today, minute), bring = catGift(today);
         const prank = awake && !sheSleeps && event?.key === "prank";
         const airy = awake && !prank && airNow(state, now()) && now() - Number(state.open) < WINDOW_WATCH_MS;
@@ -112,13 +116,13 @@ export function createRoomDoor(deps) {
         const comes = awake && !prank && !airy && !gift && seated && HER_CALM.includes(she.key) && ["сыт", "ласка", "шалит"].includes(key) && count % 3 === 1;
         const fits = { asleep: sheSleeps || she.face === "drowsy", seated, sunny: (sky === "clear" || sky === "clouds") && ["утро", "день"].includes(turn.light || partOfDay(feel.hour)) };
         const special = prank ? `событие:${event.pool}` : airy ? "байт:окно" : gift ? "байт:добыча" : comes ? "байт:к ней" : "";
-        const beats = held || hides || naps || eats || beside || special ? [] : catBeats(key).filter(item => catFits(item.line, fits));
+        const beats = held || hides || naps || eats || dines || beside || special ? [] : catBeats(key).filter(item => catFits(item.line, fits));
         const from = beats.length ? count % beats.length : 0, beat = beats[from] ?? null;
         // Распорядок — по порядку от нынешней реплики: прежняя страница идёт по нему сама, нынешняя (`steady`) — нет.
         const order = [...beats.slice(from), ...beats.slice(0, from)];
         // С места не ходит (спит) — реплика из тех, что сейчас уместны: «на солнце» — в солнечный день, «у ног» — когда она сидит.
         const settledLine = () => { const lines = roomLines(turn, `байт:${key}`).filter(item => catFits(item, fits)); return lines.length ? lines[count % lines.length] : lineAt(turn, `байт:${key}`, count); };
-        const raw = after || held ? "" : eats ? lineAt(turn, "байт:завтрак", count) : beside ? lineAt(turn, "байт:ночь", count)
+        const raw = after || held ? "" : eats ? lineAt(turn, "байт:завтрак", count) : dines ? lineAt(turn, "байт:ест", count) : beside ? lineAt(turn, "байт:ночь", count)
           : hides ? lineAt(turn, "байт:гроза", count) : naps ? lineAt(turn, "байт:тихий час", count)
             // Шалость — по дню (у всех одна); «к ней» приходится на каждый третий шаг — счёт по тройкам, иначе реплика была бы всегда одна.
             : special ? lineAt(turn, special, prank ? dayNo(today) : comes ? Math.floor(count / 3) : count) : beat ? beat.line : settledLine();
@@ -129,12 +133,13 @@ export function createRoomDoor(deps) {
             : hides ? { key, shape: "tail", place: "plaid", line: raw, beats: [], still: true }
               : naps ? { key: "спит", shape: "curl", place: "pillow", line: raw, beats: [], still: true }
                 : eats ? { key, shape: "eat", place: "near", line: raw, beats: [], still: true }
+                  : dines ? { key: "сыт", shape: "eat", place: "bowl", line: raw, beats: [], still: true }
                   : beside ? { key, shape: "curl", place: "near", line: raw, beats: [], still: true }
                     // Особый случай (0.49.0): где он и какой — по словам о нём, как и всегда; `prank` и `gift` — отметки для альбома.
                     : special ? { key, ...catPose(raw, key), line: raw, beats: [], still: true, steady: true, ...(prank ? { prank: true } : gift ? { gift: true } : {}) }
                       : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2, steady: true };
         return {
-          ...(cat ? { cat } : {}),
+          ...(cat ? { cat } : {}), ...(served ? { bowl: "full" } : {}),
           plant: { state: plantState({ water: state.water, at: now() }) === "полита" ? "wet" : "dry" },
           done: Object.fromEntries(Object.keys(ROOM_POOL).map(name => [name, Number(state.done?.[name]) || 0])),
           cared: state.cared === today,
@@ -251,7 +256,7 @@ export function createRoomDoor(deps) {
         return {
           // `once` (0.49.0): это сердце помнит номера действий — страница может сама повторить запрос, не дошедший за срок.
           ok: true, do: "look", build: BUILD, formal, once: true, ...(again ? { again: true } : {}), ...(repeat ? { repeat: true } : {}),
-          ...clockNow(visit.state, [she.left]),
+          ...clockNow(visit.state, [she.left, catMeal(turn, today)]),
           greet: spoken(greet), window: windowLine(turn, sky), sky, city: turn.skyReal === true, ...(turn.wind ? { wind: turn.wind } : {}),
           box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
           her: she,
@@ -498,7 +503,7 @@ export function createRoomDoor(deps) {
         const view = {
           part: seen.clock.part, ...(seen.clock.light ? { light: seen.clock.light } : {}), sky: seen.sky,
           her: { key: seen.her.key, pose: seen.her.pose, wear: seen.her.wear }, ...(seen.cat ? { cat: { shape: seen.cat.shape, place: seen.cat.place, key: seen.cat.key } } : {}),
-          things: seen.things.map(item => item.key), plant: seen.plant.state, lamp: seen.lamp, dark: seen.dark, open: seen.open, fed: seen.done.feed > 0, tea: seen.done.tea > 0, own: seen.own, gifts: seen.gifts,
+          things: seen.things.map(item => item.key), plant: seen.plant.state, lamp: seen.lamp, dark: seen.dark, open: seen.open, fed: seen.done.feed > 0 || seen.bowl === "full", tea: seen.done.tea > 0, own: seen.own, gifts: seen.gifts,
         };
         const done = await keepsakes.snap(userId, view, seen.her.line, { day: today });
         if (!done.ok) return refuse("storage", NOT_KEPT);

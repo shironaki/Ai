@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "22";
+export const PAGE = "23";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -49,7 +49,7 @@ const count = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? 
 export function blank(hour = 12) {
   return {
     ready: false, demo: false, busy: "", tone: "", said: "Дверь открывается…", retry: false,
-    part: partOf(hour), light: "", glow: null, her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, tea: false,
+    part: partOf(hour), light: "", glow: null, her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, served: false, tea: false,
     lines: { her: "", window: "", cat: "", box: "", things: {} }, done: {}, scene: null, build: "", next: null,
     // Которая по счёту её поза (позы состояния идут по кругу) и гладили ли её сегодня; что за окном (`SKIES`).
     // Пока сердце не ответило, за окном — ровное серое небо: какая там погода, ещё неизвестно.
@@ -101,7 +101,7 @@ export function viewOf(state) {
     ...(state.cat.run === true && !teased && !pet ? { run: true } : {}),
   };
   return {
-    part: state.part, her, cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed, tea: state.tea,
+    part: state.part, her, cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed || state.served === true, tea: state.tea,
     // Свет по солнцу назван, только когда он разошёлся с часами: иначе описание рисунка то же, что и было.
     ...(lightOf(state) !== state.part ? { light: lightOf(state) } : {}),
     ...(state.glow ? { glow: state.glow } : {}),
@@ -329,7 +329,8 @@ export function applyLook(state, result, at = 0) {
     kinds, offer, asking: offer && kinds.length > 1 ? "tea" : "", plan: text(result.her?.plan), told: "",
     cat: catOf(result.cat, null, { first: true }), plant: result.plant?.state === "dry" ? "dry" : "wet",
     things: things.map(item => item.key), lamp: /^#[0-9a-f]{6}$/iu.test(String(result.lamp ?? "")) ? result.lamp : "",
-    fed: done.feed > 0, tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
+    // `served` (0.60.0, «наедается»): корм в миску насыпала она — миска полна, пока Байт ест (`bowl` в ответе сердца).
+    fed: done.feed > 0, served: result.bowl === "full", tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
     next: count(result.next?.days) || null, said: said || "Заходите.",
   };
 }
@@ -431,7 +432,7 @@ export function applyCare(state, op, result) {
     ...(moved ? { her, turn: 0 } : {}),
     // Чай выбрали у чайника (0.48.0): вопрос «какой налить» снят, а налитый чай запомнен.
     asking: "", ...(BREWS.includes(result.kind) ? { brew: result.kind } : {}),
-    done, fed: done.feed > 0, tea: done.tea > 0, lines, said: said || "Спасибо.",
+    done, fed: done.feed > 0, served: result.bowl === "full", tea: done.tea > 0, lines, said: said || "Спасибо.",
   };
 }
 
@@ -607,6 +608,8 @@ const DEMO_DAY = Object.freeze([
 ]);
 /** Байт на витрине при её занятии: она насыпает корм в миску — он ждёт рядом (0.57.0); она спит — он спит у неё под боком. */
 const DEMO_MEAL = Object.freeze({ shape: "eat", place: "near", key: "голоден", line: "Байт ждёт. Хвост ходит из стороны в сторону — это он торопит.", beats: [], still: true });
+/** На витрине он тоже наедается (0.60.0): шаг после корма — Байт ест из полной миски. */
+const DEMO_EATS = Object.freeze({ shape: "eat", place: "bowl", key: "сыт", line: "Байт ест: уткнулся в миску и хрустит на всю комнату.", beats: [], still: true });
 const DEMO_NIGHT = Object.freeze({ shape: "curl", place: "near", key: "спит", line: "Байт свернулся у меня под боком и сопит. Нас двое — не будите.", beats: [], still: true });
 const DEMO_OFFER = "Время чая. Что налить — жасмин, улун или мяту?";
 /** Чай на витрине — словами этого чая: как у сердца (запасы «+комната:чай:улун», «+комната:чай:мята»). */
@@ -674,6 +677,8 @@ export function demoLook(hour = 12, params = {}) {
   const sky = skyOf(params.sky), left = Number(params.left);
   // Позу назвали в адресе — она стоит в ней и распорядка нет: снимок должен быть таким, каким его попросили.
   const fixed = HER_POSES.includes(params.her);
+  // Утро на витрине: шаг после корма (метёлка) — Байт ест из миски, которую она наполнила.
+  const dines = steady && !params.cat && !fixed && !params.key && sky !== "storm" && block[0] === 7 && beats[0][0] === "dust";
   return {
     ok: true, do: "look", build: "", owner: true, kinds: [...BREWS], open: params.open === "1", ...(params.wind === "1" || params.wind === "2" ? { wind: Number(params.wind) } : {}),
     ...(timed ? { step: Math.max(3_000, Math.round((10 - (minute % 10)) * 60_000)) } : {}),
@@ -684,9 +689,10 @@ export function demoLook(hour = 12, params = {}) {
     // Гроза (0.46.0): Байт под пледом, наружу один хвост, — как у сердца (запас «+комната:байт:гроза»).
     cat: sky === "storm" && !params.cat ? { shape: "tail", place: "plaid", key: "шалит", line: "Гром — и Байта как не бывало: из-под пледа торчит один хвост и делает вид, что он ни при чём.", beats: [], still: true }
       : steady && !params.cat && !fixed && !params.key && beats[0][0] === "feed" ? { ...DEMO_MEAL }
+        : dines ? { ...DEMO_EATS }
         : steady && !params.cat && !fixed && !params.key && key === "сон" ? { ...DEMO_NIGHT }
           : { shape: params.cat ? shape : pets[0][0], place: params.cat ? place : pets[0][1], key: catKey, line: params.cat ? "" : pets[0][2], beats: params.cat ? [] : pets.map(([one, where, line]) => ({ shape: one, place: where, line })), still: Boolean(params.cat), ...(steady ? { steady: true } : {}) },
-    plant: { state: params.plant === "wet" ? "wet" : "dry" }, done: {}, cared: false,
+    plant: { state: params.plant === "wet" ? "wet" : "dry" }, done: {}, cared: false, ...(dines ? { bowl: "full" } : {}),
     things: listed.map(name => ({ key: name, title: name, line: DEMO_THINGS[name] ?? "" })), lamp: params.lamp ?? "", drawing: "", fresh: [], next: null,
     dark: params.dark === "1", music: params.music === "1" ? 180_000 : 0, brew: BREWS.includes(params.brew) ? params.brew : BREWS[0],
     box: { count: 2, line: "В коробке Байта — его трофеи: носок неизвестного происхождения и лампочка от гирлянды. Растёт с каждой сценкой." }, patted: false,
@@ -708,6 +714,8 @@ export function demoCare(state, op, kind = "") {
     ...(op === "tea" && (state.her?.key === "дело" || state.her?.key === "игра") ? { her: { key: "уют", pose: DEMO_HER["вечер"][1][0][0], line: DEMO_HER["вечер"][1][0][1], beats: DEMO_HER["вечер"][1].map(([pose, line]) => ({ pose, line })) } } : {}),
     plant: { state: op === "water" ? "wet" : state.plant }, done: { ...state.done, [op]: before + (early ? 0 : 1) }, cared: true,
     ...(poured ? { kind: poured, brew: poured } : {}),
+    // Байт ел её корм (0.60.0) — от заботы корм из миски не пропадает: как у сердца.
+    ...(state.served ? { bowl: "full" } : {}),
   };
 }
 /** Окно на витрине (0.48.0): открыла — закрыла; слова — из словаря. */
@@ -762,7 +770,7 @@ export function demoSay(state, words) {
   const said = wordsOf(words).toLowerCase();
   if (!said) return { ok: false, code: "empty", text: "Слов не вижу. Напишите — и я отвечу." };
   const known = /(?:^|[^а-яё])(?:привет|здравствуй|здравствуйте|добрый день|доброе утро|добрый вечер)(?:[^а-яё]|$)/u.test(said);
-  return { ok: true, do: "say", build: "", line: known ? "Привет. Заходите — только Байта не разбудите." : "Это вопрос не для комнаты: здесь я пока говорю коротко. В чате отвечу подробно.", known };
+  return { ok: true, do: "say", build: "", line: known ? "Привет. Заходите — я вам рада." : "Это вопрос не для комнаты: здесь я пока говорю коротко. В чате отвечу подробно.", known };
 }
 const DEMO_BREW = Object.freeze({
   "жасмин": "Возвращаемся к жасмину. Он пахнет так, будто всё уже хорошо.",

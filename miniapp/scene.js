@@ -2763,7 +2763,9 @@ export function castOf(view = {}, options = {}) {
   return {
     her: sprite && stand ? { name, x: stand.x } : null,
     cat: spot ? { x: spot.x, y: spot.y, shape, mirror: Boolean(spot.mirror), k: spot.k ?? 1, ...(Number.isFinite(spot.depth) ? { depth: spot.depth } : {}) } : null,
-    fed: view?.fed === true,
+    // Она сыплет корм в миску — миска на этом рисунке наполняется (0.60.0): следующий рисунок, с полной миской,
+    // не станет сыпать в неё корм сверху второй раз.
+    fed: view?.fed === true || Boolean(sprite && pours(name)),
   };
 }
 

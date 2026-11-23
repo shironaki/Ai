@@ -2516,7 +2516,8 @@ test("0.48.0, её день в комнате: шаг один и тот же �
   assert.deepEqual([next.her.stage, next.her.pose], ["подъём", "dust"]);
   const change = logic.changeOf(state, logic.applyTick(state, next, time.now()));
   assert.deepEqual([change.kind, change.state.her.beat, change.state.said, scene.spriteOf(logic.viewOf(change.state)).replace(/^home-/u, "")], ["quiet", 0, next.her.line, "tidy"]);
-  assert.notEqual(next.cat.shape, "eat", "она отошла — он доел");
+  // 0.60.0, «наедается»: она отошла — он у миски, ест то, что она насыпала (до 0.60.0 корм из миски пропадал).
+  assert.deepEqual([next.cat.shape, next.cat.place, next.bowl], ["eat", "bowl", "full"]);
   assert.notEqual(next.cat.key, "голоден", "утром она его покормила: три часа он не голоден");
 
   // Ночь: спит по своему дню — до подъёма (раньше вставала в пять); Байт спит у неё под боком.
@@ -2745,4 +2746,56 @@ test("0.58.0, она встаёт в назначенный час (сообще
   // Разбудили — двадцать минут она не спит.
   assert.equal(room.WOKE_MS, 20 * 60_000);
   assert.deepEqual([room.wokeNow({ woke: 1000 }, 1000), room.wokeNow({ woke: 1000 }, 999 + room.WOKE_MS), room.wokeNow({ woke: 1000 }, 1000 + room.WOKE_MS), room.wokeNow({}, 5), room.wokeNow({ woke: 2000 }, 1000), room.wokeNow(null, 5)], [true, true, false, false, false, false]);
+});
+
+test("0.60.0, Байт наедается (остаток идеи 208): она насыпала и отошла — десять минут он ест из миски, и миска полна; потом миска пуста, а он не голоден", async () => {
+  reset();
+  const plan = room.dayPlan(TODAY), wake = plan[1].from, midnight = Date.parse(`${TODAY}T00:00:00+03:00`);
+  assert.equal(room.MEAL_MIN, 10);
+  // Она сыплет корм (второй шаг подъёма): миску наполняет рисунок её рук — в ответе сердца миска ещё не «полна».
+  const time = clock(midnight + (wake + 39) * 60_000);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const pours = await h.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([pours.her.pose, pours.cat.shape, pours.cat.place, pours.bowl], ["feed", "eat", "near", undefined]);
+  let state = logic.applyLook(logic.blank(7), pours, time.now());
+  assert.equal(logic.viewOf(state).fed, false);
+  assert.equal(scene.castOf(logic.viewOf(state), PAINTED).fed, true, "на этом рисунке миска наполняется: следующий не сыплет в неё корм сверху");
+  // Отошла с метёлкой — Байт у миски: ест. Миска полна; страница спросит комнату заново не позже, чем он доест.
+  time.add(2 * 60_000);
+  const meal = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([meal.her.pose, meal.cat.shape, meal.cat.place, meal.cat.key, meal.cat.still, meal.bowl], ["dust", "eat", "bowl", "сыт", true, "full"]);
+  assert.ok(pool("байт:ест").length >= 3 && pool("байт:ест").map(plain).includes(meal.cat.line), meal.cat.line);
+  assert.ok(meal.step >= 30_000 && meal.step <= 9 * 60_000, String(meal.step));
+  state = logic.applyTick(state, meal, time.now());
+  assert.deepEqual([logic.viewOf(state).fed, state.fed, state.served], [true, false, true], "миска полна, хотя человек Байта не кормил");
+  assert.deepEqual([scene.castOf(logic.viewOf(state), PAINTED).cat.shape, scene.castOf(logic.viewOf(state), PAINTED).fed], ["eat", true]);
+  // Слова о нём — уже о еде; об ожидании — в запасе «завтрак», и там он ещё не ест.
+  for (const his of pool("байт:ест")) assert.match(his, /(?:^|\s)(?:ест|завтракает)|хрустит/u, his);
+  for (const his of pool("байт:ест")) assert.ok(!pool("байт:завтрак").includes(his));
+  // В чате о нём — то же, что на рисунке.
+  await h.onMessage(message("зайду к тебе"), KEY);
+  assert.ok(pool("байт:ест").map(plain).some(line => last().includes(line)), last());
+  // Погладили его посреди еды — он отвлёкся, а корм из миски не пропал.
+  const pet = await h.onRoom({ do: "pet" }, from(5));
+  assert.deepEqual([pet.ok, pet.bowl], [true, "full"]);
+  assert.equal(logic.viewOf(logic.applyCare(state, "pet", pet)).fed, true);
+  // Десять минут прошли: доел. Миска пуста, он не голоден; человек может покормить его сам — как и раньше.
+  time.add(9 * 60_000);
+  const done = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([done.her.pose, done.bowl], ["dust", undefined]);
+  assert.notEqual(done.cat.key, "голоден");
+  state = logic.applyTick(state, done, time.now());
+  assert.deepEqual([logic.viewOf(state).fed, state.served], [false, false]);
+  const fed = await h.onRoom({ do: "feed" }, from(5));
+  assert.deepEqual([fed.ok, fed.done.feed, fed.cat.shape, fed.cat.place], [true, 1, "eat", "bowl"]);
+  assert.equal(logic.viewOf(logic.applyCare(state, "feed", fed)).fed, true);
+  // Тихий час посреди его завтрака: она села читать, Байт ушёл спать на подушку — а корм из миски никуда не делся.
+  reset();
+  const other = clock(midnight + (wake + 41) * 60_000);
+  const quiet = heart(ON, { now: other.now, random: () => 0 });
+  assert.equal((await quiet.onRoom({ do: "look" }, from(5))).bowl, "full");
+  assert.equal((await quiet.onRoom({ do: "quiet" }, from(5))).ok, true);
+  other.add(60_000);
+  const hushed = await quiet.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([hushed.bowl, hushed.cat.shape, hushed.cat.place], ["full", "curl", "pillow"], JSON.stringify(hushed.cat));
 });

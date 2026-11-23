@@ -70,7 +70,7 @@ import { levelOf } from "./rp.js";
 import { parseCard, parseDaily, cardFor, cardText, DAILY_LABEL } from "./daily.js";
 import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES, KEEPSAKE_KEY } from "./keepsake.js";
-import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, ROOM_RECENT_KEY, RECENT_MAX, sceneByKey, herPose, catPose, catAfter, colourHex,
+import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, MEAL_MIN, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, ROOM_RECENT_KEY, RECENT_MAX, sceneByKey, herPose, catPose, catAfter, colourHex,
   skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
   READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow, WOKE_MS, wokeNow } from "./room.js";
 import { createRoomDoor } from "./roomdoor.js";
@@ -141,17 +141,18 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.59.0";
+export const BUILD = "0.60.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.59.0 — приложение на телефоне сможет работать без сети: всё, что вы сделали в комнате, оно пришлёт мне пачкой, когда сеть вернётся",
-  "у двери приложения новое действие — sync: до двенадцати действий за раз, по порядку, поверх того, что в комнате сейчас",
-  "одно и то же действие я не выполню дважды — даже если пачку пришлют снова через день: помню последние события каждой установки",
-  "если комнату за это время изменили из чата или со страницы, я ничего не затираю: применяю поверх и помечаю, что комната была уже другой",
-  "в ответ отдаю свежий снимок комнаты и отметку, по которой приложение поймёт, менялась ли комната с прошлого раза",
-  "одиночные действия двери и сама комната работают как раньше",
-  "чего ещё нет: с настоящим приложением и настоящим Telegram это не проверено — только на стенде",
+  "0.60.0 — Байт наедается: утром я насыпаю корм и отхожу, а он подходит к миске и ест — десять минут миска полна",
+  "раньше корм из миски пропадал, как только я вставала с пакетом",
+  "в чате по утрам говорю о Байте то же, что видно в комнате: сначала ждёт корм, потом ест",
+  "встаю рано, до шести, — и Байт уже не спит: раньше он числился спящим и при этом ждал у миски",
+  "приложение прислало пачку действий — страница комнаты после этого больше не отвечает «не так быстро»",
+  "на витрине на «привет» отвечаю без слов о Байте: спит он или нет, там не знают",
+  "страница комнаты — 23",
+  "чего ещё нет: ответ модели в комнате, снимок в чат, новые позы и наряды — следующими сборками, по очереди",
 ]);
 
 const DAY = 86_400_000;
@@ -2078,12 +2079,36 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
   /** Что с Байтом (0.48.0, поверх `catState`): утром она его кормит — три часа после этого он не голоден. */
   function catKey(turn, state, feel, today) {
-    const key = catState({ hour: feel.hour, last: state?.last, lastAt: state?.lastAt, at: now(), fed: (Number(state?.done?.feed) || 0) > 0, seed: roomSeed(turn.actorId, today) });
-    const fedAt = planOf(turn, today)[1].from + 20, at = minutesNow(turn);
+    const wake = planOf(turn, today)[1].from, fedAt = wake + 20, at = minutesNow(turn);
+    // Она встала раньше шести (подъём к «доброму утру», 0.58.0) — и Байт уже не спит: его кормят (0.60.0). До 0.60.0
+    // он до шести утра считался спящим — и при этом ждал корм у миски.
+    const hour = feel.hour < 6 && at >= wake ? 6 : feel.hour;
+    const key = catState({ hour, last: state?.last, lastAt: state?.lastAt, at: now(), fed: (Number(state?.done?.feed) || 0) > 0, seed: roomSeed(turn.actorId, today) });
     return key === "голоден" && at >= fedAt && at < fedAt + 180 ? "сыт" : key;
   }
+  /**
+   * Байт наедается (0.60.0, остаток идеи 208): она насыпала корм и отошла — десять минут (`MEAL_MIN`) он ест из
+   * миски, и миска всё это время полна. До 0.60.0 корм пропадал из миски, едва она вставала. Шаг с кормом — тот,
+   * чья реплика в запасе «день:подъём» ставит её с пакетом. Возвращает, сколько ему ещё есть, мс; 0 — не сейчас.
+   */
+  function catMeal(turn, today) {
+    const stage = planOf(turn, today).find(item => item.name === "подъём"), lines = roomLines(turn, "день:подъём");
+    const index = lines.findIndex(line => herPose(line, "дело") === "feed");
+    if (!stage || index < 0) return 0;
+    const from = stage.from + ((index + 1) * (stage.to - stage.from)) / lines.length, at = minutesNow(turn);
+    return at >= from && at < from + MEAL_MIN ? Math.max(1000, Math.round((from + MEAL_MIN - at) * 60_000)) : 0;
+  }
   /** Реплика о Байте в эту минуту: меняется раз в семь минут (`CAT_STEP_MS`), а не при каждом вопросе. */
-  const catLineAt = (turn, key, today) => lineAt(turn, `байт:${key}`, Math.floor(now() / CAT_STEP_MS) + roomSeed(turn.actorId, today));
+  const catLineAt = (turn, key, today, pool = `байт:${key}`) => lineAt(turn, pool, Math.floor(now() / CAT_STEP_MS) + roomSeed(turn.actorId, today));
+  /**
+   * Слова о Байте для чата. Утром — те же, что под рисунком (0.60.0): она сыплет корм — он ждёт у миски; отошла — ест.
+   * До 0.60.0 чат в эти минуты говорил о нём что придётся («сбрасывает ручки со стола»), а в комнате он сидел у миски.
+   */
+  function catTold(turn, state, feel, today) {
+    const key = catKey(turn, state, feel, today), she = key === "обижен" ? null : herStep(turn, feel, state, today);
+    const pool = she?.pose === "feed" ? "байт:завтрак" : she && catMeal(turn, today) > 0 ? "байт:ест" : `байт:${key}`;
+    return catLineAt(turn, key, today, pool);
+  }
   /**
    * Чем она занята — одной строкой для модели (0.48.0): чтобы в разговоре она говорила о своём дне то же, что видно
    * в комнате. Только тому, кто в комнате уже был: остальным комната — не тема. Небо для слов узнаётся и тут же
@@ -2281,7 +2306,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       await room.look(userId);
       return tell(roomBox(turn, state).line);
     }
-    const cat = catLineAt(turn, catKey(turn, state, feel, today), today);
+    const cat = catTold(turn, state, feel, today);
     if (asked.op === "cat") {
       await room.look(userId);
       return tell(cat || "Байт где-то здесь. Он всегда где-то здесь.");
@@ -2367,7 +2392,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   let roomDoor = null;
   const onRoom = (input, ctx = {}) => (roomDoor ??= createRoomDoor({
     agoWords, airNow, ALBUM_KEY, AWAY_MS, book, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
-    CAT_STILL, catAfter, catFits, catGift, catKey, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
+    CAT_STILL, catAfter, catFits, catGift, catKey, catMeal, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
     eventFor, eventNow, feelFor, feelingNow, fill, GIFT_EVERY_MS, GIFT_POOL, GIFT_SAID, GIFTS, giftsShown, HER_CALM,
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
