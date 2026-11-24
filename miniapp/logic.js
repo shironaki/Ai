@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "28";
+export const PAGE = "29";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });

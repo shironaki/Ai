@@ -37,7 +37,7 @@ test("предпросмотр комнаты: раздатчик отдаёт �
     assert.equal(page.headers["cache-control"], "no-store", `${url}: правка видна после обновления страницы`);
   }
   // Всё, что страница грузит сама: четыре модуля, звук и каждая её картинка. Модуль с другим типом браузер не возьмёт.
-  const modules = ["app.js", "logic.js", "scene.js", "sound.js", ...readdirSync(join(FOLDER, "her")).map(name => `her/${name}`), ...readdirSync(join(FOLDER, "voice")).map(name => `voice/${name}`)];
+  const modules = ["app.js", "logic.js", "scene.js", "sound.js", ...readdirSync(join(FOLDER, "her")).map(name => `her/${name}`), ...readdirSync(join(FOLDER, "voice")).map(name => `voice/${name}`), ...readdirSync(join(FOLDER, "say")).map(name => `say/${name}`)];
   assert.ok(modules.length > 50, "картинки на месте");
   for (const name of modules) {
     const got = await answer(FOLDER, "GET", `/${name}`);

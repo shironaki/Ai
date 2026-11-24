@@ -334,7 +334,7 @@ async function startSound() {
   paintSound();
   soundScene();
   // Звук включили — она здоровается вслух (0.64.0): один раз за заход.
-  if (ok && !greeted && state.ready) { greeted = true; speak("greet"); }
+  if (ok && !greeted && state.ready) { greeted = true; speak("greet").finally(sayLine); }
   return ok;
 }
 function stopSound() {
@@ -371,6 +371,24 @@ async function speak(event) {
     }
     return ok;
   } catch { return false; }
+}
+// Строки комнаты её голосом (0.67.0, идея 215; сообщение 82: «чтоб все реплики словаря она озвучивала голосом»).
+// Её строка о занятии стоит под рисунком и записана — она произносит её саму: вслух и в тексте одно и то же. Какие
+// строки записаны, знает указатель `say/index.js` (грузится при первой строке); записи нет — молчит. Каждая строка
+// звучит один раз, пока не сменится; когда ей нельзя говорить, решает то же правило, что у реплик (`voiceFor`).
+let sayAt = "";
+function sayLine() {
+  const mine = state.lines?.her;
+  if (!soundOn || !greeted || !mine || mine === sayAt || !String(state.said).includes(mine) || !logic.voiceFor("greet", state)) return;
+  sayAt = mine;
+  (async () => {
+    try {
+      const name = (await import("./say/index.js")).nameOf(mine);
+      if (!name) return;
+      const line = (await import(`./say/${name}.js`)).default;
+      if (soundOn && state.lines?.her === mine && await sound.voice(name, voiceBytes(line.src), true) === true) document.documentElement.dataset.said = name;
+    } catch { /* звук не важнее комнаты */ }
+  })();
 }
 // Колонка (0.46.0): пока она играет, телефон сам выводит тихую мелодию (`sound.tune`), а на рисунке над ней ноты.
 // `tuneUntil` — до какого времени играет: звук включили позже или страницу развернули — мелодия продолжается.
@@ -761,6 +779,7 @@ function paint() {
     void say.offsetWidth;
     say.classList.add("fresh");
   }
+  sayLine();
   $("talk").dataset.tone = state.tone;
   $("who").textContent = state.tone === "warn" ? "Комната" : "Аи";
   $("retry").hidden = !state.retry;

@@ -1423,7 +1423,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "28");
+  assert.equal(logic.PAGE, "29");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1612,7 +1612,8 @@ test("страница: папка уходит на платформу файл
   // 0.49.0: альбом воспоминаний — отдельным модулем (`album.js`): грузится, когда его открыли.
   // 0.53.0: комната картинкой — папка `room` (два модуля: «день» и «пасмурно»; `tests/painted.test.mjs`).
   // 0.64.0: её голос — папка `voice` (по модулю на записанную реплику; тест «0.64.0, её голос…» ниже).
-  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "room", "scene.js", "sound.js", "voice"], "в папке — только страница: всё, что в ней лежит, становится публичным");
+  // 0.67.0: строки словаря её голосом — папка `say` (по модулю на строку и указатель; тест «0.67.0: строки комнаты…»).
+  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "room", "say", "scene.js", "sound.js", "voice"], "в папке — только страница: всё, что в ней лежит, становится публичным");
   const page = ["app.js", "index.html", "logic.js", "scene.js"];
   const total = page.reduce((sum, name) => sum + statSync(new URL(name, folder)).size, 0);
   // Мера — о скорости, а не о платформе: эти четыре файла нужны, чтобы комната открылась. С 0.41.0 в них позы,
@@ -1630,9 +1631,11 @@ test("страница: папка уходит на платформу файл
   // без них — 306 (сжатые — 79 против 132; сжимает ли платформа текст, не проверено). Взгляд в сторону и ветер
   // (0.51.0) — уже в этих 350: с ними без комментариев 309.
   const sent = page.reduce((sum, name) => { const text = readFileSync(new URL(name, folder), "utf8"); return sum + Buffer.byteLength(name.endsWith(".js") ? slimCode(text) : text); }, 0);
-  assert.ok(sent < 350_000, `страница без комментариев весит ${sent} байт — открываться должна сразу`);
+  // С 0.67.0 (24.11.2026) — позы на ковре и на подоконнике со своими слоями (0.65.0, 0.66.0), сказанное вслух в
+  // словах под рисунком и строки словаря её голосом: с 350 до 356 КБ (с комментариями — с 560 до 570).
+  assert.ok(sent < 356_000, `страница без комментариев весит ${sent} байт — открываться должна сразу`);
   // Не облегчилась (телефон об этом скажет) — уйдёт как лежит: и такая не должна разбухать незаметно.
-  assert.ok(total < 560_000, `страница с комментариями весит ${total} байт`);
+  assert.ok(total < 570_000, `страница с комментариями весит ${total} байт`);
   assert.ok(statSync(new URL("sound.js", folder)).size < 20_000, "звук — маленький модуль: шум и тон делает сам телефон");
   // Её картинки (0.40.0) — по модулю на спрайт, и ничего больше. Грузится только та, что нужна сейчас (и следующая
   // поза — заранее), поэтому мера у каждой своя; все вместе — чтобы папка не разбухала незаметно: предел растёт
@@ -1879,7 +1882,7 @@ test("страница: папка уходит на платформу файл
   // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
   assert.match(app, /const fresh = putInside\(view, options, renew\);/u);
   assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
-  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./voice/${name}.js`", "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", "`./room/${name}.js?again=${attempt}`", "`./room/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, картинки комнаты (0.53.0), звук, её реплики (0.64.0) и альбом (0.49.0)");
+  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./voice/${name}.js`", '"./say/index.js"', "`./say/${name}.js`", "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", "`./room/${name}.js?again=${attempt}`", "`./room/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, картинки комнаты (0.53.0), звук, её реплики (0.64.0) и альбом (0.49.0)");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).
   assert.match(app, /const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";/u);
@@ -2279,8 +2282,15 @@ test("0.64.0, её голос звучит через звук комнаты: �
     FakeAudio.made.currentTime = 12;
     assert.equal(await sound.voice("thanks"), true);
     assert.deepEqual([decoded, voices().length], [1, 2]);
-    // Запись не разобралась — тишина, а не ошибка; звук комнаты продолжается.
+    // Строка словаря (0.67.0): не ждёт тишины — встаёт в очередь за репликой; в памяти не остаётся.
+    assert.equal(await sound.voice("l0123abcd", new ArrayBuffer(8), true), true);
+    assert.deepEqual([decoded, voices().length, sound.knows("l0123abcd")], [2, 3, false]);
+    assert.ok(Math.abs(voices()[2][1] - 13.43) < 0.01, `строка начинается, когда договорит реплика: ${voices()[2][1]}`);
+    // Пока звучит строка, реплика молчит; по одному имени строка не скажется — запись у неё всякий раз своя.
     FakeAudio.made.currentTime = 14;
+    assert.deepEqual([await sound.voice("thanks"), await sound.voice("l0123abcd", null, true)], [false, false]);
+    // Запись не разобралась — тишина, а не ошибка; звук комнаты продолжается.
+    FakeAudio.made.currentTime = 16;
     broken = true;
     assert.equal(await sound.voice("glad", new ArrayBuffer(8)), false);
     assert.deepEqual([sound.knows("glad"), sound.state()], [false, "running"]);
@@ -2408,4 +2418,52 @@ test("0.66.0: сказанное вслух стоит первым в слов�
     const text = read(`miniapp/voice/${name}`).match(/text: "([^"]+)"/u)?.[1] ?? "";
     assert.match(text, /^[А-ЯЁ][^.!?]*[.!?]$/u, name);
   }
+});
+
+test("0.67.0: строки комнаты её голосом (идея 215) — по модулю на строку, указатель знает записанные; страница говорит строку, что стоит под рисунком", async () => {
+  const folder = new URL("../miniapp/say/", import.meta.url);
+  const { SAID, keyOf, nameOf } = await import("../miniapp/say/index.js");
+  const names = readdirSync(folder).map(name => name.replace(/\.js$/u, "")).filter(name => name !== "index").sort();
+  assert.deepEqual(Object.keys(SAID).sort(), names, "указатель называет ровно те строки, что записаны");
+  assert.ok(names.length >= 15 && names.length <= 700, String(names.length));
+  // Вслух — только её реплики о занятии в состояниях, где она говорит: спит, обижена, ревнует — молчит.
+  const plain = (line) => line.replace(/^(?:\[[^\]]+\]\s*)+/u, "");
+  const may = new Set(["дело", "уют", "игра", "устала"].flatMap(key => pool(`она:${key}`)).map(plain));
+  let total = 0;
+  for (const name of names) {
+    const file = readFileSync(new URL(`${name}.js`, folder), "utf8");
+    assert.match(file, /^\/\/ Строка Аи «[^\n]+»: её голос \(сборка 0\.\d+\.\d+\), собрана командой «python3 scripts\/say-lines\.py»\. Руками не править\.\nexport default \{ text: "[^\n]+", ms: \d+, src: "data:audio\/mpeg;base64,[A-Za-z0-9+/]+=*" \};\n$/u, name);
+    const line = (await import(`../miniapp/say/${name}.js`)).default;
+    assert.ok(file.startsWith(`// Строка Аи «${line.text}»`), name);
+    assert.ok(may.has(line.text), `${name}: строки «${line.text}» нет среди её реплик о занятии — страница её не найдёт`);
+    assert.equal(keyOf(line.text), name, line.text);
+    assert.equal(nameOf(line.text), name);
+    assert.equal(SAID[name], line.ms, name);
+    const bytes = Buffer.from(line.src.slice(line.src.indexOf(",") + 1), "base64");
+    assert.deepEqual([bytes[0], bytes[1] & 0xfe], [0xff, 0xfa], `${name}: mp3`);
+    // 48 кбит/с — шесть тысяч байт в секунду; строка — от двух до девяти секунд.
+    assert.ok(line.ms >= 2000 && line.ms <= 9000, `${name}: ${line.ms} мс`);
+    assert.ok(bytes.length / 6 > line.ms * 0.9 && bytes.length / 6 < line.ms * 1.2, `${name}: ${bytes.length} байт на ${line.ms} мс`);
+    assert.ok(file.length < 76_000, `${name}: модуль весит ${file.length}`);
+    total += file.length;
+  }
+  assert.ok(total < names.length * 48_000, `строки вместе весят ${total}`);
+  // Ключ не зависит от знаков, регистра и «ё»; другой текст — другой ключ; незаписанная строка — пусто.
+  assert.equal(keyOf("С кружкой на подоконнике: греюсь."), keyOf("с кружкой  на подоконнике — ГРЕЮСЬ"));
+  assert.equal(keyOf("Всё ещё"), keyOf("все еще"));
+  assert.notEqual(keyOf("С кружкой на подоконнике: греюсь."), keyOf("С кружкой на подоконнике: слушаю дождь."));
+  assert.match(keyOf(""), /^l[0-9a-f]{8}$/u);
+  for (const text of ["Этой строки в записи нет.", "", null, undefined, "constructor", "__proto__"]) assert.equal(nameOf(text), "");
+  // Новые позы говорят: на подоконнике и на ковре.
+  for (const text of ["С кружкой на подоконнике: слушаю дождь.", "Лежу на ковре с мангой, болтаю ногами. Глава длинная — и хорошо."]) assert.ok(nameOf(text), text);
+  // Страница: строка звучит, когда стоит под рисунком, один раз, после приветствия — и по тому же правилу молчания.
+  const app = read("miniapp/app.js");
+  assert.match(app, /if \(!soundOn \|\| !greeted \|\| !mine \|\| mine === sayAt \|\| !String\(state\.said\)\.includes\(mine\) \|\| !logic\.voiceFor\("greet", state\)\) return;/u);
+  assert.match(app, /speak\("greet"\)\.finally\(sayLine\)/u);
+  assert.match(app, /await sound\.voice\(name, voiceBytes\(line\.src\), true\) === true\) document\.documentElement\.dataset\.said = name;/u);
+  assert.equal(app.split("sayLine();").length - 1, 1, "строка проверяется при каждой перерисовке слов");
+  // Сборщик лежит в репозитории и берёт рецепт у сборщика коротких реплик.
+  const builder = read("scripts/say-lines.py");
+  assert.match(builder, /voice-lines\.py/u);
+  assert.match(builder, /KBPS = 48/u);
 });

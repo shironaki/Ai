@@ -87,6 +87,10 @@ const since = order >= Number(process.env.FAKE_FAIL_FROM || 1);
 if ((process.env.FAKE_HANG === args[0] || process.env.FAKE_HANG === name) && here && since) await new Promise((done) => setInterval(done, 600_000));
 const slow = String(process.env.FAKE_SLOW || "").split(":");
 if (slow[0] === args[0] || slow[0] === name) await new Promise((done) => setTimeout(done, Number(slow[1]) * 1000));
+// FAKE_FAIL_TIMES — «имя:число»: сбой только на первых стольких вызовах с этим именем (0.67.0: повтор шага «схема базы»).
+const [timesName, timesCount] = String(process.env.FAKE_FAIL_TIMES || "").split(":");
+const before = timesName ? readFileSync(process.env.FAKE_LOG, "utf8").split("\\n").filter(Boolean).map(line => JSON.parse(line).args[0]).filter(item => item === timesName).length : 0;
+if (timesName && args[0] === timesName && before <= Number(timesCount)) { console.log(process.env.FAKE_SAYS || "✗ boom"); process.exit(1); }
 if (here && since && (fail.includes(args[0]) || fail.includes(name))) { console.log(process.env.FAKE_SAYS || "✗ boom"); process.exit(1); }
 // FAKE_ROOM_FATAL — платформа не терпит саму функцию комнаты: пока её файл лежит в копии, отказ на любой отправке
 // («push») и, если значение другое, ещё и на её репетиции. Инструмент проверяет все модули копии, а не только цели.
