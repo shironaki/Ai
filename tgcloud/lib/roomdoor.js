@@ -30,7 +30,7 @@ export function createRoomDoor(deps) {
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
-    ROOM_TALK, roomThought, roomPhoto,
+    ROOM_TALK, roomThought, roomPhoto, planSet,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
     voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
@@ -120,7 +120,7 @@ export function createRoomDoor(deps) {
         // открыли окно — он уже на подоконнике; вечером приносит ей добычу; она сидит — приходит к ней (ложится у ног,
         // просится на руки). Она спит или клюёт носом — шумного он не затевает; спит сам — там, где сейчас уместно.
         const minute = minutesNow(turn), sheSleeps = she.key === "сон", awake = free && !eats && !dines && !beside && key !== "спит";
-        const event = eventNow(today, minute), bring = catGift(today);
+        const event = eventNow(today, minute, planSet(turn)), bring = catGift(today);
         const prank = awake && !sheSleeps && event?.key === "prank";
         const airy = awake && !prank && airNow(state, now()) && now() - Number(state.open) < WINDOW_WATCH_MS;
         const gift = awake && !prank && !airy && !sheSleeps && Boolean(bring) && minute >= bring.from && minute < bring.to;
@@ -234,7 +234,7 @@ export function createRoomDoor(deps) {
         // 0.49.0 (сообщение 48) — альбом воспоминаний, её вещи, подарки, встреча после отлучки. В альбом ложится то, что
         // было при человеке или что она ему рассказала: первый заход, памятные даты, событие её дня, добыча Байта.
         // Альбом — не главное: его сбой комнату не роняет.
-        const minute = minutesNow(turn), shown = picture(visit.state), happened = eventFor(today);
+        const minute = minutesNow(turn), shown = picture(visit.state), happened = eventFor(today, planSet(turn));
         const album = await keepsakes.read(userId);
         const entries = [];
         if (visit.first) entries.push({ k: "first", key: "visit", day: today, at: now() });

@@ -72,7 +72,7 @@ import { createHabits, parseHabit, streakOf } from "./habits.js";
 import { createKeepsakes, eventFor, eventNow, missedEvents, ownThings, catGift, giftsShown, captionOf, dayNumber as dayNo, dayOf, GIFTS, GIFT_EVERY_MS, MILESTONES, KEEPSAKE_KEY } from "./keepsake.js";
 import { createRoom, parseRoom, catFits, itemsFor, feastsOf, lootOf, herKey, catState, plantState, seedOf as roomSeed, ITEMS as ROOM_ITEMS, ROOM_KEY, MEAL_MIN, ROOM_OOPS_KEY, OOPS_KEEP, OOPS_EVERY_MS, tidyNote, ROOM_RECENT_KEY, RECENT_MAX, sceneByKey, herPose, catPose, catAfter, colourHex,
   skyOfCode, randomSky, sceneLook, nominative, CAT_STILL, HER_CALM, FRESH_MS as ROOM_FRESH_MS, readingNow, musicNow, MUSIC_MS, lightAt, windowTag, WEARS as ROOM_WEARS, wearNow, BREWS, brewOf, QUIET_MS, quietLeft,
-  READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow, WOKE_MS, wokeNow } from "./room.js";
+  READ_MS, TEA_WARM_MS, EPISODES, dayPlan, stageAt, stepAt, dressFor, CAT_STEP_MS, airNow, WOKE_MS, wokeNow, BED_SPAN } from "./room.js";
 import { createRoomDoor } from "./roomdoor.js";
 import { detectFact, selfStatement, factTag, offerText, OFFER_KEY, OFFER_TTL_MS } from "./offers.js";
 import { createTaught, parseTeach, beforeOf, clearsShownList } from "./taught.js";
@@ -141,17 +141,17 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.62.0";
+export const BUILD = "0.63.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.62.0 — снимок комнаты приходит в чат картинкой: в альбоме рядом с «Сохранить этот момент» — кнопка «Прислать в чат»",
-  "под картинкой — день, время суток и мои слова этой минуты",
-  "не чаще раза в минуту; в альбом такой снимок не ложится — для этого прежняя кнопка",
-  "в чате я помню, что прислала снимок и что на нём было",
-  "картинка не дошла — скажу об этом под рисунком; «ещё раз» отправит её, а не вторую",
-  "страница комнаты — 25",
-  "голос: голосовые в чате я расшифровываю и отвечаю текстом; своим голосом пока не говорю — это следующий большой блок, начнём с коротких реплик в комнате",
+  "0.63.0 — ложусь в час своего «спокойной ночи» хозяину: пожелала — и спать; вечер в комнате сдвигается вместе с этим часом",
+  "час должен быть вечерним — от половины десятого до без десяти полночь; иначе ложусь как раньше, в одиннадцать",
+  "уснула раньше одиннадцати — сообщение хозяина меня будит, как и ночью",
+  "у остальных мой вечер прежний: сон с одиннадцати",
+  "событие моего дня (книга, перерыв) стоит в своём часу и у хозяина: раньше при позднем подъёме оно могло выпасть на сон",
+  "страница комнаты прежняя — 25",
+  "голос: пока не говорю — хозяин подбирает мне голос на слух",
   "чего ещё нет: позы на подоконнике и на ковре, наряды — следующими сборками, по очереди",
 ]);
 
@@ -1799,7 +1799,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
    * План её дня для этого человека (0.58.0, сообщение 69): у хозяина она встаёт в час своего «доброго утра» ему
    * (`turn.wake` ставит `roomWake`), у остальных — как раньше, около семи.
    */
-  function planOf(turn, today) { return dayPlan(today, { wake: turn?.wake ?? null }); }
+  function planOf(turn, today) { return dayPlan(today, planSet(turn)); }
+  /** Часы её дня для этого человека: подъём и отход ко сну (0.63.0). Событие дня считается по ним же (`eventFor`). */
+  function planSet(turn) { return { wake: turn?.wake ?? null, bed: turn?.bed ?? null }; }
   /**
    * Во сколько она встаёт (0.58.0, сообщение 69: «пусть она просыпается вместе с установленным временем в доброе
    * утро… как так получается, что она спит и отвечает»). У хозяина — в час её «доброго утра» ему: фаджр в его
@@ -1814,6 +1816,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     try {
       const saved = (await store.get(GREET_KEY).catch(() => null)) ?? {};
       const set = greetSettings(saved);
+      // Ложится в час своего «спокойной ночи» ему (0.63.0, хвост 209): пожелала — и спать. Час вне вечера (раньше
+      // половины десятого или позже без десяти полночь) или привет на ночь выключен — как раньше, в одиннадцать.
+      if (!set.nightOff) { const [hh, mm] = set.night.split(":").map(Number), bed = hh * 60 + mm; if (bed >= BED_SPAN[0] && bed <= BED_SPAN[1]) turn.bed = bed; }
       if (set.morningOff) return null;
       const zone = zoneOf(turn), day = localParts(now(), zone);
       const lat = Number(saved.spot?.lat), lon = Number(saved.spot?.lon);
@@ -1837,7 +1842,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const wornNow = (turn, state, today) => (stageNow(turn, today).wear !== "day" ? "home"
     : state?.dress?.day === today && ROOM_WEARS.includes(state.dress.name) ? state.dress.name : dressFor(turn.sky));
   /** Когда она переоденется сама: проснувшись, в шесть вечера и перед сном, в одиннадцать. */
-  const wearUntil = (turn, today) => { const at = minutesNow(turn), edge = [planOf(turn, today)[1].from, 18 * 60, 23 * 60].find(value => value > at) ?? 1440 + 7 * 60; return now() + Math.round((edge - at) * 60_000); };
+  const wearUntil = (turn, today) => { const at = minutesNow(turn), day = planOf(turn, today), edge = [day[1].from, 18 * 60, day.at(-1).from].find(value => value > at) ?? 1440 + 7 * 60; return now() + Math.round((edge - at) * 60_000); };
   /** Долго не был (0.48.0): три дня без захода — и встречает она другими словами. */
   const AWAY_MS = 3 * 86_400_000;
   /** Надеть наряд по просьбе — и что из этого вышло: `asleep` — спит и не переодевается; `same` — уже в нём. */
@@ -2037,7 +2042,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // набросок, смотрит на небо, устроила перерыв. Только когда она спокойна и день идёт своим чередом; событие о
     // Байте (шалость) её с места не снимает — оно видно по нему. Чай, книга с полки, музыка и тихий час сильнее:
     // это просьбы человека.
-    const event = calm && mood === stage.key ? eventNow(today, minutesNow(turn)) : null;
+    const event = calm && mood === stage.key ? eventNow(today, minutesNow(turn), planSet(turn)) : null;
     if (event?.pose) {
       return { key: event.her, put: event.pose, said: lineAt(turn, `событие:${event.pool}`, dayNo(today)), only: true, hold: true, ends: Math.max(1000, Math.round((event.to - minutesNow(turn)) * 60_000)), stage, event: event.key };
     }
@@ -2149,7 +2154,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!ROOM || !PHRASES || !store.available || turn.dry || turn.app || turn.isPrivate !== true || !turn.message || !(Number(turn.actorId) > 0)) return turn.woken;
     try {
       const minute = minutesNow(turn);
-      if (minute >= 11 * 60 && minute < 23 * 60) return turn.woken;
+      if (minute >= 11 * 60 && minute < BED_SPAN[0]) return turn.woken;
       const today = calendarDate(now(), zoneOf(turn));
       // По плану она уже на ногах — в запись комнаты не ходим (гостю это вовсе без чтений, хозяину — запись привета).
       await roomWake(turn);
@@ -2400,7 +2405,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
-    ROOM_TALK, roomThought, roomPhoto,
+    ROOM_TALK, roomThought, roomPhoto, planSet,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
     voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
@@ -3930,7 +3935,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         const turn = { actorId: id, chatId: id, isPrivate: true, inGroup: false, manner, extra: {} };
         const zone = zoneOf(turn), local = localParts(now(), zone), today = calendarDate(now(), zone), minute = local.hh * 60 + local.mm;
         if (local.hh < NOTE_HOURS[0] || local.hh >= NOTE_HOURS[1]) continue;
-        const event = eventFor(today);
+        // Событие — по её часам для этого человека (0.63.0): у хозяина день может начинаться и кончаться иначе.
+        await roomWake(turn);
+        const event = eventFor(today, planSet(turn));
         if (!event || minute < event.from || minute > event.from + NOTE_FRESH_MIN) continue;
         const state = await room.read(id, today);
         if (state.lost || state.mute || Number(state.n) < NOTE_VISITS || state.noted === today || now() - Number(state.notedAt) < NOTE_EVERY_MS) continue;

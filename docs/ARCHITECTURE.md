@@ -1121,6 +1121,19 @@ build, side_effects: "none" }` — без чтения и записи.
 в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
 `<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
 
+## Что добавила 0.63.0: где что лежит
+
+Хвосты сна (сообщение 79; идея 209).
+
+| Что | Где |
+| --- | --- |
+| Во сколько она ложится | `dayPlan(day, { wake, bed })` — `tgcloud/lib/room.js`; края — `BED_SPAN` |
+| Час отхода ко сну у хозяина | `roomWake(turn)` ставит `turn.bed` — `tgcloud/lib/heart.js`: час «спокойной ночи» из записи привета |
+| Часы её дня для человека | `planSet(turn)` → `{ wake, bed }` — `tgcloud/lib/heart.js`; ими же считается событие дня |
+| Событие дня по её часам | `eventFor(day, hours)`, `eventNow(day, minute, hours)` — `tgcloud/lib/keepsake.js` |
+| С какого часа слово её будит | `wakeHer` — `tgcloud/lib/heart.js`: с `BED_SPAN[0]` (21:30); дальше решает план |
+| До какого часа держится наряд по просьбе | `wearUntil` — `tgcloud/lib/heart.js`: до начала сна по плану |
+
 ## Что добавила 0.62.0: где что лежит
 
 Снимок комнаты картинкой в чат (сообщение 73; идея 165).

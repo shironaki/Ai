@@ -512,6 +512,8 @@ const weekendOn = (day) => { const at = Date.parse(`${String(day).slice(0, 10)}T
  * пределами прижимается к ближнему краю — иначе день не сложить.
  */
 export const WAKE_SPAN = Object.freeze([120, 660]);
+/** Когда она ложится, если час назван (0.63.0): от половины десятого вечера до без десяти полночь — день складывается в одни сутки. */
+export const BED_SPAN = Object.freeze([21 * 60 + 30, 23 * 60 + 50]);
 /** Её разбудили (0.58.0): двадцать минут после слова она не спит. Пишут дальше — отметка обновляется. */
 export const WOKE_MS = 20 * 60_000;
 /** Не спит ли она по этой записи: её разбудили меньше двадцати минут назад. */
@@ -520,14 +522,17 @@ export const wokeNow = (state, at) => Number(state?.woke) > 0 && at - Number(sta
  * План дня. `wake` (0.58.0, сообщение 69: «пусть она просыпается вместе с установленным временем в доброе утро») —
  * во сколько она встаёт, минуты от полуночи: час её «доброго утра» хозяину. Не назван — около семи, в выходной позже.
  */
-export function dayPlan(day = "", { wake: set = null } = {}) {
+export function dayPlan(day = "", { wake: set = null, bed = null } = {}) {
   const shift = (salt, span) => (hashOf(`day:${day}:${salt}`) % (span * 2 + 1)) - span;
   const wake = Number.isFinite(set) ? Math.max(WAKE_SPAN[0], Math.min(WAKE_SPAN[1], Math.round(set))) : 7 * 60 + shift("wake", 20) + (weekendOn(day) ? 50 : 0);
+  // Ложится в названную минуту (0.63.0, хвост 209): вечер сдвигается вместе с ней — «ждёт» (только раньше), «дрёма»,
+  // «сон». Не названа — как раньше, в одиннадцать.
+  const late = Number.isFinite(bed) ? Math.max(BED_SPAN[0], Math.min(BED_SPAN[1], Math.round(bed))) - 23 * 60 : 0;
   const rest = 12 * 60 + 45 + shift("rest", 15);
   const [one, two] = hashOf(`day:${day}:order`) % 2 ? ["игра", "чай"] : ["чай", "игра"];
   const marks = [
     ["сон", 0], ["подъём", wake], ["занятия", wake + 60], [one, rest], [two, rest + 50], ["дела", rest + 100],
-    ["порядок", 17 * 60 + shift("tidy", 15)], ["вечер", 18 * 60], ["ждёт", 21 * 60 + shift("wait", 15)], ["дрёма", 22 * 60 + 30], ["сон", 23 * 60],
+    ["порядок", 17 * 60 + shift("tidy", 15)], ["вечер", 18 * 60], ["ждёт", 21 * 60 + shift("wait", 15) + Math.min(0, late)], ["дрёма", 22 * 60 + 30 + late], ["сон", 23 * 60 + late],
   ];
   return marks.map(([name, from], index) => ({ name, from, to: marks[index + 1]?.[1] ?? 1440 }));
 }

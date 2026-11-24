@@ -2987,3 +2987,46 @@ test("0.62.0, снимок в чат (165): страница присылает 
   // Дверь приложения этого действия не пускает: картинке туда не пройти по размеру.
   assert.ok(!DOOR_ALLOW.includes("photo") && DOOR_NOT_ALLOWED.includes("photo"));
 });
+
+test("0.63.0, хвосты сна (209): ложится в названную минуту — вечер сдвигается вместе с ней; событие дня стоит в своём эпизоде по её часам", async () => {
+  const { eventFor, eventNow } = await import("../tgcloud/lib/keepsake.js");
+  const usual = room.dayPlan(TODAY), early = room.dayPlan(TODAY, { bed: 22 * 60 + 15 }), late = room.dayPlan(TODAY, { bed: 23 * 60 + 40 });
+  const from = (plan, name) => plan.filter(item => item.name === name).at(-1).from;
+  assert.deepEqual(room.dayPlan(TODAY, { bed: null }), usual);
+  assert.deepEqual(room.dayPlan(TODAY, { bed: 23 * 60 }), usual, "одиннадцать — как раньше");
+  // Раньше одиннадцати: «сон», «дрёма» и «ждёт» — раньше на столько же; день до вечера — тот же.
+  assert.deepEqual([from(early, "сон"), from(early, "дрёма"), from(usual, "ждёт") - from(early, "ждёт")], [22 * 60 + 15, 21 * 60 + 45, 45]);
+  assert.deepEqual(early.slice(0, 7), usual.slice(0, 7));
+  // Позже одиннадцати: дольше сидит вечером; ждать начинает как обычно.
+  assert.deepEqual([from(late, "сон"), from(late, "дрёма"), from(late, "ждёт")], [23 * 60 + 40, 23 * 60 + 10, from(usual, "ждёт")]);
+  // Названное за пределами «от половины десятого до без десяти полночь» прижимается к краю: день должен сложиться.
+  assert.deepEqual([from(room.dayPlan(TODAY, { bed: 20 * 60 }), "сон"), from(room.dayPlan(TODAY, { bed: 1439 }), "сон")], [...room.BED_SPAN]);
+  for (const bed of [...room.BED_SPAN, 22 * 60]) for (const wake of [120, 660]) {
+    const plan = room.dayPlan(TODAY, { wake, bed });
+    assert.ok(plan.every(item => item.to > item.from), `${wake}, ${bed}: ${JSON.stringify(plan)}`);
+  }
+  // Событие дня — внутри своего эпизода по её часам. Встаёт в одиннадцать — «занятия» начинаются в полдень, и
+  // событие «занятий» до полудня не случается (раньше оно считалось по обычному дню и выпадало на её сон).
+  let checked = 0, moved = 0;
+  for (let back = 0; back < 200 && checked < 4; back += 1) {
+    const day = new Date(Date.parse(`${TODAY}T12:00:00Z`) - back * 86_400_000).toISOString().slice(0, 10);
+    const plain = eventFor(day);
+    if (!plain || plain.stage !== "занятия") continue;
+    const own = eventFor(day, { wake: 660 }), stage = room.dayPlan(day, { wake: 660 }).find(item => item.name === "занятия");
+    assert.ok(own.from >= stage.from && own.to <= stage.to, `${day}: ${JSON.stringify([own.from, own.to, stage.from, stage.to])}`);
+    assert.deepEqual([eventFor(day, {}), eventFor(day, { wake: null, bed: null })], [plain, plain]);
+    assert.equal(eventNow(day, own.from, { wake: 660 })?.key, plain.key);
+    if (plain.from < stage.from) { moved += 1; assert.equal(eventNow(day, plain.from, { wake: 660 }), null); }
+    checked += 1;
+  }
+  assert.deepEqual([checked, moved > 0], [4, true]);
+  // Вечернее событие — внутри «вечера», и когда она ложится рано.
+  for (let back = 0, seen = 0; back < 200 && seen < 3; back += 1) {
+    const day = new Date(Date.parse(`${TODAY}T12:00:00Z`) - back * 86_400_000).toISOString().slice(0, 10);
+    const own = eventFor(day, { bed: room.BED_SPAN[0] });
+    if (!own || own.stage !== "вечер") continue;
+    const stage = room.dayPlan(day, { bed: room.BED_SPAN[0] }).find(item => item.name === "вечер");
+    assert.ok(own.from >= stage.from && own.to <= stage.to, `${day}: ${JSON.stringify([own.from, own.to, stage.from, stage.to])}`);
+    seen += 1;
+  }
+});
