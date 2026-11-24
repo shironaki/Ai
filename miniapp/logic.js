@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "25";
+export const PAGE = "26";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -853,4 +853,30 @@ export function demoPick(state, pick) {
     ok: true, do: "pick", build: "", line: DEMO_SCENE.outcomes[index], counted: false, scene: { ...state.scene, pick: index, outcome: DEMO_SCENE.outcomes[index], fx: [] },
     cat: { key: "шалит", ...DEMO_SCENE.cats[index], beats: [], still: true }, cared: true,
   };
+}
+
+/**
+ * Её голос (0.64.0, идея 211; сообщение 80: «Давай эту, вроде это лучший вариант»). Реплики записаны заранее голосом,
+ * который владелец подобрал на слух, и лежат модулями в папке `voice/` — по одной на файл (`{ text, ms, src }`);
+ * звучат только при включённом звуке. Здесь — какую сказать на событие комнаты, или «» — промолчать.
+ * `event`: `greet` — звук включили: здоровается по времени суток; `back` — вернулись на страницу после долгого
+ * отсутствия; `pat` — погладили её; `tea`, `gift`; `call` — Байт пришёл на зов; `cat` — позаботились о Байте;
+ * `plant` — полили цветок; `woke` — слово её разбудило; `dark` — погасили лампу ночью или когда она клюёт носом.
+ * `count` — которая по счёту реплика на такое событие: варианты идут по кругу. Спит, обижена, ревнует, вышла
+ * переодеться или идёт тихий час — молчит.
+ */
+export const VOICE_GAP_MS = 4000;
+const VOICE_GREET = Object.freeze({ "утро": "morning", "день": "day", "вечер": "evening", "ночь": "night" });
+const VOICE_FOR = Object.freeze({
+  pat: ["pleased", "thanks", "glad"], tea: ["tea", "tasty"], gift: ["pretty", "grateful"], call: ["come", "called"],
+  cat: ["catglad", "catthanks"], plant: ["plant"], back: ["back"],
+});
+export function voiceFor(event, state, count = 0) {
+  if (!state || state.ready !== true || !state.her || state.away) return "";
+  if (event === "woke") return "awake";
+  if (["сон", "обида", "ревность"].includes(state.her.key) || state.quiet > 0) return "";
+  if (event === "greet") return VOICE_GREET[state.part] ?? "";
+  if (event === "dark") return state.part === "ночь" || state.her.face === "drowsy" ? "goodnight" : "";
+  const list = Object.hasOwn(VOICE_FOR, event) ? VOICE_FOR[event] : null;
+  return list ? list[Math.abs(Math.trunc(Number(count) || 0)) % list.length] : "";
 }

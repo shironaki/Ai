@@ -1071,6 +1071,14 @@ try {
     await pause(900);
     const loud = await soundNow();
     if (!loud.on || loud.kept !== "1" || !loud.loaded) fail(`звук не включился: нажат — ${loud.on}, запомнен — «${loud.kept}», модуль загружен — ${loud.loaded}`);
+    // Её голос (0.64.0): звук включили — она здоровается вслух записанной репликой (модуль из папки `voice/`).
+    let spoke = { name: "", loaded: 0 };
+    for (let spent = 0; spent < 4000; spent += 200) {
+      spoke = await tab.evaluate(() => ({ name: document.documentElement.dataset.voice ?? "", loaded: performance.getEntriesByType("resource").filter(entry => /\/voice\/[a-z]+\.js$/u.test(entry.name)).length }));
+      if (spoke.name) break;
+      await pause(200);
+    }
+    if (!["morning", "day", "evening", "night"].includes(spoke.name) || spoke.loaded !== 1) fail(`голос: звук включили, а она не поздоровалась вслух — реплика «${spoke.name}», модулей голоса загружено ${spoke.loaded}`);
     // Забота со звуком: мурчание — и ни одной ошибки.
     await tab.tap('#actions button[data-act="pet"]');
     await pause(500);

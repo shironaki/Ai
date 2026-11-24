@@ -12,6 +12,7 @@
  *   scene(what) — что слышно (0.48.0): `open` — окно открыто: улица слышна в полный голос, проезжают машины, днём в
  *                сухую погоду поют птицы (`birds`); закрыто — улица за стеклом, глухо и тихо, а слышен дом:
  *                мурчит Байт (`purr`), шуршат страницы (`pages`), скрипит ручка (`pen`);
+ *   voice(name, bytes) — её реплика (0.64.0): запись mp3; расшифрована однажды — дальше хватит имени (`knows`);
  *   state()    — «running» (звучит), «suspended» (телефон держит звук до нажатия) или «off».
  * Звук начинается только с нажатия человека: так устроены телефоны.
  */
@@ -239,6 +240,11 @@ export function createSound() {
     step();
   }
 
+  // Её голос (0.64.0): расшифрованные реплики остаются в памяти; пока одна звучит, вторая не начинается.
+  const spoken = new Map(), VOICE = 2;
+  let speaking = 0;
+  const canSpeak = () => Boolean(ctx && ctx.state === "running" && bed && ctx.currentTime >= speaking);
+
   return Object.freeze({
     /** Включить. Зовётся из обработчика нажатия: иначе телефон звука не даст. */
     async on(sky = "rain") {
@@ -271,6 +277,23 @@ export function createSound() {
       return true;
     },
     hush() { stopSong(); },
+    /** Её реплика вслух: `bytes` — запись (ArrayBuffer) в первый раз. Обещание: зазвучала ли. */
+    async voice(name, bytes = null) {
+      if (!canSpeak()) return false;
+      if (!spoken.has(name)) {
+        if (!bytes) return false;
+        try { spoken.set(name, await new Promise((done, fail) => { ctx.decodeAudioData(bytes, done, fail)?.catch?.(() => {}); })); } catch { return false; }
+      }
+      const buffer = spoken.get(name);
+      if (!buffer || !canSpeak()) return false;
+      const from = ctx.createBufferSource();
+      from.buffer = buffer;
+      chain(from, gain(VOICE), master);
+      from.start(ctx.currentTime + 0.03);
+      speaking = ctx.currentTime + (Number(buffer.duration) || 1) + 0.2;
+      return true;
+    },
+    knows: (name) => spoken.has(name),
     /** Что слышно: открыто ли окно и что сейчас к месту в самой комнате (см. шапку модуля). */
     scene(what = {}) {
       heard = { purr: what.purr === true, pages: what.pages === true, pen: what.pen === true, birds: what.birds === true };

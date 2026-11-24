@@ -1420,7 +1420,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "25");
+  assert.equal(logic.PAGE, "26");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1608,7 +1608,8 @@ test("страница: папка уходит на платформу файл
   const folder = new URL("miniapp/", ROOT);
   // 0.49.0: альбом воспоминаний — отдельным модулем (`album.js`): грузится, когда его открыли.
   // 0.53.0: комната картинкой — папка `room` (два модуля: «день» и «пасмурно»; `tests/painted.test.mjs`).
-  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "room", "scene.js", "sound.js"], "в папке — только страница: всё, что в ней лежит, становится публичным");
+  // 0.64.0: её голос — папка `voice` (по модулю на записанную реплику; тест «0.64.0, её голос…» ниже).
+  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "room", "scene.js", "sound.js", "voice"], "в папке — только страница: всё, что в ней лежит, становится публичным");
   const page = ["app.js", "index.html", "logic.js", "scene.js"];
   const total = page.reduce((sum, name) => sum + statSync(new URL(name, folder)).size, 0);
   // Мера — о скорости, а не о платформе: эти четыре файла нужны, чтобы комната открылась. С 0.41.0 в них позы,
@@ -1640,7 +1641,7 @@ test("страница: папка уходит на платформу файл
   for (const [index, name] of pictures.entries()) assert.ok(weights[index] < 76_000, `картинка ${name} весит ${weights[index]} байт`);
   assert.ok(weights.reduce((sum, size) => sum + size, 0) < pictures.length * 56_000, `картинки вместе весят ${weights.reduce((sum, size) => sum + size, 0)} байт`);
   for (const name of pictures) assert.match(read(`miniapp/her/${name}`), /^\/\/ Спрайт Аи «[a-z0-9-]+»: собран командой «bash scripts\/verify\.sh sprite …» \(scripts\/room-sprite\.mjs\)\. Руками не править\.\nexport default \{ w: \d+, h: \d+, cx: [\d.]+, (?:(?:blink|smile|lookl|lookr): \{ x: \d+, y: \d+, w: \d+, h: \d+, src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \}, ){0,4}src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \};\n$/u, name);
-  const files = [...page, ...pictures.map(name => `her/${name}`), ...readdirSync(new URL("room/", folder)).map(name => `room/${name}`)];
+  const files = [...page, ...pictures.map(name => `her/${name}`), ...readdirSync(new URL("room/", folder)).map(name => `room/${name}`), ...readdirSync(new URL("voice/", folder)).map(name => `voice/${name}`)];
 
   const html = read("miniapp/index.html");
   assert.match(html, /<script src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"><\/script>/u, "без этого скрипта Telegram не даёт странице ни человека, ни связи");
@@ -1875,7 +1876,7 @@ test("страница: папка уходит на платформу файл
   // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
   assert.match(app, /const fresh = putInside\(view, options, renew\);/u);
   assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
-  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", "`./room/${name}.js?again=${attempt}`", "`./room/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, картинки комнаты (0.53.0), звук и альбом (0.49.0)");
+  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./voice/${name}.js`", "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", "`./room/${name}.js?again=${attempt}`", "`./room/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, картинки комнаты (0.53.0), звук, её реплики (0.64.0) и альбом (0.49.0)");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).
   assert.match(app, /const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";/u);
@@ -2182,4 +2183,111 @@ test("0.62.0, снимок в чат (165): в альбоме — кнопка �
   assert.deepEqual([demo.ok, demo.sent], [true, false]);
   assert.match(demo.line, /На витрине снимок в чат не уходит/u);
   assert.match(logic.PHOTO_FAILED, /Снимок не получился/u);
+});
+
+test("0.64.0, её голос (211; сообщение 80: «Давай эту, вроде это лучший вариант»): реплики лежат модулями `voice/` — по одной на файл, mp3; `voiceFor` выбирает реплику по событию и молчит, когда она спит, обижена или идёт тихий час", async () => {
+  const folder = new URL("../miniapp/voice/", import.meta.url);
+  const names = readdirSync(folder).map(name => name.replace(/\.js$/u, "")).sort();
+  const awake = { ready: true, part: "вечер", her: { key: "уют", pose: "chair" }, quiet: 0 };
+  // Каждая записанная реплика кому-то нужна, и каждая названная — записана: в папке ровно то, что может прозвучать.
+  const used = new Set();
+  const EVENTS = ["greet", "back", "pat", "tea", "gift", "call", "cat", "plant", "woke", "dark"];
+  for (const event of EVENTS) for (const part of scene.PARTS) for (let count = 0; count < 6; count += 1) used.add(logic.voiceFor(event, { ...awake, part }, count));
+  used.delete("");
+  assert.deepEqual([...used].sort(), names);
+  assert.ok(names.length >= 15 && names.length <= 40, String(names.length));
+  let total = 0;
+  const said = new Set();
+  for (const name of names) {
+    const file = readFileSync(new URL(`${name}.js`, folder), "utf8");
+    assert.match(file, /^\/\/ Реплика Аи «[^»\n]+»: её голос \(сборка 0\.64\.0\), [^\n]+ Руками не править\.\nexport default \{ text: "[^"\n]+", ms: \d+, src: "data:audio\/mpeg;base64,[A-Za-z0-9+/]+=*" \};\n$/u, name);
+    const line = (await import(`../miniapp/voice/${name}.js`)).default;
+    assert.match(line.text, /^[А-ЯЁ][а-яё, ]+\.$/u, `${name}: ${line.text}`);
+    assert.ok(file.startsWith(`// Реплика Аи «${line.text}»`), name);
+    said.add(line.text);
+    const bytes = Buffer.from(line.src.slice(line.src.indexOf(",") + 1), "base64");
+    // Кадр MPEG-1 Layer III: синхрослово в первых двух байтах.
+    assert.deepEqual([bytes[0], bytes[1] & 0xfe], [0xff, 0xfa], name);
+    // Длина записи сходится с её весом: 64 кбит/с — восемь тысяч байт в секунду.
+    assert.ok(line.ms >= 500 && line.ms <= 3000, `${name}: ${line.ms} мс`);
+    assert.ok(bytes.length / 8 > line.ms * 0.9 && bytes.length / 8 < line.ms * 1.25, `${name}: ${bytes.length} байт на ${line.ms} мс`);
+    assert.ok(file.length < 24_000, `${name}: модуль весит ${file.length}`);
+    total += file.length;
+  }
+  assert.equal(said.size, names.length, "двух одинаковых реплик нет");
+  assert.ok(total < 400_000, `все реплики вместе весят ${total}`);
+
+  // Здоровается по времени суток; варианты идут по кругу.
+  assert.deepEqual(scene.PARTS.map(part => logic.voiceFor("greet", { ...awake, part })), ["morning", "day", "evening", "night"]);
+  assert.deepEqual([0, 1, 2, 3, 4].map(count => logic.voiceFor("pat", awake, count)), ["pleased", "thanks", "glad", "pleased", "thanks"]);
+  assert.deepEqual([logic.voiceFor("tea", awake, 0), logic.voiceFor("tea", awake, 1), logic.voiceFor("gift", awake), logic.voiceFor("call", awake), logic.voiceFor("cat", awake, 1), logic.voiceFor("plant", awake, 7), logic.voiceFor("back", awake)],
+    ["tea", "tasty", "pretty", "come", "catthanks", "plant", "back"]);
+  // Молчит: спит, обижена, ревнует; тихий час; вышла переодеться; комната не открыта; незнакомое событие.
+  for (const key of ["сон", "обида", "ревность"]) for (const event of EVENTS.filter(name => name !== "woke")) assert.equal(logic.voiceFor(event, { ...awake, part: "ночь", her: { key, face: "drowsy" } }), "", `${key}, ${event}`);
+  for (const quiet of [{ ...awake, quiet: 60_000 }, { ...awake, away: true }, { ...awake, ready: false }, { ready: true, her: null }, null]) for (const event of ["greet", "pat", "dark"]) assert.equal(logic.voiceFor(event, quiet), "");
+  for (const event of ["нет такого", "constructor", "", undefined]) assert.equal(logic.voiceFor(event, awake), "");
+  // Слово её разбудило: говорит, хотя по записи страницы она ещё спит (рисунок перечитается следом).
+  assert.equal(logic.voiceFor("woke", { ...awake, her: { key: "сон" } }), "awake");
+  // «Спокойной ночи» — лампу гасят ночью или когда она клюёт носом; вечером и днём — молчит.
+  assert.deepEqual([logic.voiceFor("dark", { ...awake, part: "ночь" }), logic.voiceFor("dark", { ...awake, her: { key: "устала", face: "drowsy" } }), logic.voiceFor("dark", awake), logic.voiceFor("dark", { ...awake, part: "день" })], ["goodnight", "goodnight", "", ""]);
+  assert.equal(logic.VOICE_GAP_MS, 4000);
+
+  // Страница: модуль реплики грузится по имени, только при включённом звуке; события — те, что названы в `voiceFor`.
+  const app = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  assert.match(app, /async function speak\(event\) \{\n {2}if \(!soundOn \|\| typeof sound\?\.voice !== "function" \|\| typeof logic\.voiceFor !== "function"\) return false;/u);
+  assert.match(app, /await import\(`\.\/voice\/\$\{name\}\.js`\)/u);
+  const called = [...app.matchAll(/speak\((?:"([a-z]+)"|name === "tea" \? "tea" : name === "water" \? "plant" : "cat")\)/gu)].map(found => found[1] ?? "tea plant cat").join(" ").split(" ").sort();
+  assert.deepEqual(called, [...EVENTS].sort(), "каждое событие зовётся со страницы ровно один раз");
+});
+
+test("0.64.0, её голос звучит через звук комнаты: запись расшифровывается один раз; звук выключен — молчит; пока говорит — вторую не начинает", async () => {
+  const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} });
+  const log = [];
+  const node = (kind) => ({ kind, type: "", gain: param(), frequency: param(), Q: param(), detune: param(), playbackRate: param(), buffer: null, loop: false, connect(to) { return to; }, disconnect() {}, start(at) { log.push([kind, at, this.buffer]); }, stop() {} });
+  let decoded = 0, broken = false;
+  class FakeAudio {
+    constructor() {
+      this.currentTime = 10; this.state = "suspended"; this.sampleRate = 8000; this.destination = node("out");
+      FakeAudio.made = new Proxy(this, { get: (target, name) => (name in target ? target[name] : String(name).startsWith("create") ? () => node(String(name)) : undefined) });
+      return FakeAudio.made;
+    }
+    resume() { this.state = "running"; return Promise.resolve(); }
+    suspend() { this.state = "suspended"; return Promise.resolve(); }
+    createBuffer(channels, length) { const data = new Float32Array(length); return { length, getChannelData: () => data }; }
+    decodeAudioData(bytes, done, fail) { decoded += 1; if (broken) { fail(new Error("не запись")); return Promise.reject(new Error("не запись")); } const buffer = { duration: 1.2, bytes: bytes.byteLength }; done(buffer); return Promise.resolve(buffer); }
+  }
+  const kept = globalThis.AudioContext;
+  globalThis.AudioContext = FakeAudio;
+  const { createSound } = await import("../miniapp/sound.js");
+  const sound = createSound();
+  try {
+    const voices = () => log.filter(([kind, , buffer]) => kind === "createBufferSource" && buffer?.duration === 1.2);
+    assert.equal(await sound.voice("thanks", new ArrayBuffer(8)), false, "звук не включён — молчит и запись не трогает");
+    assert.equal(decoded, 0);
+    assert.equal(await sound.on("calm"), true);
+    assert.deepEqual([sound.knows("thanks"), await sound.voice("thanks")], [false, false], "записи ещё нет — по одному имени не скажет");
+    assert.equal(await sound.voice("thanks", new ArrayBuffer(8)), true);
+    assert.deepEqual([sound.knows("thanks"), decoded, voices().length], [true, 1, 1]);
+    assert.ok(voices()[0][1] >= 10 && voices()[0][1] < 10.1, "начинает сразу");
+    // Пока говорит — вторая не начинается (и её запись не расшифровывается).
+    assert.equal(await sound.voice("glad", new ArrayBuffer(8)), false);
+    assert.deepEqual([decoded, voices().length, sound.knows("glad")], [1, 1, false]);
+    // Договорила — та же реплика звучит сразу, без новой расшифровки.
+    FakeAudio.made.currentTime = 12;
+    assert.equal(await sound.voice("thanks"), true);
+    assert.deepEqual([decoded, voices().length], [1, 2]);
+    // Запись не разобралась — тишина, а не ошибка; звук комнаты продолжается.
+    FakeAudio.made.currentTime = 14;
+    broken = true;
+    assert.equal(await sound.voice("glad", new ArrayBuffer(8)), false);
+    assert.deepEqual([sound.knows("glad"), sound.state()], [false, "running"]);
+    broken = false;
+    // Звук выключили — молчит.
+    sound.off();
+    FakeAudio.made.state = "suspended";
+    assert.equal(await sound.voice("thanks"), false);
+  } finally {
+    try { sound.off(); } catch { /* уже выключен */ }
+    if (kept === undefined) delete globalThis.AudioContext; else globalThis.AudioContext = kept;
+  }
 });
