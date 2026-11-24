@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "27";
+export const PAGE = "28";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -866,6 +866,19 @@ export function demoPick(state, pick) {
  * переодеться или идёт тихий час — молчит.
  */
 export const VOICE_GAP_MS = 4000;
+/**
+ * Слова под рисунком (0.66.0, сообщение 82: «не совпадает голос с тем, что появляется в тексте»). Сказанное вслух
+ * стоит в тексте первым: «Спасибо за чай.» — и дальше её строка. Приставка живёт, пока под рисунком та строка, при
+ * которой она это сказала (`voiced.over`): строка сменилась — приставки нет. Строка и сама начинается с этих слов —
+ * они не повторяются; под рисунком служебная пометка («…», «*переодевается*») — приставки нет.
+ */
+export function captionOf(state) {
+  const said = typeof state?.said === "string" ? state.said : "", voiced = state?.voiced;
+  if (!voiced || typeof voiced.text !== "string" || !voiced.text || voiced.over !== said || /^[…*.]/u.test(said)) return said;
+  const bare = (text) => text.toLowerCase().replace(/[^a-zа-яё0-9]+/gu, " ").trim();
+  if (!said) return voiced.text;
+  return bare(said).startsWith(bare(voiced.text)) ? said : `${voiced.text} ${said}`;
+}
 const VOICE_GREET = Object.freeze({ "утро": "morning", "день": "day", "вечер": "evening", "ночь": "night" });
 const VOICE_FOR = Object.freeze({
   pat: ["pleased", "thanks", "glad"], tea: ["tea", "tasty"], gift: ["pretty", "grateful"], call: ["come", "called"],

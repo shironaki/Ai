@@ -360,10 +360,15 @@ async function speak(event) {
   voiceAt = at;
   voiceCount[event] = (voiceCount[event] ?? 0) + 1;
   try {
-    const bytes = sound.knows?.(name) ? null : voiceBytes((await import(`./voice/${name}.js`)).default.src);
+    const line = (await import(`./voice/${name}.js`)).default;
     if (Date.now() - at > VOICE_LATE_MS || !soundOn) return false;
-    const ok = await sound.voice(name, bytes) === true;
-    if (ok) document.documentElement.dataset.voice = name;
+    const ok = await sound.voice(name, sound.knows?.(name) ? null : voiceBytes(line.src)) === true;
+    if (ok) {
+      document.documentElement.dataset.voice = name;
+      // 0.66.0 (сообщение 82: «не совпадает голос с тем, что появляется в тексте»): сказанное вслух встаёт первым в
+      // словах под рисунком — и стоит там, пока под рисунком та же строка (`captionOf` в `logic.js`).
+      if (typeof line.text === "string" && line.text) { state = { ...state, voiced: { text: line.text, over: state.said } }; paint(); }
+    }
     return ok;
   } catch { return false; }
 }
@@ -749,9 +754,9 @@ function paint() {
     // Байт, пропуская её, трогается позже (`--w`, 0.55.0): его переход длится ожидание и путь вместе.
     if (moving) drawn.until = Date.now() + Math.max(0, ...strides.map(stride => (Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5) + (Number.parseFloat(stride.style.getPropertyValue("--w")) || 0))) * 1000 + FADE_MS + 200;
   }
-  const say = $("say");
-  if (say.textContent !== state.said) {
-    say.textContent = state.said;
+  const say = $("say"), caption = typeof logic.captionOf === "function" ? logic.captionOf(state) : state.said;
+  if (say.textContent !== caption) {
+    say.textContent = caption;
     say.classList.remove("fresh");
     void say.offsetWidth;
     say.classList.add("fresh");

@@ -1079,6 +1079,10 @@ try {
       await pause(200);
     }
     if (!["morning", "day", "evening", "night"].includes(spoke.name) || spoke.loaded !== 1) fail(`голос: звук включили, а она не поздоровалась вслух — реплика «${spoke.name}», модулей голоса загружено ${spoke.loaded}`);
+    // 0.66.0: сказанное вслух стоит первым в словах под рисунком — голос и текст сходятся.
+    await pause(300);
+    const heard = await tab.evaluate(() => document.getElementById("say")?.textContent ?? "");
+    if (!/^(?:Доброе утро|Добрый день|Добрый вечер|Доброй ночи)\./u.test(heard)) fail(`голос: она поздоровалась вслух, а под рисунком этих слов нет — «${heard.slice(0, 60)}»`);
     // Забота со звуком: мурчание — и ни одной ошибки.
     await tab.tap('#actions button[data-act="pet"]');
     await pause(500);
