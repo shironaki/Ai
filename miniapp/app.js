@@ -334,7 +334,7 @@ async function startSound() {
   paintSound();
   soundScene();
   // Звук включили — она здоровается вслух (0.64.0): один раз за заход.
-  if (ok && !greeted && state.ready) { greeted = true; speak("greet").finally(sayLine); }
+  if (ok) greetOnce();
   return ok;
 }
 function stopSound() {
@@ -353,6 +353,10 @@ let voiceAt = 0, greeted = false;
 const voiceBytes = (src) => { const raw = atob(String(src).slice(String(src).indexOf(",") + 1)), bytes = new Uint8Array(raw.length); for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i); return bytes.buffer; };
 async function speak(event) {
   if (!soundOn || typeof sound?.voice !== "function" || typeof logic.voiceFor !== "function") return false;
+  // 0.68.0: под рисунком только что встала записанная строка — она прозвучит сама, и короткая реплика на то же
+  // событие не нужна: «спасибо» уже есть в строке. Приветствие — не в счёт: оно идёт первым.
+  const fresh = (sayLines(), Date.now() - sayAt < VOICE_LATE_MS);
+  if (event !== "greet" && fresh && await saying > 0) return false;
   const at = Date.now();
   if (at - voiceAt < (logic.VOICE_GAP_MS ?? 4000)) return false;
   const name = logic.voiceFor(event, state, voiceCount[event] ?? 0);
@@ -372,23 +376,46 @@ async function speak(event) {
     return ok;
   } catch { return false; }
 }
-// Строки комнаты её голосом (0.67.0, идея 215; сообщение 82: «чтоб все реплики словаря она озвучивала голосом»).
-// Её строка о занятии стоит под рисунком и записана — она произносит её саму: вслух и в тексте одно и то же. Какие
-// строки записаны, знает указатель `say/index.js` (грузится при первой строке); записи нет — молчит. Каждая строка
-// звучит один раз, пока не сменится; когда ей нельзя говорить, решает то же правило, что у реплик (`voiceFor`).
-let sayAt = "";
-function sayLine() {
-  const mine = state.lines?.her;
-  if (!soundOn || !greeted || !mine || mine === sayAt || !String(state.said).includes(mine) || !logic.voiceFor("greet", state)) return;
-  sayAt = mine;
-  (async () => {
+// Что под рисунком — то и вслух (0.68.0, идея 215; сообщение 82: «чтоб все реплики словаря она озвучивала голосом»).
+// Слова под рисунком сменились — записанные строки из них она произносит сама: по порядку, не больше трёх, каждая
+// ждёт, пока договорит прежняя. Какие строки записаны, знает указатель `say/index.js` (грузится при первой строке);
+// какие из них сказать — `linesToSay` (сказанная недавно не повторяется); спит или идёт тихий час — молчит
+// (`maySay`). Слова сменились, пока запись грузилась, — устаревшее не звучит. Что прозвучало последним — в
+// `data-said` страницы. Приветствие — один раз за заход, первым: звук включили до того, как комната ответила, —
+// она поздоровается, когда ответит.
+let sayFor = "", sayAt = 0, saying = Promise.resolve(0), greeting = null;
+const saidAt = new Map();
+function greetOnce() {
+  if (!soundOn || greeted || !state.ready) return;
+  greeted = true;
+  greeting = speak("greet").catch(() => false).then(() => { greeting = null; });
+  greeting.then(sayLines);
+}
+function sayLines() {
+  greetOnce();
+  const caption = String(state.said ?? "");
+  if (!soundOn || !greeted || typeof sound?.voice !== "function") return Promise.resolve(0);
+  if (caption === sayFor) return saying;
+  sayFor = caption;
+  sayAt = Date.now();
+  const may = logic.maySay(state);
+  saying = (async () => {
+    let count = 0;
     try {
-      const name = (await import("./say/index.js")).nameOf(mine);
-      if (!name) return;
-      const line = (await import(`./say/${name}.js`)).default;
-      if (soundOn && state.lines?.her === mine && await sound.voice(name, voiceBytes(line.src), true) === true) document.documentElement.dataset.said = name;
+      const { nameOf } = await import("./say/index.js");
+      if (greeting) await greeting;
+      const now = Date.now();
+      for (const name of may ? logic.linesToSay(caption, nameOf, (key) => now - (saidAt.get(key) ?? -Infinity) < logic.SAY_AGAIN_MS) : []) {
+        const line = (await import(`./say/${name}.js`)).default;
+        if (!soundOn || state.said !== caption || await sound.voice(name, voiceBytes(line.src), true) !== true) break;
+        saidAt.set(name, now);
+        count += 1;
+        document.documentElement.dataset.said = name;
+      }
     } catch { /* звук не важнее комнаты */ }
+    return count;
   })();
+  return saying;
 }
 // Колонка (0.46.0): пока она играет, телефон сам выводит тихую мелодию (`sound.tune`), а на рисунке над ней ноты.
 // `tuneUntil` — до какого времени играет: звук включили позже или страницу развернули — мелодия продолжается.
@@ -779,7 +806,7 @@ function paint() {
     void say.offsetWidth;
     say.classList.add("fresh");
   }
-  sayLine();
+  sayLines();
   $("talk").dataset.tone = state.tone;
   $("who").textContent = state.tone === "warn" ? "Комната" : "Аи";
   $("retry").hidden = !state.retry;

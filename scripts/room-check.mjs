@@ -1083,17 +1083,18 @@ try {
     await pause(300);
     const heard = await tab.evaluate(() => document.getElementById("say")?.textContent ?? "");
     if (!/^(?:Доброе утро|Добрый день|Добрый вечер|Доброй ночи)\./u.test(heard)) fail(`голос: она поздоровалась вслух, а под рисунком этих слов нет — «${heard.slice(0, 60)}»`);
-    // 0.67.0 (идея 215): её строка о занятии под рисунком записана — она произносит её саму, после приветствия.
-    const lineName = await tab.evaluate(async () => {
+    // 0.68.0 (идея 215): что под рисунком — то и вслух. Записанные строки из слов под рисунком (до трёх) она
+    // произносит сама, после приветствия; последняя сказанная — в `data-said` страницы.
+    const lineNames = await tab.evaluate(async () => {
       const { nameOf } = await import("./say/index.js");
-      const text = document.getElementById("say")?.textContent ?? "";
-      for (const line of text.split("\n")) for (const part of [line, line.replace(/^(?:Доброе утро|Добрый день|Добрый вечер|Доброй ночи)\.\s*/u, "")]) { const name = nameOf(part); if (name) return name; }
-      return "";
+      const { linesToSay } = await import("./logic.js");
+      const text = (document.getElementById("say")?.textContent ?? "").replace(/^(?:Доброе утро|Добрый день|Добрый вечер|Доброй ночи)\.\s*/u, "");
+      return linesToSay(text, nameOf);
     });
     let saidLine = "";
-    for (let spent = 0; lineName && spent < 6000 && saidLine !== lineName; spent += 200) { await pause(200); saidLine = await tab.evaluate(() => document.documentElement.dataset.said ?? ""); }
-    if (lineName && saidLine !== lineName) fail(`голос: строка под рисунком записана («${lineName}»), а вслух она её не сказала — «${saidLine}»`);
-    console.log(`  её строка под рисунком: ${lineName ? `записана и сказана вслух («${lineName}»)` : "в записи её нет — промолчала"}`);
+    for (let spent = 0; lineNames.length && spent < 8000 && saidLine !== lineNames.at(-1); spent += 200) { await pause(200); saidLine = await tab.evaluate(() => document.documentElement.dataset.said ?? ""); }
+    if (lineNames.length && saidLine !== lineNames.at(-1)) fail(`голос: под рисунком записанных строк — ${lineNames.length} (${lineNames.join(", ")}), а вслух последней прозвучала «${saidLine}»`);
+    console.log(`  строки под рисунком: ${lineNames.length ? `записанных — ${lineNames.length}, сказаны вслух (последняя — «${saidLine}»)` : "записанных нет — промолчала"}`);
     // Забота со звуком: мурчание — и ни одной ошибки.
     await tab.tap('#actions button[data-act="pet"]');
     await pause(500);

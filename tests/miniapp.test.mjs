@@ -1423,7 +1423,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "29");
+  assert.equal(logic.PAGE, "30");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -2420,29 +2420,38 @@ test("0.66.0: сказанное вслух стоит первым в слов�
   }
 });
 
-test("0.67.0: строки комнаты её голосом (идея 215) — по модулю на строку, указатель знает записанные; страница говорит строку, что стоит под рисунком", async () => {
+test("0.67.0–0.68.0: строки комнаты её голосом (идея 215) — по модулю на строку, указатель знает записанные; что под рисунком — то и вслух", async () => {
   const folder = new URL("../miniapp/say/", import.meta.url);
   const { SAID, keyOf, nameOf } = await import("../miniapp/say/index.js");
   const names = readdirSync(folder).map(name => name.replace(/\.js$/u, "")).filter(name => name !== "index").sort();
   assert.deepEqual(Object.keys(SAID).sort(), names, "указатель называет ровно те строки, что записаны");
   assert.ok(names.length >= 15 && names.length <= 700, String(names.length));
-  // Вслух — только её реплики о занятии в состояниях, где она говорит: спит, обижена, ревнует — молчит.
-  const plain = (line) => line.replace(/^(?:\[[^\]]+\]\s*)+/u, "");
-  const may = new Set(["дело", "уют", "игра", "устала"].flatMap(key => pool(`она:${key}`)).map(plain));
+  // 0.68.0: вслух — любая строка комнаты (запасы «+комната:…»), кроме тех, что звучат, только когда она спит:
+  // спящая молчит. У строки с обращением записаны могут быть обе формы — «ты» и «вы».
+  const may = new Set();
+  let poolName = "";
+  for (const row of read("PHRASES.txt").split("\n")) {
+    const head = /^== (.+?) ==\s*$/u.exec(row);
+    if (head) { poolName = head[1]; continue; }
+    if (!poolName.startsWith("+комната:") || /:сон$/u.test(poolName) || !row.trim() || row.startsWith("#")) continue;
+    const text = row.replace(/^(?:\[[^\]]+\]\s*)+/u, "");
+    for (const pick of [1, 2]) may.add(text.replace(/\{([^{}|]*)\|([^{}]*)\}/gu, (_, first, second) => (pick === 1 ? first : second)));
+  }
+  assert.ok(names.length >= 200, `записанных строк — ${names.length}`);
   let total = 0;
   for (const name of names) {
     const file = readFileSync(new URL(`${name}.js`, folder), "utf8");
     assert.match(file, /^\/\/ Строка Аи «[^\n]+»: её голос \(сборка 0\.\d+\.\d+\), собрана командой «python3 scripts\/say-lines\.py»\. Руками не править\.\nexport default \{ text: "[^\n]+", ms: \d+, src: "data:audio\/mpeg;base64,[A-Za-z0-9+/]+=*" \};\n$/u, name);
     const line = (await import(`../miniapp/say/${name}.js`)).default;
     assert.ok(file.startsWith(`// Строка Аи «${line.text}»`), name);
-    assert.ok(may.has(line.text), `${name}: строки «${line.text}» нет среди её реплик о занятии — страница её не найдёт`);
+    assert.ok(may.has(line.text), `${name}: строки «${line.text}» нет среди строк комнаты — страница её не найдёт`);
     assert.equal(keyOf(line.text), name, line.text);
     assert.equal(nameOf(line.text), name);
     assert.equal(SAID[name], line.ms, name);
     const bytes = Buffer.from(line.src.slice(line.src.indexOf(",") + 1), "base64");
     assert.deepEqual([bytes[0], bytes[1] & 0xfe], [0xff, 0xfa], `${name}: mp3`);
-    // 48 кбит/с — шесть тысяч байт в секунду; строка — от двух до девяти секунд.
-    assert.ok(line.ms >= 2000 && line.ms <= 9000, `${name}: ${line.ms} мс`);
+    // 48 кбит/с — шесть тысяч байт в секунду; строка — от секунды («Даже не думайте.») до девяти с половиной.
+    assert.ok(line.ms >= 1000 && line.ms <= 9500, `${name}: ${line.ms} мс`);
     assert.ok(bytes.length / 6 > line.ms * 0.9 && bytes.length / 6 < line.ms * 1.2, `${name}: ${bytes.length} байт на ${line.ms} мс`);
     assert.ok(file.length < 76_000, `${name}: модуль весит ${file.length}`);
     total += file.length;
@@ -2454,14 +2463,39 @@ test("0.67.0: строки комнаты её голосом (идея 215) —
   assert.notEqual(keyOf("С кружкой на подоконнике: греюсь."), keyOf("С кружкой на подоконнике: слушаю дождь."));
   assert.match(keyOf(""), /^l[0-9a-f]{8}$/u);
   for (const text of ["Этой строки в записи нет.", "", null, undefined, "constructor", "__proto__"]) assert.equal(nameOf(text), "");
-  // Новые позы говорят: на подоконнике и на ковре.
+  // Позы 0.65.0 и 0.66.0 говорят: на подоконнике и на ковре.
   for (const text of ["С кружкой на подоконнике: слушаю дождь.", "Лежу на ковре с мангой, болтаю ногами. Глава длинная — и хорошо."]) assert.ok(nameOf(text), text);
-  // Страница: строка звучит, когда стоит под рисунком, один раз, после приветствия — и по тому же правилу молчания.
+  // Спящая молчит: строк её сна в записи нет; у обиды и ревности строки свои — они записаны.
+  assert.ok(!names.some(name => /Дремлю|Почти сплю/u.test(read(`miniapp/say/${name}.js`).slice(0, 200))));
+  for (const text of ["У окна, спиной к двери. Слушаю дождь.", "Заходите. Тапочки у двери.", "Байт спит на подушке, свернувшись клубком.", "Спасибо. Жасминовый — мой любимый. Посидите со мной."]) assert.ok(nameOf(text), text);
+
+  // 0.68.0: что под рисунком — то и вслух. Из слов под рисунком берутся записанные строки: по порядку, без
+  // повторов, не больше трёх; сказанная только что пропускается.
+  const known = { "Заходите.": "a", "Читаю.": "b", "Байт спит.": "c", "Чай готов.": "d" }, fake = (text) => known[text] ?? "";
+  assert.deepEqual([logic.SAY_MOST, logic.SAY_AGAIN_MS], [3, 300_000]);
+  assert.deepEqual(logic.linesToSay("Заходите.\nЧитаю.\nБайт спит.", fake), ["a", "b", "c"]);
+  assert.deepEqual(logic.linesToSay("Заходите.\nНовое в комнате. Кружка.\nБайт спит.\nЧитаю.\nЧай готов.", fake), ["a", "c", "b"], "незаписанная строка пропускается, четвёртая не идёт");
+  assert.deepEqual(logic.linesToSay("Читаю.\n Читаю. \nБайт спит.", fake), ["b", "c"], "повтор — один раз");
+  assert.deepEqual(logic.linesToSay("Заходите.\nЧитаю.\nБайт спит.", fake, (name) => name === "b"), ["a", "c"], "сказанная только что — пропускается");
+  for (const empty of ["", null, undefined, "\n\n", "Ничего записанного."]) assert.deepEqual(logic.linesToSay(empty, fake), []);
+  assert.deepEqual(logic.linesToSay("С кружкой на подоконнике: слушаю дождь.\nБайт спит на подушке, свернувшись клубком.", nameOf).length, 2, "на настоящем указателе");
+  // Когда ей можно говорить: не спит, на месте, не тихий час; обижена или ревнует — говорит (строки у них свои).
+  const up = { ready: true, her: { key: "уют" }, quiet: 0 };
+  assert.equal(logic.maySay(up), true);
+  for (const key of ["дело", "игра", "устала", "обида", "ревность"]) assert.equal(logic.maySay({ ...up, her: { key } }), true, key);
+  for (const off of [{ ...up, her: { key: "сон" } }, { ...up, quiet: 60_000 }, { ...up, away: true }, { ...up, ready: false }, { ready: true, her: null }, null, undefined]) assert.equal(logic.maySay(off), false);
+
+  // Страница: строки зовутся при каждой перерисовке слов; приветствие — первым и один раз; короткая реплика молчит,
+  // когда под рисунком только что встала записанная строка; устаревшие слова не звучат.
   const app = read("miniapp/app.js");
-  assert.match(app, /if \(!soundOn \|\| !greeted \|\| !mine \|\| mine === sayAt \|\| !String\(state\.said\)\.includes\(mine\) \|\| !logic\.voiceFor\("greet", state\)\) return;/u);
-  assert.match(app, /speak\("greet"\)\.finally\(sayLine\)/u);
-  assert.match(app, /await sound\.voice\(name, voiceBytes\(line\.src\), true\) === true\) document\.documentElement\.dataset\.said = name;/u);
-  assert.equal(app.split("sayLine();").length - 1, 1, "строка проверяется при каждой перерисовке слов");
+  assert.equal(app.split("\n  sayLines();\n").length - 1, 1, "строки проверяются при каждой перерисовке слов");
+  assert.match(app, /function greetOnce\(\) \{\n {2}if \(!soundOn \|\| greeted \|\| !state\.ready\) return;\n {2}greeted = true;\n {2}greeting = speak\("greet"\)\.catch\(\(\) => false\)\.then\(\(\) => \{ greeting = null; \}\);\n {2}greeting\.then\(sayLines\);/u);
+  assert.match(app, /const fresh = \(sayLines\(\), Date\.now\(\) - sayAt < VOICE_LATE_MS\);\n {2}if \(event !== "greet" && fresh && await saying > 0\) return false;/u);
+  assert.match(app, /if \(greeting\) await greeting;/u);
+  assert.match(app, /for \(const name of may \? logic\.linesToSay\(caption, nameOf, \(key\) => now - \(saidAt\.get\(key\) \?\? -Infinity\) < logic\.SAY_AGAIN_MS\) : \[\]\) \{/u);
+  assert.match(app, /if \(!soundOn \|\| state\.said !== caption \|\| await sound\.voice\(name, voiceBytes\(line\.src\), true\) !== true\) break;/u);
+  // Очередь слов не растёт без конца: длиннее двадцати секунд — новая строка не берётся (три строки подряд — до неё).
+  assert.match(read("miniapp/sound.js"), /const free = line \? \(\) => live\(\) && speaking - ctx\.currentTime < 20 : canSpeak;/u);
   // Сборщик лежит в репозитории и берёт рецепт у сборщика коротких реплик.
   const builder = read("scripts/say-lines.py");
   assert.match(builder, /voice-lines\.py/u);

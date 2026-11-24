@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "29";
+export const PAGE = "30";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -872,6 +872,23 @@ export const VOICE_GAP_MS = 4000;
  * которой она это сказала (`voiced.over`): строка сменилась — приставки нет. Строка и сама начинается с этих слов —
  * они не повторяются; под рисунком служебная пометка («…», «*переодевается*») — приставки нет.
  */
+/**
+ * Что под рисунком — то и вслух (0.68.0, идея 215). `linesToSay` — какие строки из слов под рисунком она произнесёт:
+ * записанные (`nameOf` — имя записи по тексту строки, пусто — записи нет), не сказанные только что (`lately`), без
+ * повторов и не больше `SAY_MOST`; возвращает имена записей по порядку. `maySay` — можно ли ей говорить: спит, вышла
+ * переодеться, идёт тихий час — молчит; обижена или ревнует — говорит: строки у этих состояний свои.
+ */
+export const SAY_MOST = 3, SAY_AGAIN_MS = 5 * 60_000;
+export function linesToSay(caption, nameOf, lately = () => false) {
+  const names = [];
+  for (const text of String(caption ?? "").split("\n")) {
+    const name = text.trim() ? nameOf(text.trim()) : "";
+    if (name && !names.includes(name) && !lately(name)) names.push(name);
+    if (names.length >= SAY_MOST) break;
+  }
+  return names;
+}
+export const maySay = (state) => Boolean(state && state.ready === true && state.her && !state.away && state.her.key !== "сон" && !(state.quiet > 0));
 export function captionOf(state) {
   const said = typeof state?.said === "string" ? state.said : "", voiced = state?.voiced;
   if (!voiced || typeof voiced.text !== "string" || !voiced.text || voiced.over !== said || /^[…*.]/u.test(said)) return said;

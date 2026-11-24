@@ -141,17 +141,19 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.67.0";
+export const BUILD = "0.68.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.67.0 — строку о своём занятии говорю вслух целиком: под рисунком и в звуке одно и то же (первые девятнадцать строк)",
-  "говорю её после приветствия, один раз, пока она не сменится; сплю, обижена или ревную — молчу",
-  "телефон: сверка схемы базы повторяется до трёх раз; не вышло — в вести причина, а не одно «не применилась»",
-  "если таблицы в сборке не менялись, телефон так и пишет: работаю на прежних",
-  "словарь: семь новых тем — что я говорю вслух, подоконник, ковёр, бесплатный голос, ВКонтакте и Макс, локальная модель, схема базы",
-  "страница комнаты — 29",
-  "чего ещё нет: остальные строки комнаты не записаны; голосовых в чат не шлю — ищем бесплатный путь; во ВКонтакте и в Макс меня нет",
+  "0.68.0 — что написано под рисунком, то и говорю вслух: встречу, своё занятие, Байта, спасибо за чай — записано больше двухсот строк",
+  "говорю по порядку, не больше трёх строк подряд; сказанное недавно не повторяю пять минут",
+  "записанная строка звучит вместо короткой реплики: «спасибо» дважды не говорю",
+  "обижена или ревную — говорю своими строками; сплю или идёт тихий час — молчу",
+  "звук включили раньше, чем открылась комната, — всё равно поздороваюсь",
+  "хозяину: «проба голоса» — пробую прислать голосовое бесплатной озвучкой и говорю, получилось ли",
+  "словарь: восемь новых тем — о звуке в комнате, о Байте, о сне, о пробе голоса",
+  "страница комнаты — 30",
+  "чего ещё нет: около трёхсот пятидесяти строк комнаты не записаны; на голосовые голосом не отвечаю; новых нарядов нет",
 ]);
 
 const DAY = 86_400_000;
@@ -1128,6 +1130,49 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     return say(turn, ["Проба мозгов — живой запрос каждой модели каждого провайдера:", "", ...rows.map(row => `• ${probeLine(row)}`)].join("\n"));
   }
 
+  /**
+   * Проба голоса в чате (0.68.0, идея 216; сообщение 83: «платное нам не нужно, нужны бесплатные варианты»). Только
+   * для хозяина: «проба голоса». Короткая фраза озвучивается бесплатной службой — озвучкой переводчика Google (без
+   * ключа и регистрации, до двухсот знаков; доступ неофициальный, голос готовый, не её) — и уходит в чат голосовым;
+   * Telegram не принял голосовое — звуковым файлом. Не вышло — она называет шаг и ответ: по этой строке видно,
+   * годится ли путь для ответов голосом. Отсюда, из песочницы разработки, эту службу не проверить: в неё нет дороги.
+   */
+  const VOICE_PROBE = "Это проба голоса. Если вы меня слышите, бесплатный путь работает.";
+  async function probeVoice(turn) {
+    if (turn.dry) return say(turn, "Пробный запуск: проба голоса не выполнялась.");
+    if (typeof fetchImpl !== "function") return say(turn, "Проба голоса: ходить в сеть мне сейчас нечем.");
+    const ways = [["sendVoice", "voice", "голосовое"], ["sendAudio", "audio", "звуковой файл"]].filter(([method]) => has(method));
+    if (typeof InputFile !== "function" || !ways.length) return say(turn, "Проба голоса: отправить звук мне нечем — платформа не дала ни файла, ни способа его послать.");
+    let bytes = null;
+    try {
+      const response = await fetchImpl(`https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ru&q=${encodeURIComponent(VOICE_PROBE)}`, { headers: { "user-agent": "Mozilla/5.0" } });
+      if (!response?.ok) return say(turn, `Проба голоса: служба озвучки отказала — ответ ${Number(response?.status) || "без кода"}. Этим путём голосовые не пойдут; перешлите эту строку в чат разработки.`);
+      if (typeof response.arrayBuffer === "function") bytes = new Uint8Array(await response.arrayBuffer());
+      else if (response.body == null) bytes = new Uint8Array(0);
+      else {
+        const parts = [];
+        for await (const chunk of response.body) parts.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk.buffer ?? chunk));
+        bytes = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+        let at = 0;
+        for (const part of parts) { bytes.set(part, at); at += part.length; }
+      }
+    } catch (error) {
+      return say(turn, `Проба голоса: до службы озвучки не дотянулась — ${String(error?.name ?? "ошибка")}: ${String(error?.message ?? error).slice(0, 120)}. Перешлите эту строку в чат разработки.`);
+    }
+    // Запись mp3 начинается с кадра (FF Ex / FF Fx) или с метки ID3: страница с отказом — не звук.
+    const sound = bytes.length > 2000 && ((bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) || (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33));
+    if (!sound) return say(turn, `Проба голоса: служба озвучки прислала не звук (${bytes.length} байт). Этим путём голосовые не пойдут; перешлите эту строку в чат разработки.`);
+    const size = `${Math.max(1, Math.round(bytes.length / 1024))} КБ`;
+    let refusal = "";
+    for (const [method, field, word] of ways) {
+      try {
+        await api[method]({ chat_id: turn.chatId, [field]: new InputFile(bytes, "ai.mp3", { type: "audio/mpeg" }), ...turn.extra });
+        return say(turn, `Проба голоса: получилось — ${word} выше (${size}). Голос готовый, не мой: бесплатная озвучка переводчика Google.${refusal ? ` Голосовым Telegram не принял: ${refusal}.` : ""} Годится — скажите в чате разработки: научусь отвечать так на голосовые.`);
+      } catch (error) { refusal = tgWhy(error).slice(0, 120); }
+    }
+    return say(turn, `Проба голоса: звук получен (${size}), но Telegram его не принял — ${refusal || "без объяснения"}. Перешлите эту строку в чат разработки.`);
+  }
+
   async function diagnostic(turn) {
     if (!owner(turn.actorId)) {
       // В группе чужая проверка — шум: молчим. В личке отвечаем честно.
@@ -1366,7 +1411,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!parsed) return null;
     const { actorId, dry, inGroup } = turn;
     // «Статус» и проба провайдеров — только для хозяина; для остальных это обычные слова.
-    if (["status", "brains_check"].includes(parsed.intent) && !owner(actorId)) return null;
+    if (["status", "brains_check", "voice_check"].includes(parsed.intent) && !owner(actorId)) return null;
     // Уточняющий вопрос — её собственные слова: без служебного «Аи:» перед ними.
     if (parsed.confidence === "maybe") return say(turn, parsed.question);
     // Репетиция ничего не записывает: она проверяет маршрут, а не меняет память.
@@ -1496,6 +1541,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
         return diagnostic(turn);
       case "brains_check":
         return probeBrains(turn);
+      case "voice_check":
+        return probeVoice(turn);
       case "teach":
         return teach(turn, parsed.arg);
       case "lessons":
