@@ -2902,3 +2902,88 @@ test("0.61.0, слово в комнате (204, шаг 3): чего нет в �
   assert.ok(failed.ok === true && failed.model === undefined && pool("слово:сбой").map(plain).includes(failed.line), failed.line);
   assert.ok(pool("слово:сбой").length >= 2);
 });
+
+test("0.62.0, снимок в чат (165): страница присылает комнату картинкой — сердце шлёт её в личку с подписью; тот же номер второй раз не шлёт; не чаще раза в минуту; не ушла — можно повторить", async () => {
+  const { request } = await import("./fixtures/kit.mjs");
+  const { PHOTO_MAX, PHOTO_EVERY_MS } = await import("../tgcloud/lib/roomdoor.js");
+  const { DOOR_ALLOW, DOOR_NOT_ALLOWED } = await import("../tgcloud/lib/bridge.js");
+  reset();
+  const time = clock(NOON);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const photos = () => sdk().calls.filter(item => item.method === "sendPhoto").map(item => item.params);
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(3000, 7)]).toString("base64");
+  await h.onRoom({ do: "look" }, from(5));
+  const seen = await h.onRoom({ do: "look", again: true }, from(5));
+  const quiet = sdk().sent.length;
+  // Картинка уходит человеку в личку как пришла; подпись собирает сердце: день, время суток и её слова этой минуты.
+  const sent = await h.onRoom({ do: "photo", image: jpeg, id: "photo62001" }, from(5));
+  assert.deepEqual([sent.ok, sent.do, sent.sent], [true, "photo", true]);
+  assert.ok(pool("фото").map(plain).includes(sent.line), sent.line);
+  assert.equal(photos().length, 1);
+  const [posted] = photos();
+  assert.deepEqual([posted.chat_id, posted.photo.name, posted.photo.type, posted.photo.bytes.length], [5, "room.jpg", "image/jpeg", 3004]);
+  assert.deepEqual([...posted.photo.bytes.slice(0, 4)], [0xff, 0xd8, 0xff, 0xe0]);
+  assert.match(posted.caption, /^(?:Комната\.|На память:) \d{1,2} [а-я]+, (?:утро|день|вечер|ночь)\.\n\n/u);
+  assert.ok(seen.her.line && posted.caption.endsWith(seen.her.line), posted.caption);
+  assert.equal(sdk().sent.length, quiet, "текстом в чат ничего не ушло — только картинка");
+  // Тот же номер ещё раз (страница не дождалась ответа): второй картинки нет.
+  const again = await h.onRoom({ do: "photo", image: jpeg, id: "photo62001" }, from(5));
+  assert.deepEqual([again.ok, again.sent, again.repeat], [true, true, true]);
+  assert.equal(photos().length, 1);
+  // Чаще раза в минуту — не шлёт и говорит об этом.
+  const early = await h.onRoom({ do: "photo", image: jpeg, id: "photo62002" }, from(5));
+  assert.deepEqual([early.ok, early.sent, early.early], [true, false, true]);
+  assert.ok(pool("фото:рано").map(plain).includes(early.line), early.line);
+  assert.equal(photos().length, 1);
+  assert.equal(PHOTO_EVERY_MS, 60_000);
+  time.add(PHOTO_EVERY_MS + 1000);
+  assert.equal((await h.onRoom({ do: "photo", image: jpeg, id: "photo62003" }, from(5))).sent, true);
+  assert.equal(photos().length, 2);
+  // Не картинка, пусто, слишком тяжело — отказ словами, в чат ничего.
+  time.add(PHOTO_EVERY_MS + 1000);
+  const bad = await h.onRoom({ do: "photo", image: Buffer.alloc(3000, 1).toString("base64"), id: "photo62004" }, from(5));
+  assert.deepEqual([bad.ok, bad.code], [false, "bad_image"]);
+  assert.deepEqual([(await h.onRoom({ do: "photo" }, from(5))).code, (await h.onRoom({ do: "photo", image: 42 }, from(5))).code, (await h.onRoom({ do: "photo", image: "A".repeat(PHOTO_MAX + 1) }, from(5))).code], ["empty", "empty", "big"]);
+  assert.equal(photos().length, 2);
+  // Отказ номер не «съедает»: тот же номер с настоящей картинкой — уходит.
+  assert.equal((await h.onRoom({ do: "photo", image: jpeg, id: "photo62004" }, from(5))).sent, true);
+  assert.equal(photos().length, 3);
+  // Telegram не принял (человек закрыл чат с ней): честные слова; «ещё раз» с тем же номером — отправит.
+  time.add(PHOTO_EVERY_MS + 1000);
+  sdk().failing.sendPhoto = new Error("Forbidden: bot was blocked by the user");
+  const failed = await h.onRoom({ do: "photo", image: jpeg, id: "photo62005" }, from(5));
+  delete sdk().failing.sendPhoto;
+  assert.deepEqual([failed.ok, failed.code], [false, "send"]);
+  const retried = await h.onRoom({ do: "photo", image: jpeg, id: "photo62005" }, from(5));
+  assert.deepEqual([retried.ok, retried.sent, retried.repeat], [true, true, undefined]);
+  // Вызов оборвался посреди отправки (отметка есть, «ушло» нет): минуту — «отправляю», потом тот же номер шлёт заново.
+  time.add(PHOTO_EVERY_MS + 1000);
+  sdk().kv.set(room.ROOM_KEY(5), JSON.stringify({ ...roomOf(5), shot: { id: "photo62006", at: time.now(), ok: false }, ops: [...(roomOf(5).ops ?? []), ["photo62006", time.now()]] }));
+  const count = photos().length;
+  const going = await h.onRoom({ do: "photo", image: jpeg, id: "photo62006" }, from(5));
+  assert.deepEqual([going.ok, going.sent, going.pending], [true, false, true]);
+  assert.ok(pool("фото:идёт").map(plain).includes(going.line), going.line);
+  assert.equal(photos().length, count);
+  // Пока тот снимок уходит, запрос с другим номером (страница шлёт картинку поменьше) второго следом не шлёт.
+  const other = await h.onRoom({ do: "photo", image: jpeg, id: "photo62008" }, from(5));
+  assert.deepEqual([other.ok, other.sent, other.pending], [true, false, true]);
+  assert.equal(photos().length, count);
+  time.add(PHOTO_EVERY_MS + 1000);
+  assert.equal((await h.onRoom({ do: "photo", image: jpeg, id: "photo62006" }, from(5))).sent, true);
+  assert.equal(photos().length, count + 1);
+  // Сама картинка нигде не хранится: в записи комнаты — только отметка.
+  assert.deepEqual(Object.keys(roomOf(5).shot).sort(), ["at", "id", "ok"]);
+  assert.ok(!sdk().kv.get(room.ROOM_KEY(5)).includes(jpeg.slice(0, 40)));
+  // Счёт виден в «статусе»; разговор один — в чате она помнит, что прислала снимок.
+  const pulse = JSON.parse([...sdk().kv.entries()].find(([key]) => key.startsWith("heart:pulse:"))?.[1] ?? "{}");
+  assert.ok(pulse.roomPhoto >= 1, JSON.stringify(pulse));
+  await h.onMessage(message("что на снимке?"), KEY);
+  assert.match(JSON.stringify(request().messages), /прислала в чат снимок комнаты/u);
+  // Отправить нечем (на платформе нет `InputFile`) — отказ словами, а не падение.
+  reset();
+  const bare = heart(ON, { now: time.now, random: () => 0, InputFile: null });
+  await bare.onRoom({ do: "look" }, from(5));
+  assert.equal((await bare.onRoom({ do: "photo", image: jpeg, id: "photo62007" }, from(5))).code, "no_send");
+  // Дверь приложения этого действия не пускает: картинке туда не пройти по размеру.
+  assert.ok(!DOOR_ALLOW.includes("photo") && DOOR_NOT_ALLOWED.includes("photo"));
+});

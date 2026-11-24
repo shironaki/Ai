@@ -79,7 +79,7 @@ import { createTaught, parseTeach, beforeOf, clearsShownList } from "./taught.js
 import { clean as cleanPhrase } from "./catalogue.js";
 import { createTastes, parseTaste, readAnswer, readCasual, parseEvening, parseCommon, commonOf, EVENING_KEY, TASTE_ASK_TTL_MS as ASK_FRESH_MS, tasteByKey, tasteByTitle, TASTES } from "./tastes.js";
 import { SUBJECTS as DRAW_SUBJECTS, GUESSABLE } from "./data/subjects.js";
-import { createDraw, subjectOf, portraitLooks, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS } from "./draw.js";
+import { createDraw, subjectOf, portraitLooks, refusal as drawRefusal, splitKey as splitDrawKey, DRAWN_PREFIX, parseAlbum, ALBUM_KEY, ALBUM_MAX, DIRECTORS as DRAW_DIRECTORS, fromBase64 } from "./draw.js";
 import { createSenses, pictureIn, clipIn, asksTranscript, aboutPicture, parseLink, pageText, safeUrl as senseUrl, MAX_VOICE_SECONDS, MAX_FILE_BYTES } from "./senses.js";
 import { toSticker, parseStickerAsk, stickerSource, packName, PACK_KEY, STICKER_STYLE, STICKER_SOURCE_MAX } from "./sticker.js";
 
@@ -141,19 +141,18 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.61.0";
+export const BUILD = "0.62.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.61.0 — в комнате со мной можно говорить обо всём: над тем, чего нет в словаре, я теперь думаю и отвечаю там же, под рисунком",
-  "отвечаю коротко, одной-тремя фразами; разговор тот же, что в чате: помню, о чём говорили и здесь, и там",
-  "пока думаю, под рисунком многоточие; думаю долго — страница сама дождётся ответа, а второй раз меня не спросит",
-  "в чат из комнаты по-прежнему ничего не уходит",
-  "напоминания, рисунки, поиск и настройки из комнаты не работают: скажу, что это делается в чате",
-  "мыслей на день у гостей столько же, сколько в чате, и счёт общий; хозяина предел не касается",
-  "выключается настройкой ROOM_TALK: false — тогда, как раньше, отвечаю «об этом лучше в чате»",
-  "страница комнаты — 24",
-  "чего ещё нет: снимок в чат, новые позы и наряды — следующими сборками, по очереди",
+  "0.62.0 — снимок комнаты приходит в чат картинкой: в альбоме рядом с «Сохранить этот момент» — кнопка «Прислать в чат»",
+  "под картинкой — день, время суток и мои слова этой минуты",
+  "не чаще раза в минуту; в альбом такой снимок не ложится — для этого прежняя кнопка",
+  "в чате я помню, что прислала снимок и что на нём было",
+  "картинка не дошла — скажу об этом под рисунком; «ещё раз» отправит её, а не вторую",
+  "страница комнаты — 25",
+  "голос: голосовые в чате я расшифровываю и отвечаю текстом; своим голосом пока не говорю — это следующий большой блок, начнём с коротких реплик в комнате",
+  "чего ещё нет: позы на подоконнике и на ковре, наряды — следующими сборками, по очереди",
 ]);
 
 const DAY = 86_400_000;
@@ -2401,7 +2400,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
-    ROOM_TALK, roomThought,
+    ROOM_TALK, roomThought, roomPhoto,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
     voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
@@ -7318,6 +7317,23 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // Счётчики (токены, модель, ответы) пишутся сразу: у вызова из комнаты своего «конца хода», как в чате, нет.
     try { await pulse.commit(); } catch { /* счётчики не важнее ответа */ }
     return { text };
+  }
+
+  /**
+   * Снимок комнаты — картинкой в личку (0.62.0, идея 165). Рисовать сердце не умеет: `image` — JPEG в base64, его
+   * рисует страница; подпись собирает сердце. Возвращает `{ ok }` или `{ code }`: none — отправить нечем, bad — это
+   * не картинка JPEG, send — Telegram не принял (человек не начинал с ней чат или закрыл его).
+   */
+  async function roomPhoto(userId, image, caption) {
+    if (typeof InputFile !== "function" || !has("sendPhoto")) return { code: "none" };
+    let bytes = null;
+    try { bytes = fromBase64(image); } catch { bytes = null; }
+    if (!(bytes instanceof Uint8Array) || bytes.length < 1000 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return { code: "bad" };
+    try { await api.sendPhoto({ chat_id: userId, photo: new InputFile(bytes, "room.jpg", { type: "image/jpeg" }), caption: String(caption ?? "").slice(0, 1000) }); }
+    catch { return { code: "send" }; }
+    pulse.bump("roomPhoto");
+    try { await pulse.commit(); } catch { /* счётчики не важнее снимка */ }
+    return { ok: true };
   }
 
   async function answerByModel(turn, prompt) {

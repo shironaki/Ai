@@ -258,7 +258,7 @@ export const DOOR_SAYS = "DOOR-SAYS";
  * (сообщение 63). Новое действие комнаты сюда само не попадает: `tests/door.test.mjs` назовёт его и попросит решить.
  */
 export const DOOR_ALLOW = Object.freeze(["look", "pet", "feed", "play", "tea", "water", "pat", "book", "quiet", "wear", "brew", "call", "window", "lamp", "music", "pick", "album", "gift", "snap"]);
-export const DOOR_NOT_ALLOWED = Object.freeze(["oops", "say"]);
+export const DOOR_NOT_ALLOWED = Object.freeze(["oops", "say", "photo"]);
 /**
  * Пакетная синхронизация (0.59.0, `docs/DOOR.md`, раздел 14) — действие самой двери, а не комнаты: очередь
  * приложения, которое работает без сети. Знаков в поле `in`: у одиночного действия — 1024, у пачки — 3000.

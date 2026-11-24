@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "24";
+export const PAGE = "25";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -831,6 +831,19 @@ export function demoGift(state, kind) {
   return { ok: true, do: "gift", taken: true, days: 7, gifts: [...new Set([...(Array.isArray(state.gifts) ? state.gifts : []), kind])], line: `${words[kind]} ${DEMO_NOTE}` };
 }
 export const demoSnap = () => ({ ok: true, do: "snap", taken: true, line: "Запомнила этот момент. На витрине он проживёт, пока открыта страница." });
+/**
+ * Снимок в чат (0.62.0, идея 165). `applyPhoto` — её слова об этом под рисунком; отказ «по делу» (картинка не
+ * собралась, слишком тяжёлая, отправить нечем) — без пометки «нет связи» и без кнопки «ещё раз»; Telegram не принял —
+ * с кнопкой. На витрине снимок не уходит: слать некому.
+ */
+export const PHOTO_FAILED = "Снимок не получился: рисунок комнаты не собрался. Попробуйте ещё раз.";
+export const demoPhoto = () => ({ ok: true, do: "photo", sent: false, line: "На витрине снимок в чат не уходит. Откройте комнату кнопкой в чате со мной — и я пришлю." });
+export function applyPhoto(state, result) {
+  if (result?.ok === true) return { ...state, busy: "", tone: "", retry: false, down: false, said: typeof result.line === "string" && result.line ? result.line : state.said };
+  const told = refused({ ...state, busy: "" }, result);
+  const code = String(result?.code ?? "");
+  return /^(?:empty|big|bad_image|no_send|picture)$/u.test(code) ? { ...told, retry: false, down: false } : code === "send" ? { ...told, retry: true, down: false } : told;
+}
 export function demoPat(state) {
   return { ok: true, do: "pat", build: "", line: state.patted ? "Ещё? Я не против. Только Байту не говорите: он считает, что гладить положено его." : "…Так можно было? Ладно. Мне нравится.", again: state.patted === true, counted: false };
 }

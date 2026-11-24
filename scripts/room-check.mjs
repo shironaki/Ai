@@ -1268,7 +1268,7 @@ try {
     clockAt = Date.parse("2026-11-17T09:00:00Z");
     const tab = await browser.newPage();
     const broken = [], calls = [];
-    let drop = 0;
+    let drop = 0, shotBytes = 0;
     tab.on("pageerror", (error) => broken.push(String(error)));
     tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
     await tab.exposeFunction("heartCall", async (input) => { calls.push(input); const reply = await heart.onRoom(input, ctx); clockAt += 400; if (drop > 0) { drop -= 1; return { lost: true }; } return { reply }; });
@@ -1323,6 +1323,19 @@ try {
         await tab.click("#albumBox [data-snap]");
         const kept = await wait9(seen => seen.thumbs.some(([src, width]) => src.startsWith("data:image/svg+xml") && width > 0), 10_000);
         if (!kept) fail(`снимок: картинка снимка в альбоме не нарисовалась: ${JSON.stringify((await page9()).thumbs)}`);
+        // Снимок в чат (0.62.0, идея 165): страница рисует комнату картинкой JPEG, сердце шлёт её человеку в личку.
+        await tab.click("#albumBox [data-post]");
+        let posted = null;
+        for (let spent = 0; spent < 12_000 && !posted; spent += 150) { posted = kit.calls("sendPhoto").at(-1) ?? null; if (!posted) await pause(150); }
+        const jpeg = posted?.photo?.bytes;
+        if (!posted) fail(`снимок в чат: сердце картинку не отправило; её слова «${(await page9()).say.slice(0, 90)}»`);
+        else if (!(jpeg instanceof Uint8Array) || jpeg.length < 20_000 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8 || jpeg[2] !== 0xff) fail(`снимок в чат: ушла не картинка JPEG или она пуста: байт ${jpeg?.length ?? 0}`);
+        else if (Number(posted.chat_id) !== 5 || !/^(?:Комната\.|На память:) \d{1,2} [а-я]+, (?:утро|день|вечер|ночь)\.\n\n\S/u.test(String(posted.caption))) fail(`снимок в чат: не тот чат или подпись: ${posted.chat_id}, «${String(posted.caption).slice(0, 90)}»`);
+        else {
+          const told = await wait9(seen => /Отправила|Готово: комната/u.test(seen.say), 6000);
+          if (!told) fail(`снимок в чат: под рисунком должны быть её слова об этом, а там «${(await page9()).say.slice(0, 90)}»`);
+          shotBytes = jpeg.length;
+        }
         await tab.click("#albumBox [data-close]");
         if ((await page9()).box) fail("альбом не закрылся");
       }
@@ -1458,6 +1471,7 @@ try {
       await word.close();
     }
     if (broken.length) fail(`с сердцем — ошибка на странице: ${broken[0].slice(0, 220)}`);
+    if (failures.length === failed) console.log(`  снимок в чат: картинка JPEG ушла в личку с подписью, ${Math.round(shotBytes / 1024)} КБ`);
     if (failures.length === failed) console.log(`  слово ей: модель думала дольше страницы — «ещё думаю», тот же номер снова, ответ под рисунком; модель спросили один раз`);
     if (failures.length === failed) console.log(`  встреча по шагам, альбом с подарком и снимком, повтор с тем же номером, «нет связи» и «ещё раз», журнал без подписи, свёрнутая страница стоит, жесты: ${[...gestures].join(", ")}${access ? `; ${access}` : ""}`);
   }

@@ -124,6 +124,7 @@ export function createPulse({ store = null, now = () => Date.now(), dayOf = (at)
       c("advised") ? `посоветовала из источников: ${number(c("advised"))}` : "",
       c("searched") ? `искала в сети: ${number(c("searched"))}` : "",
       c("roomTalk") ? `ответила в комнате, подумав: ${number(c("roomTalk"))}` : "",
+      c("roomPhoto") ? `прислала снимков комнаты: ${number(c("roomPhoto"))}` : "",
       c("stickers") ? `сделала стикеров: ${number(c("stickers"))}` : "",
       c("scenes") ? `ходов в сценах: ${number(c("scenes"))}` : "",
       c("partner") ? `реплик языковой практики: ${number(c("partner"))}` : "",

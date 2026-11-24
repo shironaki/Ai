@@ -1121,6 +1121,26 @@ build, side_effects: "none" }` — без чтения и записи.
 в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
 `<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
 
+## Что добавила 0.62.0: где что лежит
+
+Снимок комнаты картинкой в чат (сообщение 73; идея 165).
+
+| Что | Где |
+| --- | --- |
+| Кнопка «Прислать в чат» | `show(…, { post })` — `miniapp/album.js` |
+| Комната — картинкой JPEG (base64) | `shotOf(view, scale, quality)` — `miniapp/app.js`: рисунок `thumbOf` на холсте |
+| Отправка сердцу, запасная картинка поменьше | `mail()` — там же: `send({ do: "photo", image })` |
+| Её слова на странице, отказы, витрина | `applyPhoto`, `demoPhoto`, `PHOTO_FAILED` — `miniapp/logic.js` |
+| Действие сердца: подпись, раз в минуту, повтор номера | `photo` — `tgcloud/lib/roomdoor.js`; `PHOTO_MAX`, `PHOTO_EVERY_MS` |
+| Отправка в личку | `roomPhoto(userId, image, caption)` — `tgcloud/lib/heart.js`: `fromBase64` (`draw.js`), `api.sendPhoto`, `InputFile` |
+| Отметка «отправляю» | `shot: { id, at, ok }` в записи комнаты — `shot()` в `tgcloud/lib/room.js` |
+| Слова | запасы «+комната:фото», «…:рано», «…:идёт», «…:подпись» — `PHRASES.txt` |
+| Через дверь приложения не пускается | `DOOR_NOT_ALLOWED` — `tgcloud/lib/bridge.js` |
+
+Ответ `photo`: `{ ok, do, build, sent, line }`; `early: true` — чаще раза в минуту; `pending: true` — прошлая
+отправка ещё идёт (тот же номер или другой); `repeat: true` — повтор номера. Отказы: `empty`, `big`, `bad_image`, `no_send`
+(на платформе нет `InputFile` или `sendPhoto`), `send` (Telegram не принял), `slow`, `storage`.
+
 ## Что добавила 0.61.0: где что лежит
 
 В комнате отвечает модель (сообщение 72; идея 204, шаг 3).

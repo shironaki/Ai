@@ -1251,7 +1251,7 @@ async function album() {
   state = { ...state, busy: "", tone: "", retry: false, said: typeof result.line === "string" && result.line ? result.line : state.said, album: { count: Array.isArray(result.items) ? result.items.length : 0, fresh: 0 } };
   albumShown = true;
   box.hidden = false;
-  albumModule.show(box, result, { thumb: thumbOf, gift: give, snap: keep, close: closeAlbum });
+  albumModule.show(box, result, { thumb: thumbOf, gift: give, snap: keep, post: mail, close: closeAlbum });
   paint();
   buzz("light");
 }
@@ -1259,7 +1259,7 @@ async function album() {
 async function refreshAlbum() {
   if (!albumShown || !albumModule) return;
   const result = state.demo ? logic.demoAlbum(state) : await call({ do: "album" });
-  if (result?.ok === true) albumModule.show($("albumBox"), result, { thumb: thumbOf, gift: give, snap: keep, close: closeAlbum });
+  if (result?.ok === true) albumModule.show($("albumBox"), result, { thumb: thumbOf, gift: give, snap: keep, post: mail, close: closeAlbum });
 }
 /** Подарить (идея 163): цветок, книгу или игрушку Байту — раз в неделю; подарок остаётся в комнате и в альбоме. */
 async function give(kind) {
@@ -1288,6 +1288,51 @@ async function keep() {
   paint();
   buzz(result.taken ? "medium" : "light");
   await refreshAlbum();
+}
+/**
+ * Комната — картинкой JPEG в base64 (0.62.0, идея 165): тот же рисунок, что у снимка в альбоме (`thumbOf`), через
+ * холст. `scale` — во сколько раз крупнее рисунка (400×520), `quality` — качество JPEG. Не получилось — пустая строка.
+ */
+async function shotOf(view, scale, quality) {
+  try {
+    const src = await thumbOf(view), picture = new Image();
+    await new Promise((resolve, reject) => { picture.onload = resolve; picture.onerror = () => reject(new Error("picture")); picture.src = src; });
+    // Картинки внутри рисунка (она, Байт) должны успеть раскрыться: иначе на холст ляжет комната без них.
+    if (typeof picture.decode === "function") await picture.decode().catch(() => {});
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round((scene.WIDTH ?? 400) * scale);
+    canvas.height = Math.round((scene.HEIGHT ?? 520) * scale);
+    const pen = canvas.getContext("2d");
+    pen.fillStyle = "#15131d";
+    pen.fillRect(0, 0, canvas.width, canvas.height);
+    pen.drawImage(picture, 0, 0, canvas.width, canvas.height);
+    const data = canvas.toDataURL("image/jpeg", quality), head = "data:image/jpeg;base64,";
+    return data.startsWith(head) ? data.slice(head.length) : "";
+  } catch { return ""; }
+}
+/**
+ * Прислать снимок в чат (идея 165, 0.62.0): комната этой минуты — картинкой; сердце шлёт её в личку с её словами.
+ * Отказ пришёл не от сердца (у его ответов есть `build`) — картинка могла не пройти по весу: ещё раз, меньше.
+ */
+async function mail() {
+  if (!state.ready || state.busy || acting || typeof logic.applyPhoto !== "function" || typeof logic.demoPhoto !== "function") return;
+  scheduleTurn();
+  state = { ...state, busy: "photo" };
+  paint();
+  const post = async (image) => await send({ do: "photo", image }, () => mail());
+  let result = null;
+  if (state.demo) result = logic.demoPhoto();
+  else {
+    const view = viewOf(state), image = await shotOf(view, 2, 0.82);
+    result = image ? await post(image) : { ok: false, code: "picture", text: logic.PHOTO_FAILED };
+    if (image && result?.ok !== true && result?.build == null && result?.code !== "timeout" && !document.hidden) {
+      const small = await shotOf(view, 1.2, 0.7);
+      if (small) result = await post(small);
+    }
+  }
+  state = logic.applyPhoto(state, result);
+  paint();
+  buzz(result?.ok === true && result.sent === true ? "medium" : result?.ok === true ? "light" : "error");
 }
 /** Сценка встречи: следующий шаг — её слова и картинка этого шага; после последнего комната возвращается к нынешней минуте. */
 function tell() {

@@ -18,6 +18,9 @@ export const SAY_MAX = 200;
 export const SAY_THINK_MS = 90_000;
 /** Через сколько секунд странице спросить тот же номер снова. */
 export const SAY_POLL_S = 3;
+/** Снимок в чат (0.62.0): предел картинки в знаках base64 (около 450 КБ) и как часто можно — раз в минуту. */
+export const PHOTO_MAX = 600_000;
+export const PHOTO_EVERY_MS = 60_000;
 
 export function createRoomDoor(deps) {
   const {
@@ -27,7 +30,7 @@ export function createRoomDoor(deps) {
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
-    ROOM_TALK, roomThought,
+    ROOM_TALK, roomThought, roomPhoto,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
     voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
@@ -517,6 +520,53 @@ export function createRoomDoor(deps) {
         const done = await keepsakes.snap(userId, view, seen.her.line, { day: today });
         if (!done.ok) return refuse("storage", NOT_KEPT);
         return { ok: true, do: op, build: BUILD, taken: !done.early, line: spoken(roomLine(turn, done.early ? "снимок:рано" : "снимок") || (done.early ? "Снимок уже есть — следующий чуть позже." : "Запомнила этот момент.")) };
+      }
+      if (op === "photo") {
+        // Снимок картинкой в чат (идея 165, 0.62.0). Рисовать сердце не умеет — комнату этой минуты рисует страница
+        // (тот же рисунок, что у снимка в альбоме, через холст) и присылает сюда как JPEG в base64; сердце шлёт её
+        // человеку в личку с подписью: день, время суток и её слова этой минуты. Подпись собирает сердце, а не
+        // страница. Не чаще раза в минуту. Тот же номер действия второй раз картинку не шлёт; не ушла — отметка и
+        // номер снимаются, и «ещё раз» на странице отправит её снова. Сама картинка нигде не хранится. Через дверь
+        // приложения действие не пускается: картинке туда не пройти по размеру.
+        const image = typeof input?.image === "string" ? input.image : "";
+        if (!image) return refuse("empty", "Картинки не вижу: снимок не собрался. Попробуйте ещё раз.");
+        if (image.length > PHOTO_MAX) return refuse("big", "Снимок слишком тяжёлый — такой мне не отправить.");
+        const lay = await room.read(userId, today);
+        if (lay.lost) return refuse("storage", MEMORY_DOWN);
+        const last = lay.shot && typeof lay.shot === "object" ? lay.shot : null;
+        const recent = last ? now() - Number(last.at) >= 0 && now() - Number(last.at) < PHOTO_EVERY_MS : false;
+        const dropMark = () => room.amend(userId, today, (state) => ({ ...state, shot: null, ops: (Array.isArray(state.ops) ? state.ops : []).filter(item => !(Array.isArray(item) && item[0] === once.id)) }));
+        const sentLine = () => spoken(roomLine(turn, "фото") || "Отправила. Снимок у вас в чате.");
+        const going = () => ({ ok: true, do: op, build: BUILD, sent: false, pending: true, line: spoken(roomLine(turn, "фото:идёт") || "Отправляю…"), repeat: true });
+        if (last && once.id && last.id === once.id) {
+          if (last.ok === true) return { ok: true, do: op, build: BUILD, sent: true, line: sentLine(), repeat: true };
+          if (recent) return going();
+          // Отметке больше минуты, а снимок так и не ушёл (вызов оборвался): номер снимается — отправляем заново.
+          await dropMark();
+        } else if (last && recent) {
+          // Другой номер, а прошлый снимок ушёл меньше минуты назад — рано; ещё уходит — второй следом не шлём.
+          if (last.ok !== true) return going();
+          return { ok: true, do: op, build: BUILD, sent: false, early: true, line: spoken(roomLine(turn, "фото:рано") || "Только что отправила. Следующий снимок — через минуту.") };
+        }
+        const seen = await looking({ again: true });
+        if (seen.ok !== true) return seen;
+        const mark = await room.shot(userId, once);
+        if (mark.lost || mark.saved === false) return refuse("storage", NOT_KEPT);
+        if (mark.slow) return refuse("slow", "Не так быстро: я не успеваю. Подождите несколько секунд.");
+        if (mark.repeat) return going();
+        const when = `${dateWords(today)}, ${seen.clock.part}`;
+        const caption = `${roomLine(turn, "фото:подпись", { "когда": when }) || `Комната. ${when}.`}${seen.her?.line ? `\n\n${seen.her.line}` : ""}`;
+        const posted = await roomPhoto(userId, image, caption);
+        if (posted.ok !== true) {
+          await dropMark();
+          return posted.code === "bad" ? refuse("bad_image", "Это не похоже на снимок комнаты — отправлять не стану.")
+            : posted.code === "none" ? refuse("no_send", "Отправить картинку мне сейчас нечем.")
+              : refuse("send", "Не получилось прислать снимок в чат. Напишите мне там что-нибудь — и попробуйте ещё раз.");
+        }
+        await room.amend(userId, today, (state) => (state.shot && state.shot.id === once.id ? { ...state, shot: { ...state.shot, ok: true } } : null));
+        // Разговор один: в чате она помнит, что прислала снимок и что на нём было.
+        await keepThread(turn, "[в комнате] просьба: прислать снимок комнаты в чат", `[прислала в чат снимок комнаты] ${caption}`);
+        return { ok: true, do: op, build: BUILD, sent: true, line: sentLine() };
       }
       if (op === "say") {
         // Слово ей прямо в комнате (0.55.1; идея 204, шаг первый — сторона сердца; поле для слов на странице — с 0.57.0).

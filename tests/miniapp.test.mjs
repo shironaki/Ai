@@ -1420,7 +1420,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "24");
+  assert.equal(logic.PAGE, "25");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -2148,4 +2148,38 @@ test("0.61.0, слово ей: пока она думает (`pending`), стр�
   const late = logic.applySay(thinking, { ok: false, code: "late", text: logic.SAY_LATE });
   assert.deepEqual([late.said, late.retry, late.down, late.busy], [logic.SAY_LATE, false, false, ""]);
   assert.match(logic.SAY_LATE, /не успела/u);
+});
+
+test("0.62.0, снимок в чат (165): в альбоме — кнопка «Прислать в чат»; страница рисует комнату картинкой JPEG и шлёт сердцу `photo`; на витрине — слова, что слать некому", () => {
+  const page = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  const album = readFileSync(new URL("../miniapp/album.js", import.meta.url), "utf8");
+  assert.match(album, /if \(typeof post === "function"\) tools\.append\(button\("Прислать в чат", "main", \{ post: "1" \}\)\);/u);
+  assert.match(album, /else if \(pressed\.dataset\.post && typeof post === "function"\) post\(\);/u);
+  assert.equal((page.match(/\{ thumb: thumbOf, gift: give, snap: keep, post: mail, close: closeAlbum \}/gu) ?? []).length, 2);
+  // Картинка — тот же рисунок, что у снимка в альбоме, через холст: JPEG вдвое крупнее рисунка.
+  assert.match(page, /const src = await thumbOf\(view\), picture = new Image\(\);/u);
+  assert.match(page, /if \(typeof picture\.decode === "function"\) await picture\.decode\(\)\.catch\(\(\) => \{\}\);/u);
+  assert.match(page, /canvas\.toDataURL\("image\/jpeg", quality\)/u);
+  assert.match(page, /const view = viewOf\(state\), image = await shotOf\(view, 2, 0\.82\);/u);
+  assert.match(page, /const post = async \(image\) => await send\(\{ do: "photo", image \}, \(\) => mail\(\)\);/u);
+  // Отказ пришёл не от сердца — ещё раз, картинкой поменьше (после тайм-аута — нет: сердце могло её получить).
+  assert.match(page, /if \(image && result\?\.ok !== true && result\?\.build == null && result\?\.code !== "timeout" && !document\.hidden\) \{\n      const small = await shotOf\(view, 1\.2, 0\.7\);/u);
+  const state = { ...logic.applyLook(logic.blank(12), logic.demoLook(12), 0), busy: "photo" };
+  const sent = logic.applyPhoto(state, { ok: true, do: "photo", sent: true, line: "Отправила. Снимок у вас в чате." });
+  assert.deepEqual([sent.said, sent.busy, sent.retry, sent.down], ["Отправила. Снимок у вас в чате.", "", false, false]);
+  // Отказ по делу — без «нет связи» и без «ещё раз»; Telegram не принял — «ещё раз» есть, «нет связи» нет.
+  for (const code of ["empty", "big", "bad_image", "no_send", "picture"]) {
+    const told = logic.applyPhoto(state, { ok: false, code, text: "нет" });
+    assert.deepEqual([told.said, told.retry, told.down, told.busy], ["нет", false, false, ""], code);
+  }
+  const closed = logic.applyPhoto(state, { ok: false, code: "send", text: "Не получилось." });
+  assert.deepEqual([closed.retry, closed.down], [true, false]);
+  // Связь оборвалась — как у любого действия: «нет связи» и «ещё раз».
+  const lost = logic.applyPhoto(state, { ok: false, code: "timeout", text: "Комната не ответила." });
+  assert.deepEqual([lost.retry, lost.down], [true, true]);
+  // Витрина: слать некому — она говорит об этом, а не молчит.
+  const demo = logic.demoPhoto();
+  assert.deepEqual([demo.ok, demo.sent], [true, false]);
+  assert.match(demo.line, /На витрине снимок в чат не уходит/u);
+  assert.match(logic.PHOTO_FAILED, /Снимок не получился/u);
 });

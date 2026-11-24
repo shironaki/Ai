@@ -957,6 +957,15 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
     return { ok: true, answer: id && done.state?.word?.id === id ? String(done.state.word.a ?? "") : "", state: done.state, ...flags(done) };
   }
 
+  /**
+   * Снимок в чат (0.62.0, идея 165): отметка «отправляю» под номером действия — тот же номер второй раз картинку не
+   * шлёт. `ok` ставит дверь комнаты, когда картинка ушла; не ушла — она же снимает и отметку, и номер.
+   */
+  async function shot(userId, { day, id = "", limit = false } = {}) {
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, shot: { id, at, ok: false } }));
+    return { ok: true, state: done.state, ...flags(done) };
+  }
+
   async function lamp(userId, { day, id = "", limit = false } = {}) {
     const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, dark: state.dark !== true }));
     return { ok: true, dark: done.state.dark === true, state: done.state, ...flags(done) };
@@ -1061,5 +1070,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId) { return (await amend(userId, "", (state) => ({ ...state, at: state.at || now(), near: now() }))).saved; }
 
-  return { read, amend, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look, word };
+  return { read, amend, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look, word, shot };
 }
