@@ -642,7 +642,7 @@ Telegram о доставке событий Аи: в очереди — 0; ош�
 {
   "ok": true,
   "do": "sync",
-  "build": "0.60.0",
+  "build": "0.61.0",
   "server_ts": 1795338014000,
   "cursor": "c1.4.a73c897beb8bf9de",
   "ack": ["q7w2e9r4t6y1u8i3o5pa"],
@@ -752,7 +752,7 @@ Telegram о доставке событий Аи: в очереди — 0; ош�
 Ответ (снимок сокращён; сборка — та, что отвечает):
 
 ```json
-{"ok":true,"do":"sync","build":"0.60.0","server_ts":1795338014000,"cursor":"c1.4.a73c897beb8bf9de","ack":["q7w2e9r4t6y1u8i3o5pa"],"rejected":[{"id":"z1x5c9v3b7n2m6k4j8hg","code":"unknown","text":"Этой сценки уже нет: её день прошёл.","final":true}],"retry":[],"conflicts":[{"id":"q7w2e9r4t6y1u8i3o5pa","code":"rebased","text":"Комната изменилась, пока действие ждало в очереди: применено поверх нынешнего состояния."}],"snapshot":{"ok":true,"do":"look","again":true}}
+{"ok":true,"do":"sync","build":"0.61.0","server_ts":1795338014000,"cursor":"c1.4.a73c897beb8bf9de","ack":["q7w2e9r4t6y1u8i3o5pa"],"rejected":[{"id":"z1x5c9v3b7n2m6k4j8hg","code":"unknown","text":"Этой сценки уже нет: её день прошёл.","final":true}],"retry":[],"conflicts":[{"id":"q7w2e9r4t6y1u8i3o5pa","code":"rebased","text":"Комната изменилась, пока действие ждало в очереди: применено поверх нынешнего состояния."}],"snapshot":{"ok":true,"do":"look","again":true}}
 ```
 
 Полив применён поверх комнаты с чаем и помечен `rebased`; сценки с таким ключом нет —
@@ -762,7 +762,7 @@ Telegram о доставке событий Аи: в очереди — 0; ош�
 Та же установка с курсором, которого сердце не выдавало:
 
 ```json
-{"ok":false,"code":"bad_cursor","text":"Курсор не мой или из будущего. Ничего не применено: возьмите снимок и курсор из этого ответа и повторите пачку.","do":"sync","build":"0.60.0","server_ts":1795338021000,"cursor":"c1.4.a73c897beb8bf9de","ack":[],"rejected":[],"retry":["h2j6k1l9p4o8i3u7y5tr"],"conflicts":[],"snapshot":{"ok":true,"do":"look","again":true}}
+{"ok":false,"code":"bad_cursor","text":"Курсор не мой или из будущего. Ничего не применено: возьмите снимок и курсор из этого ответа и повторите пачку.","do":"sync","build":"0.61.0","server_ts":1795338021000,"cursor":"c1.4.a73c897beb8bf9de","ack":[],"rejected":[],"retry":["h2j6k1l9p4o8i3u7y5tr"],"conflicts":[],"snapshot":{"ok":true,"do":"look","again":true}}
 ```
 
 ### 14.7. Что проверено и что нет

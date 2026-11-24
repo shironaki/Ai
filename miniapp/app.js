@@ -815,9 +815,14 @@ const newId = () => Array.from({ length: 10 }, () => "abcdefghijklmnopqrstuvwxyz
 // Кнопка «Попробовать ещё раз» шлёт то же действие с тем же номером (`sameId`): если прошлый запрос на самом деле
 // дошёл, сердце не выполнит его второй раз (окно не закроется обратно), а покажет комнату как она есть.
 let again = null, sameId = null;
+/** Номер последнего отправленного действия (0.61.0): пока она думает над словом, страница спрашивает его же снова. */
+let lastSent = null;
+/** Сколько раз спросить снова, пока она думает: вместе с ожиданием между вопросами — около минуты. */
+const SAY_ROUNDS = 20;
 async function send(input, redo = null) {
   const name = String(input.do), id = sameId && sameId.op === name ? sameId.id : newId();
   sameId = null;
+  lastSent = { op: name, id };
   let result = await call({ ...input, id });
   if (result?.ok !== true && state.once && typeof logic.resend === "function" && logic.resend(result) && !document.hidden) {
     note(name, result.code, `${result.text ?? ""} Повторяю сама.`);
@@ -1042,9 +1047,23 @@ async function talk() {
   const words = logic.wordsOf(field.value);
   if (!words) return;
   scheduleTurn();
-  state = { ...state, busy: "say" };
+  // Пока ответа нет, под рисунком — многоточие (0.61.0): видно, что слово услышано и она думает.
+  state = { ...state, busy: "say", ...(state.demo ? {} : { said: "…", tone: "" }) };
   paint();
-  const result = state.demo ? logic.demoSay(state, words) : await send({ do: "say", text: words }, () => talk());
+  const ask = async () => await send({ do: "say", text: words }, () => talk());
+  let result = state.demo ? logic.demoSay(state, words) : await ask();
+  // 0.61.0 (идея 204, шаг 3). На то, чего нет в словаре, отвечает модель — бывает, дольше, чем страница ждёт один
+  // запрос. Тогда сердце говорит «ещё думаю» (`pending`): её слова об этом встают под рисунком, кнопка погашена, а
+  // страница спрашивает тот же номер снова, пока ответ не готов. Второго вопроса к модели от этого не бывает.
+  for (let round = 0; result?.ok === true && result.pending === true && round < SAY_ROUNDS && lastSent?.op === "say"; round += 1) {
+    state = { ...logic.applySay(state, result), busy: "say" };
+    paint();
+    await sleep(Math.max(1, Math.min(10, Number(result.wait) || 3)) * 1000);
+    sameId = { op: "say", id: lastSent.id };
+    result = await ask();
+  }
+  // Минута прошла, а она всё думает — страница больше не ждёт: её слова об этом, поле остаётся с вопросом.
+  if (result?.ok === true && result.pending === true) result = { ok: false, code: "late", text: logic.SAY_LATE };
   // Повтор того же номера у слова — тот же её ответ, а не «комната как она есть»: `repeated` здесь не нужен.
   state = logic.applySay(state, result);
   if (result?.ok === true) field.value = "";

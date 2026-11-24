@@ -141,18 +141,19 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.60.0";
+export const BUILD = "0.61.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.60.0 — Байт наедается: утром я насыпаю корм и отхожу, а он подходит к миске и ест — десять минут миска полна",
-  "раньше корм из миски пропадал, как только я вставала с пакетом",
-  "в чате по утрам говорю о Байте то же, что видно в комнате: сначала ждёт корм, потом ест",
-  "встаю рано, до шести, — и Байт уже не спит: раньше он числился спящим и при этом ждал у миски",
-  "приложение прислало пачку действий — страница комнаты после этого больше не отвечает «не так быстро»",
-  "на витрине на «привет» отвечаю без слов о Байте: спит он или нет, там не знают",
-  "страница комнаты — 23",
-  "чего ещё нет: ответ модели в комнате, снимок в чат, новые позы и наряды — следующими сборками, по очереди",
+  "0.61.0 — в комнате со мной можно говорить обо всём: над тем, чего нет в словаре, я теперь думаю и отвечаю там же, под рисунком",
+  "отвечаю коротко, одной-тремя фразами; разговор тот же, что в чате: помню, о чём говорили и здесь, и там",
+  "пока думаю, под рисунком многоточие; думаю долго — страница сама дождётся ответа, а второй раз меня не спросит",
+  "в чат из комнаты по-прежнему ничего не уходит",
+  "напоминания, рисунки, поиск и настройки из комнаты не работают: скажу, что это делается в чате",
+  "мыслей на день у гостей столько же, сколько в чате, и счёт общий; хозяина предел не касается",
+  "выключается настройкой ROOM_TALK: false — тогда, как раньше, отвечаю «об этом лучше в чате»",
+  "страница комнаты — 24",
+  "чего ещё нет: снимок в чат, новые позы и наряды — следующими сборками, по очереди",
 ]);
 
 const DAY = 86_400_000;
@@ -568,6 +569,9 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   // Мини-приложение «Комната» (0.38.0): кнопка под ответом на «зайду к тебе» и кнопка в меню бота. Адрес страницы
   // называет телефон при публикации (`tick`, поле `page`): пока его нет, комната отвечает словами, как раньше.
   const ROOM_APP = ROOM && config.ROOM_APP !== false;
+  // 0.61.0 (идея 204, шаг 3): на слово в комнате, которого нет в словаре, отвечает модель. `ROOM_TALK: false` —
+  // как до 0.61.0: «об этом лучше в чате».
+  const ROOM_TALK = ROOM_APP && config.ROOM_TALK !== false;
   const ROOM_MENU = config.ROOM_MENU !== false;
   const book = createPhrasebook({ random });
   const bond = createBond({ store, now });
@@ -2397,6 +2401,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
+    ROOM_TALK, roomThought,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
     voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
@@ -6776,7 +6781,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   }
 
   /** Разговор: всё, что не команда, не настройка, не умение и не намерение. */
-  async function talk(turn, prompt, { lateMs = 0, deferred = false, plain = false, avoid = "" } = {}) {
+  async function talk(turn, prompt, { lateMs = 0, deferred = false, plain = false, avoid = "", room = false } = {}) {
     const { chatId, actorId, ctx, dry } = turn;
     if (!deferred) await typing(turn);
     const context = dry ? { note: "", lessons: [] } : await contextFor(turn, prompt, { lateMs });
@@ -6784,6 +6789,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     if (!dry && !plain && turn.isPrivate === true) {
       try { const busy = await herBusy(turn); if (busy) context.note = `${context.note ? `${context.note}\n` : ""}${busy}`; } catch { /* без этого */ }
     }
+    // Слово сказано в комнате (0.61.0): ответ встанет под рисунком — он должен быть коротким и без разметки.
+    if (room) context.note = `${context.note ? `${context.note}\n` : ""}${ROOM_TALK_NOTE}`;
     const key = `${chatId}:${actorId}`;
     const shared = { manner: turn.manner, facts: 0, mood: "", way: "", brief: false };
     // Устала: людям сначала отвечают запасные модели — остаток основной бережётся для хозяина;
@@ -7274,6 +7281,43 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       "",
       "Веса модели от разговоров не меняются — учусь я записями: достаю их, когда разговор похож, и отвечаю по ним. Чем больше вы мне дадите, тем больше я знаю.",
     ].filter(line => line !== "").join("\n").replace("\nВеса модели", "\n\nВеса модели"));
+  }
+
+  /** Что модель знает о слове из комнаты: где оно сказано и каким должен быть ответ. */
+  const ROOM_TALK_NOTE = "Собеседник сейчас у тебя в комнате (мини-приложение): он видит тебя и Байта на рисунке и сказал это там, а не в чате. Ответь коротко — одна-три фразы, не длиннее трёхсот знаков; без списков, разметки и ссылок. Из комнаты ты только разговариваешь: напоминания, заметки, рисунки, поиск и настройки отсюда не работают — если просят об этом, не обещай, а скажи, что это делается в чате.";
+  /** Ответ модели для подписи под рисунком: одной строкой, без разметки, не длиннее `ROOM_TALK_MAX` — по границе фразы. */
+  const ROOM_TALK_MAX = 420;
+  function roomShort(text) {
+    const line = String(text ?? "").replace(/```[\s\S]*?```/gu, " ").replace(/[*_`#>]+/gu, "").replace(/\s+/gu, " ").trim();
+    if (line.length <= ROOM_TALK_MAX) return line;
+    const cut = line.slice(0, ROOM_TALK_MAX), end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "), cut.lastIndexOf("… "));
+    return end >= 120 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(" ") > 120 ? cut.lastIndexOf(" ") : ROOM_TALK_MAX).replace(/[,;:—-]+$/u, "").trim()}…`;
+  }
+  /**
+   * Ответ модели на слово из комнаты (0.61.0, идея 204, шаг 3) — на то, чего нет в словаре. Тот же разговор, что в
+   * чате: та же память, та же нить, то же настроение, тот же дневной предел мыслей на человека (`DAILY`; хозяина он
+   * не касается) — только ответ короткий (`ROOM_TALK_NOTE`) и в чат ничего не уходит. Таймеров на платформе нет:
+   * прервать долгий ответ сердцу нечем, поэтому ожидание — забота страницы (`pending` в ответе `say`).
+   * Возвращает `{ text }` или `{ code }`: off — выключено, capped — предел на сегодня, failed — модель не ответила.
+   */
+  async function roomThought(turn, ctx, words, name = "") {
+    if (!ROOM_TALK) return { code: "off" };
+    if (DAILY && !owner(turn.actorId)) {
+      const used = await store.get(quotaKey(turn.actorId)).catch(() => null);
+      if (Number(used?.n) >= DAILY) return { code: "capped" };
+    }
+    const asked = { ...turn, ctx, dry: false, chatType: "private", name: String(name ?? "").slice(0, 60), seen: null, viaModel: true };
+    let got = null;
+    try { got = await talk(asked, words, { deferred: true, room: true }); } catch { got = null; }
+    const answer = got?.answer;
+    if (!answer?.ok || answer.testRun) { try { await pulse.commit(); } catch { /* счётчики не важнее ответа */ } return { code: "failed" }; }
+    const text = roomShort(answer.text);
+    if (!text) return { code: "failed" };
+    pulse.bump("roomTalk");
+    try { await remember(asked, words, answer, got.context, got.facts); } catch { /* ответ важнее записи */ }
+    // Счётчики (токены, модель, ответы) пишутся сразу: у вызова из комнаты своего «конца хода», как в чате, нет.
+    try { await pulse.commit(); } catch { /* счётчики не важнее ответа */ }
+    return { text };
   }
 
   async function answerByModel(turn, prompt) {

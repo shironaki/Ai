@@ -1411,7 +1411,54 @@ try {
     }
     if (gestures.size < 2) fail(`жесты: за девять секунд при ходе в 0,7 с ждали хотя бы два разных жеста, были: ${JSON.stringify([...gestures])}`);
     await live.close();
+    // Слово ей с настоящим сердцем (0.61.0, идея 204, шаг 3): чего нет в словаре — отвечает модель. Модель здесь
+    // «думает долго»: первый вызов сердца ждёт её, а странице вместо него отвечает повтор того же номера — так
+    // бывает, когда страница не дождалась и спросила снова. Сердце говорит «ещё думаю»; страница ждёт и спрашивает
+    // тот же номер ещё раз — и получает ответ. Модель при этом спросили один раз.
+    {
+      const stub = await import(pathToFileURL(join(root, "tests/fixtures/sdk-stub.mjs")).href);
+      let open = () => {};
+      const gate = new Promise((resolve) => { open = resolve; });
+      const thinker = kit.heart({ PHRASES: true }, { now: () => clockAt, random: () => 0, fetchImpl: async (url, options) => { if (String(url).endsWith("/chat/completions")) await gate; return stub.fetch(url, options); } });
+      const asked = kit.chats().length, ids = [];
+      let first = null;
+      const word = await browser.newPage();
+      word.on("pageerror", (error) => broken.push(String(error)));
+      await word.exposeFunction("heartCall", async (input) => {
+        if (input.do !== "say") return { reply: await thinker.onRoom(input, ctx) };
+        ids.push(input.id);
+        if (!first) { first = thinker.onRoom(input, ctx); await pause(200); } else { open(); await first; }
+        return { reply: await thinker.onRoom(input, ctx) };
+      });
+      await word.evaluateOnNewDocument(() => {
+        globalThis.Telegram = { WebApp: { initData: "user=test", ready() {}, expand() {}, Serverless: { call(name, input, done) { globalThis.heartCall(input).then(({ reply }) => done(null, reply)); } } } };
+      });
+      await word.goto(`${origin}/index.html#turn=600000`, { waitUntil: "load", timeout: 30_000 });
+      const shown = () => word.evaluate(() => ({ state: document.getElementById("app").dataset.state, say: document.getElementById("say").textContent, off: document.getElementById("wordSend").disabled, field: document.getElementById("word").value, hidden: document.getElementById("words").hidden }));
+      let ready = null;
+      for (let spent = 0; spent < 12_000 && !ready; spent += 150) { const seen = await shown(); if (seen.state === "ready" && !seen.hidden) ready = seen; else await pause(150); }
+      if (!ready) fail(`слово с сердцем: комната не открылась или поля для слов нет: ${JSON.stringify(await shown()).slice(0, 200)}`);
+      else {
+        await word.evaluate(() => { document.getElementById("word").value = "что такое квазар?"; document.getElementById("words").requestSubmit(); });
+        let thinking = null, answered = null;
+        for (let spent = 0; spent < 10_000 && !answered; spent += 100) {
+          const seen = await shown();
+          if (/^(?:Думаю|Минутку|Хороший вопрос)/u.test(seen.say) && seen.off) thinking = seen;
+          if (seen.say === "ответ из стаба") answered = seen; else await pause(100);
+        }
+        if (!thinking) fail("слово с сердцем: пока она думает, под рисунком должны стоять её слова об этом, а кнопка «Сказать» — быть погашена");
+        if (!answered) fail(`слово с сердцем: ответа модели под рисунком нет: «${(await shown()).say.slice(0, 80)}», вопросов ушло ${ids.length}`);
+        else {
+          if (answered.field !== "" || answered.off) fail(`слово с сердцем: после ответа поле должно быть пустым, а кнопка — живой: ${JSON.stringify(answered)}`);
+          if (ids.length !== 2 || ids[0] !== ids[1] || !ids[0]) fail(`слово с сердцем: страница должна была спросить тот же номер дважды: ${JSON.stringify(ids)}`);
+          if (kit.chats().length !== asked + 1) fail(`слово с сердцем: модель спросили ${kit.chats().length - asked} раз(а), а не один`);
+        }
+      }
+      open();
+      await word.close();
+    }
     if (broken.length) fail(`с сердцем — ошибка на странице: ${broken[0].slice(0, 220)}`);
+    if (failures.length === failed) console.log(`  слово ей: модель думала дольше страницы — «ещё думаю», тот же номер снова, ответ под рисунком; модель спросили один раз`);
     if (failures.length === failed) console.log(`  встреча по шагам, альбом с подарком и снимком, повтор с тем же номером, «нет связи» и «ещё раз», журнал без подписи, свёрнутая страница стоит, жесты: ${[...gestures].join(", ")}${access ? `; ${access}` : ""}`);
   }
 

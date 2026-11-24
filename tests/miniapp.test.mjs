@@ -1420,7 +1420,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "23");
+  assert.equal(logic.PAGE, "24");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -2102,7 +2102,7 @@ test("0.57.0, слово ей: под её словами — поле и кно
   assert.deepEqual([logic.demoSay(state, "   ").ok, logic.demoSay(state, "   ").code], [false, "empty"]);
   // Страница: шлёт `say` со словами; повтор кнопкой «Попробовать ещё раз» — те же слова; ответ пришёл — поле пустое;
   // поле видно при открытой комнате и прячется, пока она спрашивает про чай; пока идёт запрос, гаснет кнопка, не поле.
-  assert.match(page, /const result = state\.demo \? logic\.demoSay\(state, words\) : await send\(\{ do: "say", text: words \}, \(\) => talk\(\)\);/u);
+  assert.match(page, /const ask = async \(\) => await send\(\{ do: "say", text: words \}, \(\) => talk\(\)\);\n  let result = state\.demo \? logic\.demoSay\(state, words\) : await ask\(\);/u);
   assert.match(page, /\$\("words"\)\?\.addEventListener\("submit", \(event\) => \{ event\.preventDefault\(\); talk\(\); \}\);/u);
   assert.match(page, /form\.hidden = !state\.ready \|\| state\.asking === "tea"/u);
   assert.match(page, /if \(result\?\.ok === true\) field\.value = "";/u);
@@ -2127,4 +2127,25 @@ test("0.60.0, витрина: после корма Байт ест из пол�
   // Позу или Байта назвали в адресе (снимки) — никто ничего не ест сам.
   assert.equal(logic.demoLook(7, { minute: 22, cat: "sit.rug" }).bowl, undefined);
   assert.equal(logic.demoLook(8, { minute: 22 }).bowl, undefined);
+});
+
+test("0.61.0, слово ей: пока она думает (`pending`), страница спрашивает тот же номер снова; не дождалась за минуту — говорит об этом", () => {
+  const page = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  // Номер последнего действия помнится; повторный вопрос идёт с ним же — сердце второй раз модель не спрашивает.
+  assert.match(page, /lastSent = \{ op: name, id \};/u);
+  assert.match(page, /for \(let round = 0; result\?\.ok === true && result\.pending === true && round < SAY_ROUNDS && lastSent\?\.op === "say"; round \+= 1\) \{/u);
+  assert.match(page, /sameId = \{ op: "say", id: lastSent\.id \};\n    result = await ask\(\);/u);
+  assert.match(page, /await sleep\(Math\.max\(1, Math\.min\(10, Number\(result\.wait\) \|\| 3\)\) \* 1000\);/u);
+  // Пока ждёт — под рисунком её «думаю», кнопка погашена.
+  assert.match(page, /state = \{ \.\.\.logic\.applySay\(state, result\), busy: "say" \};/u);
+  const state = { ...logic.applyLook(logic.blank(12), logic.demoLook(12), 0), busy: "say" };
+  const thinking = logic.applySay(state, { ok: true, do: "say", line: "Думаю… Сейчас отвечу.", known: false, pending: true, wait: 3 });
+  assert.equal(thinking.said, "Думаю… Сейчас отвечу.");
+  // Ответ модели встаёт под рисунком как любой её ответ.
+  assert.equal(logic.applySay(thinking, { ok: true, do: "say", line: "Квазар — ядро далёкой галактики.", known: false, model: true }).said, "Квазар — ядро далёкой галактики.");
+  // Не дождалась: её слова, без пометки «нет связи» и без кнопки «ещё раз» — вопрос остаётся в поле.
+  assert.match(page, /if \(result\?\.ok === true && result\.pending === true\) result = \{ ok: false, code: "late", text: logic\.SAY_LATE \};/u);
+  const late = logic.applySay(thinking, { ok: false, code: "late", text: logic.SAY_LATE });
+  assert.deepEqual([late.said, late.retry, late.down, late.busy], [logic.SAY_LATE, false, false, ""]);
+  assert.match(logic.SAY_LATE, /не успела/u);
 });

@@ -953,7 +953,7 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
    */
   async function word(userId, { day, id = "", limit = false, answer = "", wake = false } = {}) {
     // `wake` (0.58.0) — слово её разбудило: двадцать минут она не спит (`wokeNow`).
-    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, word: { id, a: String(answer).slice(0, 600) }, ...(wake ? { woke: at } : {}) }));
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, word: { id, a: String(answer).slice(0, 600), t: at }, ...(wake ? { woke: at } : {}) }));
     return { ok: true, answer: id && done.state?.word?.id === id ? String(done.state.word.a ?? "") : "", state: done.state, ...flags(done) };
   }
 

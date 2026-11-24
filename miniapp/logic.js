@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "23";
+export const PAGE = "24";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -757,11 +757,13 @@ export function demoWear(state) {
 export const SAY_MAX = 200;
 export const wordsOf = (value) => String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, SAY_MAX);
 /** Её ответ на слово — под рисунком; отказ — как у остальных действий: слова отказа и, если дело в связи, «Попробовать ещё раз». */
+/** Она думала над словом дольше минуты (0.61.0): страница перестала ждать — говорит об этом её словами. */
+export const SAY_LATE = "Задумалась — и не успела ответить. Спросите ещё раз.";
 export function applySay(state, result) {
   if (!result || result.ok !== true) {
     // «Пусто» и «слишком длинно» — ответ по делу, а не обрыв связи: повторять нечего, пометки «нет связи» нет.
     const told = refused(state, result);
-    return /^(?:empty|long)$/u.test(String(result?.code ?? "")) ? { ...told, retry: false, down: false } : told;
+    return /^(?:empty|long|late)$/u.test(String(result?.code ?? "")) ? { ...told, retry: false, down: false } : told;
   }
   return { ...state, busy: "", tone: "", retry: false, said: text(result.line) || "…" };
 }

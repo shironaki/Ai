@@ -2429,7 +2429,8 @@ test("0.55.1, слова под рисунком не говорят одно и
 test("0.55.1, слово ей прямо в комнате (204, шаг первый — сердце): отвечает сама, словарём и тем же голосом, что в чате; чего в словаре нет — «об этом в чате»; в чат ничего не уходит; повтор номера — тот же ответ", async () => {
   reset();
   const time = clock(NOON);
-  const h = heart(ON, { now: time.now, random: () => 0 });
+  // С 0.61.0 на то, чего нет в словаре, отвечает модель; «об этом в чате» — когда это выключено (`ROOM_TALK: false`).
+  const h = heart({ ...ON, ROOM_TALK: false }, { now: time.now, random: () => 0 });
   const { SAY_MAX } = await import("../tgcloud/lib/roomdoor.js");
   const { DOOR_ALLOW, DOOR_NOT_ALLOWED } = await import("../tgcloud/lib/bridge.js");
   const sent = () => sdk().calls.filter(item => /^send|^edit/u.test(item.method)).length;
@@ -2472,7 +2473,7 @@ test("0.55.1, слово ей прямо в комнате (204, шаг перв
   assert.equal(slow?.code, "slow");
   // Слова человека в записи комнаты не лежат: только её ответ на последний номер.
   const kept = roomOf(5);
-  assert.deepEqual(Object.keys(kept.word).sort(), ["a", "id"]);
+  assert.deepEqual(Object.keys(kept.word).sort(), ["a", "id", "t"]);
   assert.doesNotMatch(JSON.stringify(kept), /Марса|где язык/u);
   // Дверь приложения этого действия не пускает: она остаётся как была (сообщение 63).
   assert.ok(!DOOR_ALLOW.includes("say") && DOOR_NOT_ALLOWED.includes("say"));
@@ -2798,4 +2799,106 @@ test("0.60.0, Байт наедается (остаток идеи 208): она 
   other.add(60_000);
   const hushed = await quiet.onRoom({ do: "look", again: true }, from(5));
   assert.deepEqual([hushed.bowl, hushed.cat.shape, hushed.cat.place], ["full", "curl", "pillow"], JSON.stringify(hushed.cat));
+});
+
+test("0.61.0, слово в комнате (204, шаг 3): чего нет в словаре — отвечает модель, коротко и тем же разговором, что в чате; повтор номера — тот же ответ без второго вопроса; думает дольше страницы — «ещё думаю»", async () => {
+  const { says, refuses, request } = await import("./fixtures/kit.mjs");
+  const { fetch: stubFetch } = await import("./fixtures/sdk-stub.mjs");
+  const { SAY_THINK_MS, SAY_POLL_S } = await import("../tgcloud/lib/roomdoor.js");
+  reset();
+  const time = clock(NOON);
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  const sent = () => sdk().calls.filter(item => /^send|^edit/u.test(item.method)).length;
+  await h.onRoom({ do: "look" }, from(5));
+  const quiet = sent();
+  // Вопрос, которого словарь не знает: модель отвечает — и ответ встаёт под рисунком одной строкой, без разметки.
+  sdk().fetchQueue.push(says("Квазар — это **ядро** далёкой галактики.\nОчень яркое."));
+  const said = await h.onRoom({ do: "say", text: "что такое квазар?", id: "word610001" }, from(5));
+  assert.deepEqual([said.ok, said.do, said.known, said.model, said.line], [true, "say", false, true, "Квазар — это ядро далёкой галактики. Очень яркое."]);
+  assert.equal(chats().length, 1);
+  // Модель знает, где это сказано и каким должен быть ответ; вопрос ушёл ей как есть.
+  assert.match(JSON.stringify(request().messages), /в комнате \(мини-приложение\)/u);
+  assert.match(JSON.stringify(request().messages), /одна-три фразы/u);
+  // Умения чата из комнаты не работают — и модель об этом знает: обещать напоминание отсюда она не должна.
+  assert.match(JSON.stringify(request().messages), /напоминания, заметки, рисунки, поиск и настройки отсюда не работают/u);
+  assert.equal(request().messages.at(-1).content, "что такое квазар?");
+  // Тот же номер ещё раз (страница не дождалась): тот же ответ, модель второй раз не спрашивают.
+  const again = await h.onRoom({ do: "say", text: "что такое квазар?", id: "word610001" }, from(5));
+  assert.deepEqual([again.ok, again.repeat, again.model, again.line], [true, true, true, said.line]);
+  assert.equal(chats().length, 1);
+  // Что словарь знает — отвечает сама, как раньше: без модели.
+  const hello = await h.onRoom({ do: "say", text: "привет", id: "word610002" }, from(5));
+  assert.deepEqual([hello.known, hello.model], [true, undefined]);
+  assert.equal(chats().length, 1);
+  // Расход виден в «статусе» сразу: счётчики записаны этим же вызовом (своего «конца хода» у комнаты нет).
+  const pulse = JSON.parse([...sdk().kv.entries()].find(([key]) => key.startsWith("heart:pulse:"))?.[1] ?? "{}");
+  assert.ok(pulse.roomTalk === 1 && pulse.tokens > 0 && pulse.replies === 1, JSON.stringify(pulse));
+  // В чат из комнаты ничего не ушло; вопроса в записи комнаты нет — только её ответ.
+  assert.equal(sent(), quiet);
+  const kept = roomOf(5);
+  assert.doesNotMatch(JSON.stringify(kept), /что такое квазар/u);
+  // Разговор — один: в чате она помнит, о чём говорили в комнате.
+  await h.onMessage(message("а подробнее?"), KEY);
+  assert.match(JSON.stringify(request().messages), /что такое квазар\?/u);
+  assert.match(JSON.stringify(request().messages), /далёкой галактики/u);
+  // Длинный ответ режется по границе фразы: под рисунком — не простыня.
+  sdk().fetchQueue.push(says(`${"Это долгая история. ".repeat(40)}Конец.`));
+  const long = await h.onRoom({ do: "say", text: "расскажи историю звёзд", id: "word610003" }, from(5));
+  assert.ok(long.model === true && long.line.length <= 420 && /\.$/u.test(long.line), `${long.line.length}: ${long.line.slice(-30)}`);
+
+  // Модель думает дольше, чем страница ждёт запрос. Таймеров у сердца нет — оно не прерывает, а помнит, что думает.
+  reset();
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const slow = heart(ON, { now: time.now, random: () => 0, fetchImpl: async (url, options) => { if (String(url).endsWith("/chat/completions")) await gate; return stubFetch(url, options); } });
+  await slow.onRoom({ do: "look" }, from(5));
+  const first = slow.onRoom({ do: "say", text: "что такое пульсар?", id: "word610004" }, from(5));
+  // Страница не дождалась и спросила тот же номер: «ещё думаю» и через сколько секунд спросить снова.
+  let poll = null;
+  for (let n = 0; n < 200 && !(poll?.pending); n += 1) { await new Promise(resolve => setImmediate(resolve)); if (roomOf(5)?.word?.id === "word610004") poll = await slow.onRoom({ do: "say", text: "что такое пульсар?", id: "word610004" }, from(5)); }
+  assert.deepEqual([poll.ok, poll.pending, poll.wait, poll.known, poll.repeat], [true, true, SAY_POLL_S, false, true]);
+  assert.ok(pool("слово:думаю").map(plain).includes(poll.line) && pool("слово:думаю").length >= 3, poll.line);
+  assert.equal(roomOf(5).word.a, "", "пока думает, ответа в записи нет");
+  // Модель ответила: первый вызов отдаёт ответ, и он же лежит под номером — страница получит его повтором.
+  release();
+  const thought = await first;
+  assert.deepEqual([thought.ok, thought.model, thought.line], [true, true, "ответ из стаба"]);
+  const got = await slow.onRoom({ do: "say", text: "что такое пульсар?", id: "word610004" }, from(5));
+  assert.deepEqual([got.repeat, got.model, got.line, got.pending], [true, true, "ответ из стаба", undefined]);
+  assert.equal(chats().length, 1, "модель спросили один раз");
+  // Вызов оборвался, ответа так и нет: полторы минуты — и «не успела», а не вечное «думаю».
+  assert.equal(SAY_THINK_MS, 90_000);
+  sdk().kv.set(room.ROOM_KEY(5), JSON.stringify({ ...roomOf(5), word: { id: "word610005", a: "", t: time.now() } }));
+  assert.equal((await slow.onRoom({ do: "say", text: "что такое магнетар?", id: "word610005" }, from(5))).pending, true);
+  time.add(SAY_THINK_MS + 1000);
+  const late = await slow.onRoom({ do: "say", text: "что такое магнетар?", id: "word610005" }, from(5));
+  assert.deepEqual([late.ok, late.late, late.pending], [true, true, undefined]);
+  assert.ok(pool("слово:долго").map(plain).includes(late.line), late.line);
+  assert.equal(chats().length, 1);
+
+  // Выключено настройкой — как до 0.61.0: «об этом в чате», без модели.
+  reset();
+  const off = heart({ ...ON, ROOM_TALK: false }, { now: time.now, random: () => 0 });
+  await off.onRoom({ do: "look" }, from(5));
+  const past = await off.onRoom({ do: "say", text: "что такое пульсар?", id: "word610006" }, from(5));
+  assert.ok(pool("слово:мимо").map(plain).includes(past.line) && past.model === undefined, past.line);
+  assert.equal(chats().length, 0);
+  // Дневной предел мыслей на человека — общий с чатом: вышел — говорит об этом, модель не тратит. Хозяина не касается.
+  reset();
+  const cap = heart({ ...ON, AI_DAILY_PER_PERSON: 1 }, { now: time.now, random: () => 0 });
+  await cap.onRoom({ do: "look" }, from(5));
+  assert.equal((await cap.onRoom({ do: "say", text: "что такое пульсар?", id: "word610007" }, from(5))).model, true);
+  const over = await cap.onRoom({ do: "say", text: "а что такое магнетар?", id: "word610008" }, from(5));
+  assert.ok(pool("слово:предел").map(plain).includes(over.line) && over.model === undefined, over.line);
+  assert.equal(chats().length, 1);
+  await cap.onRoom({ do: "look" }, from(OWNER));
+  for (const id of ["word610009", "word610010"]) assert.equal((await cap.onRoom({ do: "say", text: "что такое пульсар?", id }, from(OWNER))).model, true);
+  // Модель не ответила — честные слова об этом, не молчание и не «в чате».
+  reset();
+  const bad = heart(ON, { now: time.now, random: () => 0 });
+  await bad.onRoom({ do: "look" }, from(5));
+  for (let n = 0; n < 8; n += 1) sdk().fetchQueue.push(refuses(500));
+  const failed = await bad.onRoom({ do: "say", text: "что такое пульсар?", id: "word610011" }, from(5));
+  assert.ok(failed.ok === true && failed.model === undefined && pool("слово:сбой").map(plain).includes(failed.line), failed.line);
+  assert.ok(pool("слово:сбой").length >= 2);
 });

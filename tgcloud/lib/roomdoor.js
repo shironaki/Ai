@@ -10,6 +10,14 @@
  */
 /** Сколько знаков в одном слове ей в комнате: длиннее — в чат. */
 export const SAY_MAX = 200;
+/**
+ * Она думает (0.61.0): сколько миллисекунд вопрос к модели считается «в работе». Страница ждёт ответа двадцать
+ * секунд и спрашивает тот же номер снова: пока срок не вышел, ответ — «ещё думаю» (`pending`), без второго вопроса
+ * к модели. Вышел — «не успела».
+ */
+export const SAY_THINK_MS = 90_000;
+/** Через сколько секунд странице спросить тот же номер снова. */
+export const SAY_POLL_S = 3;
 
 export function createRoomDoor(deps) {
   const {
@@ -19,6 +27,7 @@ export function createRoomDoor(deps) {
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
+    ROOM_TALK, roomThought,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
     voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
@@ -513,9 +522,9 @@ export function createRoomDoor(deps) {
         // Слово ей прямо в комнате (0.55.1; идея 204, шаг первый — сторона сердца; поле для слов на странице — с 0.57.0).
         // Отвечает сама, словарём, как в чате: сначала выученным от хозяина, потом темами `PHRASES.txt` — тем же
         // голосом, с той же памятью о последнем сказанном (`heart:said:`), и разговор ложится в ту же нить, что и
-        // чат (`keepThread`). Чего в словаре нет — говорит, что об этом лучше в чате: ответ модели не укладывается
-        // в срок запроса страницы, это следующий шаг. В чат отсюда ничего не уходит. Умения чата («напомни»,
-        // «нарисуй», «статус») здесь не работают: слова, которые словарь не знает, — тоже «в чат».
+        // чат (`keepThread`). Чего в словаре нет — с 0.61.0 отвечает модель (ниже); выключено настройкой или мысли на
+        // день вышли — говорит, что об этом лучше в чате. В чат отсюда ничего не уходит. Умения чата («напомни»,
+        // «нарисуй», «статус») здесь не работают: такие слова уходят модели как обычная реплика.
         const words = (typeof input?.text === "string" ? input.text : "").replace(/\s+/gu, " ").trim();
         if (!words) return refuse("empty", "Слов не вижу. Напишите — и я отвечу.");
         if (words.length > SAY_MAX) return refuse("long", "Так много сразу я здесь не разберу. Длинное — в чате: там отвечу как следует.");
@@ -531,6 +540,29 @@ export function createRoomDoor(deps) {
         const lay = await room.read(userId, today);
         const slept = !lay.lost && herState(turn, feel, lay, today).key === "сон";
         const yawn = slept ? book.pick("+разбудили", voiceCtx(turn)) ?? "" : "";
+        // 0.61.0 (идея 204, шаг 3): чего нет в словаре — отвечает модель, тем же разговором, что в чате (`roomThought`
+        // в `heart.js`), коротко. Таймеров на платформе нет, прервать долгий ответ нечем, а страница ждёт двадцать
+        // секунд — поэтому вопрос сначала помечается «в работе» (пустой ответ под номером действия), а готовый ответ
+        // ложится в ту же запись. Страница повторила номер: ответ готов — он; ещё нет — `pending` и `wait`, второго
+        // вопроса к модели не будет. Сам вопрос в записи комнаты не хранится — только ответ.
+        if (!found && ROOM_TALK) {
+          const kept = once.id && !lay.lost && lay.word?.id === once.id ? lay.word : null;
+          const waiting = () => ({ ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "слово:думаю") || "Думаю…"), known: false, pending: true, wait: SAY_POLL_S, repeat: true });
+          const gaveUp = () => ({ ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "слово:долго") || "Не успела ответить. Спросите ещё раз."), known: false, late: true, repeat: true });
+          const fresh = (mark) => now() - Number(mark?.t) >= 0 && now() - Number(mark?.t) < SAY_THINK_MS;
+          if (kept?.a) return { ok: true, do: op, build: BUILD, line: spoken(kept.a), known: false, ...(kept.m === 1 ? { model: true } : {}), repeat: true };
+          if (kept) return fresh(kept) ? waiting() : gaveUp();
+          const mark = await room.word(userId, { ...once, answer: "", wake: slept });
+          { const other = await instead(mark); if (other) return other; }
+          // Тот же номер успел прийти второй раз, пока читалась запись: думает уже тот вызов.
+          if (mark.repeat) return mark.answer ? { ok: true, do: op, build: BUILD, line: spoken(mark.answer), known: false, repeat: true } : fresh(mark.state?.word) ? waiting() : gaveUp();
+          const thought = await roomThought(turn, ctx, words, user?.first_name);
+          const said = thought.text || roomLine(turn, thought.code === "capped" ? "слово:предел" : thought.code === "failed" ? "слово:сбой" : "слово:мимо") || "Об этом лучше в чате: там я отвечу как следует.";
+          const told = yawn ? `${yawn} ${said}` : said;
+          // Ответ — в ту же запись, под тот же номер: страница, которая не дождалась, получит его повтором.
+          await room.amend(userId, today, (state) => (!once.id || state.word?.id === once.id ? { ...state, word: { id: once.id, a: told.slice(0, 600), t: now(), ...(thought.text ? { m: 1 } : {}) } } : null));
+          return { ok: true, do: op, build: BUILD, line: spoken(told), known: false, ...(thought.text ? { model: true } : {}), ...(slept ? { woke: true } : {}) };
+        }
         const raw = yawn ? `${yawn} ${plain}` : plain;
         const done = await room.word(userId, { ...once, answer: raw, wake: slept });
         // Повтор того же номера: тот же ответ, без второй записи в нить.
