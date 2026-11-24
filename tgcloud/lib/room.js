@@ -224,6 +224,9 @@ const RULES = Object.freeze([
   ["wearhome", /^(?:переоденься|переоденешься|оденься)\s+в\s+(?:свитер|домашнее)$/u],
   ["wearjacket", /^(?:надень|одень|накинь|надевай)\s+(?:свою\s+)?(?:куртку|косуху)$/u],
   ["wearjacket", /^(?:переоденься|переоденешься|оденься)\s+в\s+куртку$/u],
+  // Пижама с облаками (0.70.0, идея 157): третий наряд — вечером и ночью.
+  ["wearpajama", /^(?:надень|одень|накинь|надевай)\s+(?:свою\s+)?(?:пижаму|пижамку)$/u],
+  ["wearpajama", /^(?:переоденься|переоденешься|оденься)\s+в\s+(?:пижаму|пижамку)$/u],
   ["wearswap", /^(?:переоденься|смени\s+наряд|надень\s+(?:что\s+нибудь\s+)?другое|оденься\s+по\s+другому)$/u],
 
   // Чай на выбор (идея 166, 0.47.0): «налью тебе улун», «заварю чай с мятой», «держи жасминовый» — выбрать и налить.
@@ -482,13 +485,14 @@ export function herKey(mood, hour = 12, { tea = 0, at = 0 } = {}) {
  *   key    — состояние: по нему берётся картинка (`SPRITE_FOR` в рисунке);
  *   pool   — запас реплик «+комната:<pool>»: каждая реплика — шаг, место — из её же слов (`herPose`);
  *   title  — как эпизод называется в её словах о плане («дальше — уборка»); слов-примет места в нём быть не должно;
- *   wear   — наряд: day — дневной, по погоде (`dressFor`); home — домашний;
+ *   wear   — наряд: day — дневной, по погоде (`dressFor`); home — домашний; pajama — пижама с облаками (0.70.0:
+ *            перед сном и во сне);
  *   story  — шаги идут по порядку и один раз (проснулась → покормила → смахнула пыль), а не по кругу;
  *   active — занятие требует сил: уставшая, она его откладывает;
  *   face   — мимика эпизода: drowsy — клюёт носом (моргает медленно).
  */
 export const EPISODES = Object.freeze({
-  "сон": { key: "сон", pool: "она:сон", title: "сон", wear: "home" },
+  "сон": { key: "сон", pool: "она:сон", title: "сон", wear: "pajama" },
   "подъём": { key: "дело", pool: "день:подъём", title: "подъём и завтрак Байта", wear: "day", story: true },
   "занятия": { key: "дело", pool: "день:занятия", title: "занятия", wear: "day", active: true },
   "чай": { key: "уют", pool: "день:чай", title: "чай", wear: "day" },
@@ -497,7 +501,7 @@ export const EPISODES = Object.freeze({
   "порядок": { key: "дело", pool: "день:порядок", title: "уборка", wear: "day", active: true },
   "вечер": { key: "уют", pool: "она:уют", title: "вечер с чаем", wear: "home" },
   "ждёт": { key: "уют", pool: "день:ждёт", title: "тихий вечер у лампы", wear: "home" },
-  "дрёма": { key: "уют", pool: "день:дрёма", title: "последняя страница", wear: "home", story: true, face: "drowsy" },
+  "дрёма": { key: "уют", pool: "день:дрёма", title: "последняя страница", wear: "pajama", story: true, face: "drowsy" },
 });
 /** Суббота и воскресенье: в выходной она встаёт позже. `day` — «2026-11-20». */
 const weekendOn = (day) => { const at = Date.parse(`${String(day).slice(0, 10)}T12:00:00Z`); return Number.isFinite(at) && [0, 6].includes(new Date(at).getUTCDay()); };
@@ -773,7 +777,7 @@ export const MUSIC_MS = 3 * 60_000;
 export const musicNow = (state, at) => Number(state?.music) > 0 && at - Number(state.music) >= 0 && at - Number(state.music) < MUSIC_MS;
 
 /** Наряды, в которых она нарисована: выбирать можно из них (идея 157, 0.47.0). Те же слова, что `HER_WEARS` в рисунке. */
-export const WEARS = Object.freeze(["jacket", "home"]);
+export const WEARS = Object.freeze(["jacket", "home", "pajama"]);
 /** Наряд, надетый по просьбе, — пока не пришло время переодеваться самой (`until`, мс эпохи); иначе `null`. */
 export const wearNow = (state, at) => (WEARS.includes(state?.wear?.name) && at < Number(state.wear.until) ? state.wear.name : null);
 /** Чай на выбор (идея 166, 0.47.0): что ей наливают. Первый — её любимый: с него всё начинается. */

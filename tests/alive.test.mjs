@@ -704,7 +704,7 @@ test("смена часа 0.44.0: страница сама спрашивает
   const mute = logic.changeOf(state, { ...after, wardrobe: null });
   assert.deepEqual([mute.kind, mute.leave, mute.back.split("\n")[0]], ["wardrobe", "Пойду переоденусь — я быстро.", "Вот. Так лучше."]);
 
-  // 23:00. Ночь: наряд тот же — шкафа нет, свет перетекает; она засыпает, Байт тоже.
+  // 23:00. Ночь: она засыпает — в пижаме (0.70.0), но шкафа нет: к шкафу ходит та, что не спит; свет перетекает; Байт тоже спит.
   time.set(Date.parse("2026-11-18T20:00:05Z"));
   const night = await h.onRoom({ do: "look", again: true }, from(5));
   const asleep = logic.applyTick(after, night, time.now());
@@ -714,7 +714,7 @@ test("смена часа 0.44.0: страница сама спрашивает
   time.set(Date.parse("2026-11-19T02:00:05Z"));
   const dawn = await h.onRoom({ do: "look", again: true }, from(5));
   const dozing = logic.applyTick(asleep, dawn, time.now());
-  assert.deepEqual([dawn.clock.part, dawn.her.key, dawn.her.wear, logic.changeOf(asleep, dozing).kind], ["утро", "сон", "home", "light"]);
+  assert.deepEqual([dawn.clock.part, dawn.her.key, dawn.her.wear, logic.changeOf(asleep, dozing).kind], ["утро", "сон", "pajama", "light"]);
   // Подъём — около семи, у каждого дня своя минута (`dayPlan`). Час тот же, а наряд другой: из свитера в куртку (за
   // окном сухо) — снова шкаф, слова утренние.
   time.set(Date.parse("2026-11-19T00:00:00+03:00") + room.dayPlan("2026-11-19")[1].from * 60_000 + 5_000);
@@ -1007,7 +1007,7 @@ test("кадры 0.45.0: второй кадр — та же поза, а не �
   assert.deepEqual(frames.map(([base, [name, how]]) => `${base}>${name}:${how}`), [
     "tea3>tea3b:sip", "home-tea3>home-tea3b:sip", "work>workb:glance", "home-work>home-workb:glance", "play2>play2b:dance", "home-play2>home-play2b:dance",
     // 0.46.0: чай у подоконника, книга, шаг — в обоих нарядах; чай под гирляндой в свитере — с 0.47.0.
-    "tea>teab:sip", "home-tea>home-teab:sip", "tea2>tea2b:glance", "home-tea2>home-tea2b:glance", "read>readb:sip", "home-read>home-readb:sip", "walk>walkb:pace", "home-walk>home-walkb:pace",
+    "tea>teab:sip", "home-tea>home-teab:sip", "tea2>tea2b:glance", "home-tea2>home-tea2b:glance", "read>readb:sip", "home-read>home-readb:sip", "walk>walkb:pace", "home-walk>home-walkb:pace", "pajama-walk>pajama-walkb:pace",
     // 0.49.0: кадры для поз дня, у которых движения не было.
     "work2>work2b:glance", "home-work2>home-work2b:glance", "work3>work3b:sip", "home-work3>home-work3b:sip", "tidy>tidyb:sweep", "home-tidy>home-tidyb:sweep",
     "books>booksb:sip", "home-books>home-booksb:sip", "play3>play3b:sweep", "home-play3>home-play3b:sweep",
@@ -2094,10 +2094,10 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   assert.deepEqual(roomOf(5).wear, { name: "jacket", until: Date.parse("2026-11-18T20:00:00Z") });
   time.set(Date.parse("2026-11-18T20:10:00Z"));
   const night = await h.onRoom({ do: "look", again: true }, from(5));
-  assert.deepEqual([night.clock.part, night.her.key, night.her.wear], ["ночь", "сон", "home"]);
+  assert.deepEqual([night.clock.part, night.her.key, night.her.wear], ["ночь", "сон", "pajama"], "спит она в пижаме (0.70.0)");
   // Спит — не переодевается.
   const asleep = await h.onRoom({ do: "wear" }, from(5));
-  assert.deepEqual([asleep.changed, asleep.wear], [false, "home"]);
+  assert.deepEqual([asleep.changed, asleep.wear], [false, "pajama"]);
   assert.ok(pool("наряд:сон").includes(asleep.line), asleep.line);
   // Незнакомый наряд — как «без названия»; мусор в записи не считается нарядом.
   assert.equal(room.wearNow({ wear: { name: "пижама", until: Infinity } }, 0), null);
@@ -2119,9 +2119,9 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   await chat.onMessage(message("переоденься в свитер"), KEY);
   assert.equal(roomOf(5).wear.name, "home");
   assert.equal((await chat.onRoom({ do: "look" }, from(5))).her.wear, "home", "переодел словами — в комнате она в том же");
-  for (const [said, op] of [["надень свитер", "wearhome"], ["надень куртку", "wearjacket"], ["переоденься в куртку", "wearjacket"], ["смени наряд", "wearswap"], ["надень что-нибудь другое", "wearswap"]]) assert.equal(room.parseRoom(said)?.op, op, said);
+  for (const [said, op] of [["надень свитер", "wearhome"], ["надень куртку", "wearjacket"], ["переоденься в куртку", "wearjacket"], ["смени наряд", "wearswap"], ["надень что-нибудь другое", "wearswap"], ["надень пижаму", "wearpajama"], ["переоденься в пижаму", "wearpajama"]]) assert.equal(room.parseRoom(said)?.op, op, said);
   // Того, чего не нарисовано, она не надевает: на это отвечает словарь.
-  for (const said of ["надень платье", "надень пижаму", "надень шляпу", "переоденься в платье"]) assert.equal(room.parseRoom(said), null, said);
+  for (const said of ["надень платье", "надень худи", "надень шляпу", "переоденься в платье"]) assert.equal(room.parseRoom(said), null, said);
   assert.deepEqual(book.match("надень платье"), ["переоденься"]);
   assert.doesNotMatch(book.pool("переоденься", { formal: true }).join(" "), /не умею|[Нн]аряд меняет время/u, "о наряде по просьбе она больше не говорит «не умею»");
 
@@ -2134,6 +2134,67 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   assert.ok(pool("наряд:куртка").includes(other.line) && pool("наряд:куртка:готово").includes(other.back));
   assert.equal(logic.demoWear({ part: "ночь", her: { key: "сон" } }).changed, false);
   assert.equal(logic.applyWear(before, { ok: false, text: "нет связи" }).state.tone, "warn");
+});
+
+test("0.70.0, пижама с облаками: вечером по просьбе — словом и кнопкой по кругу; днём — отказ; с половины одиннадцатого — сама; чего в пижаме нет — в свитере", async () => {
+  reset();
+  const time = clock(NOON); // 14:00 по Москве
+  const h = heart(ON, { now: time.now, random: () => 0 });
+  await h.onRoom({ do: "look" }, from(5));
+  // Днём — отказ словами, наряд прежний.
+  const early = await h.onRoom({ do: "wear", wear: "pajama" }, from(5));
+  assert.deepEqual([early.ok, early.changed, early.wear], [true, false, "jacket"]);
+  assert.ok(pool("наряд:пижама:рано").map(plain).includes(early.line), early.line);
+  assert.equal(roomOf(5).wear, null);
+  // Кнопка под рисунком называет следующий наряд по кругу; днём — без пижамы.
+  assert.deepEqual([logic.nextWear("день", "jacket"), logic.nextWear("день", "home"), logic.nextWear("день", "pajama"), logic.nextWear("день")], ["home", "jacket", "jacket", "home"]);
+  assert.deepEqual([logic.nextWear("вечер", "jacket"), logic.nextWear("вечер", "home"), logic.nextWear("вечер"), logic.nextWear("ночь", "pajama")], ["home", "pajama", "pajama", "jacket"]);
+  assert.deepEqual(Object.keys(logic.WEAR_LABELS).sort(), ["home", "jacket", "pajama"]);
+  // Вечером — надевает: слова на пути к шкафу и по возвращении; второй раз — «уже».
+  time.set(Date.parse("2026-11-18T15:30:00Z")); // 18:30
+  const evening = await h.onRoom({ do: "look", again: true }, from(5));
+  assert.deepEqual([evening.clock.part, evening.her.wear], ["вечер", "home"]);
+  const worn = await h.onRoom({ do: "wear", wear: "pajama" }, from(5));
+  assert.deepEqual([worn.ok, worn.changed, worn.wear, worn.her.wear], [true, true, "pajama", "pajama"]);
+  assert.ok(pool("наряд:пижама").map(plain).includes(worn.line), worn.line);
+  assert.ok(pool("наряд:пижама:готово").map(plain).includes(worn.back), worn.back);
+  const same = await h.onRoom({ do: "wear", wear: "pajama" }, from(5));
+  assert.deepEqual([same.changed, same.wear], [false, "pajama"]);
+  assert.ok(pool("наряд:пижама:уже").map(plain).includes(same.line), same.line);
+  // Страница: та же сцена у шкафа; идёт она в пижаме.
+  const before = logic.applyLook(logic.blank(18), evening, time.now());
+  const change = logic.applyWear(before, worn);
+  assert.deepEqual([change.kind, change.state.her.wear, scene.walkOf(logic.viewOf(change.state))], ["wardrobe", "pajama", "pajama-walk"]);
+  assert.equal(scene.frameOf("pajama-walk"), "pajama-walkb");
+  // Рисунок: в пижаме — кресло, карта, гирлянда, плед, сон; чего нет — та же поза в свитере, а не в куртке.
+  const view = (key, pose, more = {}) => ({ part: "вечер", her: { key, pose, wear: "pajama", ...more } });
+  assert.deepEqual(scene.spritesOf(view("уют", "chair", { beat: true })), ["pajama-tea3"]);
+  assert.deepEqual(scene.spritesOf(view("уют", "read", { beat: true })), ["pajama-read"]);
+  assert.deepEqual(scene.spritesOf(view("уют", "sill", { beat: true })), ["home-tea4"], "на подоконнике в пижаме не нарисована");
+  assert.ok(scene.spritesOf(view("уют", "chair")).every(name => name.startsWith("pajama-")), scene.spritesOf(view("уют", "chair")).join(" "));
+  assert.ok(scene.spritesOf(view("устала", "chair")).every(name => name.startsWith("pajama-")));
+  assert.ok(scene.spritesOf(view("дело", "desk")).every(name => name.startsWith("home-")), "дела в пижаме не нарисованы — она в свитере");
+  assert.deepEqual(scene.spritesOf({ part: "ночь", her: { key: "сон", pose: "nap", wear: "pajama" } }), ["pajama-sleep"]);
+  // Прежняя страница имени «pajama» не знает — у неё ночью свитер, как раньше; новая без имени — тоже.
+  assert.deepEqual(scene.spritesOf({ part: "ночь", her: { key: "сон", pose: "nap" } }), ["home-sleep"]);
+
+  // Сама — с половины одиннадцатого («дрёма»): слова у шкафа — ночные.
+  reset();
+  const h2 = heart(ON, { now: () => Date.parse("2026-11-18T19:40:00Z"), random: () => 0 }); // 22:40 по Москве
+  const drowsy = await h2.onRoom({ do: "look" }, from(5));
+  assert.deepEqual([drowsy.her.stage, drowsy.her.wear], ["дрёма", "pajama"]);
+  assert.ok(pool("шкаф:ночь").map(plain).includes(drowsy.wardrobe.leave), drowsy.wardrobe.leave);
+  assert.ok(pool("переоделась:ночь").map(plain).includes(drowsy.wardrobe.back), drowsy.wardrobe.back);
+
+  // В чате — теми же словами: вечером надевает, днём отказывает.
+  reset();
+  const chat = heart(ON, { now: () => Date.parse("2026-11-18T15:30:00Z"), random: () => 0 });
+  await chat.onMessage(message("надень пижаму"), KEY);
+  assert.ok(pool("наряд:пижама:готово").map(plain).some(line => last(5).includes(line)), last(5));
+  reset();
+  const noon = heart(ON, { now: () => NOON, random: () => 0 });
+  await noon.onMessage(message("надень пижаму"), KEY);
+  assert.ok(pool("наряд:пижама:рано").map(plain).some(line => last(5).includes(line)), last(5));
 });
 
 test("0.47.0, чай на выбор: жасмин, улун, мята — по кругу; выбор запоминается; первая кружка — словами этого чая; в чате «налью тебе улун» выбирает и наливает", async () => {
@@ -2524,7 +2585,7 @@ test("0.48.0, её день в комнате: шаг один и тот же �
   // Ночь: спит по своему дню — до подъёма (раньше вставала в пять); Байт спит у неё под боком.
   time.set(midnight + 26 * HOUR);
   const night = await h.onRoom({ do: "look", again: true }, from(5));
-  assert.deepEqual([night.her.stage, night.her.key, night.her.wear, night.cat.shape, night.cat.place], ["сон", "сон", "home", "curl", "near"]);
+  assert.deepEqual([night.her.stage, night.her.key, night.her.wear, night.cat.shape, night.cat.place], ["сон", "сон", "pajama", "curl", "near"]);
   assert.ok(pool("байт:ночь").map(plain).includes(night.cat.line), night.cat.line);
   assert.equal(night.her.plan, undefined, "спит — не до планов");
   time.set(midnight + 30 * HOUR);

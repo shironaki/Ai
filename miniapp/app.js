@@ -1054,7 +1054,8 @@ function paintChips() {
     const can = known && Boolean(state.her) && typeof applyWear === "function" && typeof demoWear === "function" && typeof wearAt === "function";
     wear.hidden = !can;
     wear.disabled = !idle;
-    if (can) wear.querySelector("span").textContent = wearAt(state.part, state.her.wear) === "home" ? "Надеть куртку" : "Надеть свитер";
+    // Кнопка называет следующий наряд (0.70.0): куртка → свитер → пижама (вечером и ночью) → куртка.
+    if (can) wear.querySelector("span").textContent = typeof logic.nextWear === "function" ? logic.WEAR_LABELS[logic.nextWear(state.part, state.her.wear)] : wearAt(state.part, state.her.wear) === "home" ? "Надеть куртку" : "Надеть свитер";
   }
   if (brew) {
     const can = known && typeof applyBrew === "function" && typeof demoBrew === "function";
@@ -1105,7 +1106,7 @@ async function dress() {
   const before = state;
   state = { ...state, busy: "wear" };
   paint();
-  const result = state.demo ? demoWear(before) : await send({ do: "wear" }, () => dress());
+  const result = state.demo ? demoWear(before) : await send({ do: "wear", ...(typeof logic.nextWear === "function" && before.her ? { wear: logic.nextWear(before.part, before.her.wear) } : {}) }, () => dress());
   if (repeated(result)) return;
   const change = applyWear(before, result);
   if (change.kind !== "wardrobe") { state = change.state; paint(); buzz(result?.ok === true ? "light" : "error"); return; }

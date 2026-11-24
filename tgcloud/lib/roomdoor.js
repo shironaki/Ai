@@ -196,7 +196,7 @@ export function createRoomDoor(deps) {
         const local = localParts(now(), zone), part = partOfDay(feel.hour);
         const edge = [5, 12, 18, 23].find(hour => hour > local.hh) ?? 29;
         // Слова у шкафа — по тому, во что она переоделась: наряд идёт за её днём и погодой (0.48.0), а не за часом.
-        const wear = (wearNow(state, now()) ?? wornNow(turn, state, today)) === "home" ? "вечер" : "утро";
+        const wear = { home: "вечер", pajama: "ночь" }[wearNow(state, now()) ?? wornNow(turn, state, today)] ?? "утро";
         const byClock = ((edge - local.hh) * 60 - local.mm) * 60_000 - (now() % 60_000);
         // Свет — по солнцу города (идея 164, 0.47.0): `light` — каким светом красить рисунок; страница спросит
         // комнату заново и к перемене часа, и к рассвету с закатом. Солнца не знаем — поля нет: свет по часам.
@@ -386,9 +386,11 @@ export function createRoomDoor(deps) {
         const done = await dressHer(turn, feel, today, String(input?.wear ?? ""), once);
         { const other = await instead(done); if (other) return other; }
         const word = WEAR_WORD[done.name];
+        // Пижама — вечерняя (0.70.0): днём — отказ словами, наряд прежний.
+        if (done.early) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "наряд:пижама:рано") || "Пижаму — вечером."), wear: done.name, changed: false };
         if (done.asleep || done.same) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${word}:уже`) || "Не сейчас."), wear: done.name, changed: false };
         const back = roomLine(turn, `наряд:${word}:готово`) || "Вот.";
-        await keepThread(turn, `[в комнате] попросил тебя надеть ${word === "свитер" ? "свитер" : "куртку"}`, back);
+        await keepThread(turn, `[в комнате] попросил тебя надеть ${{ свитер: "свитер", пижама: "пижаму" }[word] ?? "куртку"}`, back);
         return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `наряд:${word}`) || "Сейчас переоденусь."), back: spoken(back), wear: done.name, changed: true, her: herNow(done.state) };
       }
       if (op === "brew") {

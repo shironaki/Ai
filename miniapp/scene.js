@@ -1800,8 +1800,13 @@ function her(g, c, f, pose, key, view = {}) {
 // С 0.41.0 картинок у состояния несколько: позы сменяют друг друга (сами и от нажатия), у глаз есть «веки» —
 // она моргает, а вечером на ней домашний свитер. Всё, что нужно знать о картинке, лежит в одной таблице.
 
-/** Наряды: `jacket` — куртка, как на портрете; `home` — большой свитер и наушники (вечером и ночью). */
-export const HER_WEARS = Object.freeze(["jacket", "home"]);
+/**
+ * Наряды: `jacket` — куртка, как на портрете; `home` — большой свитер и наушники (вечером); `pajama` — пижама с
+ * облаками (0.70.0, идея 157: перед сном и во сне; по просьбе — вечером и ночью). В пижаме нарисованы «уют» (кресло
+ * с кружкой и с книгой, у карты, под гирляндой), «устала», «сон» и шаг; позы, которой в пижаме нет, она показывает в
+ * свитере (`wearOf`, `spritesOf`).
+ */
+export const HER_WEARS = Object.freeze(["jacket", "home", "pajama"]);
 /**
  * Её картинки. Имя — файл в `her/`; наряд, кроме куртки, — приставкой через дефис (`home-tea`).
  *   tall — высота картинки на рисунке (стоя — 390: рост три четверти рисунка);
@@ -1887,6 +1892,16 @@ export const HER_SPRITES = Object.freeze({
   "home-books": { tall: 390, head: [0.54, 0.1], blush: false },
   "home-feed": { tall: 215, kind: "crouch", half: 66, head: [0.34, 0.15], pour: [0.103, 0.509], feet: 440, wait: [-52, 52], blush: false },
   "home-walk": { tall: 374, kind: "walk", faces: "left" },
+  // Пижама с облаками (0.70.0): те же позы и те же числа, что у пары в куртке и в свитере.
+  "pajama-tea": { tall: 390, mark: ["steam", 0.115, 0.228] },
+  "pajama-tea2": { tall: 390, mark: ["steam", 0.36, 0.13] },
+  "pajama-tea3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], mark: ["steam", 0.485, 0.465] },
+  "pajama-read": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  "pajama-tired": { tall: 390, half: 70 },
+  "pajama-tired2": { tall: 390, half: 70 },
+  "pajama-tired3": { tall: 320, kind: "seat", half: 86, seat: 0.568, head: [0.48, 0.09] },
+  "pajama-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
+  "pajama-walk": { tall: 374, kind: "walk", faces: "left" },
 });
 /**
  * Кадры движения внутри позы (0.45.0, «больше кадров, чтоб казалась живой»): вторая картинка той же позы — та же
@@ -1909,7 +1924,7 @@ export const HER_FRAMES = Object.freeze({
   // По умолчанию — на первом; под гирляндой первый кадр «пьёт» с закрытыми глазами — смотрит второй; танец не прерывается.
   tea2: ["tea2b", "glance", "b"], "home-tea2": ["home-tea2b", "glance", "b"],
   read: ["readb", "sip"], "home-read": ["home-readb", "sip"],
-  walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"],
+  walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"], "pajama-walk": ["pajama-walkb", "pace"],
   // 0.49.0 (сообщение 48: «поворот головы», «поправляет волосы, меняет положение рук»): кадры для пяти поз дня, у
   // которых движения не было. С блокнотом у подоконника: ручка у губ, смотрит на зрителя ↔ пишет, глаза в блокнот
   // (подолгу). В кресле с блокнотом: изредка поправляет волосы и смотрит в сторону. С метёлкой: взмах — вверх и
@@ -1986,11 +2001,15 @@ export const lookOf = (key, pose) => (Object.hasOwn(SPRITE_FOR, key) && Object.h
  * Наряд: названный (сердцем или страницей) или по часу — вечером и ночью домашний. Наряд без картинки этого состояния
  * не надевается. С 0.43.0 в свитере нарисована каждая поза: список поз вечером той же длины, что днём.
  */
+const wearNamed = (view) => (HER_WEARS.includes(view.her.wear) ? view.her.wear : view.part === "вечер" || view.part === "ночь" ? "home" : "jacket");
 function wearOf(view, key) {
-  const named = HER_WEARS.includes(view.her.wear) ? view.her.wear : null;
-  const wear = named ?? (view.part === "вечер" || view.part === "ночь" ? "home" : "jacket");
-  return wear !== "jacket" && SPRITE_OF[key].some(pose => Object.hasOwn(HER_SPRITES, `${wear}-${pose}`)) ? wear : "jacket";
+  const wear = wearNamed(view);
+  const drawn = (name) => name !== "jacket" && SPRITE_OF[key].some(pose => Object.hasOwn(HER_SPRITES, `${name}-${pose}`));
+  // Состояния в пижаме нет (0.70.0: в ней нарисованы уют, усталость и сон) — она в свитере, а не в куртке.
+  return drawn(wear) ? wear : wear === "pajama" && drawn("home") ? "home" : "jacket";
 }
+/** Картинка позы в наряде: сама; в пижаме её нет — та же поза в свитере; иначе — в куртке. */
+const dressedAs = (wear, base) => [wear, ...(wear === "pajama" ? ["home"] : [])].filter(name => name !== "jacket").map(name => `${name}-${base}`).find(name => Object.hasOwn(HER_SPRITES, name)) ?? base;
 /** Все картинки для этого вида комнаты по порядку показа: первая — та, с которой она встречает. Её нет — пусто. */
 export function spritesOf(view = {}) {
   if (!view?.her) return [];
@@ -1999,7 +2018,9 @@ export function spritesOf(view = {}) {
   // Распорядок (`beat`): у реплики своя картинка — и только она; что у неё в руках, решает сердце (налили чай — «уют»).
   if (view.her.beat === true) {
     const base = lookOf(key, view.her.pose) ?? SPRITE_OF[key][0];
-    return [wear !== "jacket" && Object.hasOwn(HER_SPRITES, `${wear}-${base}`) ? `${wear}-${base}` : base];
+    // Картинка реплики — в названном наряде, если она в нём нарисована (0.70.0: «читаю учебник» в пижаме — та же
+    // картинка с книгой, хотя других картинок «дела» в пижаме нет).
+    return [dressedAs(wearNamed(view), base)];
   }
   // Ей налили чай — в руках кружка, а не блокнот.
   const poses = key === "дело" && view.tea ? SPRITE_OF["уют"] : SPRITE_OF[key];
@@ -2024,7 +2045,7 @@ export function spriteOf(view = {}) {
 export function walkOf(view = {}) {
   if (!view?.her) return null;
   const key = Object.hasOwn(SPRITE_OF, view.her.key) ? view.her.key : "уют";
-  return wearOf(view, key) === "home" ? "home-walk" : "walk";
+  return dressedAs(wearOf(view, key), "walk");
 }
 /** Свет часа на картинке: она нарисована при дневном свете, вечером и ночью её накрывает тень комнаты. */
 const SPRITE_TINT = Object.freeze({ "утро": ["#ffe1cc", 0.05], "вечер": ["#2a1c45", 0.24], "ночь": ["#0e1238", 0.36] });

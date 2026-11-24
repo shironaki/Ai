@@ -507,7 +507,7 @@ test("словарь 0.43.0: слова сходятся с картинками
   const names = Object.keys(HER_SPRITES).filter(name => !strides.includes(name)), jackets = names.filter(name => !name.includes("-")), lidded = names.filter(name => SPRITES[name].blink);
   // Числа, которые она называет вслух, — из папки с картинками. Прибавилась картинка — тест напомнит перечитать
   // темы (их список — в шапке блока «СБОРКА 0.44.0» в PHRASES.txt) и назвать новое число здесь.
-  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u, 23: /двадцать три/u, 46: /[Сс]орок шесть/u, 34: /[Тт]ридцать четыре/u, 48: /[Сс]орок восемь/u };
+  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u, 23: /двадцать три/u, 46: /[Сс]орок шесть/u, 34: /[Тт]ридцать четыре/u, 48: /[Сс]орок восемь/u, 56: /[Пп]ятьдесят шесть/u, 3: /три/u, 36: /[Тт]ридцать шесть/u };
   const word = (count, what) => { assert.ok(WORDS[count], `${what}: ${count} — этого числа словами здесь нет: перечитать темы о картинках и дописать`); return WORDS[count]; };
   for (const topic of ["сколько у тебя поз", "кто тебя рисует"]) {
     assert.match(said(topic), word(names.length, "картинок"), topic);
@@ -606,7 +606,7 @@ test("она картинкой: у каждого состояния своя �
     }
   }
   // Имя картинки: наряд (кроме куртки) — приставкой через дефис; наряд из списка.
-  assert.deepEqual([...HER_WEARS], ["jacket", "home"]);
+  assert.deepEqual([...HER_WEARS], ["jacket", "home", "pajama"]);
   for (const name of Object.keys(HER_SPRITES)) assert.match(name, new RegExp(`^(?:(?:${HER_WEARS.filter(wear => wear !== "jacket").join("|")})-)?[a-z]+\\d?$`, "u"), name);
   // У каждого состояния — картинки, и каждая картинка кому-то нужна.
   assert.equal(spriteOf({}), null);
@@ -619,13 +619,15 @@ test("она картинкой: у каждого состояния своя �
     first.add(name);
     // И по кругу (прежнее сердце, без распорядка), и по реплике (`beat`): у реплики картинка одна. «Читает» (0.45.0)
     // есть только у реплики: в круг «уюта» она не входит — там у всех поз в руках кружка.
-    for (const part of PARTS) for (const tea of [false, true]) for (const pose of HER_POSES) for (const beat of [false, true]) {
-      const list = spritesOf({ part, her: { pose, key, beat }, tea });
+    // Наряд — по часу (без имени) и названный сердцем (0.70.0: в пижаме нарисовано не всё — остальное она показывает в свитере).
+    for (const part of PARTS) for (const tea of [false, true]) for (const pose of HER_POSES) for (const beat of [false, true]) for (const wear of [null, ...HER_WEARS]) {
+      const worn = wear ? { wear } : {};
+      const list = spritesOf({ part, her: { pose, key, beat, ...worn }, tea });
       assert.ok(list.length >= 1 && new Set(list).size === list.length && list.every(item => Object.hasOwn(HER_SPRITES, item)), `${part}/${pose}/${key}: ${list}`);
       assert.ok(!beat || list.length === 1, `${part}/${pose}/${key}: у реплики картинка одна`);
       // Позы идут по кругу: какой бы ни был счёт, имя — из списка; счёт из чужих рук — как ноль.
-      for (const turn of [0, 1, 2, 5, 17]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat }, tea }), list[turn % list.length]);
-      for (const turn of [-1, 1.5, "2", null, NaN]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat }, tea }), list[0]);
+      for (const turn of [0, 1, 2, 5, 17]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat, ...worn }, tea }), list[turn % list.length]);
+      for (const turn of [-1, 1.5, "2", null, NaN]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat, ...worn }, tea }), list[0]);
       // Все позы одного списка — в одном наряде: она не переодевается, сменив позу.
       assert.equal(new Set(list.map(item => (item.includes("-") ? item.split("-")[0] : "jacket"))).size, 1, `${part}/${pose}/${key}: ${list}`);
       for (const item of list) used.add(item);
@@ -633,7 +635,7 @@ test("она картинкой: у каждого состояния своя �
   }
   // «Идёт» — не поза состояния: ею она переходит от места к месту (0.44.0). В списки поз она не попадает.
   const strides = Object.keys(HER_SPRITES).filter(name => HER_SPRITES[name].kind === "walk");
-  assert.deepEqual(strides.sort(), ["home-walk", "walk"]);
+  assert.deepEqual(strides.sort(), ["home-walk", "pajama-walk", "walk"]);
   assert.deepEqual([...used].sort(), Object.keys(HER_SPRITES).filter(name => !strides.includes(name)).sort());
   assert.equal(first.size, Object.keys(MOODS).length, "у двух состояний одна первая картинка — их не отличить");
   // Наряд: вечером и ночью — домашний, но только там, где у него есть картинка этого состояния; названный
@@ -693,7 +695,8 @@ test("она картинкой: у каждого состояния своя �
   // равно») их нет и не будет; «идёт» смотрит в сторону — ей они не нужны.
   const lidded = Object.keys(SPRITES).filter(name => SPRITES[name].blink).sort();
   // 0.48.0 — тридцать: с метёлкой, со стопкой книг и с пакетом корма — в обоих нарядах.
-  assert.deepEqual(lidded, ["books", "feed", "home-books", "home-feed", "home-jealous", "home-jealous3", "home-play", "home-play3", "home-pout2", "home-read", "home-read2", "home-tea", "home-tea3", "home-tea4", "home-tidy", "home-tired2", "home-work", "home-work2", "home-work3", "jealous", "jealous3", "play", "play3", "pout2", "read", "read2", "tea", "tea3", "tea4", "tidy", "tired2", "work", "work2", "work3"]);
+  assert.deepEqual(lidded, ["books", "feed", "home-books", "home-feed", "home-jealous", "home-jealous3", "home-play", "home-play3", "home-pout2", "home-read", "home-read2", "home-tea", "home-tea3", "home-tea4", "home-tidy", "home-tired2", "home-work", "home-work2", "home-work3", "jealous", "jealous3", "pajama-tea", "pajama-tired2", "play", "play3", "pout2", "read", "read2", "tea", "tea3", "tea4", "tidy", "tired2", "work", "work2", "work3"]);
+  // 0.70.0 — в пижаме веки пока у двух стоящих поз: на сидящие с куртки не легли (кайма 11–15).
   // Моргает в куртке — моргает и в свитере: веки пары переносятся без новой картинки (`blink … by=head`).
   for (const name of lidded.filter(item => !item.includes("-"))) assert.ok(lidded.includes(`home-${name}`), `home-${name}: веки есть у пары в куртке — перенести`);
   // У картинки с «веками» определений два: она сама и заплатка на глаза — в точках самой картинки.
@@ -761,9 +764,9 @@ test("она картинкой: у каждого состояния своя �
   }
   // Каждая картинка встаёт в комнату: на рисунке, с местом нажатия выше полосы с её словами.
   for (const part of PARTS) for (const name of Object.keys(HER_SPRITES).filter(item => HER_SPRITES[item].kind !== "walk")) {
-    const key = Object.keys(MOODS).find(mood => [false, true].some(tea => ["jacket", "home"].some(wear => spritesOf({ part, her: { pose: "desk", key: mood, wear }, tea }).includes(name))));
+    const key = Object.keys(MOODS).find(mood => [false, true].some(tea => HER_WEARS.some(wear => spritesOf({ part, her: { pose: "desk", key: mood, wear }, tea }).includes(name))));
     // Картинка только у реплики («читает»): её состояние и место — из таблицы реплик (`lookOf`).
-    const told = key ? null : Object.keys(MOODS).flatMap(mood => HER_POSES.map(pose => [mood, pose])).find(([mood, pose]) => scene.lookOf(mood, pose) === name.replace(/^home-/u, ""));
+    const told = key ? null : Object.keys(MOODS).flatMap(mood => HER_POSES.map(pose => [mood, pose])).find(([mood, pose]) => scene.lookOf(mood, pose) === name.replace(/^(?:home|pajama)-/u, ""));
     assert.ok(key || told, name);
     const wear = name.includes("-") ? name.split("-")[0] : "jacket", tea = Boolean(key) && !spritesOf({ part, her: { pose: "desk", key, wear } }).includes(name);
     const list = key ? spritesOf({ part, her: { pose: "desk", key, wear }, tea }) : [name];
@@ -1423,7 +1426,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "31");
+  assert.equal(logic.PAGE, "32");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {

@@ -292,7 +292,7 @@ try {
       if ((await chip("quiet")) !== "Посидеть рядом") fail("кнопки: тихий час закончили — а отсчёт на кнопке остался");
     }
     const wear = await chip("wear");
-    if (!/^Надеть (?:свитер|куртку)$/u.test(wear)) fail(`кнопки: «Надеть …» под рисунком нет (${wear || "скрыта"})`);
+    if (!/^Надеть (?:свитер|куртку|пижаму)$/u.test(wear)) fail(`кнопки: «Надеть …» под рисунком нет (${wear || "скрыта"})`);
     else {
       // Сцена у шкафа: уходит, «*переодевается*», возвращается в другом. Спит — не переодевается: кнопка прежняя.
       const dressed = async (was) => {
@@ -304,12 +304,17 @@ try {
       if (!turned && !/Сплю/u.test(await said())) fail(`кнопки: нажали «${wear}» — а наряд не сменился`);
       if (turned) {
         await pause(1500);
-        const home = wear === "Надеть свитер";
+        // Нарядов три (0.70.0): кнопка идёт по кругу — куртка → свитер → пижама (вечером и ночью) → куртка. Чего в
+        // пижаме не нарисовано, то она показывает в свитере — но не в куртке.
+        const want = { "Надеть свитер": "home", "Надеть пижаму": "pajama" }[wear] ?? "jacket";
+        const dress = (href) => (href.startsWith("#r-her-home-") ? "home" : href.startsWith("#r-her-pajama-") ? "pajama" : "jacket");
         const worn = await page.evaluate(() => Array.from(document.querySelectorAll('#inside use[href^="#r-her-"]'), (node) => node.getAttribute("href")));
-        if (worn.some((href) => href.startsWith("#r-her-home-") !== home)) fail(`кнопки: надела ${home ? "свитер" : "куртку"} — а на рисунке ${worn.join(", ")}`);
-        // Вернуть как было: дальше проверяется наряд по часам.
-        if (!(await dressed(await chip("wear")))) fail("кнопки: обратно наряд не сменился");
-        await pause(1200);
+        if (worn.some((href) => dress(href) !== want && !(want === "pajama" && dress(href) === "home"))) fail(`кнопки: надела ${{ home: "свитер", pajama: "пижаму" }[want] ?? "куртку"} — а на рисунке ${worn.join(", ")}`);
+        // Вернуть как было: по кругу, пока кнопка не предложит то же, что вначале; дальше проверяется наряд по часам.
+        for (let i = 0; i < 3 && (await chip("wear")) !== wear; i += 1) {
+          if (!(await dressed(await chip("wear")))) { fail("кнопки: обратно наряд не сменился"); break; }
+          await pause(1200);
+        }
       }
     }
   }
@@ -442,8 +447,9 @@ try {
   // С 0.45.0 в кладовой больше картинок: вторые кадры поз и «читает» (нажатие на полку) с её веками; с 0.46.0 —
   // оба кадра шага, кадры ещё шести поз и танец (нажатие на колонку). Главное — что ни одна не лежит дважды.
   // С 0.50.0 и 0.51.0 при картинке лежат её заплатки — веки, улыбка, взгляд (у позы до трёх): счёт идёт по самим картинкам.
+  // С 0.70.0 нарядов три: кнопка «Надеть …» проходит круг, и в кладовой остаются шаг и поза ещё двух нарядов — до 28.
   const whole = later.kept.filter(id => !/-(?:blink|smile|look[lr])$/u.test(id));
-  if (new Set(later.kept).size !== later.kept.length || whole.length > 20) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
+  if (new Set(later.kept).size !== later.kept.length || whole.length > 28) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
   if (!later.shown || later.inline) fail(`после нажатий её картинки не видно: ${JSON.stringify(later.used)}`);
   console.log(`  нажато: забота на рисунке и кнопками, она, окно, вещей — ${Object.keys(lines.things).length}, сценка`);
   if (shot) { await page.screenshot({ path: shot, fullPage: false }); console.log(`  снимок: ${shot}`); }

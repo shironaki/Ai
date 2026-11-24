@@ -1121,6 +1121,20 @@ build, side_effects: "none" }` — без чтения и записи.
 в `<defs id="store">` → `settleRoom` → `paint()` с `options.room` → `scene.drawParts` рисует части со ссылками
 `<use href="#r-room-…">`. Вещь с листа — вложенный `<svg viewBox="место на листе">` со ссылкой на лист.
 
+## Что добавила 0.70.0: где что лежит
+
+Пижама с облаками — третий наряд (сообщение 86; идея 157).
+
+| Что | Где |
+| --- | --- |
+| Картинки | `miniapp/her/pajama-*.js` — десять: `tea`, `tea2`, `tea3`, `read`, `tired`, `tired2`, `tired3`, `sleep`, `walk`, `walkb`; веки — у `pajama-tea` и `pajama-tired2` |
+| Наряд на странице | `HER_WEARS`, строки `pajama-…` в `HER_SPRITES`, `wearOf` и `dressedAs` в `miniapp/scene.js`: позы в пижаме нет — та же поза в свитере |
+| Кнопка «Надеть …» | `nextWear`, `WEAR_LABELS` в `miniapp/logic.js`; страница называет наряд сердцу (`do: "wear", wear`) |
+| Когда она в пижаме сама | `EPISODES` в `tgcloud/lib/room.js`: эпизоды «дрёма» и «сон» — `wear: "pajama"`; `wornNow` в `tgcloud/lib/heart.js` |
+| По просьбе | слова `wearpajama` в `tgcloud/lib/room.js`; `dressHer` в `tgcloud/lib/heart.js` (днём — `early`); действие `wear` в `tgcloud/lib/roomdoor.js` |
+| Слова | `PHRASES.txt`: запасы «+комната:наряд:пижама», «…:готово», «…:уже», «…:рано», «+комната:шкаф:ночь», «+комната:переоделась:ночь»; записи — `shots/golos/room4` (вне репозитория) |
+| Уснула — без сцены у шкафа | `changeIn` в `miniapp/logic.js` |
+
 ## Что добавила 0.69.0: где что лежит
 
 Голосом — на голос; строки комнаты записаны (сообщение 85; идеи 74, 154, 215, 216).

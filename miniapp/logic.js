@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "31";
+export const PAGE = "32";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -16,7 +16,7 @@ export const HEADERS = Object.freeze({ "утро": "#c9b5ab", "день": "#cbbe
 export const partOf = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
 
 /** Наряды, которые может назвать сердце (те же, что `HER_WEARS` в рисунке; из рисунка имя не берётся: рядом может лежать его прежняя копия). */
-const WEARS = Object.freeze(["jacket", "home"]);
+const WEARS = Object.freeze(["jacket", "home", "pajama"]);
 /**
  * Что за окном (те же слова, что `SKIES` в рисунке и в сердце): с 0.44.0 — погода города человека. Прежнее сердце
  * знает два слова, «rain» и «snow»; незнакомое слово — дождь, как было всегда.
@@ -398,7 +398,8 @@ function changeIn(before, after) {
   if (!before.ready || !after.ready) return { kind: "same", state: after };
   const herLine = herBeat(after)?.line || after.lines.her, catLine = catBeat(after)?.line || after.lines.cat;
   const lines = { ...after.lines, her: herLine || after.lines.her };
-  const dressed = Boolean(before.her && after.her) && wearAt(before.part, before.her.wear) !== wearAt(after.part, after.her.wear);
+  // Уснула (0.70.0: спит она в пижаме) — сцены у шкафа нет: к шкафу ходит та, что не спит.
+  const dressed = Boolean(before.her && after.her) && after.her.key !== "сон" && wearAt(before.part, before.her.wear) !== wearAt(after.part, after.her.wear);
   const closet = () => ({ leave: after.wardrobe?.leave || "Пойду переоденусь — я быстро.", back: [after.wardrobe?.back || "Вот. Так лучше.", herLine].filter(Boolean).join("\n") });
   // Час тот же и свет тот же. Свет по солнцу (0.47.0) меняется и посреди часа: закат в пять вечера — тоже перемена.
   if (before.part === after.part && lightOf(before) === lightOf(after)) {
@@ -741,11 +742,21 @@ export function demoQuiet(state) {
     cat: { key: "спит", shape: "curl", place: "pillow", line: nap, beats: [], still: true },
   };
 }
-/** «Переодеться» на витрине: в другой наряд — не тот, что на ней; спит — не переодевается. Слова — из словаря. */
+/**
+ * Что предложит кнопка «Надеть …» (0.70.0, пижама с облаками): куртка → свитер → пижама → куртка. Пижама — вечером и
+ * ночью: днём после свитера идёт куртка. Имя наряда страница называет сердцу сама (`do: "wear", wear`).
+ */
+export const nextWear = (part, named = "") => {
+  const worn = wearAt(part, named);
+  return worn === "jacket" ? "home" : worn === "home" && (part === "вечер" || part === "ночь") ? "pajama" : "jacket";
+};
+export const WEAR_LABELS = Object.freeze({ home: "Надеть свитер", jacket: "Надеть куртку", pajama: "Надеть пижаму" });
+/** «Переодеться» на витрине: в следующий наряд (`nextWear`); спит — не переодевается. Слова — из словаря. */
 export function demoWear(state) {
   const worn = wearAt(state.part, state.her?.wear);
   if (state.her?.key === "сон") return { ok: true, do: "wear", build: "", line: "…Сплю. Переоденусь утром.", wear: worn, changed: false };
-  return worn === "home"
+  if (nextWear(state.part, state.her?.wear) === "pajama") return { ok: true, do: "wear", build: "", line: "Пижама так пижама: день можно считать законченным. Минуту.", back: "Вот. Пижама с облаками — самая мягкая вещь в шкафу.", wear: "pajama", changed: true };
+  return worn !== "jacket"
     ? { ok: true, do: "wear", build: "", line: "Куртка так куртка: вид деловой, характер прежний. Минуту.", back: "Вот. Куртка, чокер — и вид, будто у меня планы.", wear: "jacket", changed: true }
     : { ok: true, do: "wear", build: "", line: "Свитер так свитер: куртку — на вешалку. Минуту.", back: "Вот. Свитер, тёплые рукава — и никуда не тороплюсь.", wear: "home", changed: true };
 }
