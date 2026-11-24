@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "30";
+export const PAGE = "31";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -882,7 +882,8 @@ export const SAY_MOST = 3, SAY_AGAIN_MS = 5 * 60_000;
 export function linesToSay(caption, nameOf, lately = () => false) {
   const names = [];
   for (const text of String(caption ?? "").split("\n")) {
-    const name = text.trim() ? nameOf(text.trim()) : "";
+    // Строка о новой вещи стоит под рисунком с приставкой «Новое в комнате.» (0.69.0): запись ищется и без неё.
+    const line = text.trim(), name = line ? nameOf(line) || nameOf(line.replace(/^Новое в комнате\.\s*/u, "")) : "";
     if (name && !names.includes(name) && !lately(name)) names.push(name);
     if (names.length >= SAY_MOST) break;
   }

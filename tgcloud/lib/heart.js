@@ -141,19 +141,18 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.68.0";
+export const BUILD = "0.69.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
-  "0.68.0 — что написано под рисунком, то и говорю вслух: встречу, своё занятие, Байта, спасибо за чай — записано больше двухсот строк",
-  "говорю по порядку, не больше трёх строк подряд; сказанное недавно не повторяю пять минут",
-  "записанная строка звучит вместо короткой реплики: «спасибо» дважды не говорю",
-  "обижена или ревную — говорю своими строками; сплю или идёт тихий час — молчу",
-  "звук включили раньше, чем открылась комната, — всё равно поздороваюсь",
-  "хозяину: «проба голоса» — пробую прислать голосовое бесплатной озвучкой и говорю, получилось ли",
-  "словарь: восемь новых тем — о звуке в комнате, о Байте, о сне, о пробе голоса",
-  "страница комнаты — 30",
-  "чего ещё нет: около трёхсот пятидесяти строк комнаты не записаны; на голосовые голосом не отвечаю; новых нарядов нет",
+  "0.69.0 — на голосовое в личке отвечаю текстом и следом голосовым; скажете «не отвечай голосом» — оставлю один текст",
+  "«скажи голосом» — пришлю голосовое по просьбе",
+  "голос в чате — готовый, бесплатной озвучки; своим голосом я говорю в комнате",
+  "в комнате говорю вслух почти всё, что стоит под рисунком: записано строк — 501",
+  "добавились погода за окном, вещи, полка, наряды, подарки, альбом, мой день и события",
+  "словарь: три новые темы — о голосовых в чате",
+  "страница комнаты — 31",
+  "чего ещё нет: строки с подстановками (время, имя, число) вслух не звучат; новых нарядов нет; во ВКонтакте и в Макс меня нет",
 ]);
 
 const DAY = 86_400_000;
@@ -676,6 +675,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     // A test run proves the route without touching Telegram: the platform's own
     // contract, and the reason a green test cannot be mistaken for delivery.
     if (turn.dry) return { ok: true, text, side_effects: "none" };
+    // Что сказать голосом, если человек говорил голосом (0.69.0): сам ответ, без «проснулась» и без расшифровки.
+    const aloud = text;
     // Она спала — ответ начинается с того, что проснулась (0.58.0, сообщение 69): один раз за пробуждение.
     if (turn.isPrivate === true && turn.message && !turn.app) {
       const woken = await wakeHer(turn);
@@ -698,6 +699,8 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (turn.isPrivate && sent?.message_id != null && text.length <= 700 && ASKS_NAME.test(text)) {
         await store.set(ASKED_NAME_KEY(turn.actorId), { mid: Number(sent.message_id) + tail.length, at: now() }).catch(() => false);
       }
+      // Голосом — на голос (0.69.0): на голосовое — ещё и голосовое, следом за текстом. Не вышло — остаётся текст.
+      if (turn.heard && !turn.voiced) await voiceBack(turn, aloud).catch(() => false);
       return { ok: true, text, messageId: sent?.message_id ?? null, parts: 1 + tail.length };
     } catch {
       // Не дошло до человека — это поломка, а не настроение. Владелец узнает
@@ -706,6 +709,92 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
       if (!quiet) { try { await notices.report({ component: "telegram", code: "send_failed", detail: "сообщение не ушло в чат", severity: "degraded" }); } catch { /* отчёт не должен ломать ответ */ } }
       return { ok: false, code: "send_failed", text };
     }
+  }
+
+  /**
+   * Голосом — на голос (0.69.0, идея 74, правило 154; сообщение 85: «Доделывай уже»). Человек прислал голосовое в
+   * личке — она отвечает текстом, как всегда, и следом голосовым: сам ответ, без разметки, смайликов и ремарок.
+   * Озвучка — бесплатная (переводчик Google: без ключа, доступ неофициальный; голос готовый, не её): фраза до 180
+   * знаков за запрос, длинный ответ идёт частями и склеивается; ответ длиннее `VOICE_BACK_MAX` знаков голосом не
+   * идёт. Озвучка не ответила, прислала не звук, Telegram не принял — остаётся текст, без слов об ошибке: причину
+   * хозяину называет «проба голоса». Выключается словом человека: «не отвечай голосом» (`voice: false`).
+   */
+  const VOICE_BACK_MAX = 600, VOICE_PART = 180;
+  const speakable = (text) => String(text ?? "")
+    .replace(/<[^>]+>/gu, " ").replace(/&amp;/gu, " и ").replace(/&(?:lt|gt|quot|nbsp);/gu, " ")
+    .replace(/\*[^*\n]{1,80}\*/gu, " ").replace(/https?:\/\/\S+/gu, " ")
+    .replace(/[\p{Extended_Pictographic}\u200d\ufe0f]/gu, " ").replace(/[_`~#>|*]+/gu, " ")
+    .replace(/\s+/gu, " ").trim();
+  function speechParts(text, limit = VOICE_PART) {
+    const parts = [];
+    let rest = String(text).trim();
+    while (rest.length > limit) {
+      const slice = rest.slice(0, limit + 1);
+      let at = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "), slice.lastIndexOf("… "));
+      if (at < limit * 0.4) at = Math.max(slice.lastIndexOf(", "), slice.lastIndexOf("; "), slice.lastIndexOf(": "), slice.lastIndexOf(" — "));
+      if (at < limit * 0.4) at = slice.lastIndexOf(" ");
+      if (at < 1) at = limit - 1;
+      parts.push(rest.slice(0, at + 1).trim());
+      rest = rest.slice(at + 1).trim();
+    }
+    if (rest) parts.push(rest);
+    return parts;
+  }
+  const isMp3 = (bytes) => bytes.length > 400 && ((bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) || (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33));
+  /** Слова → запись mp3 (байты) или `null`: части идут разом и склеиваются по порядку. */
+  // Озвучка молчит — ждать её дольше восьми секунд нельзя: текст уже ушёл, а ход должен закончиться.
+  const speechWait = () => { try { return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(8000) : undefined; } catch { return undefined; } };
+  async function soundOf(response) {
+    if (typeof response.arrayBuffer === "function") return new Uint8Array(await response.arrayBuffer());
+    if (response.body == null) return new Uint8Array(0);
+    const chunks = [];
+    for await (const chunk of response.body) chunks.push(chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk.buffer ?? chunk));
+    const whole = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+    let at = 0;
+    for (const chunk of chunks) { whole.set(chunk, at); at += chunk.length; }
+    return whole;
+  }
+  async function speech(text) {
+    if (typeof fetchImpl !== "function") return null;
+    const got = await Promise.all(speechParts(text).map(async (part) => {
+      const signal = speechWait();
+      const response = await fetchImpl(`https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=ru&q=${encodeURIComponent(part)}`, { headers: { "user-agent": "Mozilla/5.0" }, ...(signal ? { signal } : {}) });
+      if (!response?.ok) return null;
+      const bytes = await soundOf(response);
+      return isMp3(bytes) ? bytes : null;
+    })).catch(() => [null]);
+    if (!got.length || got.some(item => !item)) return null;
+    const whole = new Uint8Array(got.reduce((sum, item) => sum + item.length, 0));
+    let at = 0;
+    for (const item of got) { whole.set(item, at); at += item.length; }
+    return whole;
+  }
+  async function voiceBack(turn, text) {
+    if (turn.dry || !turn.heard || turn.voiced || turn.isPrivate !== true || turn.manner?.settings?.voice === false) return false;
+    if (typeof InputFile !== "function" || !has("sendVoice")) return false;
+    const words = speakable(text);
+    if (words.length < 2 || words.length > VOICE_BACK_MAX) return false;
+    turn.voiced = true;
+    const bytes = await speech(words);
+    if (!bytes) return false;
+    try {
+      await api.sendVoice({ chat_id: turn.chatId, voice: new InputFile(bytes, "ai.mp3", { type: "audio/mpeg" }), ...(turn.extra?.message_thread_id != null ? { message_thread_id: turn.extra.message_thread_id } : {}) });
+      pulse.bump("voiced");
+      return true;
+    } catch { return false; }
+  }
+  /** «Скажи голосом» (0.69.0): одно голосовое по просьбе — её слова или те, что названы после просьбы. */
+  async function sayAloud(turn, asked) {
+    if (turn.dry) return say(turn, "Пробный запуск: голосовое не записывалось.");
+    const words = speakable(asked || "Говорю голосом. Меня хорошо слышно?").slice(0, 300);
+    const bytes = typeof InputFile === "function" && has("sendVoice") && words.length >= 2 ? await speech(words).catch(() => null) : null;
+    if (!bytes) return say(turn, `Голосом сейчас не выходит: озвучка не ответила. ${owner(turn.actorId) ? "Скажите «проба голоса» — назову причину." : you(turn, "Попробуйте позже.", "Попробуй позже.")}`);
+    try {
+      await api.sendVoice({ chat_id: turn.chatId, voice: new InputFile(bytes, "ai.mp3", { type: "audio/mpeg" }), ...turn.extra });
+      turn.delivered = true;
+      pulse.bump("voiced");
+      return { ok: true, action: "voice", text: words };
+    } catch { return say(turn, "Голосовое записала, но Telegram его не принял. Отвечу текстом."); }
   }
 
   /** «Вы» или «ты» — одна фраза в двух формах. */
@@ -1519,6 +1608,20 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
           ? "Хорошо, реакции ставить не буду: отвечу словами или промолчу."
           : "Не запомнилось: хранилище не отвечает.");
       }
+      case "no_voice": {
+        const saved = await personal.save(actorId, { voice: false }).catch(() => ({ ok: false }));
+        return say(turn, saved?.ok
+          ? `Хорошо, на голосовые отвечаю только текстом. ${you(turn, "Передумаете — скажите", "Передумаешь — скажи")} «отвечай голосом».`
+          : "Не запомнилось: хранилище не отвечает.");
+      }
+      case "yes_voice": {
+        const saved = await personal.save(actorId, { voice: true }).catch(() => ({ ok: false }));
+        return say(turn, saved?.ok
+          ? `Хорошо: на голосовое отвечу и голосом. Голос там готовый, не мой, — своим я говорю только в комнате. ${you(turn, "Не понравится — скажите", "Не понравится — скажи")} «не отвечай голосом».`
+          : "Не запомнилось: хранилище не отвечает.");
+      }
+      case "say_voice":
+        return sayAloud(turn, parsed.arg);
       case "no_night": {
         const saved = await personal.save(actorId, { night: false }).catch(() => ({ ok: false }));
         return say(turn, saved?.ok

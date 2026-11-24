@@ -25,6 +25,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRUNE = "--prune" in sys.argv[1:]
 SOURCES = [os.path.join(path, "") for path in ([arg for arg in sys.argv[1:] if arg != "--prune"] or [os.path.join(ROOT, "shots", "golos", "pilot"), os.path.join(ROOT, "shots", "golos", "room")])]
 OUT = os.path.join(ROOT, "miniapp", "say", "")
+# Число в шапке модулей — с какой сборки идёт их вид, а не «нынешняя сборка»: поменять его — и все записи изменятся
+# и уйдут на платформу заново (десятки мегабайт с телефона). Не трогать без нужды.
 BUILD = "0.68.0"
 KBPS = 48
 # Запасы, строки которых звучат, только когда она спит: в модули не идут.

@@ -23,7 +23,7 @@ export const INTENTS = Object.freeze([
   "remember", "memories", "forget",
   "profile", "inventory", "relationship", "card",
   "play", "roll", "sister_play", "summon", "news", "sister_news",
-  "no_flirt", "yes_flirt", "no_jealous", "yes_jealous", "no_reactions", "no_night",
+  "no_flirt", "yes_flirt", "no_jealous", "yes_jealous", "no_reactions", "no_night", "no_voice", "yes_voice", "say_voice",
   "whyquiet", "not_mine",
   "help", "whoami", "version", "status",
   "teach", "lessons", "unlearn", "judge", "learned", "why_answer",
@@ -242,6 +242,12 @@ export function parseIntent(text) {
     return sure("no_reactions");
   }
   if (/^(?:не\s+пиши\s+(?:мне\s+)?ночью|не\s+беспокой(?:\s+меня)?\s+ночью)$/u.test(value)) return sure("no_night");
+  // Голосом — на голос (0.69.0, идея 74, правило 154): на голосовое она отвечает и голосовым; это можно выключить.
+  if (/^(?:не\s+отвечай\s+(?:мне\s+)?голосом|без\s+голосовых|не\s+(?:шли|присылай)\s+(?:мне\s+)?голосовые|отвечай\s+(?:мне\s+)?(?:только\s+)?текстом)$/u.test(value)) return sure("no_voice");
+  if (/^(?:отвечай\s+(?:мне\s+)?голосом|можешь\s+отвечать\s+(?:мне\s+)?голосом|можно\s+голосом|верни\s+голосовые)$/u.test(value)) return sure("yes_voice");
+  // «Скажи голосом» — одно голосовое по просьбе; со словами после — произносит их.
+  const aloud = /^(?:скажи|ответь|произнеси)\s+(?:это\s+|что\s+нибудь\s+|что-нибудь\s+)?голосом(?:[\s:,—–-]+(.+))?$/u.exec(value);
+  if (aloud) return sure("say_voice", (aloud[1] ?? "").trim());
 
   // ── почему молчала ────────────────────────────────────────────────────
   // «Чего молчишь?», «ты меня игнорируешь?» — тот же вопрос: ответ — настоящая причина из записи.

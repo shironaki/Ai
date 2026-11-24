@@ -368,3 +368,114 @@ test("чувства выключены настройкой: ни слуха, �
   assert.equal(calls("getFileContent").length, 0);
   assert.equal(sourced().length, 0);
 });
+
+// ── голосом — на голос (0.69.0, идея 74, правило 154) ──────────────────────
+
+test("0.69.0: голосом — на голос: на голосовое в личке — текст и следом голосовое бесплатной озвучки; выключается словом; сбой озвучки — просто текст", async () => {
+  const mp3 = (size) => { const bytes = new Uint8Array(size); bytes[0] = 0xff; bytes[1] = 0xf3; return bytes; };
+  const audio = (bytes) => ({ ok: true, status: 200, text: async () => "", arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
+  const asked = [];
+  const tts = (size = 3000) => source(/translate_tts/u, (address) => { asked.push(decodeURIComponent(address.split("&q=")[1])); return audio(mp3(size)); });
+  const voices = () => calls("sendVoice");
+
+  // 1. Голосовое в личке: расшифровка и ответ — текстом, как раньше; следом — голосовое: сам ответ, без расшифровки,
+  //    разметки, смайлика и ремарки.
+  reset();
+  let h = heart();
+  file(OGG);
+  tts();
+  sdk().fetchQueue.push(heard("Расскажи, как прошёл день"), says("*улыбается* День прошёл <b>хорошо</b>: читала мангу и пила чай 🍵. А у вас?"));
+  await h.onMessage(message(null, { extra: voice() }), KEY);
+  assert.match(last(), /^🎤 «Расскажи, как прошёл день»\n\n/u);
+  assert.equal(voices().length, 1);
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /^День прошёл хорошо ?: читала мангу и пила чай ?\. А у вас\?$/u);
+  assert.doesNotMatch(asked[0], /улыбается|<b>|🍵|🎤|Расскажи/u);
+  assert.deepEqual([String(voices()[0].chat_id), voices()[0].voice.name, voices()[0].voice.type, voices()[0].voice.bytes.length], ["5", "ai.mp3", "audio/mpeg", 3000]);
+  assert.match(sourced().at(-1), /^https:\/\/translate\.google\.com\/translate_tts\?ie=UTF-8&client=tw-ob&tl=ru&q=/u);
+
+  // 2. Обычное сообщение текстом — без голосового.
+  sdk().fetchQueue.push(says("И вам хорошего дня."));
+  await h.onMessage(message("спасибо, и тебе"), KEY);
+  assert.equal(voices().length, 1);
+
+  // 3. Длинный ответ идёт частями не длиннее 180 знаков — и одним голосовым: записи склеены по порядку.
+  const long = "Сегодня я разбирала полку с книгами и нашла закладку, которую потеряла ещё весной. Потом заварила жасминовый чай и села с мангой в кресло. Байт всё это время спал на подоконнике и делал вид, что охраняет дом. А вечером пошёл дождь, и стало совсем уютно.";
+  asked.length = 0;
+  sdk().fetchQueue.push(heard("Что было сегодня"), says(long));
+  await h.onMessage(message(null, { extra: voice() }), KEY);
+  assert.equal(voices().length, 2);
+  assert.ok(asked.length >= 2 && asked.every(part => part.length <= 180), JSON.stringify(asked.map(part => part.length)));
+  assert.equal(asked.join(" "), long);
+  assert.equal(voices()[1].voice.bytes.length, 3000 * asked.length);
+
+  // 4. Ответ длиннее шестисот знаков голосом не идёт.
+  asked.length = 0;
+  sdk().fetchQueue.push(heard("Расскажи сказку"), says(`${long} ${long} ${long}`));
+  await h.onMessage(message(null, { extra: voice() }), KEY);
+  assert.deepEqual([voices().length, asked.length], [2, 0]);
+
+  // 5. «Не отвечай голосом» — только текст; «отвечай голосом» — снова голосом.
+  await h.onMessage(message("не отвечай голосом"), KEY);
+  assert.match(last(), /^Хорошо, на голосовые отвечаю только текстом\. Передума(?:ете — скажите|ешь — скажи) «отвечай голосом»\.$/u);
+  sdk().fetchQueue.push(heard("Как дела"), says("Хорошо."));
+  await h.onMessage(message(null, { extra: voice() }), KEY);
+  assert.equal(voices().length, 2);
+  await h.onMessage(message("Отвечай голосом!"), KEY);
+  assert.match(last(), /^Хорошо: на голосовое отвечу и голосом\. Голос там готовый, не мой/u);
+  sdk().fetchQueue.push(heard("Как дела"), says("Хорошо."));
+  await h.onMessage(message(null, { extra: voice() }), KEY);
+  assert.equal(voices().length, 3);
+
+  // 6. В группе голосом не отвечает.
+  sdk().fetchQueue.push(heard("Аи, как дела"), says("Хорошо."));
+  await h.onMessage(group(null, { extra: voice() }), KEY);
+  assert.equal(voices().length, 3);
+
+  // 7. Озвучка отказала или прислала не звук — остаётся текст, без слов об ошибке; Telegram не принял — тоже.
+  for (const broken of [{ ok: false, status: 429, text: async () => "" }, audio(new TextEncoder().encode("<html>Sorry</html>")), new TypeError("fetch failed")]) {
+    reset();
+    h = heart();
+    file(OGG);
+    source(/translate_tts/u, broken);
+    sdk().fetchQueue.push(heard("Как дела"), says("Хорошо, спасибо."));
+    await h.onMessage(message(null, { extra: voice() }), KEY);
+    assert.equal(last(), "🎤 «Как дела»\n\nХорошо, спасибо.");
+    assert.equal(calls("sendVoice").length, 0);
+  }
+  reset();
+  h = heart();
+  file(OGG);
+  tts();
+  sdk().failing.sendVoice = new Error("Bad Request: wrong file type");
+  sdk().fetchQueue.push(heard("Как дела"), says("Хорошо, спасибо."));
+  await h.onMessage(message(null, { extra: voice() }), KEY);
+  assert.equal(last(), "🎤 «Как дела»\n\nХорошо, спасибо.");
+  assert.equal(toOwner().length, 0, "хозяину об этом не пишет");
+});
+
+test("0.69.0: «скажи голосом» — голосовое по просьбе: её слова или названные; озвучка молчит — отвечает текстом", async () => {
+  const bytes = new Uint8Array(2500); bytes[0] = 0xff; bytes[1] = 0xf3;
+  const asked = [];
+  reset();
+  let h = heart();
+  source(/translate_tts/u, (address) => { asked.push(decodeURIComponent(address.split("&q=")[1])); return { ok: true, status: 200, text: async () => "", arrayBuffer: async () => bytes.buffer }; });
+  const texts = toChat(5).length;
+  await h.onMessage(message("Скажи голосом"), KEY);
+  assert.deepEqual(asked, ["Говорю голосом. Меня хорошо слышно?"]);
+  assert.equal(calls("sendVoice").length, 1);
+  assert.equal(toChat(5).length, texts, "текста при этом нет: голосовое и есть ответ");
+  await h.onMessage(message("скажи голосом: доброе утро, хозяин"), KEY);
+  assert.equal(asked.at(-1), "доброе утро, хозяин");
+  assert.equal(calls("sendVoice").length, 2);
+  await h.onMessage(message("скажи что-нибудь голосом"), KEY);
+  assert.equal(calls("sendVoice").length, 3);
+  // Озвучка не ответила — текстом; хозяину — где узнать причину.
+  reset();
+  h = heart();
+  await h.onMessage(message("скажи голосом"), KEY);
+  assert.equal(last(), "Голосом сейчас не выходит: озвучка не ответила. Попробуйте позже.");
+  await h.onMessage(message("скажи голосом", { id: OWNER }), KEY);
+  assert.equal(last(OWNER), "Голосом сейчас не выходит: озвучка не ответила. Скажите «проба голоса» — назову причину.");
+  assert.equal(calls("sendVoice").length, 0);
+});
