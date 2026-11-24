@@ -1820,6 +1820,10 @@ export const HER_SPRITES = Object.freeze({
   tea3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], mark: ["steam", 0.485, 0.465] },
   // Читает в кресле (0.45.0): та же сидящая фигура, что с кружкой, — в руках книга; числа — как у `tea3`.
   read: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  // Лежит на ковре с книгой (0.65.0, идея 168): на животе, локти на ковре, ноги согнуты в воздухе; голова — слева,
+  // над книгой. Вид — «на полу», как у спящей. `half` — половина её длины на ковре (по ней Байт её обходит и по ней
+  // считается, что она закрыла), `spot` — где на ковре середина картинки.
+  read2: { tall: 150, kind: "floor", half: 132, spot: 208, head: [0.33, 0.3], blush: false },
   work: { tall: 390 },
   work2: { tall: 390 },
   // Сидит в кресле и в других состояниях (0.47.0, идея 168): с блокнотом, под пледом с закрытыми глазами, скрестив
@@ -1852,6 +1856,7 @@ export const HER_SPRITES = Object.freeze({
   "home-tea2": { tall: 390, mark: ["steam", 0.36, 0.13] },
   "home-tea3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], mark: ["steam", 0.485, 0.465] },
   "home-read": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  "home-read2": { tall: 150, kind: "floor", half: 132, spot: 208, head: [0.33, 0.3], blush: false },
   "home-work": { tall: 390 },
   "home-work2": { tall: 390 },
   "home-work3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], blush: false },
@@ -1955,7 +1960,8 @@ const SPRITE_FOR = Object.freeze({
   "дело": { desk: "work", shelf: "work", sill: "work2", chair: "work3", read: "read", feed: "feed", dust: "tidy", sort: "books" },
   // `read` — в кресле с книгой (0.45.0): сама, по распорядку, или когда её усадили читать (полка с книгами, сценка
   // «что читать»). Это единственная картинка «уюта» без кружки — и её реплика говорит о книге, а не о чае.
-  "уют": { chair: "tea3", sill: "tea", garland: "tea2", map: "tea", read: "read" },
+  // `lie` — на ковре с книгой (0.65.0): вторая картинка «уюта» без кружки; и её реплика — о книге.
+  "уют": { chair: "tea3", sill: "tea", garland: "tea2", map: "tea", read: "read", lie: "read2" },
   "игра": { dance: "play2", ribbon: "play3", shelf: "play" },
   "сон": { nap: "sleep", lie: "sleep" },
   "устала": { sill: "tired", chair: "tired3", desk: "tired", garland: "tired2" },
@@ -2049,6 +2055,8 @@ const SPRITE_SPOTS = Object.freeze([252, CHAIR.x, 226, 160]);
 /** Сколько у двух областей общего. */
 const overlap = ([ax, ay, aw, ah], [bx, by, bw, bh]) => Math.max(0, Math.min(ax + aw, bx + bw) - Math.max(ax, bx)) * Math.max(0, Math.min(ay + ah, by + bh) - Math.max(ay, by));
 const kindOf = (name) => HER_SPRITES[name].kind ?? "stand";
+/** Половина её длины на полу: спит в пледе — 92; лежит с книгой, вытянувшись, — записана в таблице (`half`, 0.65.0). */
+const lowHalf = (name) => (Number.isFinite(HER_SPRITES[name].half) ? HER_SPRITES[name].half : 92);
 /** Линия её ступней: общая, у спящей на полу — своя, у позы в глубине комнаты — записана в таблице (`feet`, 0.57.0). */
 const feetOf = (name) => (Number.isFinite(HER_SPRITES[name].feet) ? HER_SPRITES[name].feet : kindOf(name) === "floor" ? FEET_SIT : FEET);
 /** С пакетом корма она сидит у миски и с места не уходит (0.57.0): уступает Байт. */
@@ -2062,6 +2070,14 @@ const plaidWorn = (name) => /^(?:tired|sleep)/u.test(String(name).replace(/^[a-z
  */
 function spriteCovers(name, x) {
   const { tall, half = 58, legs = [-30, 30] } = HER_SPRITES[name], kind = kindOf(name);
+  // Лежит с книгой, вытянувшись (0.65.0): голова — слева, над книгой; тело и волосы — вправо; книга — у самого пола,
+  // левее головы; ступни подняты над правым краем. Левее головы над книгой пусто — там и садится Байт.
+  if (kind === "floor" && Number.isFinite(HER_SPRITES[name].half)) {
+    const low = HER_SPRITES[name].half, up = FEET_SIT - tall;
+    // Четыре части: голова; тело с волосами; книга; голени со ступнями и колени (правый нижний угол под коленями пуст —
+    // там подушка Байта, и он на ней виден).
+    return [[x - low * 0.62, up + 8, low * 0.56, tall * 0.5 - 8], [x - low * 0.62, up + tall * 0.4, low * 1.2, tall * 0.6], [x - low, up + tall * 0.84, low * 0.5, tall * 0.16], [x + low * 0.5, up, low * 0.5, tall * 0.8]];
+  }
   if (kind === "floor") return [[x - 60, FEET_SIT - tall + 8, 120, tall * 0.5 - 8], [x - 92, FEET_SIT - tall * 0.5, 184, tall * 0.5]];
   const top = feetOf(name) - tall;
   if (kind === "crouch") return [[x - 18, top, 54, tall * 0.34], [x - half + 4, top + tall * 0.3, half * 2 - 8, tall * 0.7]];
@@ -2139,7 +2155,7 @@ const YARN = CARE_ZONES.play[2];
  * она не уходит, уступает Байт.
  */
 function herStand(name, pose, pet) {
-  const kind = kindOf(name), fixed = kind === "seat" ? CHAIR.x : kind === "floor" ? SPRITE_AT.nap : pours(name) ? SPRITE_AT.feed : null;
+  const kind = kindOf(name), fixed = kind === "seat" ? CHAIR.x : kind === "floor" ? (HER_SPRITES[name].spot ?? SPRITE_AT.nap) : pours(name) ? SPRITE_AT.feed : null;
   const first = fixed ?? SPRITE_AT[pose] ?? SPRITE_SPOTS[0];
   const spots = fixed == null ? [first, ...SPRITE_SPOTS.filter(x => x !== first)] : [first];
   if (!pet) return { x: first, spot: null };
@@ -2611,7 +2627,7 @@ export const catSeconds = (from, to, runs = false) => Math.round(Math.max(runs ?
  */
 function herFloor(name, x, y) {
   const kind = kindOf(name);
-  if (kind === "floor") return { x0: x - 92, x1: x + 92, y, low: true };
+  if (kind === "floor") return { x0: x - lowHalf(name), x1: x + lowHalf(name), y, low: true };
   const [from, to] = kind === "seat" ? [-40, 40] : kind === "crouch" ? [-64, 64] : HER_SPRITES[name].legs ?? [-30, 30];
   return { x0: x + from, x1: x + to, y, low: false };
 }

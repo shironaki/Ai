@@ -426,7 +426,7 @@ test("словарь 0.40.0: о картинке она отвечает сам�
   // увидел это на Байте: «в тексте перевернулся на спину, а по факту нет»). Поэтому здесь: у каждой реплики — при
   // любом небе, хозяину и гостю — есть картинка, и реплика говорит то, что на этой картинке видно.
   const SEEN = {
-    work: /блокнот/u, work2: /блокнот.*[Рр]учка — у губ/u, tea: /[Сс] кружкой/u, tea2: /[Пп]ью чай/u, tea3: /[Чч]ай, кресло/u, read: /[Чч]итаю в кресле/u,
+    work: /блокнот/u, work2: /блокнот.*[Рр]учка — у губ/u, tea: /[Сс] кружкой/u, tea2: /[Пп]ью чай/u, tea3: /[Чч]ай, кресло/u, read: /[Чч]итаю в кресле/u, read2: /[Лл]ежу на ковре с мангой/u,
     play: /[Дд]ирижирую/u, play2: /[Тт]анцую/u, play3: /ленточкой/u, sleep: /плед/u, tired: /[Зз]ева/u, tired2: /плед.*тру глаз/u,
     pout: /спиной|[Оо]твернулась/u, pout2: /скрестив руки/u, jealous: /[Рр]азглядываю/u, jealous2: /[Сс]крестила руки/u,
     // 0.47.0: в кресле — с блокнотом, под пледом с закрытыми глазами, скрестив руки. Слово «в кресле» обязательно:
@@ -446,7 +446,8 @@ test("словарь 0.40.0: о картинке она отвечает сам�
       assert.ok(name && SEEN[name], `${key}: «${line}» — место «${pose}», а картинки для него нет`);
       assert.match(line, SEEN[name], `${key}: «${line}» — не о том, что на картинке «${name}»`);
       // «Читаю» — только у картинки с книгой (0.45.0): у остальных книги в руках нет.
-      assert.doesNotMatch(name === "read" ? line.replace(/[Чч]итаю/u, "") : line, absent, `${key}: «${line}» — этого на картинке нет`);
+      // «Лежу» — только у картинки на ковре с книгой (0.65.0): остальные стоят или сидят в кресле.
+      assert.doesNotMatch(name === "read" ? line.replace(/[Чч]итаю/u, "") : name === "read2" ? line.replace(/[Лл]ежу/u, "") : line, absent, `${key}: «${line}» — этого на картинке нет`);
       // Слова о погоде — только при этой погоде.
       if (sky !== "rain" && sky !== "storm") assert.doesNotMatch(line, /дожд|капл/iu, `${sky}: ${line}`);
       if (sky !== "snow") assert.doesNotMatch(line, /снег|снежин/iu, `${sky}: ${line}`);
@@ -506,7 +507,7 @@ test("словарь 0.43.0: слова сходятся с картинками
   const names = Object.keys(HER_SPRITES).filter(name => !strides.includes(name)), jackets = names.filter(name => !name.includes("-")), lidded = names.filter(name => SPRITES[name].blink);
   // Числа, которые она называет вслух, — из папки с картинками. Прибавилась картинка — тест напомнит перечитать
   // темы (их список — в шапке блока «СБОРКА 0.44.0» в PHRASES.txt) и назвать новое число здесь.
-  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u };
+  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u, 23: /двадцать три/u, 46: /[Сс]орок шесть/u };
   const word = (count, what) => { assert.ok(WORDS[count], `${what}: ${count} — этого числа словами здесь нет: перечитать темы о картинках и дописать`); return WORDS[count]; };
   for (const topic of ["сколько у тебя поз", "кто тебя рисует"]) {
     assert.match(said(topic), word(names.length, "картинок"), topic);
@@ -516,7 +517,7 @@ test("словарь 0.43.0: слова сходятся с картинками
   assert.match(said("как часто ты моргаешь"), word(lidded.length, "картинок с веками"));
   // Где она моргает — названо словами: у каждой картинки с веками есть своё слово в теме. Новые веки — новое слово.
   // С 0.44.0 веки есть у каждой картинки с открытыми глазами; сидит она в кресле — пуфа в словах больше нет.
-  const LIDS = { tea: /кружк/u, tea3: /в кресле/u, read: /с книгой/u, work: /блокнот/u, work2: /блокнот/u, jealous: /скрещ[её]нными руками/u, jealous3: /скрещ[её]нными руками.*в кресле/u, work3: /блокнот.*в кресле/u, play: /ленточк/u, play3: /ленточк/u, pout2: /дуюсь/u, tired2: /тру глаз/u, tidy: /метёлк/u, books: /стопк/u, feed: /корм/u };
+  const LIDS = { tea: /кружк/u, tea3: /в кресле/u, read: /с книгой/u, read2: /на ковре/u, work: /блокнот/u, work2: /блокнот/u, jealous: /скрещ[её]нными руками/u, jealous3: /скрещ[её]нными руками.*в кресле/u, work3: /блокнот.*в кресле/u, play: /ленточк/u, play3: /ленточк/u, pout2: /дуюсь/u, tired2: /тру глаз/u, tidy: /метёлк/u, books: /стопк/u, feed: /корм/u };
   for (const topic of ["как часто ты моргаешь", "ты моргаешь", "на чём ты сидишь", "позы вечером", "ты меняешь позы", "почему ты стоишь", "длина волос"]) {
     assert.doesNotMatch(said(topic).replace(/Пуфа больше нет[^.]*\.|Пуф убрали[^.]*\./gu, ""), /пуф/iu, `${topic}: пуфа в комнате нет — она сидит в кресле`);
   }
@@ -692,7 +693,7 @@ test("она картинкой: у каждого состояния своя �
   // равно») их нет и не будет; «идёт» смотрит в сторону — ей они не нужны.
   const lidded = Object.keys(SPRITES).filter(name => SPRITES[name].blink).sort();
   // 0.48.0 — тридцать: с метёлкой, со стопкой книг и с пакетом корма — в обоих нарядах.
-  assert.deepEqual(lidded, ["books", "feed", "home-books", "home-feed", "home-jealous", "home-jealous3", "home-play", "home-play3", "home-pout2", "home-read", "home-tea", "home-tea3", "home-tidy", "home-tired2", "home-work", "home-work2", "home-work3", "jealous", "jealous3", "play", "play3", "pout2", "read", "tea", "tea3", "tidy", "tired2", "work", "work2", "work3"]);
+  assert.deepEqual(lidded, ["books", "feed", "home-books", "home-feed", "home-jealous", "home-jealous3", "home-play", "home-play3", "home-pout2", "home-read", "home-read2", "home-tea", "home-tea3", "home-tidy", "home-tired2", "home-work", "home-work2", "home-work3", "jealous", "jealous3", "play", "play3", "pout2", "read", "read2", "tea", "tea3", "tidy", "tired2", "work", "work2", "work3"]);
   // Моргает в куртке — моргает и в свитере: веки пары переносятся без новой картинки (`blink … by=head`).
   for (const name of lidded.filter(item => !item.includes("-"))) assert.ok(lidded.includes(`home-${name}`), `home-${name}: веки есть у пары в куртке — перенести`);
   // У картинки с «веками» определений два: она сама и заплатка на глаза — в точках самой картинки.
@@ -855,8 +856,10 @@ test("она картинкой: Байта она собой не закрыв�
     if (stand.x !== home && (data.kind ?? "stand") === "stand" && !data.legs) moved.add(place);
   }
   // Встаёт она у того, о чём её слова: мест несколько, и все они в середине комнаты — миска, шкаф, стол и чайник открыты.
-  // Кресло (196) — там она сидит; середина ковра (218) — там спит, закутавшись в плед.
-  assert.deepEqual([...seen].sort((a, b) => a - b), [160, 196, 218, 226, 252]);
+  // Кресло (196) — там она сидит; середина ковра (218) — там спит, закутавшись в плед. 224 (0.65.0) — место слов «лежу
+  // на ковре» у вида без распорядка: такой вид шлёт только старая запись, и она в нём стоит с кружкой у ковра. Сама
+  // картинка «на ковре с книгой» приходит со знаком распорядка (`beat`) — её место проверяет тест «0.65.0».
+  assert.deepEqual([...seen].sort((a, b) => a - b), [160, 196, 218, 224, 226, 252]);
   // Со своего места она (стоящая прямо) уходит, только когда иначе закрыла бы Байта: он в кресле, под пледом или
   // на подоконнике. Миска, стол, коробка, шкаф и его подушка в стороне — из-за них она не двигается; «у её ног» он
   // садится с той стороны, где свободно; под большим креслом (0.44.0) места хватает — глаза видны сбоку от её ног.
@@ -1420,7 +1423,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "26");
+  assert.equal(logic.PAGE, "27");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -2290,4 +2293,40 @@ test("0.64.0, её голос звучит через звук комнаты: �
     try { sound.off(); } catch { /* уже выключен */ }
     if (kept === undefined) delete globalThis.AudioContext; else globalThis.AudioContext = kept;
   }
+});
+
+test("0.65.0: лежит на ковре с книгой — картинка в обоих нарядах, место на ковре, Байт рядом не закрыт; спит она по-прежнему в пледе", () => {
+  // Слова → место → картинка: «лежу на ковре с мангой» — не кресло, хотя в словах есть «с мангой».
+  const line = pool("она:уют").find(text => /на ковре/u.test(text));
+  assert.ok(line, "в запасе «уют» есть реплика о ковре");
+  assert.equal(room.herPose(line, "уют"), "lie");
+  assert.equal(room.herPose("Читаю в кресле. Глава такая, что не оторваться.", "уют"), "read");
+  assert.equal(scene.lookOf("уют", "lie"), "read2");
+  assert.equal(scene.lookOf("сон", "lie"), "sleep");
+  // Картинка — «на полу», как у спящей, в обоих нарядах, с веками; пара в свитере — те же числа.
+  for (const name of ["read2", "home-read2"]) {
+    assert.equal(HER_SPRITES[name].kind, "floor", name);
+    assert.ok(SPRITES[name].blink, `${name}: веки`);
+    assert.ok(SPRITES[name].w > SPRITES[name].h * 1.6, `${name}: лежит — картинка шире, чем выше`);
+  }
+  assert.deepEqual(HER_SPRITES["home-read2"], HER_SPRITES.read2);
+  for (const [part, name] of [["день", "read2"], ["вечер", "home-read2"], ["ночь", "home-read2"]]) for (const [shape, place] of [["sit", "near"], ["curl", "pillow"], ["lie", "rug"], ["sit", "sill"], ["lie", "chair"], ["eat", "bowl"]]) {
+    const view = { part, her: { pose: "lie", key: "уют", beat: true }, cat: { shape, place, key: "сыт" }, plant: "wet", things: [] }, label = `${part} · ${shape}.${place}`;
+    assert.deepEqual(spritesOf(view), [name], label);
+    const stand = spriteStand(view);
+    assert.equal(stand.name, name, label);
+    assert.equal(stand.x, HER_SPRITES.read2.spot, label);
+    assert.ok(stand.hidden <= 0.15, `${label}: Байт закрыт на ${Math.round(stand.hidden * 100)} %`);
+    const zones = zonesOf(drawInside(view, PAINTED)), her = zones.find(zone => zone.id === "her"), head = zones.find(zone => zone.id === "pat"), pet = zones.find(zone => zone.id === "cat");
+    assert.ok(her && head && pet, label);
+    // Вся она — на рисунке и выше полосы с её словами; лежит на ковре, а не на шкафу и не на столе.
+    assert.ok(her.x >= 40 && her.x + her.w <= 360 && her.y >= 330 && her.y + her.h <= 500, `${label}: она ${JSON.stringify(her)}`);
+    assert.ok(head.y + head.h <= 480 && head.x >= her.x && head.x + head.w <= her.x + her.w, `${label}: голова ${JSON.stringify(head)}`);
+    assert.ok(pet.y + pet.h / 2 < 490, `${label}: место Байта ${JSON.stringify(pet)}`);
+  }
+  // Спящая — на прежнем месте и прежней ширины: мерка «половина длины» у неё не записана.
+  const asleep = spriteStand({ part: "ночь", her: { pose: "nap", key: "сон", beat: true }, cat: { shape: "curl", place: "pillow", key: "спит" }, plant: "wet", things: ["плед"] });
+  assert.equal(asleep.x, 218);
+  assert.equal(HER_SPRITES.sleep.half, undefined);
+  assert.equal(logic.PAGE, "27");
 });
