@@ -152,7 +152,7 @@ function settle(name, sprite) {
  */
 let frameTimer = 0;
 // Страница свёрнута (0.49.0): её часы стоят — никто никуда не идёт, ничего не перерисовывается, отсчёты ждут.
-let resting = false;
+let resting = false, restedAt = 0;
 function frameLater() {
   clearTimeout(frameTimer);
   if (resting) return;
@@ -333,6 +333,8 @@ async function startSound() {
   soundOn = ok;
   paintSound();
   soundScene();
+  // Звук включили — она здоровается вслух (0.64.0): один раз за заход.
+  if (ok) greetOnce();
   return ok;
 }
 function stopSound() {
@@ -341,6 +343,80 @@ function stopSound() {
   paintSound();
 }
 const ring = (name) => { if (soundOn && Object.hasOwn(SOUNDS, name)) { try { sound?.play(SOUNDS[name]); } catch { /* звук не важнее комнаты */ } } };
+// Её голос (0.64.0, идея 211): короткие записанные реплики — модули в папке `voice/`, по одной на файл, как её
+// картинки. Звучат только при включённом звуке; модуль грузится, когда реплика понадобилась впервые. Какую сказать
+// и когда промолчать — решает `logic.voiceFor`; между репликами — пауза (`VOICE_GAP_MS`). Модуль шёл дольше двух с
+// половиной секунд — молчит: ответ невпопад хуже тишины. Что прозвучало последним — в `data-voice` страницы.
+const VOICE_LATE_MS = 2500, BACK_MS = 5 * 60_000;
+const voiceCount = {};
+let voiceAt = 0, greeted = false;
+const voiceBytes = (src) => { const raw = atob(String(src).slice(String(src).indexOf(",") + 1)), bytes = new Uint8Array(raw.length); for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i); return bytes.buffer; };
+async function speak(event) {
+  if (!soundOn || typeof sound?.voice !== "function" || typeof logic.voiceFor !== "function") return false;
+  // 0.68.0: под рисунком только что встала записанная строка — она прозвучит сама, и короткая реплика на то же
+  // событие не нужна: «спасибо» уже есть в строке. Приветствие — не в счёт: оно идёт первым.
+  const fresh = (sayLines(), Date.now() - sayAt < VOICE_LATE_MS);
+  if (event !== "greet" && fresh && await saying > 0) return false;
+  const at = Date.now();
+  if (at - voiceAt < (logic.VOICE_GAP_MS ?? 4000)) return false;
+  const name = logic.voiceFor(event, state, voiceCount[event] ?? 0);
+  if (!name) return false;
+  voiceAt = at;
+  voiceCount[event] = (voiceCount[event] ?? 0) + 1;
+  try {
+    const line = (await import(`./voice/${name}.js`)).default;
+    if (Date.now() - at > VOICE_LATE_MS || !soundOn) return false;
+    const ok = await sound.voice(name, sound.knows?.(name) ? null : voiceBytes(line.src)) === true;
+    if (ok) {
+      document.documentElement.dataset.voice = name;
+      // 0.66.0 (сообщение 82: «не совпадает голос с тем, что появляется в тексте»): сказанное вслух встаёт первым в
+      // словах под рисунком — и стоит там, пока под рисунком та же строка (`captionOf` в `logic.js`).
+      if (typeof line.text === "string" && line.text) { state = { ...state, voiced: { text: line.text, over: state.said } }; paint(); }
+    }
+    return ok;
+  } catch { return false; }
+}
+// Что под рисунком — то и вслух (0.68.0, идея 215; сообщение 82: «чтоб все реплики словаря она озвучивала голосом»).
+// Слова под рисунком сменились — записанные строки из них она произносит сама: по порядку, не больше трёх, каждая
+// ждёт, пока договорит прежняя. Какие строки записаны, знает указатель `say/index.js` (грузится при первой строке);
+// какие из них сказать — `linesToSay` (сказанная недавно не повторяется); спит или идёт тихий час — молчит
+// (`maySay`). Слова сменились, пока запись грузилась, — устаревшее не звучит. Что прозвучало последним — в
+// `data-said` страницы. Приветствие — один раз за заход, первым: звук включили до того, как комната ответила, —
+// она поздоровается, когда ответит.
+let sayFor = "", sayAt = 0, saying = Promise.resolve(0), greeting = null;
+const saidAt = new Map();
+function greetOnce() {
+  if (!soundOn || greeted || !state.ready) return;
+  greeted = true;
+  greeting = speak("greet").catch(() => false).then(() => { greeting = null; });
+  greeting.then(sayLines);
+}
+function sayLines() {
+  greetOnce();
+  const caption = String(state.said ?? "");
+  if (!soundOn || !greeted || typeof sound?.voice !== "function") return Promise.resolve(0);
+  if (caption === sayFor) return saying;
+  sayFor = caption;
+  sayAt = Date.now();
+  const may = logic.maySay(state);
+  saying = (async () => {
+    let count = 0;
+    try {
+      const { nameOf } = await import("./say/index.js");
+      if (greeting) await greeting;
+      const now = Date.now();
+      for (const name of may ? logic.linesToSay(caption, nameOf, (key) => now - (saidAt.get(key) ?? -Infinity) < logic.SAY_AGAIN_MS) : []) {
+        const line = (await import(`./say/${name}.js`)).default;
+        if (!soundOn || state.said !== caption || await sound.voice(name, voiceBytes(line.src), true) !== true) break;
+        saidAt.set(name, now);
+        count += 1;
+        document.documentElement.dataset.said = name;
+      }
+    } catch { /* звук не важнее комнаты */ }
+    return count;
+  })();
+  return saying;
+}
 // Колонка (0.46.0): пока она играет, телефон сам выводит тихую мелодию (`sound.tune`), а на рисунке над ней ноты.
 // `tuneUntil` — до какого времени играет: звук включили позже или страницу развернули — мелодия продолжается.
 let tuneTimer = 0, tuneUntil = 0;
@@ -723,13 +799,14 @@ function paint() {
     // Байт, пропуская её, трогается позже (`--w`, 0.55.0): его переход длится ожидание и путь вместе.
     if (moving) drawn.until = Date.now() + Math.max(0, ...strides.map(stride => (Number.parseFloat(stride.style.getPropertyValue("--t")) || 3.5) + (Number.parseFloat(stride.style.getPropertyValue("--w")) || 0))) * 1000 + FADE_MS + 200;
   }
-  const say = $("say");
-  if (say.textContent !== state.said) {
-    say.textContent = state.said;
+  const say = $("say"), caption = typeof logic.captionOf === "function" ? logic.captionOf(state) : state.said;
+  if (say.textContent !== caption) {
+    say.textContent = caption;
     say.classList.remove("fresh");
     void say.offsetWidth;
     say.classList.add("fresh");
   }
+  sayLines();
   $("talk").dataset.tone = state.tone;
   $("who").textContent = state.tone === "warn" ? "Комната" : "Аи";
   $("retry").hidden = !state.retry;
@@ -815,9 +892,14 @@ const newId = () => Array.from({ length: 10 }, () => "abcdefghijklmnopqrstuvwxyz
 // Кнопка «Попробовать ещё раз» шлёт то же действие с тем же номером (`sameId`): если прошлый запрос на самом деле
 // дошёл, сердце не выполнит его второй раз (окно не закроется обратно), а покажет комнату как она есть.
 let again = null, sameId = null;
+/** Номер последнего отправленного действия (0.61.0): пока она думает над словом, страница спрашивает его же снова. */
+let lastSent = null;
+/** Сколько раз спросить снова, пока она думает: вместе с ожиданием между вопросами — около минуты. */
+const SAY_ROUNDS = 20;
 async function send(input, redo = null) {
   const name = String(input.do), id = sameId && sameId.op === name ? sameId.id : newId();
   sameId = null;
+  lastSent = { op: name, id };
   let result = await call({ ...input, id });
   if (result?.ok !== true && state.once && typeof logic.resend === "function" && logic.resend(result) && !document.hidden) {
     note(name, result.code, `${result.text ?? ""} Повторяю сама.`);
@@ -925,7 +1007,7 @@ async function pat() {
   if (result?.ok !== true) { buzz("error"); return; }
   buzz(result.again ? "light" : "medium");
   ring("pat");
-  if (!result.again) heart("pat");
+  if (!result.again) { heart("pat"); speak("pat"); }
   // Погладили — она закрывает глаза и краснеет (0.48.0).
   react("patted", 1700);
 }
@@ -972,7 +1054,8 @@ function paintChips() {
     const can = known && Boolean(state.her) && typeof applyWear === "function" && typeof demoWear === "function" && typeof wearAt === "function";
     wear.hidden = !can;
     wear.disabled = !idle;
-    if (can) wear.querySelector("span").textContent = wearAt(state.part, state.her.wear) === "home" ? "Надеть куртку" : "Надеть свитер";
+    // Кнопка называет следующий наряд (0.70.0): куртка → свитер → пижама (вечером и ночью) → куртка.
+    if (can) wear.querySelector("span").textContent = typeof logic.nextWear === "function" ? logic.WEAR_LABELS[logic.nextWear(state.part, state.her.wear)] : wearAt(state.part, state.her.wear) === "home" ? "Надеть куртку" : "Надеть свитер";
   }
   if (brew) {
     const can = known && typeof applyBrew === "function" && typeof demoBrew === "function";
@@ -1023,7 +1106,7 @@ async function dress() {
   const before = state;
   state = { ...state, busy: "wear" };
   paint();
-  const result = state.demo ? demoWear(before) : await send({ do: "wear" }, () => dress());
+  const result = state.demo ? demoWear(before) : await send({ do: "wear", ...(typeof logic.nextWear === "function" && before.her ? { wear: logic.nextWear(before.part, before.her.wear) } : {}) }, () => dress());
   if (repeated(result)) return;
   const change = applyWear(before, result);
   if (change.kind !== "wardrobe") { state = change.state; paint(); buzz(result?.ok === true ? "light" : "error"); return; }
@@ -1042,16 +1125,30 @@ async function talk() {
   const words = logic.wordsOf(field.value);
   if (!words) return;
   scheduleTurn();
-  state = { ...state, busy: "say" };
+  // Пока ответа нет, под рисунком — многоточие (0.61.0): видно, что слово услышано и она думает.
+  state = { ...state, busy: "say", ...(state.demo ? {} : { said: "…", tone: "" }) };
   paint();
-  const result = state.demo ? logic.demoSay(state, words) : await send({ do: "say", text: words }, () => talk());
+  const ask = async () => await send({ do: "say", text: words }, () => talk());
+  let result = state.demo ? logic.demoSay(state, words) : await ask();
+  // 0.61.0 (идея 204, шаг 3). На то, чего нет в словаре, отвечает модель — бывает, дольше, чем страница ждёт один
+  // запрос. Тогда сердце говорит «ещё думаю» (`pending`): её слова об этом встают под рисунком, кнопка погашена, а
+  // страница спрашивает тот же номер снова, пока ответ не готов. Второго вопроса к модели от этого не бывает.
+  for (let round = 0; result?.ok === true && result.pending === true && round < SAY_ROUNDS && lastSent?.op === "say"; round += 1) {
+    state = { ...logic.applySay(state, result), busy: "say" };
+    paint();
+    await sleep(Math.max(1, Math.min(10, Number(result.wait) || 3)) * 1000);
+    sameId = { op: "say", id: lastSent.id };
+    result = await ask();
+  }
+  // Минута прошла, а она всё думает — страница больше не ждёт: её слова об этом, поле остаётся с вопросом.
+  if (result?.ok === true && result.pending === true) result = { ok: false, code: "late", text: logic.SAY_LATE };
   // Повтор того же номера у слова — тот же её ответ, а не «комната как она есть»: `repeated` здесь не нужен.
   state = logic.applySay(state, result);
   if (result?.ok === true) field.value = "";
   paint();
   buzz(result?.ok === true ? "light" : "error");
   // Слово её разбудило (0.58.0): рисунок перечитывается сразу — она уже не спит, а сидит в кресле сонная.
-  if (result?.ok === true && result.woke === true) tick();
+  if (result?.ok === true && result.woke === true) { speak("woke"); tick(); }
 }
 /** Поле для слов видно, когда комната открыта и она не спрашивает про чай; кнопка гаснет, пока что-то делается. */
 function paintWords() {
@@ -1089,7 +1186,7 @@ async function beckon() {
   if (state.demo && result?.cat?.called === true && state.cat) state = { ...state, cat: { ...state.cat, called: true } };
   paint();
   buzz(result?.ok === true ? "light" : "error");
-  if (result?.came === true) ring("pet");
+  if (result?.came === true) { ring("pet"); speak("call"); }
   // Байт подошёл или удрал — она смотрит ему вслед (0.49.0).
   if (result?.ok === true) lookAt("cat", result.fled === true);
 }
@@ -1106,6 +1203,7 @@ async function lamp() {
   paint();
   buzz(result?.ok === true ? "light" : "error");
   if (result?.changed === true) ring("lamp");
+  if (result?.changed === true && state.dark === true) speak("dark");
 }
 
 /**
@@ -1232,7 +1330,7 @@ async function album() {
   state = { ...state, busy: "", tone: "", retry: false, said: typeof result.line === "string" && result.line ? result.line : state.said, album: { count: Array.isArray(result.items) ? result.items.length : 0, fresh: 0 } };
   albumShown = true;
   box.hidden = false;
-  albumModule.show(box, result, { thumb: thumbOf, gift: give, snap: keep, close: closeAlbum });
+  albumModule.show(box, result, { thumb: thumbOf, gift: give, snap: keep, post: mail, close: closeAlbum });
   paint();
   buzz("light");
 }
@@ -1240,7 +1338,7 @@ async function album() {
 async function refreshAlbum() {
   if (!albumShown || !albumModule) return;
   const result = state.demo ? logic.demoAlbum(state) : await call({ do: "album" });
-  if (result?.ok === true) albumModule.show($("albumBox"), result, { thumb: thumbOf, gift: give, snap: keep, close: closeAlbum });
+  if (result?.ok === true) albumModule.show($("albumBox"), result, { thumb: thumbOf, gift: give, snap: keep, post: mail, close: closeAlbum });
 }
 /** Подарить (идея 163): цветок, книгу или игрушку Байту — раз в неделю; подарок остаётся в комнате и в альбоме. */
 async function give(kind) {
@@ -1252,7 +1350,7 @@ async function give(kind) {
   state = logic.applyGift(state, result);
   paint();
   buzz(result?.ok === true && result.taken ? "medium" : result?.ok === true ? "light" : "error");
-  if (result?.ok === true && result.taken) { react("glad", 1800); heart("her"); }
+  if (result?.ok === true && result.taken) { react("glad", 1800); heart("her"); speak("gift"); }
   await refreshAlbum();
 }
 /** Сохранить этот момент (идея 165): комната этой минуты ложится в альбом; сердце собирает её само. */
@@ -1269,6 +1367,51 @@ async function keep() {
   paint();
   buzz(result.taken ? "medium" : "light");
   await refreshAlbum();
+}
+/**
+ * Комната — картинкой JPEG в base64 (0.62.0, идея 165): тот же рисунок, что у снимка в альбоме (`thumbOf`), через
+ * холст. `scale` — во сколько раз крупнее рисунка (400×520), `quality` — качество JPEG. Не получилось — пустая строка.
+ */
+async function shotOf(view, scale, quality) {
+  try {
+    const src = await thumbOf(view), picture = new Image();
+    await new Promise((resolve, reject) => { picture.onload = resolve; picture.onerror = () => reject(new Error("picture")); picture.src = src; });
+    // Картинки внутри рисунка (она, Байт) должны успеть раскрыться: иначе на холст ляжет комната без них.
+    if (typeof picture.decode === "function") await picture.decode().catch(() => {});
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round((scene.WIDTH ?? 400) * scale);
+    canvas.height = Math.round((scene.HEIGHT ?? 520) * scale);
+    const pen = canvas.getContext("2d");
+    pen.fillStyle = "#15131d";
+    pen.fillRect(0, 0, canvas.width, canvas.height);
+    pen.drawImage(picture, 0, 0, canvas.width, canvas.height);
+    const data = canvas.toDataURL("image/jpeg", quality), head = "data:image/jpeg;base64,";
+    return data.startsWith(head) ? data.slice(head.length) : "";
+  } catch { return ""; }
+}
+/**
+ * Прислать снимок в чат (идея 165, 0.62.0): комната этой минуты — картинкой; сердце шлёт её в личку с её словами.
+ * Отказ пришёл не от сердца (у его ответов есть `build`) — картинка могла не пройти по весу: ещё раз, меньше.
+ */
+async function mail() {
+  if (!state.ready || state.busy || acting || typeof logic.applyPhoto !== "function" || typeof logic.demoPhoto !== "function") return;
+  scheduleTurn();
+  state = { ...state, busy: "photo" };
+  paint();
+  const post = async (image) => await send({ do: "photo", image }, () => mail());
+  let result = null;
+  if (state.demo) result = logic.demoPhoto();
+  else {
+    const view = viewOf(state), image = await shotOf(view, 2, 0.82);
+    result = image ? await post(image) : { ok: false, code: "picture", text: logic.PHOTO_FAILED };
+    if (image && result?.ok !== true && result?.build == null && result?.code !== "timeout" && !document.hidden) {
+      const small = await shotOf(view, 1.2, 0.7);
+      if (small) result = await post(small);
+    }
+  }
+  state = logic.applyPhoto(state, result);
+  paint();
+  buzz(result?.ok === true && result.sent === true ? "medium" : result?.ok === true ? "light" : "error");
 }
 /** Сценка встречи: следующий шаг — её слова и картинка этого шага; после последнего комната возвращается к нынешней минуте. */
 function tell() {
@@ -1309,6 +1452,7 @@ async function care(name, extra = {}) {
   buzz(result.again ? "light" : "medium");
   ring(name);
   if (!result.again) heart(name === "tea" ? "her" : name === "water" ? "plant" : "cat");
+  if (!result.again) speak(name === "tea" ? "tea" : name === "water" ? "plant" : "cat");
   // Налили чай — румянец (0.48.0).
   if (name === "tea") react("glad", 1800);
   // Позаботились о Байте — она смотрит в его сторону (0.49.0).
@@ -1414,6 +1558,7 @@ if (canSound && soundKept()) document.addEventListener("pointerdown", () => { if
 // прошло больше минуты.
 function rest() {
   resting = true;
+  restedAt = Date.now();
   for (const timer of [turnTimer, tickTimer, frameTimer, tuneTimer, retryTimer]) clearTimeout(timer);
   clearInterval(quietTimer);
   document.documentElement.classList.add("resting");
@@ -1423,7 +1568,7 @@ function wake() {
   if (!resting) return;
   resting = false;
   document.documentElement.classList.remove("resting");
-  if (soundOn) startSound().then(retune);
+  const away = Date.now() - restedAt, started = soundOn ? startSound().then(retune) : null;
   scheduleTurn();
   frameLater();
   // Тихий час и музыка: срок шёл и без страницы — вышел, так вышел.
@@ -1431,7 +1576,10 @@ function wake() {
   if (tuneUntil > 0) { const left = tuneUntil - Date.now(); if (left > 0) tuneFor(left); else { tuneUntil = 0; state = { ...state, music: 0 }; paint(); } }
   if (!state.ready) { if (!state.busy) enter(); return; }
   const left = canTick ? tickLeft() : null;
-  if (left != null && (left <= 0 || Date.now() - lookedAt > 60_000 || state.down)) tick(); else scheduleTick();
+  const fresh = left != null && (left <= 0 || Date.now() - lookedAt > 60_000 || state.down) ? tick() : null;
+  if (!fresh) scheduleTick();
+  // Вернулись после долгого отсутствия — она встречает вслух (0.64.0): когда звук вернулся, а комната сверена.
+  if (started && away >= BACK_MS) Promise.all([started, fresh]).then(() => speak("back")).catch(() => {});
 }
 document.addEventListener("visibilitychange", () => (document.hidden ? rest() : wake()));
 window.addEventListener("pagehide", rest);

@@ -43,21 +43,23 @@ export const EVENT_MIN = 25;
 /**
  * Событие этого дня или `null`. Не чаще одного в день и не каждый день — три дня из пяти; виды идут по кругу, так что
  * один и тот же повторяется не раньше чем через шесть дней. `from` и `to` — минуты от полуночи: внутри своего эпизода.
+ * `hours` (0.63.0) — часы её дня для этого человека, `{ wake, bed }`: у хозяина эпизоды стоят иначе, и событие
+ * должно попасть в свой эпизод по его часам. Прошлые дни считаются без них: там важно только, было ли событие.
  */
-export function eventFor(day) {
+export function eventFor(day, hours = {}) {
   const number = dayNumber(day);
   if (!number) return null;
   const seed = hashOf(`event:${String(day).slice(0, 10)}`);
   if (seed % 5 >= 3) return null;
   const event = EVENTS[number % EVENTS.length];
-  const stage = dayPlan(String(day).slice(0, 10)).find(item => item.name === event.stage);
+  const stage = dayPlan(String(day).slice(0, 10), hours ?? {}).find(item => item.name === event.stage);
   if (!stage) return null;
   const room = Math.max(1, Math.floor(stage.to - stage.from - EVENT_MIN - 4));
   const from = Math.floor(stage.from) + 2 + ((seed >>> 3) % room);
   return { ...event, day: String(day).slice(0, 10), from, to: from + EVENT_MIN };
 }
 /** Идёт ли событие в эту минуту дня. */
-export const eventNow = (day, minute) => { const event = eventFor(day); return event && minute >= event.from && minute < event.to ? event : null; };
+export const eventNow = (day, minute, hours = {}) => { const event = eventFor(day, hours); return event && minute >= event.from && minute < event.to ? event : null; };
 /** События дней между `fromDay` и `toDay` (не включая оба), не дальше недели назад: о них она расскажет при встрече. */
 export function missedEvents(fromDay, toDay, limit = 7) {
   const last = dayNumber(toDay), first = Math.max(dayNumber(fromDay), last - limit - 1), list = [];

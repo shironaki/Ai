@@ -234,10 +234,12 @@ test("страница: действия идут с номером и чере�
   const direct = [...app.matchAll(/(?<![a-zA-Z])call\(\{ ([^}]*)\}\)/gu)].map(found => found[1].trim());
   assert.deepEqual(direct.sort(), ['...input, id', '...input, id', 'do: "album"', 'do: "look"', 'do: "look", again: true', 'do: "oops", page: PAGE, items'].sort());
   const sends = [...app.matchAll(/await send\(\{ do: ("[a-z]+"|name)/gu)].map(found => found[1]);
-  assert.deepEqual(sends.sort(), ['"album"', '"book"', '"brew"', '"call"', '"gift"', '"lamp"', '"music"', '"pat"', '"pick"', '"quiet"', '"say"', '"snap"', '"wear"', '"window"', "name"].sort(), "каждое действие — через `send`");
+  assert.deepEqual(sends.sort(), ['"album"', '"book"', '"brew"', '"call"', '"gift"', '"lamp"', '"music"', '"pat"', '"photo"', '"pick"', '"quiet"', '"say"', '"snap"', '"wear"', '"window"', "name"].sort(), "каждое действие — через `send`");
   // Разбор ответа на повтор — у каждого действия, которое что-то меняет в комнате. Альбом только читается; слово ей
   // (0.57.0) комнату не меняет: повтор того же номера у него — тот же её ответ, он и встаёт под рисунком (`applySay`).
-  assert.equal((app.match(/if \(repeated\(result\)\) return;/gu) ?? []).length, sends.length - 2, "и у каждого — разбор ответа на повтор");
+  // Снимок в чат (0.62.0) — так же: повтор номера — её слова «отправила» (`applyPhoto`), рисунок не меняется.
+  assert.equal((app.match(/if \(repeated\(result\)\) return;/gu) ?? []).length, sends.length - 3, "и у каждого — разбор ответа на повтор");
+  assert.match(app, /state = logic\.applyPhoto\(state, result\);/u);
   assert.match(app, /state = logic\.applySay\(state, result\);/u);
   // Кнопка «ещё раз» шлёт то же действие с тем же номером: дошедшее в прошлый раз второй раз не выполнится.
   assert.match(app, /if \(redo && state\.ready\) \{ sameId = \{ id: redo\.id, op: redo\.op \}; redo\.run\(\); \} else enter\(\);/u);

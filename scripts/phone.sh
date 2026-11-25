@@ -880,7 +880,40 @@ main() {
     if [ -n "$stale_word" ]; then
       warn="лишние модули из облака убрать не вышло (ответ платформы: «$stale_word»); перешлите эту строку в чат разработки"
     fi
-    step "схема базы" tg migrate --yes || warn="${warn:+$warn; }схема базы не применилась"
+    # Схема базы (0.67.0, сообщение 83: «сборка опубликована, но схема базы не применилась»). До 0.67.0 шаг делался
+    # один раз: любая осечка — минутный обрыв связи тоже — давала весть «не применилась» без единого слова о причине.
+    # Шаг повторяется без вреда (инструмент сам сверяет таблицы с опубликованной схемой): обрыв связи — до трёх
+    # попыток, отказ платформы словами — две. Не вышло — в весть идёт причина: «нет связи» или ответ платформы. И
+    # различается, менялась ли схема в этой сборке: не менялась — таблицы те же, что были, бот работает на них.
+    local schema_ok=0 schema_try=0 schema_cut=0 schema_word=""
+    while [ "$schema_try" -lt 3 ]; do
+      schema_try=$((schema_try + 1))
+      if step "схема базы" tg migrate --yes; then schema_ok=1; [ "$schema_try" -gt 1 ] && WHY=""; break; fi
+      schema_word="$(last_word)"; schema_cut=0; cut_off && schema_cut=1
+      [ "$schema_cut" = 1 ] || [ "$schema_try" -lt 2 ] || break
+      if [ "$schema_try" -lt 3 ]; then
+        sleep "$RETRY_PAUSE"
+        printf '\n(схема базы: попытка %s)\n' "$((schema_try + 1))" >> "$DEPLOY_LOG"
+      fi
+    done
+    if [ "$schema_ok" != 1 ]; then
+      local schema_why="ответ платформы: «${schema_word:-пусто}»" schema_warn
+      [ "$schema_cut" = 1 ] && schema_why="нет связи с платформой, попыток: $schema_try"
+      # Та же ли схема, что в прежней публикации с этого телефона (её слепок — в «$LIVE»): файл совпал или его нет
+      # ни там, ни тут. Слепка нет — публикация первая: схема новая.
+      local schema_same=0
+      if [ -d "$LIVE/tgcloud" ]; then
+        if [ -f "$LIVE/tgcloud/schema.js" ] || [ -f "$STAGE/tgcloud/schema.js" ]; then
+          cmp -s "$LIVE/tgcloud/schema.js" "$STAGE/tgcloud/schema.js" 2>/dev/null && schema_same=1
+        else schema_same=1; fi
+      fi
+      if [ "$schema_same" = 1 ]; then
+        schema_warn="схему базы сверить не вышло ($schema_why); таблицы в этой сборке не менялись — бот работает на прежних, следующая публикация сверит снова"
+      else
+        schema_warn="схема базы не применилась ($schema_why); перешлите эту строку в чат разработки"
+      fi
+      warn="${warn:+$warn; }$schema_warn"
+    fi
     step "вебхук" webhook_check || true
     if [ -n "$WEBHOOK_MISSING" ]; then
       log "⚠ Бот не подписан на события:$WEBHOOK_MISSING — то, что на них держится (кнопки, секретарь, список её чатов), работать не будет. Пришлите эту строку в чат разработки."

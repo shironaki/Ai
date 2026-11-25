@@ -16,7 +16,7 @@ state.sourceReplies ??= [];
 state.sourceFetches ??= [];
 state.apiReplies ??= {};
 
-const SOURCE_HOSTS = /(?:api\.tavily\.com|api\.exa\.ai|ydc-index\.io|mymemory\.translated\.net|cloudflare\.com\/client\/v4\/accounts\/[^/]+\/ai\/run\/|example\.org|nagerholidays\.com|wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|jsdelivr\.net|er-api\.com|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best|wikimedia\.org|openverse\.org|shikimori\.|itunes\.apple\.com|deezer\.com|rutube\.ru|dailymotion\.com)/u;
+const SOURCE_HOSTS = /(?:translate\.google\.com\/translate_tts|api\.tavily\.com|api\.exa\.ai|ydc-index\.io|mymemory\.translated\.net|cloudflare\.com\/client\/v4\/accounts\/[^/]+\/ai\/run\/|example\.org|nagerholidays\.com|wikipedia\.org|wiktionary\.org|open-meteo\.com|cbr-xml-daily\.ru|jsdelivr\.net|er-api\.com|thecatapi\.com|dog\.ceo|randomfox\.ca|nekos\.best|wikimedia\.org|openverse\.org|shikimori\.|itunes\.apple\.com|deezer\.com|rutube\.ru|dailymotion\.com)/u;
 
 const methods = {
   async sendMessage(params) {

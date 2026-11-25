@@ -12,6 +12,9 @@
  *   scene(what) — что слышно (0.48.0): `open` — окно открыто: улица слышна в полный голос, проезжают машины, днём в
  *                сухую погоду поют птицы (`birds`); закрыто — улица за стеклом, глухо и тихо, а слышен дом:
  *                мурчит Байт (`purr`), шуршат страницы (`pages`), скрипит ручка (`pen`);
+ *   voice(name, bytes, line) — её реплика (0.64.0): запись mp3; расшифрована однажды — дальше хватит имени (`knows`);
+ *     `line` — строка словаря (0.67.0): встаёт в очередь за репликой и в памяти не держится; очередь длиннее
+ *     двадцати секунд новых строк не берёт (0.68.0);
  *   state()    — «running» (звучит), «suspended» (телефон держит звук до нажатия) или «off».
  * Звук начинается только с нажатия человека: так устроены телефоны.
  */
@@ -239,6 +242,11 @@ export function createSound() {
     step();
   }
 
+  // Её голос (0.64.0): расшифрованные реплики остаются в памяти; пока одна звучит, вторая не начинается.
+  const spoken = new Map(), VOICE = 2;
+  let speaking = 0;
+  const live = () => Boolean(ctx && ctx.state === "running" && bed), canSpeak = () => live() && ctx.currentTime >= speaking;
+
   return Object.freeze({
     /** Включить. Зовётся из обработчика нажатия: иначе телефон звука не даст. */
     async on(sky = "rain") {
@@ -271,6 +279,26 @@ export function createSound() {
       return true;
     },
     hush() { stopSong(); },
+    /** Её реплика вслух: `bytes` — запись (ArrayBuffer) в первый раз. Обещание: зазвучала ли. */
+    async voice(name, bytes = null, line = false) {
+      // Строка словаря (0.67.0, `line`): ждёт, пока договорит реплика, — слова идут подряд; в памяти не держится.
+      const free = line ? () => live() && speaking - ctx.currentTime < 20 : canSpeak;
+      if (!free()) return false;
+      let buffer = spoken.get(name);
+      if (!buffer) {
+        if (!bytes) return false;
+        try { buffer = await new Promise((done, fail) => { ctx.decodeAudioData(bytes, done, fail)?.catch?.(() => {}); }); } catch { return false; }
+        if (!line) spoken.set(name, buffer);
+      }
+      if (!buffer || !free()) return false;
+      const from = ctx.createBufferSource(), at = Math.max(ctx.currentTime + 0.03, line ? speaking : 0);
+      from.buffer = buffer;
+      chain(from, gain(VOICE), master);
+      from.start(at);
+      speaking = at + (Number(buffer.duration) || 1) + 0.2;
+      return true;
+    },
+    knows: (name) => spoken.has(name),
     /** Что слышно: открыто ли окно и что сейчас к месту в самой комнате (см. шапку модуля). */
     scene(what = {}) {
       heard = { purr: what.purr === true, pages: what.pages === true, pen: what.pen === true, birds: what.birds === true };

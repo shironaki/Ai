@@ -10,15 +10,27 @@
  */
 /** Сколько знаков в одном слове ей в комнате: длиннее — в чат. */
 export const SAY_MAX = 200;
+/**
+ * Она думает (0.61.0): сколько миллисекунд вопрос к модели считается «в работе». Страница ждёт ответа двадцать
+ * секунд и спрашивает тот же номер снова: пока срок не вышел, ответ — «ещё думаю» (`pending`), без второго вопроса
+ * к модели. Вышел — «не успела».
+ */
+export const SAY_THINK_MS = 90_000;
+/** Через сколько секунд странице спросить тот же номер снова. */
+export const SAY_POLL_S = 3;
+/** Снимок в чат (0.62.0): предел картинки в знаках base64 (около 450 КБ) и как часто можно — раз в минуту. */
+export const PHOTO_MAX = 600_000;
+export const PHOTO_EVERY_MS = 60_000;
 
 export function createRoomDoor(deps) {
   const {
     agoWords, airNow, ALBUM_KEY, AWAY_MS, book, brewOf, BREWS, BUILD, calendarDate, captionOf, carePool, CAT_STEP_MS,
-    CAT_STILL, catAfter, catFits, catGift, catKey, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
+    CAT_STILL, catAfter, catFits, catGift, catKey, catMeal, catPose, colourHex, dateWords, dayNo, dayOf, days, dressHer,
     eventFor, eventNow, feelFor, feelingNow, fill, GIFT_EVERY_MS, GIFT_POOL, GIFT_SAID, GIFTS, giftsShown, HER_CALM,
     herState, herStep, keepsakes, keepThread, lightAt, lineAt, LISTED_EVERY_MS, localParts, mannerFor, MILESTONES,
     minutesNow, missedEvents, MUSIC_MS, musicNow, now, OOPS_EVERY_MS, OOPS_KEEP, owner, ownThings, partOfDay,
     PHRASES, plantState, QUIET_MS, quietLeft, RECENT_MAX, reportCrash, room, ROOM_APP, ROOM_FRESH_MS, ROOM_ITEMS,
+    ROOM_TALK, roomThought, roomPhoto, planSet,
     ROOM_NOTES, ROOM_OOPS_KEY, ROOM_POOL, ROOM_RECENT_KEY, ROOM_SAID, roomBox, roomCared, roomLine, roomLines,
     roomSeed, roomSky, roomThings, sceneByKey, sceneLook, stageLine, stageNow, store, taught, tidyNote, voiceCtx,
     voiced, WEAR_WORD, wearNow, WINDOW_WATCH_MS, windowLine, wornNow, zoneOf,
@@ -98,13 +110,17 @@ export function createRoomDoor(deps) {
         const she = herStep(turn, feel, state, today);
         const free = !after && !held && !hides && !naps && key !== "обижен";
         const eats = free && she.pose === "feed", beside = free && !eats && she.key === "сон" && key === "спит";
+        // 0.60.0, «наедается» (остаток идеи 208): она насыпала и отошла — десять минут корм лежит в миске (`bowl` в
+        // ответе: страница рисует миску полной), а Байт ест из неё, если ничем другим не занят. Срок — по плану её
+        // дня, а не по тому, чем она занята сейчас: налили ей чаю, попросили тишины — корм из миски не пропадает.
+        const served = catMeal(turn, today) > 0, dines = free && !eats && !beside && served;
         const count = Math.floor(now() / CAT_STEP_MS) + roomSeed(userId, today);
         // 0.49.0 (сообщение 48: «Байт не должен быть просто генератором случайных действий… его поведение должно
         // учитывать состояние Аи и происходящее в комнате»). По старшинству: шалость — событие её дня; только что
         // открыли окно — он уже на подоконнике; вечером приносит ей добычу; она сидит — приходит к ней (ложится у ног,
         // просится на руки). Она спит или клюёт носом — шумного он не затевает; спит сам — там, где сейчас уместно.
-        const minute = minutesNow(turn), sheSleeps = she.key === "сон", awake = free && !eats && !beside && key !== "спит";
-        const event = eventNow(today, minute), bring = catGift(today);
+        const minute = minutesNow(turn), sheSleeps = she.key === "сон", awake = free && !eats && !dines && !beside && key !== "спит";
+        const event = eventNow(today, minute, planSet(turn)), bring = catGift(today);
         const prank = awake && !sheSleeps && event?.key === "prank";
         const airy = awake && !prank && airNow(state, now()) && now() - Number(state.open) < WINDOW_WATCH_MS;
         const gift = awake && !prank && !airy && !sheSleeps && Boolean(bring) && minute >= bring.from && minute < bring.to;
@@ -112,13 +128,13 @@ export function createRoomDoor(deps) {
         const comes = awake && !prank && !airy && !gift && seated && HER_CALM.includes(she.key) && ["сыт", "ласка", "шалит"].includes(key) && count % 3 === 1;
         const fits = { asleep: sheSleeps || she.face === "drowsy", seated, sunny: (sky === "clear" || sky === "clouds") && ["утро", "день"].includes(turn.light || partOfDay(feel.hour)) };
         const special = prank ? `событие:${event.pool}` : airy ? "байт:окно" : gift ? "байт:добыча" : comes ? "байт:к ней" : "";
-        const beats = held || hides || naps || eats || beside || special ? [] : catBeats(key).filter(item => catFits(item.line, fits));
+        const beats = held || hides || naps || eats || dines || beside || special ? [] : catBeats(key).filter(item => catFits(item.line, fits));
         const from = beats.length ? count % beats.length : 0, beat = beats[from] ?? null;
         // Распорядок — по порядку от нынешней реплики: прежняя страница идёт по нему сама, нынешняя (`steady`) — нет.
         const order = [...beats.slice(from), ...beats.slice(0, from)];
         // С места не ходит (спит) — реплика из тех, что сейчас уместны: «на солнце» — в солнечный день, «у ног» — когда она сидит.
         const settledLine = () => { const lines = roomLines(turn, `байт:${key}`).filter(item => catFits(item, fits)); return lines.length ? lines[count % lines.length] : lineAt(turn, `байт:${key}`, count); };
-        const raw = after || held ? "" : eats ? lineAt(turn, "байт:завтрак", count) : beside ? lineAt(turn, "байт:ночь", count)
+        const raw = after || held ? "" : eats ? lineAt(turn, "байт:завтрак", count) : dines ? lineAt(turn, "байт:ест", count) : beside ? lineAt(turn, "байт:ночь", count)
           : hides ? lineAt(turn, "байт:гроза", count) : naps ? lineAt(turn, "байт:тихий час", count)
             // Шалость — по дню (у всех одна); «к ней» приходится на каждый третий шаг — счёт по тройкам, иначе реплика была бы всегда одна.
             : special ? lineAt(turn, special, prank ? dayNo(today) : comes ? Math.floor(count / 3) : count) : beat ? beat.line : settledLine();
@@ -129,12 +145,13 @@ export function createRoomDoor(deps) {
             : hides ? { key, shape: "tail", place: "plaid", line: raw, beats: [], still: true }
               : naps ? { key: "спит", shape: "curl", place: "pillow", line: raw, beats: [], still: true }
                 : eats ? { key, shape: "eat", place: "near", line: raw, beats: [], still: true }
+                  : dines ? { key: "сыт", shape: "eat", place: "bowl", line: raw, beats: [], still: true }
                   : beside ? { key, shape: "curl", place: "near", line: raw, beats: [], still: true }
                     // Особый случай (0.49.0): где он и какой — по словам о нём, как и всегда; `prank` и `gift` — отметки для альбома.
                     : special ? { key, ...catPose(raw, key), line: raw, beats: [], still: true, steady: true, ...(prank ? { prank: true } : gift ? { gift: true } : {}) }
                       : { key, ...catPose(raw, key), line: raw, beats: order, still: order.length < 2, steady: true };
         return {
-          ...(cat ? { cat } : {}),
+          ...(cat ? { cat } : {}), ...(served ? { bowl: "full" } : {}),
           plant: { state: plantState({ water: state.water, at: now() }) === "полита" ? "wet" : "dry" },
           done: Object.fromEntries(Object.keys(ROOM_POOL).map(name => [name, Number(state.done?.[name]) || 0])),
           cared: state.cared === today,
@@ -179,7 +196,7 @@ export function createRoomDoor(deps) {
         const local = localParts(now(), zone), part = partOfDay(feel.hour);
         const edge = [5, 12, 18, 23].find(hour => hour > local.hh) ?? 29;
         // Слова у шкафа — по тому, во что она переоделась: наряд идёт за её днём и погодой (0.48.0), а не за часом.
-        const wear = (wearNow(state, now()) ?? wornNow(turn, state, today)) === "home" ? "вечер" : "утро";
+        const wear = { home: "вечер", pajama: "ночь" }[wearNow(state, now()) ?? wornNow(turn, state, today)] ?? "утро";
         const byClock = ((edge - local.hh) * 60 - local.mm) * 60_000 - (now() % 60_000);
         // Свет — по солнцу города (идея 164, 0.47.0): `light` — каким светом красить рисунок; страница спросит
         // комнату заново и к перемене часа, и к рассвету с закатом. Солнца не знаем — поля нет: свет по часам.
@@ -217,7 +234,7 @@ export function createRoomDoor(deps) {
         // 0.49.0 (сообщение 48) — альбом воспоминаний, её вещи, подарки, встреча после отлучки. В альбом ложится то, что
         // было при человеке или что она ему рассказала: первый заход, памятные даты, событие её дня, добыча Байта.
         // Альбом — не главное: его сбой комнату не роняет.
-        const minute = minutesNow(turn), shown = picture(visit.state), happened = eventFor(today);
+        const minute = minutesNow(turn), shown = picture(visit.state), happened = eventFor(today, planSet(turn));
         const album = await keepsakes.read(userId);
         const entries = [];
         if (visit.first) entries.push({ k: "first", key: "visit", day: today, at: now() });
@@ -251,7 +268,7 @@ export function createRoomDoor(deps) {
         return {
           // `once` (0.49.0): это сердце помнит номера действий — страница может сама повторить запрос, не дошедший за срок.
           ok: true, do: "look", build: BUILD, formal, once: true, ...(again ? { again: true } : {}), ...(repeat ? { repeat: true } : {}),
-          ...clockNow(visit.state, [she.left]),
+          ...clockNow(visit.state, [she.left, catMeal(turn, today)]),
           greet: spoken(greet), window: windowLine(turn, sky), sky, city: turn.skyReal === true, ...(turn.wind ? { wind: turn.wind } : {}),
           box: roomBox(turn, visit.state), patted: (Number(visit.state.done?.pat) || 0) > 0,
           her: she,
@@ -369,9 +386,11 @@ export function createRoomDoor(deps) {
         const done = await dressHer(turn, feel, today, String(input?.wear ?? ""), once);
         { const other = await instead(done); if (other) return other; }
         const word = WEAR_WORD[done.name];
+        // Пижама — вечерняя (0.70.0): днём — отказ словами, наряд прежний.
+        if (done.early) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "наряд:пижама:рано") || "Пижаму — вечером."), wear: done.name, changed: false };
         if (done.asleep || done.same) return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${word}:уже`) || "Не сейчас."), wear: done.name, changed: false };
         const back = roomLine(turn, `наряд:${word}:готово`) || "Вот.";
-        await keepThread(turn, `[в комнате] попросил тебя надеть ${word === "свитер" ? "свитер" : "куртку"}`, back);
+        await keepThread(turn, `[в комнате] попросил тебя надеть ${{ свитер: "свитер", пижама: "пижаму" }[word] ?? "куртку"}`, back);
         return { ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, `наряд:${word}`) || "Сейчас переоденусь."), back: spoken(back), wear: done.name, changed: true, her: herNow(done.state) };
       }
       if (op === "brew") {
@@ -498,19 +517,66 @@ export function createRoomDoor(deps) {
         const view = {
           part: seen.clock.part, ...(seen.clock.light ? { light: seen.clock.light } : {}), sky: seen.sky,
           her: { key: seen.her.key, pose: seen.her.pose, wear: seen.her.wear }, ...(seen.cat ? { cat: { shape: seen.cat.shape, place: seen.cat.place, key: seen.cat.key } } : {}),
-          things: seen.things.map(item => item.key), plant: seen.plant.state, lamp: seen.lamp, dark: seen.dark, open: seen.open, fed: seen.done.feed > 0, tea: seen.done.tea > 0, own: seen.own, gifts: seen.gifts,
+          things: seen.things.map(item => item.key), plant: seen.plant.state, lamp: seen.lamp, dark: seen.dark, open: seen.open, fed: seen.done.feed > 0 || seen.bowl === "full", tea: seen.done.tea > 0, own: seen.own, gifts: seen.gifts,
         };
         const done = await keepsakes.snap(userId, view, seen.her.line, { day: today });
         if (!done.ok) return refuse("storage", NOT_KEPT);
         return { ok: true, do: op, build: BUILD, taken: !done.early, line: spoken(roomLine(turn, done.early ? "снимок:рано" : "снимок") || (done.early ? "Снимок уже есть — следующий чуть позже." : "Запомнила этот момент.")) };
       }
+      if (op === "photo") {
+        // Снимок картинкой в чат (идея 165, 0.62.0). Рисовать сердце не умеет — комнату этой минуты рисует страница
+        // (тот же рисунок, что у снимка в альбоме, через холст) и присылает сюда как JPEG в base64; сердце шлёт её
+        // человеку в личку с подписью: день, время суток и её слова этой минуты. Подпись собирает сердце, а не
+        // страница. Не чаще раза в минуту. Тот же номер действия второй раз картинку не шлёт; не ушла — отметка и
+        // номер снимаются, и «ещё раз» на странице отправит её снова. Сама картинка нигде не хранится. Через дверь
+        // приложения действие не пускается: картинке туда не пройти по размеру.
+        const image = typeof input?.image === "string" ? input.image : "";
+        if (!image) return refuse("empty", "Картинки не вижу: снимок не собрался. Попробуйте ещё раз.");
+        if (image.length > PHOTO_MAX) return refuse("big", "Снимок слишком тяжёлый — такой мне не отправить.");
+        const lay = await room.read(userId, today);
+        if (lay.lost) return refuse("storage", MEMORY_DOWN);
+        const last = lay.shot && typeof lay.shot === "object" ? lay.shot : null;
+        const recent = last ? now() - Number(last.at) >= 0 && now() - Number(last.at) < PHOTO_EVERY_MS : false;
+        const dropMark = () => room.amend(userId, today, (state) => ({ ...state, shot: null, ops: (Array.isArray(state.ops) ? state.ops : []).filter(item => !(Array.isArray(item) && item[0] === once.id)) }));
+        const sentLine = () => spoken(roomLine(turn, "фото") || "Отправила. Снимок у вас в чате.");
+        const going = () => ({ ok: true, do: op, build: BUILD, sent: false, pending: true, line: spoken(roomLine(turn, "фото:идёт") || "Отправляю…"), repeat: true });
+        if (last && once.id && last.id === once.id) {
+          if (last.ok === true) return { ok: true, do: op, build: BUILD, sent: true, line: sentLine(), repeat: true };
+          if (recent) return going();
+          // Отметке больше минуты, а снимок так и не ушёл (вызов оборвался): номер снимается — отправляем заново.
+          await dropMark();
+        } else if (last && recent) {
+          // Другой номер, а прошлый снимок ушёл меньше минуты назад — рано; ещё уходит — второй следом не шлём.
+          if (last.ok !== true) return going();
+          return { ok: true, do: op, build: BUILD, sent: false, early: true, line: spoken(roomLine(turn, "фото:рано") || "Только что отправила. Следующий снимок — через минуту.") };
+        }
+        const seen = await looking({ again: true });
+        if (seen.ok !== true) return seen;
+        const mark = await room.shot(userId, once);
+        if (mark.lost || mark.saved === false) return refuse("storage", NOT_KEPT);
+        if (mark.slow) return refuse("slow", "Не так быстро: я не успеваю. Подождите несколько секунд.");
+        if (mark.repeat) return going();
+        const when = `${dateWords(today)}, ${seen.clock.part}`;
+        const caption = `${roomLine(turn, "фото:подпись", { "когда": when }) || `Комната. ${when}.`}${seen.her?.line ? `\n\n${seen.her.line}` : ""}`;
+        const posted = await roomPhoto(userId, image, caption);
+        if (posted.ok !== true) {
+          await dropMark();
+          return posted.code === "bad" ? refuse("bad_image", "Это не похоже на снимок комнаты — отправлять не стану.")
+            : posted.code === "none" ? refuse("no_send", "Отправить картинку мне сейчас нечем.")
+              : refuse("send", "Не получилось прислать снимок в чат. Напишите мне там что-нибудь — и попробуйте ещё раз.");
+        }
+        await room.amend(userId, today, (state) => (state.shot && state.shot.id === once.id ? { ...state, shot: { ...state.shot, ok: true } } : null));
+        // Разговор один: в чате она помнит, что прислала снимок и что на нём было.
+        await keepThread(turn, "[в комнате] просьба: прислать снимок комнаты в чат", `[прислала в чат снимок комнаты] ${caption}`);
+        return { ok: true, do: op, build: BUILD, sent: true, line: sentLine() };
+      }
       if (op === "say") {
         // Слово ей прямо в комнате (0.55.1; идея 204, шаг первый — сторона сердца; поле для слов на странице — с 0.57.0).
         // Отвечает сама, словарём, как в чате: сначала выученным от хозяина, потом темами `PHRASES.txt` — тем же
         // голосом, с той же памятью о последнем сказанном (`heart:said:`), и разговор ложится в ту же нить, что и
-        // чат (`keepThread`). Чего в словаре нет — говорит, что об этом лучше в чате: ответ модели не укладывается
-        // в срок запроса страницы, это следующий шаг. В чат отсюда ничего не уходит. Умения чата («напомни»,
-        // «нарисуй», «статус») здесь не работают: слова, которые словарь не знает, — тоже «в чат».
+        // чат (`keepThread`). Чего в словаре нет — с 0.61.0 отвечает модель (ниже); выключено настройкой или мысли на
+        // день вышли — говорит, что об этом лучше в чате. В чат отсюда ничего не уходит. Умения чата («напомни»,
+        // «нарисуй», «статус») здесь не работают: такие слова уходят модели как обычная реплика.
         const words = (typeof input?.text === "string" ? input.text : "").replace(/\s+/gu, " ").trim();
         if (!words) return refuse("empty", "Слов не вижу. Напишите — и я отвечу.");
         if (words.length > SAY_MAX) return refuse("long", "Так много сразу я здесь не разберу. Длинное — в чате: там отвечу как следует.");
@@ -526,6 +592,29 @@ export function createRoomDoor(deps) {
         const lay = await room.read(userId, today);
         const slept = !lay.lost && herState(turn, feel, lay, today).key === "сон";
         const yawn = slept ? book.pick("+разбудили", voiceCtx(turn)) ?? "" : "";
+        // 0.61.0 (идея 204, шаг 3): чего нет в словаре — отвечает модель, тем же разговором, что в чате (`roomThought`
+        // в `heart.js`), коротко. Таймеров на платформе нет, прервать долгий ответ нечем, а страница ждёт двадцать
+        // секунд — поэтому вопрос сначала помечается «в работе» (пустой ответ под номером действия), а готовый ответ
+        // ложится в ту же запись. Страница повторила номер: ответ готов — он; ещё нет — `pending` и `wait`, второго
+        // вопроса к модели не будет. Сам вопрос в записи комнаты не хранится — только ответ.
+        if (!found && ROOM_TALK) {
+          const kept = once.id && !lay.lost && lay.word?.id === once.id ? lay.word : null;
+          const waiting = () => ({ ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "слово:думаю") || "Думаю…"), known: false, pending: true, wait: SAY_POLL_S, repeat: true });
+          const gaveUp = () => ({ ok: true, do: op, build: BUILD, line: spoken(roomLine(turn, "слово:долго") || "Не успела ответить. Спросите ещё раз."), known: false, late: true, repeat: true });
+          const fresh = (mark) => now() - Number(mark?.t) >= 0 && now() - Number(mark?.t) < SAY_THINK_MS;
+          if (kept?.a) return { ok: true, do: op, build: BUILD, line: spoken(kept.a), known: false, ...(kept.m === 1 ? { model: true } : {}), repeat: true };
+          if (kept) return fresh(kept) ? waiting() : gaveUp();
+          const mark = await room.word(userId, { ...once, answer: "", wake: slept });
+          { const other = await instead(mark); if (other) return other; }
+          // Тот же номер успел прийти второй раз, пока читалась запись: думает уже тот вызов.
+          if (mark.repeat) return mark.answer ? { ok: true, do: op, build: BUILD, line: spoken(mark.answer), known: false, repeat: true } : fresh(mark.state?.word) ? waiting() : gaveUp();
+          const thought = await roomThought(turn, ctx, words, user?.first_name);
+          const said = thought.text || roomLine(turn, thought.code === "capped" ? "слово:предел" : thought.code === "failed" ? "слово:сбой" : "слово:мимо") || "Об этом лучше в чате: там я отвечу как следует.";
+          const told = yawn ? `${yawn} ${said}` : said;
+          // Ответ — в ту же запись, под тот же номер: страница, которая не дождалась, получит его повтором.
+          await room.amend(userId, today, (state) => (!once.id || state.word?.id === once.id ? { ...state, word: { id: once.id, a: told.slice(0, 600), t: now(), ...(thought.text ? { m: 1 } : {}) } } : null));
+          return { ok: true, do: op, build: BUILD, line: spoken(told), known: false, ...(thought.text ? { model: true } : {}), ...(slept ? { woke: true } : {}) };
+        }
         const raw = yawn ? `${yawn} ${plain}` : plain;
         const done = await room.word(userId, { ...once, answer: raw, wake: slept });
         // Повтор того же номера: тот же ответ, без второй записи в нить.

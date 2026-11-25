@@ -426,7 +426,7 @@ test("словарь 0.40.0: о картинке она отвечает сам�
   // увидел это на Байте: «в тексте перевернулся на спину, а по факту нет»). Поэтому здесь: у каждой реплики — при
   // любом небе, хозяину и гостю — есть картинка, и реплика говорит то, что на этой картинке видно.
   const SEEN = {
-    work: /блокнот/u, work2: /блокнот.*[Рр]учка — у губ/u, tea: /[Сс] кружкой/u, tea2: /[Пп]ью чай/u, tea3: /[Чч]ай, кресло/u, read: /[Чч]итаю в кресле/u,
+    work: /блокнот/u, work2: /блокнот.*[Рр]учка — у губ/u, tea: /[Сс] кружкой/u, tea2: /[Пп]ью чай/u, tea3: /[Чч]ай, кресло/u, tea4: /[Сс] кружкой на подоконнике/u, read: /[Чч]итаю в кресле/u, read2: /[Лл]ежу на ковре с мангой/u,
     play: /[Дд]ирижирую/u, play2: /[Тт]анцую/u, play3: /ленточкой/u, sleep: /плед/u, tired: /[Зз]ева/u, tired2: /плед.*тру глаз/u,
     pout: /спиной|[Оо]твернулась/u, pout2: /скрестив руки/u, jealous: /[Рр]азглядываю/u, jealous2: /[Сс]крестила руки/u,
     // 0.47.0: в кресле — с блокнотом, под пледом с закрытыми глазами, скрестив руки. Слово «в кресле» обязательно:
@@ -446,7 +446,8 @@ test("словарь 0.40.0: о картинке она отвечает сам�
       assert.ok(name && SEEN[name], `${key}: «${line}» — место «${pose}», а картинки для него нет`);
       assert.match(line, SEEN[name], `${key}: «${line}» — не о том, что на картинке «${name}»`);
       // «Читаю» — только у картинки с книгой (0.45.0): у остальных книги в руках нет.
-      assert.doesNotMatch(name === "read" ? line.replace(/[Чч]итаю/u, "") : line, absent, `${key}: «${line}» — этого на картинке нет`);
+      // «Лежу» — только у картинки на ковре с книгой (0.65.0): остальные стоят или сидят в кресле.
+      assert.doesNotMatch(name === "read" ? line.replace(/[Чч]итаю/u, "") : name === "read2" ? line.replace(/[Лл]ежу/u, "") : line, absent, `${key}: «${line}» — этого на картинке нет`);
       // Слова о погоде — только при этой погоде.
       if (sky !== "rain" && sky !== "storm") assert.doesNotMatch(line, /дожд|капл/iu, `${sky}: ${line}`);
       if (sky !== "snow") assert.doesNotMatch(line, /снег|снежин/iu, `${sky}: ${line}`);
@@ -456,7 +457,7 @@ test("словарь 0.40.0: о картинке она отвечает сам�
   // 0.48.0: у эпизодов её дня свои запасы («+комната:день:…») — правила те же: у каждой реплики есть картинка, и
   // говорит реплика о том, что на этой картинке видно; слова о погоде — только при этой погоде.
   const SEEN_DAY = {
-    work: /блокнот/u, work2: /блокнот/u, work3: /[Вв] кресле с блокнотом/u, read: /[Чч]итаю/u, tea: /[Сс] кружкой/u, tea2: /[Пп]ью чай/u, tea3: /кресл/u,
+    work: /блокнот/u, work2: /блокнот/u, work3: /[Вв] кресле с блокнотом/u, read: /[Чч]итаю/u, tea: /[Сс] кружкой/u, tea2: /[Пп]ью чай/u, tea3: /кресл/u, tea4: /[Сс] кружкой на подоконнике/u,
     tidy: /метёлк/u, books: /книги/u, feed: /корм/u,
   };
   for (const [name, stage] of Object.entries(room.EPISODES)) for (const sky of room.SKIES) for (const owner of [true, false]) {
@@ -506,7 +507,7 @@ test("словарь 0.43.0: слова сходятся с картинками
   const names = Object.keys(HER_SPRITES).filter(name => !strides.includes(name)), jackets = names.filter(name => !name.includes("-")), lidded = names.filter(name => SPRITES[name].blink);
   // Числа, которые она называет вслух, — из папки с картинками. Прибавилась картинка — тест напомнит перечитать
   // темы (их список — в шапке блока «СБОРКА 0.44.0» в PHRASES.txt) и назвать новое число здесь.
-  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u };
+  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u, 23: /двадцать три/u, 46: /[Сс]орок шесть/u, 34: /[Тт]ридцать четыре/u, 48: /[Сс]орок восемь/u, 56: /[Пп]ятьдесят шесть/u, 3: /три/u, 36: /[Тт]ридцать шесть/u };
   const word = (count, what) => { assert.ok(WORDS[count], `${what}: ${count} — этого числа словами здесь нет: перечитать темы о картинках и дописать`); return WORDS[count]; };
   for (const topic of ["сколько у тебя поз", "кто тебя рисует"]) {
     assert.match(said(topic), word(names.length, "картинок"), topic);
@@ -516,7 +517,7 @@ test("словарь 0.43.0: слова сходятся с картинками
   assert.match(said("как часто ты моргаешь"), word(lidded.length, "картинок с веками"));
   // Где она моргает — названо словами: у каждой картинки с веками есть своё слово в теме. Новые веки — новое слово.
   // С 0.44.0 веки есть у каждой картинки с открытыми глазами; сидит она в кресле — пуфа в словах больше нет.
-  const LIDS = { tea: /кружк/u, tea3: /в кресле/u, read: /с книгой/u, work: /блокнот/u, work2: /блокнот/u, jealous: /скрещ[её]нными руками/u, jealous3: /скрещ[её]нными руками.*в кресле/u, work3: /блокнот.*в кресле/u, play: /ленточк/u, play3: /ленточк/u, pout2: /дуюсь/u, tired2: /тру глаз/u, tidy: /метёлк/u, books: /стопк/u, feed: /корм/u };
+  const LIDS = { tea: /кружк/u, tea3: /в кресле/u, tea4: /на подоконнике/u, read: /с книгой/u, read2: /на ковре/u, work: /блокнот/u, work2: /блокнот/u, jealous: /скрещ[её]нными руками/u, jealous3: /скрещ[её]нными руками.*в кресле/u, work3: /блокнот.*в кресле/u, play: /ленточк/u, play3: /ленточк/u, pout2: /дуюсь/u, tired2: /тру глаз/u, tidy: /метёлк/u, books: /стопк/u, feed: /корм/u };
   for (const topic of ["как часто ты моргаешь", "ты моргаешь", "на чём ты сидишь", "позы вечером", "ты меняешь позы", "почему ты стоишь", "длина волос"]) {
     assert.doesNotMatch(said(topic).replace(/Пуфа больше нет[^.]*\.|Пуф убрали[^.]*\./gu, ""), /пуф/iu, `${topic}: пуфа в комнате нет — она сидит в кресле`);
   }
@@ -594,7 +595,7 @@ test("она картинкой: у каждого состояния своя �
     const data = HER_SPRITES[name], stands = ["stand", "walk"].includes(data.kind ?? "stand");
     assert.equal(sprite.h >= 800, stands, `${name}: ${sprite.w}×${sprite.h}`);
     assert.ok(stands ? data.tall >= 370 && data.tall <= 400 : data.tall >= 150 && data.tall <= 340, `${name}: рост на рисунке ${data.tall}`);
-    assert.ok(["stand", "crouch", "seat", "floor", "walk"].includes(data.kind ?? "stand"), name);
+    assert.ok(["stand", "crouch", "seat", "floor", "walk", "sill"].includes(data.kind ?? "stand"), name);
     // Что движется рядом и где голова — в долях картинки: внутри неё.
     for (const [fx, fy] of [data.mark?.slice(1), data.head].filter(Boolean)) assert.ok(fx > 0 && fx < 1 && fy > 0 && fy < 1, `${name}: ${fx}, ${fy}`);
     if (sprite.blink) {
@@ -605,7 +606,7 @@ test("она картинкой: у каждого состояния своя �
     }
   }
   // Имя картинки: наряд (кроме куртки) — приставкой через дефис; наряд из списка.
-  assert.deepEqual([...HER_WEARS], ["jacket", "home"]);
+  assert.deepEqual([...HER_WEARS], ["jacket", "home", "pajama"]);
   for (const name of Object.keys(HER_SPRITES)) assert.match(name, new RegExp(`^(?:(?:${HER_WEARS.filter(wear => wear !== "jacket").join("|")})-)?[a-z]+\\d?$`, "u"), name);
   // У каждого состояния — картинки, и каждая картинка кому-то нужна.
   assert.equal(spriteOf({}), null);
@@ -618,13 +619,15 @@ test("она картинкой: у каждого состояния своя �
     first.add(name);
     // И по кругу (прежнее сердце, без распорядка), и по реплике (`beat`): у реплики картинка одна. «Читает» (0.45.0)
     // есть только у реплики: в круг «уюта» она не входит — там у всех поз в руках кружка.
-    for (const part of PARTS) for (const tea of [false, true]) for (const pose of HER_POSES) for (const beat of [false, true]) {
-      const list = spritesOf({ part, her: { pose, key, beat }, tea });
+    // Наряд — по часу (без имени) и названный сердцем (0.70.0: в пижаме нарисовано не всё — остальное она показывает в свитере).
+    for (const part of PARTS) for (const tea of [false, true]) for (const pose of HER_POSES) for (const beat of [false, true]) for (const wear of [null, ...HER_WEARS]) {
+      const worn = wear ? { wear } : {};
+      const list = spritesOf({ part, her: { pose, key, beat, ...worn }, tea });
       assert.ok(list.length >= 1 && new Set(list).size === list.length && list.every(item => Object.hasOwn(HER_SPRITES, item)), `${part}/${pose}/${key}: ${list}`);
       assert.ok(!beat || list.length === 1, `${part}/${pose}/${key}: у реплики картинка одна`);
       // Позы идут по кругу: какой бы ни был счёт, имя — из списка; счёт из чужих рук — как ноль.
-      for (const turn of [0, 1, 2, 5, 17]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat }, tea }), list[turn % list.length]);
-      for (const turn of [-1, 1.5, "2", null, NaN]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat }, tea }), list[0]);
+      for (const turn of [0, 1, 2, 5, 17]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat, ...worn }, tea }), list[turn % list.length]);
+      for (const turn of [-1, 1.5, "2", null, NaN]) assert.equal(spriteOf({ part, her: { pose, key, turn, beat, ...worn }, tea }), list[0]);
       // Все позы одного списка — в одном наряде: она не переодевается, сменив позу.
       assert.equal(new Set(list.map(item => (item.includes("-") ? item.split("-")[0] : "jacket"))).size, 1, `${part}/${pose}/${key}: ${list}`);
       for (const item of list) used.add(item);
@@ -632,7 +635,7 @@ test("она картинкой: у каждого состояния своя �
   }
   // «Идёт» — не поза состояния: ею она переходит от места к месту (0.44.0). В списки поз она не попадает.
   const strides = Object.keys(HER_SPRITES).filter(name => HER_SPRITES[name].kind === "walk");
-  assert.deepEqual(strides.sort(), ["home-walk", "walk"]);
+  assert.deepEqual(strides.sort(), ["home-walk", "pajama-walk", "walk"]);
   assert.deepEqual([...used].sort(), Object.keys(HER_SPRITES).filter(name => !strides.includes(name)).sort());
   assert.equal(first.size, Object.keys(MOODS).length, "у двух состояний одна первая картинка — их не отличить");
   // Наряд: вечером и ночью — домашний, но только там, где у него есть картинка этого состояния; названный
@@ -692,7 +695,8 @@ test("она картинкой: у каждого состояния своя �
   // равно») их нет и не будет; «идёт» смотрит в сторону — ей они не нужны.
   const lidded = Object.keys(SPRITES).filter(name => SPRITES[name].blink).sort();
   // 0.48.0 — тридцать: с метёлкой, со стопкой книг и с пакетом корма — в обоих нарядах.
-  assert.deepEqual(lidded, ["books", "feed", "home-books", "home-feed", "home-jealous", "home-jealous3", "home-play", "home-play3", "home-pout2", "home-read", "home-tea", "home-tea3", "home-tidy", "home-tired2", "home-work", "home-work2", "home-work3", "jealous", "jealous3", "play", "play3", "pout2", "read", "tea", "tea3", "tidy", "tired2", "work", "work2", "work3"]);
+  assert.deepEqual(lidded, ["books", "feed", "home-books", "home-feed", "home-jealous", "home-jealous3", "home-play", "home-play3", "home-pout2", "home-read", "home-read2", "home-tea", "home-tea3", "home-tea4", "home-tidy", "home-tired2", "home-work", "home-work2", "home-work3", "jealous", "jealous3", "pajama-tea", "pajama-tired2", "play", "play3", "pout2", "read", "read2", "tea", "tea3", "tea4", "tidy", "tired2", "work", "work2", "work3"]);
+  // 0.70.0 — в пижаме веки пока у двух стоящих поз: на сидящие с куртки не легли (кайма 11–15).
   // Моргает в куртке — моргает и в свитере: веки пары переносятся без новой картинки (`blink … by=head`).
   for (const name of lidded.filter(item => !item.includes("-"))) assert.ok(lidded.includes(`home-${name}`), `home-${name}: веки есть у пары в куртке — перенести`);
   // У картинки с «веками» определений два: она сама и заплатка на глаза — в точках самой картинки.
@@ -760,9 +764,9 @@ test("она картинкой: у каждого состояния своя �
   }
   // Каждая картинка встаёт в комнату: на рисунке, с местом нажатия выше полосы с её словами.
   for (const part of PARTS) for (const name of Object.keys(HER_SPRITES).filter(item => HER_SPRITES[item].kind !== "walk")) {
-    const key = Object.keys(MOODS).find(mood => [false, true].some(tea => ["jacket", "home"].some(wear => spritesOf({ part, her: { pose: "desk", key: mood, wear }, tea }).includes(name))));
+    const key = Object.keys(MOODS).find(mood => [false, true].some(tea => HER_WEARS.some(wear => spritesOf({ part, her: { pose: "desk", key: mood, wear }, tea }).includes(name))));
     // Картинка только у реплики («читает»): её состояние и место — из таблицы реплик (`lookOf`).
-    const told = key ? null : Object.keys(MOODS).flatMap(mood => HER_POSES.map(pose => [mood, pose])).find(([mood, pose]) => scene.lookOf(mood, pose) === name.replace(/^home-/u, ""));
+    const told = key ? null : Object.keys(MOODS).flatMap(mood => HER_POSES.map(pose => [mood, pose])).find(([mood, pose]) => scene.lookOf(mood, pose) === name.replace(/^(?:home|pajama)-/u, ""));
     assert.ok(key || told, name);
     const wear = name.includes("-") ? name.split("-")[0] : "jacket", tea = Boolean(key) && !spritesOf({ part, her: { pose: "desk", key, wear } }).includes(name);
     const list = key ? spritesOf({ part, her: { pose: "desk", key, wear }, tea }) : [name];
@@ -855,8 +859,10 @@ test("она картинкой: Байта она собой не закрыв�
     if (stand.x !== home && (data.kind ?? "stand") === "stand" && !data.legs) moved.add(place);
   }
   // Встаёт она у того, о чём её слова: мест несколько, и все они в середине комнаты — миска, шкаф, стол и чайник открыты.
-  // Кресло (196) — там она сидит; середина ковра (218) — там спит, закутавшись в плед.
-  assert.deepEqual([...seen].sort((a, b) => a - b), [160, 196, 218, 226, 252]);
+  // Кресло (196) — там она сидит; середина ковра (218) — там спит, закутавшись в плед. 224 (0.65.0) — место слов «лежу
+  // на ковре» у вида без распорядка: такой вид шлёт только старая запись, и она в нём стоит с кружкой у ковра. Сама
+  // картинка «на ковре с книгой» приходит со знаком распорядка (`beat`) — её место проверяет тест «0.65.0».
+  assert.deepEqual([...seen].sort((a, b) => a - b), [160, 196, 218, 224, 226, 252]);
   // Со своего места она (стоящая прямо) уходит, только когда иначе закрыла бы Байта: он в кресле, под пледом или
   // на подоконнике. Миска, стол, коробка, шкаф и его подушка в стороне — из-за них она не двигается; «у её ног» он
   // садится с той стороны, где свободно; под большим креслом (0.44.0) места хватает — глаза видны сбоку от её ног.
@@ -1420,7 +1426,7 @@ test("страница 0.41.0: позы, погладить, коробка, с�
   assert.equal(logic.demoLook(13, { sky: "snow" }).sky, "snow");
   assert.equal(logic.demoLook(13, {}).sky, "rain");
   assert.ok(logic.demoLook(13, {}).box.line);
-  assert.equal(logic.PAGE, "22");
+  assert.equal(logic.PAGE, "33");
 });
 
 test("адрес страницы: телефон называет его с пробуждением — сердце запоминает, ставит кнопку в меню и говорит о комнате в «статус»", async () => {
@@ -1608,7 +1614,9 @@ test("страница: папка уходит на платформу файл
   const folder = new URL("miniapp/", ROOT);
   // 0.49.0: альбом воспоминаний — отдельным модулем (`album.js`): грузится, когда его открыли.
   // 0.53.0: комната картинкой — папка `room` (два модуля: «день» и «пасмурно»; `tests/painted.test.mjs`).
-  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "room", "scene.js", "sound.js"], "в папке — только страница: всё, что в ней лежит, становится публичным");
+  // 0.64.0: её голос — папка `voice` (по модулю на записанную реплику; тест «0.64.0, её голос…» ниже).
+  // 0.67.0: строки словаря её голосом — папка `say` (по модулю на строку и указатель; тест «0.67.0: строки комнаты…»).
+  assert.deepEqual(readdirSync(folder).sort(), ["album.js", "app.js", "her", "index.html", "logic.js", "room", "say", "scene.js", "sound.js", "voice"], "в папке — только страница: всё, что в ней лежит, становится публичным");
   const page = ["app.js", "index.html", "logic.js", "scene.js"];
   const total = page.reduce((sum, name) => sum + statSync(new URL(name, folder)).size, 0);
   // Мера — о скорости, а не о платформе: эти четыре файла нужны, чтобы комната открылась. С 0.41.0 в них позы,
@@ -1626,9 +1634,11 @@ test("страница: папка уходит на платформу файл
   // без них — 306 (сжатые — 79 против 132; сжимает ли платформа текст, не проверено). Взгляд в сторону и ветер
   // (0.51.0) — уже в этих 350: с ними без комментариев 309.
   const sent = page.reduce((sum, name) => { const text = readFileSync(new URL(name, folder), "utf8"); return sum + Buffer.byteLength(name.endsWith(".js") ? slimCode(text) : text); }, 0);
-  assert.ok(sent < 350_000, `страница без комментариев весит ${sent} байт — открываться должна сразу`);
+  // С 0.67.0 (24.11.2026) — позы на ковре и на подоконнике со своими слоями (0.65.0, 0.66.0), сказанное вслух в
+  // словах под рисунком и строки словаря её голосом: с 350 до 356 КБ (с комментариями — с 560 до 570).
+  assert.ok(sent < 356_000, `страница без комментариев весит ${sent} байт — открываться должна сразу`);
   // Не облегчилась (телефон об этом скажет) — уйдёт как лежит: и такая не должна разбухать незаметно.
-  assert.ok(total < 560_000, `страница с комментариями весит ${total} байт`);
+  assert.ok(total < 570_000, `страница с комментариями весит ${total} байт`);
   assert.ok(statSync(new URL("sound.js", folder)).size < 20_000, "звук — маленький модуль: шум и тон делает сам телефон");
   // Её картинки (0.40.0) — по модулю на спрайт, и ничего больше. Грузится только та, что нужна сейчас (и следующая
   // поза — заранее), поэтому мера у каждой своя; все вместе — чтобы папка не разбухала незаметно: предел растёт
@@ -1640,7 +1650,7 @@ test("страница: папка уходит на платформу файл
   for (const [index, name] of pictures.entries()) assert.ok(weights[index] < 76_000, `картинка ${name} весит ${weights[index]} байт`);
   assert.ok(weights.reduce((sum, size) => sum + size, 0) < pictures.length * 56_000, `картинки вместе весят ${weights.reduce((sum, size) => sum + size, 0)} байт`);
   for (const name of pictures) assert.match(read(`miniapp/her/${name}`), /^\/\/ Спрайт Аи «[a-z0-9-]+»: собран командой «bash scripts\/verify\.sh sprite …» \(scripts\/room-sprite\.mjs\)\. Руками не править\.\nexport default \{ w: \d+, h: \d+, cx: [\d.]+, (?:(?:blink|smile|lookl|lookr): \{ x: \d+, y: \d+, w: \d+, h: \d+, src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \}, ){0,4}src: "data:image\/webp;base64,[A-Za-z0-9+/=]+" \};\n$/u, name);
-  const files = [...page, ...pictures.map(name => `her/${name}`), ...readdirSync(new URL("room/", folder)).map(name => `room/${name}`)];
+  const files = [...page, ...pictures.map(name => `her/${name}`), ...readdirSync(new URL("room/", folder)).map(name => `room/${name}`), ...readdirSync(new URL("voice/", folder)).map(name => `voice/${name}`)];
 
   const html = read("miniapp/index.html");
   assert.match(html, /<script src="https:\/\/telegram\.org\/js\/telegram-web-app\.js"><\/script>/u, "без этого скрипта Telegram не даёт странице ни человека, ни связи");
@@ -1875,7 +1885,7 @@ test("страница: папка уходит на платформу файл
   // С 0.48.0 комната меняется по частям (`putInside`); рядом прежний `scene.js` без `drawParts` — целиком, как раньше.
   assert.match(app, /const fresh = putInside\(view, options, renew\);/u);
   assert.match(app, /if \(typeof scene\.drawParts !== "function"\) \{\s+inside\.innerHTML = drawInside\(view, options\);/u);
-  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", "`./room/${name}.js?again=${attempt}`", "`./room/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, картинки комнаты (0.53.0), звук и альбом (0.49.0)");
+  assert.deepEqual([...app.matchAll(/\bimport\(([^)]+)\)/gu)].map(found => found[1]), ['"./sound.js"', "`./voice/${name}.js`", '"./say/index.js"', "`./say/${name}.js`", "`./her/${name}.js?again=${attempt}`", "`./her/${name}.js`", "`./room/${name}.js?again=${attempt}`", "`./room/${name}.js`", '"./album.js"'], "страница грузит по ходу дела только её картинки, картинки комнаты (0.53.0), звук, её реплики (0.64.0) и альбом (0.49.0)");
   // Позы (0.41.0): смена — только когда следующая картинка уже здесь; новые имена рисунка и логики перед вызовом
   // проверяются (рядом может лежать прежняя копия любого из файлов).
   assert.match(app, /const canTurn = canPaint && typeof spritesOf === "function" && typeof nextTurn === "function";/u);
@@ -2093,7 +2103,8 @@ test("0.57.0, слово ей: под её словами — поле и кно
   assert.deepEqual([lost.tone, lost.retry, lost.busy], ["warn", true, ""], "нет связи — под словами «Попробовать ещё раз»");
   // Витрина: словаря в ней нет — на приветствие она отвечает, об остальном говорит как сердце: «в чате».
   const hello = logic.demoSay(state, "  Привет! ");
-  assert.deepEqual([hello.ok, hello.do, hello.known, hello.line], [true, "say", true, "Привет. Заходите — только Байта не разбудите."]);
+  assert.deepEqual([hello.ok, hello.do, hello.known, hello.line], [true, "say", true, "Привет. Заходите — я вам рада."]);
+  assert.doesNotMatch(hello.line, /Байт/u, "о Байте витрина здесь не говорит: спит он или нет, она не знает (0.60.0)");
   const other = logic.demoSay(state, "что такое квазар?");
   assert.deepEqual([other.ok, other.known], [true, false]);
   assert.ok(readFileSync(new URL("../PHRASES.txt", import.meta.url), "utf8").includes(`\n${other.line}\n`), "слова «мимо» на витрине — из запаса «+комната:слово:мимо»");
@@ -2101,10 +2112,402 @@ test("0.57.0, слово ей: под её словами — поле и кно
   assert.deepEqual([logic.demoSay(state, "   ").ok, logic.demoSay(state, "   ").code], [false, "empty"]);
   // Страница: шлёт `say` со словами; повтор кнопкой «Попробовать ещё раз» — те же слова; ответ пришёл — поле пустое;
   // поле видно при открытой комнате и прячется, пока она спрашивает про чай; пока идёт запрос, гаснет кнопка, не поле.
-  assert.match(page, /const result = state\.demo \? logic\.demoSay\(state, words\) : await send\(\{ do: "say", text: words \}, \(\) => talk\(\)\);/u);
+  assert.match(page, /const ask = async \(\) => await send\(\{ do: "say", text: words \}, \(\) => talk\(\)\);\n  let result = state\.demo \? logic\.demoSay\(state, words\) : await ask\(\);/u);
   assert.match(page, /\$\("words"\)\?\.addEventListener\("submit", \(event\) => \{ event\.preventDefault\(\); talk\(\); \}\);/u);
   assert.match(page, /form\.hidden = !state\.ready \|\| state\.asking === "tea"/u);
   assert.match(page, /if \(result\?\.ok === true\) field\.value = "";/u);
   assert.match(page, /button\.disabled = Boolean\(state\.busy\) \|\| acting;/u);
   assert.doesNotMatch(page, /\$\("word"\)\.disabled|field\.disabled/u, "поле не гаснет: иначе закрылась бы клавиатура");
+});
+
+test("0.60.0, витрина: после корма Байт ест из полной миски — как у сердца («наедается»)", () => {
+  // Утро на витрине: шаги по десять минут — блокнот, корм, метёлка.
+  const pours = logic.demoLook(7, { minute: 12 });
+  assert.deepEqual([pours.her.pose, pours.cat.shape, pours.cat.place, pours.bowl], ["feed", "eat", "near", undefined]);
+  const meal = logic.demoLook(7, { minute: 22 });
+  assert.deepEqual([meal.her.pose, meal.cat.shape, meal.cat.place, meal.cat.key, meal.bowl], ["dust", "eat", "bowl", "сыт", "full"]);
+  assert.ok(readFileSync(new URL("../PHRASES.txt", import.meta.url), "utf8").includes(`\n${meal.cat.line}\n`), "слова о нём на витрине — из запаса «+комната:байт:ест»");
+  const state = logic.applyLook(logic.blank(7), meal, 0);
+  assert.deepEqual([logic.viewOf(state).fed, state.fed, state.served], [true, false, true]);
+  // Между сверками витрина помнит сделанную заботу, а миску после её корма берёт из свежего ответа: доел — пуста.
+  const later = logic.demoKept(state, logic.applyLook(logic.blank(7), logic.demoLook(7, { minute: 32 }), 0));
+  assert.deepEqual([later.served, logic.viewOf(later).fed], [false, false]);
+  // Забота посреди его завтрака на витрине корм из миски не убирает.
+  assert.equal(logic.viewOf(logic.applyCare(state, "tea", logic.demoCare(state, "tea"))).fed, true);
+  // Позу или Байта назвали в адресе (снимки) — никто ничего не ест сам.
+  assert.equal(logic.demoLook(7, { minute: 22, cat: "sit.rug" }).bowl, undefined);
+  assert.equal(logic.demoLook(8, { minute: 22 }).bowl, undefined);
+});
+
+test("0.61.0, слово ей: пока она думает (`pending`), страница спрашивает тот же номер снова; не дождалась за минуту — говорит об этом", () => {
+  const page = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  // Номер последнего действия помнится; повторный вопрос идёт с ним же — сердце второй раз модель не спрашивает.
+  assert.match(page, /lastSent = \{ op: name, id \};/u);
+  assert.match(page, /for \(let round = 0; result\?\.ok === true && result\.pending === true && round < SAY_ROUNDS && lastSent\?\.op === "say"; round \+= 1\) \{/u);
+  assert.match(page, /sameId = \{ op: "say", id: lastSent\.id \};\n    result = await ask\(\);/u);
+  assert.match(page, /await sleep\(Math\.max\(1, Math\.min\(10, Number\(result\.wait\) \|\| 3\)\) \* 1000\);/u);
+  // Пока ждёт — под рисунком её «думаю», кнопка погашена.
+  assert.match(page, /state = \{ \.\.\.logic\.applySay\(state, result\), busy: "say" \};/u);
+  const state = { ...logic.applyLook(logic.blank(12), logic.demoLook(12), 0), busy: "say" };
+  const thinking = logic.applySay(state, { ok: true, do: "say", line: "Думаю… Сейчас отвечу.", known: false, pending: true, wait: 3 });
+  assert.equal(thinking.said, "Думаю… Сейчас отвечу.");
+  // Ответ модели встаёт под рисунком как любой её ответ.
+  assert.equal(logic.applySay(thinking, { ok: true, do: "say", line: "Квазар — ядро далёкой галактики.", known: false, model: true }).said, "Квазар — ядро далёкой галактики.");
+  // Не дождалась: её слова, без пометки «нет связи» и без кнопки «ещё раз» — вопрос остаётся в поле.
+  assert.match(page, /if \(result\?\.ok === true && result\.pending === true\) result = \{ ok: false, code: "late", text: logic\.SAY_LATE \};/u);
+  const late = logic.applySay(thinking, { ok: false, code: "late", text: logic.SAY_LATE });
+  assert.deepEqual([late.said, late.retry, late.down, late.busy], [logic.SAY_LATE, false, false, ""]);
+  assert.match(logic.SAY_LATE, /не успела/u);
+});
+
+test("0.62.0, снимок в чат (165): в альбоме — кнопка «Прислать в чат»; страница рисует комнату картинкой JPEG и шлёт сердцу `photo`; на витрине — слова, что слать некому", () => {
+  const page = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  const album = readFileSync(new URL("../miniapp/album.js", import.meta.url), "utf8");
+  assert.match(album, /if \(typeof post === "function"\) tools\.append\(button\("Прислать в чат", "main", \{ post: "1" \}\)\);/u);
+  assert.match(album, /else if \(pressed\.dataset\.post && typeof post === "function"\) post\(\);/u);
+  assert.equal((page.match(/\{ thumb: thumbOf, gift: give, snap: keep, post: mail, close: closeAlbum \}/gu) ?? []).length, 2);
+  // Картинка — тот же рисунок, что у снимка в альбоме, через холст: JPEG вдвое крупнее рисунка.
+  assert.match(page, /const src = await thumbOf\(view\), picture = new Image\(\);/u);
+  assert.match(page, /if \(typeof picture\.decode === "function"\) await picture\.decode\(\)\.catch\(\(\) => \{\}\);/u);
+  assert.match(page, /canvas\.toDataURL\("image\/jpeg", quality\)/u);
+  assert.match(page, /const view = viewOf\(state\), image = await shotOf\(view, 2, 0\.82\);/u);
+  assert.match(page, /const post = async \(image\) => await send\(\{ do: "photo", image \}, \(\) => mail\(\)\);/u);
+  // Отказ пришёл не от сердца — ещё раз, картинкой поменьше (после тайм-аута — нет: сердце могло её получить).
+  assert.match(page, /if \(image && result\?\.ok !== true && result\?\.build == null && result\?\.code !== "timeout" && !document\.hidden\) \{\n      const small = await shotOf\(view, 1\.2, 0\.7\);/u);
+  const state = { ...logic.applyLook(logic.blank(12), logic.demoLook(12), 0), busy: "photo" };
+  const sent = logic.applyPhoto(state, { ok: true, do: "photo", sent: true, line: "Отправила. Снимок у вас в чате." });
+  assert.deepEqual([sent.said, sent.busy, sent.retry, sent.down], ["Отправила. Снимок у вас в чате.", "", false, false]);
+  // Отказ по делу — без «нет связи» и без «ещё раз»; Telegram не принял — «ещё раз» есть, «нет связи» нет.
+  for (const code of ["empty", "big", "bad_image", "no_send", "picture"]) {
+    const told = logic.applyPhoto(state, { ok: false, code, text: "нет" });
+    assert.deepEqual([told.said, told.retry, told.down, told.busy], ["нет", false, false, ""], code);
+  }
+  const closed = logic.applyPhoto(state, { ok: false, code: "send", text: "Не получилось." });
+  assert.deepEqual([closed.retry, closed.down], [true, false]);
+  // Связь оборвалась — как у любого действия: «нет связи» и «ещё раз».
+  const lost = logic.applyPhoto(state, { ok: false, code: "timeout", text: "Комната не ответила." });
+  assert.deepEqual([lost.retry, lost.down], [true, true]);
+  // Витрина: слать некому — она говорит об этом, а не молчит.
+  const demo = logic.demoPhoto();
+  assert.deepEqual([demo.ok, demo.sent], [true, false]);
+  assert.match(demo.line, /На витрине снимок в чат не уходит/u);
+  assert.match(logic.PHOTO_FAILED, /Снимок не получился/u);
+});
+
+test("0.64.0, её голос (211; сообщение 80: «Давай эту, вроде это лучший вариант»): реплики лежат модулями `voice/` — по одной на файл, mp3; `voiceFor` выбирает реплику по событию и молчит, когда она спит, обижена или идёт тихий час", async () => {
+  const folder = new URL("../miniapp/voice/", import.meta.url);
+  const names = readdirSync(folder).map(name => name.replace(/\.js$/u, "")).sort();
+  const awake = { ready: true, part: "вечер", her: { key: "уют", pose: "chair" }, quiet: 0 };
+  // Каждая записанная реплика кому-то нужна, и каждая названная — записана: в папке ровно то, что может прозвучать.
+  const used = new Set();
+  const EVENTS = ["greet", "back", "pat", "tea", "gift", "call", "cat", "plant", "woke", "dark"];
+  for (const event of EVENTS) for (const part of scene.PARTS) for (let count = 0; count < 6; count += 1) used.add(logic.voiceFor(event, { ...awake, part }, count));
+  used.delete("");
+  assert.deepEqual([...used].sort(), names);
+  assert.ok(names.length >= 15 && names.length <= 40, String(names.length));
+  let total = 0;
+  const said = new Set();
+  for (const name of names) {
+    const file = readFileSync(new URL(`${name}.js`, folder), "utf8");
+    assert.match(file, /^\/\/ Реплика Аи «[^»\n]+»: её голос \(сборка 0\.64\.0\), [^\n]+ Руками не править\.\nexport default \{ text: "[^"\n]+", ms: \d+, src: "data:audio\/mpeg;base64,[A-Za-z0-9+/]+=*" \};\n$/u, name);
+    const line = (await import(`../miniapp/voice/${name}.js`)).default;
+    assert.match(line.text, /^[А-ЯЁ][а-яё, ]+\.$/u, `${name}: ${line.text}`);
+    assert.ok(file.startsWith(`// Реплика Аи «${line.text}»`), name);
+    said.add(line.text);
+    const bytes = Buffer.from(line.src.slice(line.src.indexOf(",") + 1), "base64");
+    // Кадр MPEG-1 Layer III: синхрослово в первых двух байтах.
+    assert.deepEqual([bytes[0], bytes[1] & 0xfe], [0xff, 0xfa], name);
+    // Длина записи сходится с её весом: 64 кбит/с — восемь тысяч байт в секунду.
+    assert.ok(line.ms >= 500 && line.ms <= 3000, `${name}: ${line.ms} мс`);
+    assert.ok(bytes.length / 8 > line.ms * 0.9 && bytes.length / 8 < line.ms * 1.25, `${name}: ${bytes.length} байт на ${line.ms} мс`);
+    assert.ok(file.length < 24_000, `${name}: модуль весит ${file.length}`);
+    total += file.length;
+  }
+  assert.equal(said.size, names.length, "двух одинаковых реплик нет");
+  assert.ok(total < 400_000, `все реплики вместе весят ${total}`);
+
+  // Здоровается по времени суток; варианты идут по кругу.
+  assert.deepEqual(scene.PARTS.map(part => logic.voiceFor("greet", { ...awake, part })), ["morning", "day", "evening", "night"]);
+  assert.deepEqual([0, 1, 2, 3, 4].map(count => logic.voiceFor("pat", awake, count)), ["pleased", "thanks", "glad", "pleased", "thanks"]);
+  assert.deepEqual([logic.voiceFor("tea", awake, 0), logic.voiceFor("tea", awake, 1), logic.voiceFor("gift", awake), logic.voiceFor("call", awake), logic.voiceFor("cat", awake, 1), logic.voiceFor("plant", awake, 7), logic.voiceFor("back", awake)],
+    ["tea", "tasty", "pretty", "come", "catthanks", "plant", "back"]);
+  // Молчит: спит, обижена, ревнует; тихий час; вышла переодеться; комната не открыта; незнакомое событие.
+  for (const key of ["сон", "обида", "ревность"]) for (const event of EVENTS.filter(name => name !== "woke")) assert.equal(logic.voiceFor(event, { ...awake, part: "ночь", her: { key, face: "drowsy" } }), "", `${key}, ${event}`);
+  for (const quiet of [{ ...awake, quiet: 60_000 }, { ...awake, away: true }, { ...awake, ready: false }, { ready: true, her: null }, null]) for (const event of ["greet", "pat", "dark"]) assert.equal(logic.voiceFor(event, quiet), "");
+  for (const event of ["нет такого", "constructor", "", undefined]) assert.equal(logic.voiceFor(event, awake), "");
+  // Слово её разбудило: говорит, хотя по записи страницы она ещё спит (рисунок перечитается следом).
+  assert.equal(logic.voiceFor("woke", { ...awake, her: { key: "сон" } }), "awake");
+  // «Спокойной ночи» — лампу гасят ночью или когда она клюёт носом; вечером и днём — молчит.
+  assert.deepEqual([logic.voiceFor("dark", { ...awake, part: "ночь" }), logic.voiceFor("dark", { ...awake, her: { key: "устала", face: "drowsy" } }), logic.voiceFor("dark", awake), logic.voiceFor("dark", { ...awake, part: "день" })], ["goodnight", "goodnight", "", ""]);
+  assert.equal(logic.VOICE_GAP_MS, 4000);
+
+  // Страница: модуль реплики грузится по имени, только при включённом звуке; события — те, что названы в `voiceFor`.
+  const app = readFileSync(new URL("../miniapp/app.js", import.meta.url), "utf8");
+  assert.match(app, /async function speak\(event\) \{\n {2}if \(!soundOn \|\| typeof sound\?\.voice !== "function" \|\| typeof logic\.voiceFor !== "function"\) return false;/u);
+  assert.match(app, /await import\(`\.\/voice\/\$\{name\}\.js`\)/u);
+  const called = [...app.matchAll(/speak\((?:"([a-z]+)"|name === "tea" \? "tea" : name === "water" \? "plant" : "cat")\)/gu)].map(found => found[1] ?? "tea plant cat").join(" ").split(" ").sort();
+  assert.deepEqual(called, [...EVENTS].sort(), "каждое событие зовётся со страницы ровно один раз");
+});
+
+test("0.64.0, её голос звучит через звук комнаты: запись расшифровывается один раз; звук выключен — молчит; пока говорит — вторую не начинает", async () => {
+  const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {}, cancelScheduledValues() {} });
+  const log = [];
+  const node = (kind) => ({ kind, type: "", gain: param(), frequency: param(), Q: param(), detune: param(), playbackRate: param(), buffer: null, loop: false, connect(to) { return to; }, disconnect() {}, start(at) { log.push([kind, at, this.buffer]); }, stop() {} });
+  let decoded = 0, broken = false;
+  class FakeAudio {
+    constructor() {
+      this.currentTime = 10; this.state = "suspended"; this.sampleRate = 8000; this.destination = node("out");
+      FakeAudio.made = new Proxy(this, { get: (target, name) => (name in target ? target[name] : String(name).startsWith("create") ? () => node(String(name)) : undefined) });
+      return FakeAudio.made;
+    }
+    resume() { this.state = "running"; return Promise.resolve(); }
+    suspend() { this.state = "suspended"; return Promise.resolve(); }
+    createBuffer(channels, length) { const data = new Float32Array(length); return { length, getChannelData: () => data }; }
+    decodeAudioData(bytes, done, fail) { decoded += 1; if (broken) { fail(new Error("не запись")); return Promise.reject(new Error("не запись")); } const buffer = { duration: 1.2, bytes: bytes.byteLength }; done(buffer); return Promise.resolve(buffer); }
+  }
+  const kept = globalThis.AudioContext;
+  globalThis.AudioContext = FakeAudio;
+  const { createSound } = await import("../miniapp/sound.js");
+  const sound = createSound();
+  try {
+    const voices = () => log.filter(([kind, , buffer]) => kind === "createBufferSource" && buffer?.duration === 1.2);
+    assert.equal(await sound.voice("thanks", new ArrayBuffer(8)), false, "звук не включён — молчит и запись не трогает");
+    assert.equal(decoded, 0);
+    assert.equal(await sound.on("calm"), true);
+    assert.deepEqual([sound.knows("thanks"), await sound.voice("thanks")], [false, false], "записи ещё нет — по одному имени не скажет");
+    assert.equal(await sound.voice("thanks", new ArrayBuffer(8)), true);
+    assert.deepEqual([sound.knows("thanks"), decoded, voices().length], [true, 1, 1]);
+    assert.ok(voices()[0][1] >= 10 && voices()[0][1] < 10.1, "начинает сразу");
+    // Пока говорит — вторая не начинается (и её запись не расшифровывается).
+    assert.equal(await sound.voice("glad", new ArrayBuffer(8)), false);
+    assert.deepEqual([decoded, voices().length, sound.knows("glad")], [1, 1, false]);
+    // Договорила — та же реплика звучит сразу, без новой расшифровки.
+    FakeAudio.made.currentTime = 12;
+    assert.equal(await sound.voice("thanks"), true);
+    assert.deepEqual([decoded, voices().length], [1, 2]);
+    // Строка словаря (0.67.0): не ждёт тишины — встаёт в очередь за репликой; в памяти не остаётся.
+    assert.equal(await sound.voice("l0123abcd", new ArrayBuffer(8), true), true);
+    assert.deepEqual([decoded, voices().length, sound.knows("l0123abcd")], [2, 3, false]);
+    assert.ok(Math.abs(voices()[2][1] - 13.43) < 0.01, `строка начинается, когда договорит реплика: ${voices()[2][1]}`);
+    // Пока звучит строка, реплика молчит; по одному имени строка не скажется — запись у неё всякий раз своя.
+    FakeAudio.made.currentTime = 14;
+    assert.deepEqual([await sound.voice("thanks"), await sound.voice("l0123abcd", null, true)], [false, false]);
+    // Запись не разобралась — тишина, а не ошибка; звук комнаты продолжается.
+    FakeAudio.made.currentTime = 16;
+    broken = true;
+    assert.equal(await sound.voice("glad", new ArrayBuffer(8)), false);
+    assert.deepEqual([sound.knows("glad"), sound.state()], [false, "running"]);
+    broken = false;
+    // Звук выключили — молчит.
+    sound.off();
+    FakeAudio.made.state = "suspended";
+    assert.equal(await sound.voice("thanks"), false);
+  } finally {
+    try { sound.off(); } catch { /* уже выключен */ }
+    if (kept === undefined) delete globalThis.AudioContext; else globalThis.AudioContext = kept;
+  }
+});
+
+test("0.65.0: лежит на ковре с книгой — картинка в обоих нарядах, место на ковре, Байт рядом не закрыт; спит она по-прежнему в пледе", () => {
+  // Слова → место → картинка: «лежу на ковре с мангой» — не кресло, хотя в словах есть «с мангой».
+  const line = pool("она:уют").find(text => /на ковре/u.test(text));
+  assert.ok(line, "в запасе «уют» есть реплика о ковре");
+  assert.equal(room.herPose(line, "уют"), "lie");
+  assert.equal(room.herPose("Читаю в кресле. Глава такая, что не оторваться.", "уют"), "read");
+  assert.equal(scene.lookOf("уют", "lie"), "read2");
+  assert.equal(scene.lookOf("сон", "lie"), "sleep");
+  // Картинка — «на полу», как у спящей, в обоих нарядах, с веками; пара в свитере — те же числа.
+  for (const name of ["read2", "home-read2"]) {
+    assert.equal(HER_SPRITES[name].kind, "floor", name);
+    assert.ok(SPRITES[name].blink, `${name}: веки`);
+    assert.ok(SPRITES[name].w > SPRITES[name].h * 1.6, `${name}: лежит — картинка шире, чем выше`);
+  }
+  assert.deepEqual(HER_SPRITES["home-read2"], HER_SPRITES.read2);
+  for (const [part, name] of [["день", "read2"], ["вечер", "home-read2"], ["ночь", "home-read2"]]) for (const [shape, place] of [["sit", "near"], ["curl", "pillow"], ["lie", "rug"], ["sit", "sill"], ["lie", "chair"], ["eat", "bowl"]]) {
+    const view = { part, her: { pose: "lie", key: "уют", beat: true }, cat: { shape, place, key: "сыт" }, plant: "wet", things: [] }, label = `${part} · ${shape}.${place}`;
+    assert.deepEqual(spritesOf(view), [name], label);
+    const stand = spriteStand(view);
+    assert.equal(stand.name, name, label);
+    assert.equal(stand.x, HER_SPRITES.read2.spot, label);
+    assert.ok(stand.hidden <= 0.15, `${label}: Байт закрыт на ${Math.round(stand.hidden * 100)} %`);
+    const zones = zonesOf(drawInside(view, PAINTED)), her = zones.find(zone => zone.id === "her"), head = zones.find(zone => zone.id === "pat"), pet = zones.find(zone => zone.id === "cat");
+    assert.ok(her && head && pet, label);
+    // Вся она — на рисунке и выше полосы с её словами; лежит на ковре, а не на шкафу и не на столе.
+    assert.ok(her.x >= 40 && her.x + her.w <= 360 && her.y >= 330 && her.y + her.h <= 500, `${label}: она ${JSON.stringify(her)}`);
+    assert.ok(head.y + head.h <= 480 && head.x >= her.x && head.x + head.w <= her.x + her.w, `${label}: голова ${JSON.stringify(head)}`);
+    assert.ok(pet.y + pet.h / 2 < 490, `${label}: место Байта ${JSON.stringify(pet)}`);
+  }
+  // Спящая — на прежнем месте и прежней ширины: мерка «половина длины» у неё не записана.
+  const asleep = spriteStand({ part: "ночь", her: { pose: "nap", key: "сон", beat: true }, cat: { shape: "curl", place: "pillow", key: "спит" }, plant: "wet", things: ["плед"] });
+  assert.equal(asleep.x, 218);
+  assert.equal(HER_SPRITES.sleep.half, undefined);
+});
+
+test("0.66.0: сидит на подоконнике с кружкой — в слое подоконника, Байт рядом за спиной; с лежащей на ковре Байта можно позвать с края ковра", () => {
+  // «С кружкой на подоконнике» — теперь сидя: место то же (`sill`), картинка — новая; с блокнотом у подоконника она стоит.
+  const lines = pool("она:уют").filter(text => /подоконник/u.test(text));
+  assert.ok(lines.length >= 1 && lines.every(text => /^С кружкой на подоконнике:/u.test(text)), lines.join(" | "));
+  for (const line of lines) assert.equal(room.herPose(line, "уют"), "sill");
+  assert.equal(scene.lookOf("уют", "sill"), "tea4");
+  assert.equal(scene.lookOf("дело", "sill"), "work2");
+  assert.equal(scene.lookOf("уют", "map"), "tea");
+  for (const name of ["tea4", "home-tea4"]) {
+    assert.equal(HER_SPRITES[name].kind, "sill", name);
+    assert.equal(HER_SPRITES[name].feet, 262, `${name}: линия подоконника`);
+    assert.ok(SPRITES[name].blink, `${name}: веки`);
+    assert.equal(HER_SPRITES[name].mark[0], "steam", `${name}: над кружкой пар`);
+  }
+  assert.deepEqual(HER_SPRITES["home-tea4"], HER_SPRITES.tea4);
+  for (const [part, name] of [["день", "tea4"], ["вечер", "home-tea4"], ["ночь", "home-tea4"]]) for (const [shape, place] of [["sit", "sill"], ["curl", "sill"], ["sit", "near"], ["lie", "chair"], ["sit", "rug"], ["curl", "pillow"], ["sit", "desk"], ["eat", "bowl"]]) {
+    const view = { part, her: { pose: "sill", key: "уют", beat: true }, cat: { shape, place, key: "сыт" }, plant: "wet", things: ["плед"] }, label = `${part} · ${shape}.${place}`;
+    assert.deepEqual(spritesOf(view), [name], label);
+    const stand = spriteStand(view);
+    assert.equal(stand.name, name, label);
+    assert.equal(stand.x, HER_SPRITES.tea4.spot, label);
+    assert.ok(stand.hidden <= 0.15, `${label}: Байт закрыт на ${Math.round(stand.hidden * 100)} %`);
+    const markup = drawInside(view, PAINTED), zones = zonesOf(markup), her = zones.find(zone => zone.id === "her"), head = zones.find(zone => zone.id === "pat"), pet = zones.find(zone => zone.id === "cat");
+    assert.ok(her && head && pet, label);
+    // Она — над линией подоконника, в окне: между левой шторой и Колючкой; голова — на рисунке.
+    assert.ok(her.y >= WIN.y && her.y + her.h <= 264 && her.x >= WIN.x && her.x + her.w <= 320, `${label}: она ${JSON.stringify(her)}`);
+    assert.ok(head.y >= WIN.y && head.y + head.h <= 264, `${label}: голова ${JSON.stringify(head)}`);
+    // Слой подоконника: её картинка стоит в разметке раньше кресла (в комнате кодом — раньше его обивки): кресло, плед
+    // и Колючка рисуются поверх неё.
+    const at = markup.indexOf('href="#r-her-' + name + '"'), plaid = markup.lastIndexOf("</g>", markup.indexOf('<g class="zones">'));
+    assert.ok(at > 0 && at < plaid, label);
+    // Байт на подоконнике — слева, у неё за спиной, и виден.
+    if (place === "sill" || place === "near") assert.ok(pet.x + pet.w / 2 < her.x && pet.y + pet.h <= 270, `${label}: Байт ${JSON.stringify(pet)}`);
+  }
+  // Стоящая на полу картинка — в переднем слое, сидящая на подоконнике — в слое подоконника: между ними в разметке
+  // лежит кресло. Мерка — сколько разметки осталось после её картинки до слоя нажатий: у сидящей — заметно больше.
+  const after = (view, name) => { const markup = drawInside(view, PAINTED); return markup.indexOf('<g class="zones">') - markup.indexOf('href="#r-her-' + name + '"'); };
+  const standing = after({ part: "день", her: { pose: "map", key: "уют", beat: true }, plant: "wet", things: [] }, "tea"), perched = after({ part: "день", her: { pose: "sill", key: "уют", beat: true }, plant: "wet", things: [] }, "tea4");
+  assert.ok(perched > standing + 2000, `после сидящей на подоконнике — ${perched} знаков разметки, после стоящей — ${standing}`);
+
+  // Лежит на ковре — середина ковра под ней; позвать Байта можно с края: слева от книги и справа, под коленями.
+  const lying = zonesOf(drawInside({ part: "день", her: { pose: "lie", key: "уют", beat: true }, cat: { shape: "sit", place: "top", key: "сыт" }, plant: "wet", things: [] }, PAINTED));
+  const calls = lying.filter(zone => zone.act === "call"), she = lying.find(zone => zone.id === "her"), pat = lying.find(zone => zone.id === "pat");
+  assert.equal(calls.length, 3, "середина ковра и два его края");
+  const free = calls.filter(zone => !overlap(zone, she) && !overlap(zone, pat));
+  assert.equal(free.length, 2, `свободных мест зова — ${free.length}`);
+  for (const zone of free) assert.ok(zone.w >= 44 && zone.h >= 24 && zone.x >= 40 && zone.x + zone.w <= 360 && zone.y >= 420 && zone.y + zone.h <= 500, JSON.stringify(zone));
+  // У стоящей и у спящей мест зова — одно, как было.
+  for (const her of [{ pose: "desk", key: "дело", beat: true }, { pose: "nap", key: "сон", beat: true }]) assert.equal(zonesOf(drawInside({ part: "день", her, plant: "wet", things: [] }, PAINTED)).filter(zone => zone.act === "call").length, 1, her.pose);
+});
+
+test("0.66.0: сказанное вслух стоит первым в словах под рисунком — голос и текст сходятся", () => {
+  const said = "Жасминовый. Откуда вы знаете?";
+  // Без голоса — как было.
+  assert.equal(logic.captionOf({ said }), said);
+  assert.equal(logic.captionOf({}), "");
+  // Сказала вслух при этой строке — её слова первыми.
+  assert.equal(logic.captionOf({ said, voiced: { text: "Спасибо за чай.", over: said } }), `Спасибо за чай. ${said}`);
+  // Строка сменилась — приставки нет: вслух было сказано не при ней.
+  assert.equal(logic.captionOf({ said: "Пью чай под гирляндой.", voiced: { text: "Спасибо за чай.", over: said } }), "Пью чай под гирляндой.");
+  // Строка и сама начинается с этих слов — они не повторяются (знаки и регистр не важны).
+  assert.equal(logic.captionOf({ said: "Спасибо за чай! Жасминовый.", voiced: { text: "Спасибо за чай.", over: "Спасибо за чай! Жасминовый." } }), "Спасибо за чай! Жасминовый.");
+  assert.equal(logic.captionOf({ said: "добрый вечер, хозяин.", voiced: { text: "Добрый вечер.", over: "добрый вечер, хозяин." } }), "добрый вечер, хозяин.");
+  // Служебные пометки («…», «*переодевается*») и пустая строка.
+  for (const mark of ["…", "*переодевается*"]) assert.equal(logic.captionOf({ said: mark, voiced: { text: "Добрый день.", over: mark } }), mark);
+  assert.equal(logic.captionOf({ said: "", voiced: { text: "Добрый день.", over: "" } }), "Добрый день.");
+  // Испорченная запись о сказанном — строка как есть.
+  for (const voiced of [null, {}, { text: "", over: said }, { text: 5, over: said }]) assert.equal(logic.captionOf({ said, voiced }), said);
+  // Страница: реплика прозвучала — её текст кладётся в состояние, а слова под рисунком берутся через `captionOf`.
+  const app = read("miniapp/app.js");
+  assert.match(app, /voiced: \{ text: line\.text, over: state\.said \}/u);
+  assert.match(app, /caption = typeof logic\.captionOf === "function" \? logic\.captionOf\(state\) : state\.said/u);
+  assert.match(app, /say\.textContent = caption;/u);
+  // Каждая запись несёт свой текст — то, что в ней сказано: с большой буквы и с точкой.
+  for (const name of readdirSync(new URL("../miniapp/voice/", import.meta.url))) {
+    const text = read(`miniapp/voice/${name}`).match(/text: "([^"]+)"/u)?.[1] ?? "";
+    assert.match(text, /^[А-ЯЁ][^.!?]*[.!?]$/u, name);
+  }
+});
+
+test("0.67.0–0.68.0: строки комнаты её голосом (идея 215) — по модулю на строку, указатель знает записанные; что под рисунком — то и вслух", async () => {
+  const folder = new URL("../miniapp/say/", import.meta.url);
+  const { SAID, keyOf, nameOf } = await import("../miniapp/say/index.js");
+  const names = readdirSync(folder).map(name => name.replace(/\.js$/u, "")).filter(name => name !== "index").sort();
+  assert.deepEqual(Object.keys(SAID).sort(), names, "указатель называет ровно те строки, что записаны");
+  assert.ok(names.length >= 15 && names.length <= 700, String(names.length));
+  // 0.68.0: вслух — любая строка комнаты (запасы «+комната:…»), кроме тех, что звучат, только когда она спит:
+  // спящая молчит. У строки с обращением записаны могут быть обе формы — «ты» и «вы».
+  const may = new Set();
+  let poolName = "";
+  for (const row of read("PHRASES.txt").split("\n")) {
+    const head = /^== (.+?) ==\s*$/u.exec(row);
+    if (head) { poolName = head[1]; continue; }
+    if (!poolName.startsWith("+комната:") || /:сон$/u.test(poolName) || !row.trim() || row.startsWith("#")) continue;
+    const text = row.replace(/^(?:\[[^\]]+\]\s*)+/u, "");
+    for (const pick of [1, 2]) may.add(text.replace(/\{([^{}|]*)\|([^{}]*)\}/gu, (_, first, second) => (pick === 1 ? first : second)));
+  }
+  assert.ok(names.length >= 200, `записанных строк — ${names.length}`);
+  let total = 0;
+  for (const name of names) {
+    const file = readFileSync(new URL(`${name}.js`, folder), "utf8");
+    assert.match(file, /^\/\/ Строка Аи «[^\n]+»: её голос \(сборка 0\.\d+\.\d+\), собрана командой «python3 scripts\/say-lines\.py»\. Руками не править\.\nexport default \{ text: "[^\n]+", ms: \d+, src: "data:audio\/mpeg;base64,[A-Za-z0-9+/]+=*" \};\n$/u, name);
+    const line = (await import(`../miniapp/say/${name}.js`)).default;
+    assert.ok(file.startsWith(`// Строка Аи «${line.text}»`), name);
+    assert.ok(may.has(line.text), `${name}: строки «${line.text}» нет среди строк комнаты — страница её не найдёт`);
+    assert.equal(keyOf(line.text), name, line.text);
+    assert.equal(nameOf(line.text), name);
+    assert.equal(SAID[name], line.ms, name);
+    const bytes = Buffer.from(line.src.slice(line.src.indexOf(",") + 1), "base64");
+    assert.deepEqual([bytes[0], bytes[1] & 0xfe], [0xff, 0xfa], `${name}: mp3`);
+    // 48 кбит/с — шесть тысяч байт в секунду; строка — от секунды («Даже не думайте.») до девяти с половиной.
+    assert.ok(line.ms >= 1000 && line.ms <= 9500, `${name}: ${line.ms} мс`);
+    assert.ok(bytes.length / 6 > line.ms * 0.9 && bytes.length / 6 < line.ms * 1.2, `${name}: ${bytes.length} байт на ${line.ms} мс`);
+    assert.ok(file.length < 76_000, `${name}: модуль весит ${file.length}`);
+    total += file.length;
+  }
+  assert.ok(total < names.length * 48_000, `строки вместе весят ${total}`);
+  // Ключ не зависит от знаков, регистра и «ё»; другой текст — другой ключ; незаписанная строка — пусто.
+  assert.equal(keyOf("С кружкой на подоконнике: греюсь."), keyOf("с кружкой  на подоконнике — ГРЕЮСЬ"));
+  assert.equal(keyOf("Всё ещё"), keyOf("все еще"));
+  assert.notEqual(keyOf("С кружкой на подоконнике: греюсь."), keyOf("С кружкой на подоконнике: слушаю дождь."));
+  assert.match(keyOf(""), /^l[0-9a-f]{8}$/u);
+  for (const text of ["Этой строки в записи нет.", "", null, undefined, "constructor", "__proto__"]) assert.equal(nameOf(text), "");
+  // Позы 0.65.0 и 0.66.0 говорят: на подоконнике и на ковре.
+  for (const text of ["С кружкой на подоконнике: слушаю дождь.", "Лежу на ковре с мангой, болтаю ногами. Глава длинная — и хорошо."]) assert.ok(nameOf(text), text);
+  // Спящая молчит: строк её сна в записи нет; у обиды и ревности строки свои — они записаны.
+  assert.ok(!names.some(name => /Дремлю|Почти сплю/u.test(read(`miniapp/say/${name}.js`).slice(0, 200))));
+  for (const text of ["У окна, спиной к двери. Слушаю дождь.", "Заходите. Тапочки у двери.", "Байт спит на подушке, свернувшись клубком.", "Спасибо. Жасминовый — мой любимый. Посидите со мной."]) assert.ok(nameOf(text), text);
+
+  // 0.68.0: что под рисунком — то и вслух. Из слов под рисунком берутся записанные строки: по порядку, без
+  // повторов, не больше трёх; сказанная только что пропускается.
+  const known = { "Заходите.": "a", "Читаю.": "b", "Байт спит.": "c", "Чай готов.": "d" }, fake = (text) => known[text] ?? "";
+  assert.deepEqual([logic.SAY_MOST, logic.SAY_AGAIN_MS], [3, 300_000]);
+  assert.deepEqual(logic.linesToSay("Заходите.\nЧитаю.\nБайт спит.", fake), ["a", "b", "c"]);
+  assert.deepEqual(logic.linesToSay("Заходите.\nНовое в комнате. Кружка.\nБайт спит.\nЧитаю.\nЧай готов.", fake), ["a", "c", "b"], "незаписанная строка пропускается, четвёртая не идёт");
+  assert.deepEqual(logic.linesToSay("Читаю.\n Читаю. \nБайт спит.", fake), ["b", "c"], "повтор — один раз");
+  assert.deepEqual(logic.linesToSay("Заходите.\nЧитаю.\nБайт спит.", fake, (name) => name === "b"), ["a", "c"], "сказанная только что — пропускается");
+  for (const empty of ["", null, undefined, "\n\n", "Ничего записанного."]) assert.deepEqual(logic.linesToSay(empty, fake), []);
+  // 0.69.0: строка о новой вещи идёт с приставкой «Новое в комнате.» — запись находится и с ней.
+  assert.deepEqual(logic.linesToSay("Заходите.\nНовое в комнате. Чай готов.\nНовое в комнате. Чего-то нет.", fake), ["a", "d"]);
+  assert.ok(nameOf("На полке появилась вторая кружка. Ваша."), "строки вещей записаны");
+  assert.equal(logic.linesToSay("Новое в комнате. На полке появилась вторая кружка. Ваша.", nameOf).length, 1);
+  // 0.69.0: записаны погода за окном, полка, шкаф и наряды, подарки, альбом, её день, события, «слово».
+  for (const text of ["Ночь. Небо чистое — над крышами звёзды и луна.", "Вечер. Пойду переоденусь в домашнее — я быстро.", "Думаю… Сейчас отвечу.", "Книга! Положу на шкаф: дочитаю свою — и возьмусь за неё. Спасибо.", "Чай, кресло, плед. Перерыв — это тоже пункт плана."]) assert.ok(nameOf(text), text);
+  assert.ok(names.length >= 480, `записанных строк — ${names.length}`);
+  assert.deepEqual(logic.linesToSay("С кружкой на подоконнике: слушаю дождь.\nБайт спит на подушке, свернувшись клубком.", nameOf).length, 2, "на настоящем указателе");
+  // Когда ей можно говорить: не спит, на месте, не тихий час; обижена или ревнует — говорит (строки у них свои).
+  const up = { ready: true, her: { key: "уют" }, quiet: 0 };
+  assert.equal(logic.maySay(up), true);
+  for (const key of ["дело", "игра", "устала", "обида", "ревность"]) assert.equal(logic.maySay({ ...up, her: { key } }), true, key);
+  for (const off of [{ ...up, her: { key: "сон" } }, { ...up, quiet: 60_000 }, { ...up, away: true }, { ...up, ready: false }, { ready: true, her: null }, null, undefined]) assert.equal(logic.maySay(off), false);
+
+  // Страница: строки зовутся при каждой перерисовке слов; приветствие — первым и один раз; короткая реплика молчит,
+  // когда под рисунком только что встала записанная строка; устаревшие слова не звучат.
+  const app = read("miniapp/app.js");
+  assert.equal(app.split("\n  sayLines();\n").length - 1, 1, "строки проверяются при каждой перерисовке слов");
+  assert.match(app, /function greetOnce\(\) \{\n {2}if \(!soundOn \|\| greeted \|\| !state\.ready\) return;\n {2}greeted = true;\n {2}greeting = speak\("greet"\)\.catch\(\(\) => false\)\.then\(\(\) => \{ greeting = null; \}\);\n {2}greeting\.then\(sayLines\);/u);
+  assert.match(app, /const fresh = \(sayLines\(\), Date\.now\(\) - sayAt < VOICE_LATE_MS\);\n {2}if \(event !== "greet" && fresh && await saying > 0\) return false;/u);
+  assert.match(app, /if \(greeting\) await greeting;/u);
+  assert.match(app, /for \(const name of may \? logic\.linesToSay\(caption, nameOf, \(key\) => now - \(saidAt\.get\(key\) \?\? -Infinity\) < logic\.SAY_AGAIN_MS\) : \[\]\) \{/u);
+  assert.match(app, /if \(!soundOn \|\| state\.said !== caption \|\| await sound\.voice\(name, voiceBytes\(line\.src\), true\) !== true\) break;/u);
+  // Очередь слов не растёт без конца: длиннее двадцати секунд — новая строка не берётся (три строки подряд — до неё).
+  assert.match(read("miniapp/sound.js"), /const free = line \? \(\) => live\(\) && speaking - ctx\.currentTime < 20 : canSpeak;/u);
+  // Сборщик лежит в репозитории и берёт рецепт у сборщика коротких реплик.
+  const builder = read("scripts/say-lines.py");
+  assert.match(builder, /voice-lines\.py/u);
+  assert.match(builder, /KBPS = 48/u);
 });

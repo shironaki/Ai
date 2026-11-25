@@ -292,7 +292,7 @@ try {
       if ((await chip("quiet")) !== "Посидеть рядом") fail("кнопки: тихий час закончили — а отсчёт на кнопке остался");
     }
     const wear = await chip("wear");
-    if (!/^Надеть (?:свитер|куртку)$/u.test(wear)) fail(`кнопки: «Надеть …» под рисунком нет (${wear || "скрыта"})`);
+    if (!/^Надеть (?:свитер|куртку|пижаму)$/u.test(wear)) fail(`кнопки: «Надеть …» под рисунком нет (${wear || "скрыта"})`);
     else {
       // Сцена у шкафа: уходит, «*переодевается*», возвращается в другом. Спит — не переодевается: кнопка прежняя.
       const dressed = async (was) => {
@@ -304,12 +304,17 @@ try {
       if (!turned && !/Сплю/u.test(await said())) fail(`кнопки: нажали «${wear}» — а наряд не сменился`);
       if (turned) {
         await pause(1500);
-        const home = wear === "Надеть свитер";
+        // Нарядов три (0.70.0): кнопка идёт по кругу — куртка → свитер → пижама (вечером и ночью) → куртка. Чего в
+        // пижаме не нарисовано, то она показывает в свитере — но не в куртке.
+        const want = { "Надеть свитер": "home", "Надеть пижаму": "pajama" }[wear] ?? "jacket";
+        const dress = (href) => (href.startsWith("#r-her-home-") ? "home" : href.startsWith("#r-her-pajama-") ? "pajama" : "jacket");
         const worn = await page.evaluate(() => Array.from(document.querySelectorAll('#inside use[href^="#r-her-"]'), (node) => node.getAttribute("href")));
-        if (worn.some((href) => href.startsWith("#r-her-home-") !== home)) fail(`кнопки: надела ${home ? "свитер" : "куртку"} — а на рисунке ${worn.join(", ")}`);
-        // Вернуть как было: дальше проверяется наряд по часам.
-        if (!(await dressed(await chip("wear")))) fail("кнопки: обратно наряд не сменился");
-        await pause(1200);
+        if (worn.some((href) => dress(href) !== want && !(want === "pajama" && dress(href) === "home"))) fail(`кнопки: надела ${{ home: "свитер", pajama: "пижаму" }[want] ?? "куртку"} — а на рисунке ${worn.join(", ")}`);
+        // Вернуть как было: по кругу, пока кнопка не предложит то же, что вначале; дальше проверяется наряд по часам.
+        for (let i = 0; i < 3 && (await chip("wear")) !== wear; i += 1) {
+          if (!(await dressed(await chip("wear")))) { fail("кнопки: обратно наряд не сменился"); break; }
+          await pause(1200);
+        }
       }
     }
   }
@@ -442,8 +447,9 @@ try {
   // С 0.45.0 в кладовой больше картинок: вторые кадры поз и «читает» (нажатие на полку) с её веками; с 0.46.0 —
   // оба кадра шага, кадры ещё шести поз и танец (нажатие на колонку). Главное — что ни одна не лежит дважды.
   // С 0.50.0 и 0.51.0 при картинке лежат её заплатки — веки, улыбка, взгляд (у позы до трёх): счёт идёт по самим картинкам.
+  // С 0.70.0 нарядов три: кнопка «Надеть …» проходит круг, и в кладовой остаются шаг и поза ещё двух нарядов — до 28.
   const whole = later.kept.filter(id => !/-(?:blink|smile|look[lr])$/u.test(id));
-  if (new Set(later.kept).size !== later.kept.length || whole.length > 20) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
+  if (new Set(later.kept).size !== later.kept.length || whole.length > 28) fail(`картинок в кладовой после нажатий: ${JSON.stringify(later.kept)} — копятся`);
   if (!later.shown || later.inline) fail(`после нажатий её картинки не видно: ${JSON.stringify(later.used)}`);
   console.log(`  нажато: забота на рисунке и кнопками, она, окно, вещей — ${Object.keys(lines.things).length}, сценка`);
   if (shot) { await page.screenshot({ path: shot, fullPage: false }); console.log(`  снимок: ${shot}`); }
@@ -1071,6 +1077,30 @@ try {
     await pause(900);
     const loud = await soundNow();
     if (!loud.on || loud.kept !== "1" || !loud.loaded) fail(`звук не включился: нажат — ${loud.on}, запомнен — «${loud.kept}», модуль загружен — ${loud.loaded}`);
+    // Её голос (0.64.0): звук включили — она здоровается вслух записанной репликой (модуль из папки `voice/`).
+    let spoke = { name: "", loaded: 0 };
+    for (let spent = 0; spent < 4000; spent += 200) {
+      spoke = await tab.evaluate(() => ({ name: document.documentElement.dataset.voice ?? "", loaded: performance.getEntriesByType("resource").filter(entry => /\/voice\/[a-z]+\.js$/u.test(entry.name)).length }));
+      if (spoke.name) break;
+      await pause(200);
+    }
+    if (!["morning", "day", "evening", "night"].includes(spoke.name) || spoke.loaded !== 1) fail(`голос: звук включили, а она не поздоровалась вслух — реплика «${spoke.name}», модулей голоса загружено ${spoke.loaded}`);
+    // 0.66.0: сказанное вслух стоит первым в словах под рисунком — голос и текст сходятся.
+    await pause(300);
+    const heard = await tab.evaluate(() => document.getElementById("say")?.textContent ?? "");
+    if (!/^(?:Доброе утро|Добрый день|Добрый вечер|Доброй ночи)\./u.test(heard)) fail(`голос: она поздоровалась вслух, а под рисунком этих слов нет — «${heard.slice(0, 60)}»`);
+    // 0.68.0 (идея 215): что под рисунком — то и вслух. Записанные строки из слов под рисунком (до трёх) она
+    // произносит сама, после приветствия; последняя сказанная — в `data-said` страницы.
+    const lineNames = await tab.evaluate(async () => {
+      const { nameOf } = await import("./say/index.js");
+      const { linesToSay } = await import("./logic.js");
+      const text = (document.getElementById("say")?.textContent ?? "").replace(/^(?:Доброе утро|Добрый день|Добрый вечер|Доброй ночи)\.\s*/u, "");
+      return linesToSay(text, nameOf);
+    });
+    let saidLine = "";
+    for (let spent = 0; lineNames.length && spent < 8000 && saidLine !== lineNames.at(-1); spent += 200) { await pause(200); saidLine = await tab.evaluate(() => document.documentElement.dataset.said ?? ""); }
+    if (lineNames.length && saidLine !== lineNames.at(-1)) fail(`голос: под рисунком записанных строк — ${lineNames.length} (${lineNames.join(", ")}), а вслух последней прозвучала «${saidLine}»`);
+    console.log(`  строки под рисунком: ${lineNames.length ? `записанных — ${lineNames.length}, сказаны вслух (последняя — «${saidLine}»)` : "записанных нет — промолчала"}`);
     // Забота со звуком: мурчание — и ни одной ошибки.
     await tab.tap('#actions button[data-act="pet"]');
     await pause(500);
@@ -1268,7 +1298,7 @@ try {
     clockAt = Date.parse("2026-11-17T09:00:00Z");
     const tab = await browser.newPage();
     const broken = [], calls = [];
-    let drop = 0;
+    let drop = 0, shotBytes = 0;
     tab.on("pageerror", (error) => broken.push(String(error)));
     tab.on("console", (message) => { if (message.type() === "error" && !/net::ERR_/u.test(message.text())) broken.push(message.text()); });
     await tab.exposeFunction("heartCall", async (input) => { calls.push(input); const reply = await heart.onRoom(input, ctx); clockAt += 400; if (drop > 0) { drop -= 1; return { lost: true }; } return { reply }; });
@@ -1323,6 +1353,19 @@ try {
         await tab.click("#albumBox [data-snap]");
         const kept = await wait9(seen => seen.thumbs.some(([src, width]) => src.startsWith("data:image/svg+xml") && width > 0), 10_000);
         if (!kept) fail(`снимок: картинка снимка в альбоме не нарисовалась: ${JSON.stringify((await page9()).thumbs)}`);
+        // Снимок в чат (0.62.0, идея 165): страница рисует комнату картинкой JPEG, сердце шлёт её человеку в личку.
+        await tab.click("#albumBox [data-post]");
+        let posted = null;
+        for (let spent = 0; spent < 12_000 && !posted; spent += 150) { posted = kit.calls("sendPhoto").at(-1) ?? null; if (!posted) await pause(150); }
+        const jpeg = posted?.photo?.bytes;
+        if (!posted) fail(`снимок в чат: сердце картинку не отправило; её слова «${(await page9()).say.slice(0, 90)}»`);
+        else if (!(jpeg instanceof Uint8Array) || jpeg.length < 20_000 || jpeg[0] !== 0xff || jpeg[1] !== 0xd8 || jpeg[2] !== 0xff) fail(`снимок в чат: ушла не картинка JPEG или она пуста: байт ${jpeg?.length ?? 0}`);
+        else if (Number(posted.chat_id) !== 5 || !/^(?:Комната\.|На память:) \d{1,2} [а-я]+, (?:утро|день|вечер|ночь)\.\n\n\S/u.test(String(posted.caption))) fail(`снимок в чат: не тот чат или подпись: ${posted.chat_id}, «${String(posted.caption).slice(0, 90)}»`);
+        else {
+          const told = await wait9(seen => /Отправила|Готово: комната/u.test(seen.say), 6000);
+          if (!told) fail(`снимок в чат: под рисунком должны быть её слова об этом, а там «${(await page9()).say.slice(0, 90)}»`);
+          shotBytes = jpeg.length;
+        }
         await tab.click("#albumBox [data-close]");
         if ((await page9()).box) fail("альбом не закрылся");
       }
@@ -1411,7 +1454,55 @@ try {
     }
     if (gestures.size < 2) fail(`жесты: за девять секунд при ходе в 0,7 с ждали хотя бы два разных жеста, были: ${JSON.stringify([...gestures])}`);
     await live.close();
+    // Слово ей с настоящим сердцем (0.61.0, идея 204, шаг 3): чего нет в словаре — отвечает модель. Модель здесь
+    // «думает долго»: первый вызов сердца ждёт её, а странице вместо него отвечает повтор того же номера — так
+    // бывает, когда страница не дождалась и спросила снова. Сердце говорит «ещё думаю»; страница ждёт и спрашивает
+    // тот же номер ещё раз — и получает ответ. Модель при этом спросили один раз.
+    {
+      const stub = await import(pathToFileURL(join(root, "tests/fixtures/sdk-stub.mjs")).href);
+      let open = () => {};
+      const gate = new Promise((resolve) => { open = resolve; });
+      const thinker = kit.heart({ PHRASES: true }, { now: () => clockAt, random: () => 0, fetchImpl: async (url, options) => { if (String(url).endsWith("/chat/completions")) await gate; return stub.fetch(url, options); } });
+      const asked = kit.chats().length, ids = [];
+      let first = null;
+      const word = await browser.newPage();
+      word.on("pageerror", (error) => broken.push(String(error)));
+      await word.exposeFunction("heartCall", async (input) => {
+        if (input.do !== "say") return { reply: await thinker.onRoom(input, ctx) };
+        ids.push(input.id);
+        if (!first) { first = thinker.onRoom(input, ctx); await pause(200); } else { open(); await first; }
+        return { reply: await thinker.onRoom(input, ctx) };
+      });
+      await word.evaluateOnNewDocument(() => {
+        globalThis.Telegram = { WebApp: { initData: "user=test", ready() {}, expand() {}, Serverless: { call(name, input, done) { globalThis.heartCall(input).then(({ reply }) => done(null, reply)); } } } };
+      });
+      await word.goto(`${origin}/index.html#turn=600000`, { waitUntil: "load", timeout: 30_000 });
+      const shown = () => word.evaluate(() => ({ state: document.getElementById("app").dataset.state, say: document.getElementById("say").textContent, off: document.getElementById("wordSend").disabled, field: document.getElementById("word").value, hidden: document.getElementById("words").hidden }));
+      let ready = null;
+      for (let spent = 0; spent < 12_000 && !ready; spent += 150) { const seen = await shown(); if (seen.state === "ready" && !seen.hidden) ready = seen; else await pause(150); }
+      if (!ready) fail(`слово с сердцем: комната не открылась или поля для слов нет: ${JSON.stringify(await shown()).slice(0, 200)}`);
+      else {
+        await word.evaluate(() => { document.getElementById("word").value = "что такое квазар?"; document.getElementById("words").requestSubmit(); });
+        let thinking = null, answered = null;
+        for (let spent = 0; spent < 10_000 && !answered; spent += 100) {
+          const seen = await shown();
+          if (/^(?:Думаю|Минутку|Хороший вопрос)/u.test(seen.say) && seen.off) thinking = seen;
+          if (seen.say === "ответ из стаба") answered = seen; else await pause(100);
+        }
+        if (!thinking) fail("слово с сердцем: пока она думает, под рисунком должны стоять её слова об этом, а кнопка «Сказать» — быть погашена");
+        if (!answered) fail(`слово с сердцем: ответа модели под рисунком нет: «${(await shown()).say.slice(0, 80)}», вопросов ушло ${ids.length}`);
+        else {
+          if (answered.field !== "" || answered.off) fail(`слово с сердцем: после ответа поле должно быть пустым, а кнопка — живой: ${JSON.stringify(answered)}`);
+          if (ids.length !== 2 || ids[0] !== ids[1] || !ids[0]) fail(`слово с сердцем: страница должна была спросить тот же номер дважды: ${JSON.stringify(ids)}`);
+          if (kit.chats().length !== asked + 1) fail(`слово с сердцем: модель спросили ${kit.chats().length - asked} раз(а), а не один`);
+        }
+      }
+      open();
+      await word.close();
+    }
     if (broken.length) fail(`с сердцем — ошибка на странице: ${broken[0].slice(0, 220)}`);
+    if (failures.length === failed) console.log(`  снимок в чат: картинка JPEG ушла в личку с подписью, ${Math.round(shotBytes / 1024)} КБ`);
+    if (failures.length === failed) console.log(`  слово ей: модель думала дольше страницы — «ещё думаю», тот же номер снова, ответ под рисунком; модель спросили один раз`);
     if (failures.length === failed) console.log(`  встреча по шагам, альбом с подарком и снимком, повтор с тем же номером, «нет связи» и «ещё раз», журнал без подписи, свёрнутая страница стоит, жесты: ${[...gestures].join(", ")}${access ? `; ${access}` : ""}`);
   }
 

@@ -183,6 +183,11 @@ const BOOKS = Object.freeze([16, 174, 86, 84]);
 /** Вещи, которые появляются у человека со временем (`ITEMS` в `tgcloud/lib/room.js`): подпись и область. */
 /** Середина ковра: нажатие на неё зовёт Байта (0.47.0). Целиком внутри ковра и выше полосы с её словами. */
 const RUG_ZONE = [110, 420, 180, 50];
+/**
+ * Края ковра (0.66.0): когда она лежит на ковре с книгой, середина ковра под ней, и нажатие достаётся ей. Позвать
+ * Байта тогда можно с края: слева от книги и справа, под её коленями, — там ковёр виден.
+ */
+const RUG_ENDS = Object.freeze([[58, 440, 52, 30], [292, 462, 58, 26]]);
 const THING_ZONES = Object.freeze({
   "рисунок": ["Её рисунок", [14, 116, 44, 48]],
   "календарь": ["Календарь", [60, 116, 40, 48]],
@@ -1033,9 +1038,11 @@ function lampLight(g, part, shade, off = false) {
   if (!lit(part)) return "";
   // Лампа погашена (0.46.0): светит одна гирлянда — её зарево над окном чуть ярче, тёплого круга у стола нет.
   if (off) return `<ellipse cx="256" cy="46" rx="176" ry="34" fill="${g.rad("garlandGlow", [[0, "#ffd58a", 0.3], [1, "#ffd58a", 0]])}"/>`;
-  const warm = mix(shade, "#ffd9a0", 0.4);
+  // Свет лампы — тёплый, как у настоящей лампы: цвет абажура лишь чуть его тинтит, а не задаёт (0.71.0):
+  // иначе яркий абажур заливал бы свет своими цветами, и лампа сливалась в одно пепелищное пятно.
+  const warm = mix(shade, "#ffd9a0", 0.55);
   return [
-    `<circle class="glow" cx="${LAMP.x}" cy="${LAMP.y + 2}" r="${part === "ночь" ? 128 : 112}" fill="${g.rad("lampGlow", [[0, warm, 0.62], [0.32, warm, 0.26], [1, warm, 0]])}"/>`,
+    `<circle class="glow" cx="${LAMP.x}" cy="${LAMP.y + 2}" r="${part === "ночь" ? 128 : 112}" fill="${g.rad("lampGlow", [[0, warm, 0.55], [0.32, warm, 0.24], [1, warm, 0]])}"/>`,
     `<ellipse cx="366" cy="319" rx="42" ry="4.6" fill="#ffe9b8" opacity="0.4"/>`,
     `<ellipse cx="256" cy="46" rx="176" ry="34" fill="${g.rad("garlandGlow", [[0, "#ffd58a", 0.2], [1, "#ffd58a", 0]])}"/>`,
   ].join("");
@@ -1096,9 +1103,10 @@ function floorLight(g, part, shade, sky = "rain", off = false, painted = false) 
   const warm = mix(shade, "#ffd9a0", 0.4);
   // Ясной ночью от окна на пол ложится лунный свет: чуть ярче обычной синевы.
   const blue = part === "ночь" ? (open(sky) ? 0.17 : 0.1) : 0.07;
+  // Ночной пол — под тёплым кругом лампы: иначе голубая заливка пола покрывала бы свет лампы на полу.
   return [
-    off ? "" : `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.2], [1, warm, 0]])}"/>`,
     `<path d="M132 372 H400 L352 520 H30 Z" fill="${g.lin("nightFloor", [[0, "#9fb4ff", blue], [1, "#9fb4ff", 0]])}"/>`,
+    off ? "" : `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.3], [1, warm, 0]])}"/>`,
   ].join("");
 }
 
@@ -1252,7 +1260,9 @@ function paintedShelves(g, c, room, has, part, music = false) {
  */
 function paintedLamp(g, room, part, shade, off = false, own = false) {
   const on = lit(part) && !off, picture = paintedThing(g, room, "lamp", part, { glow: on, air: false });
-  const cover = own ? `<path d="${PIC.shade}" fill="${on ? shade : tint(shade, part)}" opacity="0.6"/>` : "";
+  // Горящая лампа: абажур светится цветом абажура — и выбранным человеком, и янтарным по умолчанию (0.71.0):
+  // иначе на картинке комнаты абажур оставался тёмным, как погашенный, и свет лампы казался голубым от ночного ти́нта.
+  const cover = on ? `<path d="${PIC.shade}" fill="${shade}" opacity="0.66"/>` : (own ? `<path d="${PIC.shade}" fill="${tint(shade, part)}" opacity="0.6"/>` : "");
   const cut = g.raw("lampCut", id => `<clipPath id="${id}"><path d="${PIC.lamp}"/></clipPath>`);
   if (on) return `<g clip-path="${cut}">${picture}</g>${cover}`;
   // Верх абажура виден на фоне окна: вечерняя тень проёма ложится и на него — последним слоем, поверх тона ткани.
@@ -1350,6 +1360,15 @@ const partIn = (view) => (PARTS.includes(view?.part) ? view.part : "день");
 export const lightIn = (view) => (PARTS.includes(view?.light) ? view.light : partIn(view));
 /** Краски под час. `soft` — насколько слабее приглушать (для неё и Байта). */
 const palette = (part, soft = 0) => Object.fromEntries(Object.entries(DAY).map(([name, colour]) => [name, tint(colour, part, soft)]));
+
+/**
+ * Палитра Байта на ночь (0.71.0): шерсть и тело — тёмный силуэт, сливающийся с тёмной комнатой,
+ * а глаза, нос и внутренние ушки остаются дневными — чтобы кот в темноте был виден именно как кот.
+ * Днём и вечером — как palette(part, FIGURE_SOFT), без перекрашивания.
+ */
+const catPal = (part, f) => part === "ночь"
+  ? { ...f, cat: mix(f.cat, "#0c0f24", 0.7), catDark: mix(f.catDark, "#0c0f24", 0.7), catLight: mix(f.catLight, "#1a1f3d", 0.6), catEar: mix(f.catEar, "#0c0f24", 0.6), nose: mix(f.nose, "#0c0f24", 0.55) }
+  : f;
 
 /**
  * За окном: небо и город. Зависит от часа и погоды — страница рисует это один раз и при нажатиях не трогает.
@@ -1795,8 +1814,13 @@ function her(g, c, f, pose, key, view = {}) {
 // С 0.41.0 картинок у состояния несколько: позы сменяют друг друга (сами и от нажатия), у глаз есть «веки» —
 // она моргает, а вечером на ней домашний свитер. Всё, что нужно знать о картинке, лежит в одной таблице.
 
-/** Наряды: `jacket` — куртка, как на портрете; `home` — большой свитер и наушники (вечером и ночью). */
-export const HER_WEARS = Object.freeze(["jacket", "home"]);
+/**
+ * Наряды: `jacket` — куртка, как на портрете; `home` — большой свитер и наушники (вечером); `pajama` — пижама с
+ * облаками (0.70.0, идея 157: перед сном и во сне; по просьбе — вечером и ночью). В пижаме нарисованы «уют» (кресло
+ * с кружкой и с книгой, у карты, под гирляндой), «устала», «сон» и шаг; позы, которой в пижаме нет, она показывает в
+ * свитере (`wearOf`, `spritesOf`).
+ */
+export const HER_WEARS = Object.freeze(["jacket", "home", "pajama"]);
 /**
  * Её картинки. Имя — файл в `her/`; наряд, кроме куртки, — приставкой через дефис (`home-tea`).
  *   tall — высота картинки на рисунке (стоя — 390: рост три четверти рисунка);
@@ -1818,8 +1842,17 @@ export const HER_SPRITES = Object.freeze({
   tea: { tall: 390, mark: ["steam", 0.11, 0.222] },
   tea2: { tall: 390, mark: ["steam", 0.36, 0.13] },
   tea3: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], mark: ["steam", 0.485, 0.465] },
+  // На подоконнике с кружкой (0.66.0, идея 168): сидит боком, спиной к левому краю окна, колени подняты, кружка в
+  // руках. Вид — `sill`: рисуется в слое подоконника — перед окном, за креслом, пледом и Колючкой. `feet` — линия
+  // подоконника, `spot` — середина картинки (между шторой и Колючкой). Ростом меньше сидящей в кресле: подоконник —
+  // в глубине комнаты.
+  tea4: { tall: 156, kind: "sill", half: 70, spot: 234, feet: 262, head: [0.28, 0.2], mark: ["steam", 0.43, 0.33], blush: false },
   // Читает в кресле (0.45.0): та же сидящая фигура, что с кружкой, — в руках книга; числа — как у `tea3`.
   read: { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  // Лежит на ковре с книгой (0.65.0, идея 168): на животе, локти на ковре, ноги согнуты в воздухе; голова — слева,
+  // над книгой. Вид — «на полу», как у спящей. `half` — половина её длины на ковре (по ней Байт её обходит и по ней
+  // считается, что она закрыла), `spot` — где на ковре середина картинки.
+  read2: { tall: 150, kind: "floor", half: 132, spot: 208, head: [0.33, 0.3], blush: false },
   work: { tall: 390 },
   work2: { tall: 390 },
   // Сидит в кресле и в других состояниях (0.47.0, идея 168): с блокнотом, под пледом с закрытыми глазами, скрестив
@@ -1851,7 +1884,9 @@ export const HER_SPRITES = Object.freeze({
   "home-tea": { tall: 390, mark: ["steam", 0.115, 0.228] },
   "home-tea2": { tall: 390, mark: ["steam", 0.36, 0.13] },
   "home-tea3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], mark: ["steam", 0.485, 0.465] },
+  "home-tea4": { tall: 156, kind: "sill", half: 70, spot: 234, feet: 262, head: [0.28, 0.2], mark: ["steam", 0.43, 0.33], blush: false },
   "home-read": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  "home-read2": { tall: 150, kind: "floor", half: 132, spot: 208, head: [0.33, 0.3], blush: false },
   "home-work": { tall: 390 },
   "home-work2": { tall: 390 },
   "home-work3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], blush: false },
@@ -1871,6 +1906,16 @@ export const HER_SPRITES = Object.freeze({
   "home-books": { tall: 390, head: [0.54, 0.1], blush: false },
   "home-feed": { tall: 215, kind: "crouch", half: 66, head: [0.34, 0.15], pour: [0.103, 0.509], feet: 440, wait: [-52, 52], blush: false },
   "home-walk": { tall: 374, kind: "walk", faces: "left" },
+  // Пижама с облаками (0.70.0): те же позы и те же числа, что у пары в куртке и в свитере.
+  "pajama-tea": { tall: 390, mark: ["steam", 0.115, 0.228] },
+  "pajama-tea2": { tall: 390, mark: ["steam", 0.36, 0.13] },
+  "pajama-tea3": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09], mark: ["steam", 0.485, 0.465] },
+  "pajama-read": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  "pajama-tired": { tall: 390, half: 70 },
+  "pajama-tired2": { tall: 390, half: 70 },
+  "pajama-tired3": { tall: 320, kind: "seat", half: 86, seat: 0.568, head: [0.48, 0.09] },
+  "pajama-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
+  "pajama-walk": { tall: 374, kind: "walk", faces: "left" },
 });
 /**
  * Кадры движения внутри позы (0.45.0, «больше кадров, чтоб казалась живой»): вторая картинка той же позы — та же
@@ -1893,7 +1938,7 @@ export const HER_FRAMES = Object.freeze({
   // По умолчанию — на первом; под гирляндой первый кадр «пьёт» с закрытыми глазами — смотрит второй; танец не прерывается.
   tea2: ["tea2b", "glance", "b"], "home-tea2": ["home-tea2b", "glance", "b"],
   read: ["readb", "sip"], "home-read": ["home-readb", "sip"],
-  walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"],
+  walk: ["walkb", "pace"], "home-walk": ["home-walkb", "pace"], "pajama-walk": ["pajama-walkb", "pace"],
   // 0.49.0 (сообщение 48: «поворот головы», «поправляет волосы, меняет положение рук»): кадры для пяти поз дня, у
   // которых движения не было. С блокнотом у подоконника: ручка у губ, смотрит на зрителя ↔ пишет, глаза в блокнот
   // (подолгу). В кресле с блокнотом: изредка поправляет волосы и смотрит в сторону. С метёлкой: взмах — вверх и
@@ -1955,7 +2000,9 @@ const SPRITE_FOR = Object.freeze({
   "дело": { desk: "work", shelf: "work", sill: "work2", chair: "work3", read: "read", feed: "feed", dust: "tidy", sort: "books" },
   // `read` — в кресле с книгой (0.45.0): сама, по распорядку, или когда её усадили читать (полка с книгами, сценка
   // «что читать»). Это единственная картинка «уюта» без кружки — и её реплика говорит о книге, а не о чае.
-  "уют": { chair: "tea3", sill: "tea", garland: "tea2", map: "tea", read: "read" },
+  // `lie` — на ковре с книгой (0.65.0): вторая картинка «уюта» без кружки; и её реплика — о книге.
+  // `sill` — на подоконнике с кружкой (0.66.0): до этого «с кружкой у подоконника» она стояла.
+  "уют": { chair: "tea3", sill: "tea4", garland: "tea2", map: "tea", read: "read", lie: "read2" },
   "игра": { dance: "play2", ribbon: "play3", shelf: "play" },
   "сон": { nap: "sleep", lie: "sleep" },
   "устала": { sill: "tired", chair: "tired3", desk: "tired", garland: "tired2" },
@@ -1968,11 +2015,15 @@ export const lookOf = (key, pose) => (Object.hasOwn(SPRITE_FOR, key) && Object.h
  * Наряд: названный (сердцем или страницей) или по часу — вечером и ночью домашний. Наряд без картинки этого состояния
  * не надевается. С 0.43.0 в свитере нарисована каждая поза: список поз вечером той же длины, что днём.
  */
+const wearNamed = (view) => (HER_WEARS.includes(view.her.wear) ? view.her.wear : view.part === "вечер" || view.part === "ночь" ? "home" : "jacket");
 function wearOf(view, key) {
-  const named = HER_WEARS.includes(view.her.wear) ? view.her.wear : null;
-  const wear = named ?? (view.part === "вечер" || view.part === "ночь" ? "home" : "jacket");
-  return wear !== "jacket" && SPRITE_OF[key].some(pose => Object.hasOwn(HER_SPRITES, `${wear}-${pose}`)) ? wear : "jacket";
+  const wear = wearNamed(view);
+  const drawn = (name) => name !== "jacket" && SPRITE_OF[key].some(pose => Object.hasOwn(HER_SPRITES, `${name}-${pose}`));
+  // Состояния в пижаме нет (0.70.0: в ней нарисованы уют, усталость и сон) — она в свитере, а не в куртке.
+  return drawn(wear) ? wear : wear === "pajama" && drawn("home") ? "home" : "jacket";
 }
+/** Картинка позы в наряде: сама; в пижаме её нет — та же поза в свитере; иначе — в куртке. */
+const dressedAs = (wear, base) => [wear, ...(wear === "pajama" ? ["home"] : [])].filter(name => name !== "jacket").map(name => `${name}-${base}`).find(name => Object.hasOwn(HER_SPRITES, name)) ?? base;
 /** Все картинки для этого вида комнаты по порядку показа: первая — та, с которой она встречает. Её нет — пусто. */
 export function spritesOf(view = {}) {
   if (!view?.her) return [];
@@ -1981,7 +2032,9 @@ export function spritesOf(view = {}) {
   // Распорядок (`beat`): у реплики своя картинка — и только она; что у неё в руках, решает сердце (налили чай — «уют»).
   if (view.her.beat === true) {
     const base = lookOf(key, view.her.pose) ?? SPRITE_OF[key][0];
-    return [wear !== "jacket" && Object.hasOwn(HER_SPRITES, `${wear}-${base}`) ? `${wear}-${base}` : base];
+    // Картинка реплики — в названном наряде, если она в нём нарисована (0.70.0: «читаю учебник» в пижаме — та же
+    // картинка с книгой, хотя других картинок «дела» в пижаме нет).
+    return [dressedAs(wearNamed(view), base)];
   }
   // Ей налили чай — в руках кружка, а не блокнот.
   const poses = key === "дело" && view.tea ? SPRITE_OF["уют"] : SPRITE_OF[key];
@@ -2006,7 +2059,7 @@ export function spriteOf(view = {}) {
 export function walkOf(view = {}) {
   if (!view?.her) return null;
   const key = Object.hasOwn(SPRITE_OF, view.her.key) ? view.her.key : "уют";
-  return wearOf(view, key) === "home" ? "home-walk" : "walk";
+  return dressedAs(wearOf(view, key), "walk");
 }
 /** Свет часа на картинке: она нарисована при дневном свете, вечером и ночью её накрывает тень комнаты. */
 const SPRITE_TINT = Object.freeze({ "утро": ["#ffe1cc", 0.05], "вечер": ["#2a1c45", 0.24], "ночь": ["#0e1238", 0.36] });
@@ -2049,6 +2102,10 @@ const SPRITE_SPOTS = Object.freeze([252, CHAIR.x, 226, 160]);
 /** Сколько у двух областей общего. */
 const overlap = ([ax, ay, aw, ah], [bx, by, bw, bh]) => Math.max(0, Math.min(ax + aw, bx + bw) - Math.max(ax, bx)) * Math.max(0, Math.min(ay + ah, by + bh) - Math.max(ay, by));
 const kindOf = (name) => HER_SPRITES[name].kind ?? "stand";
+/** Лежит на ковре, вытянувшись (0.65.0): у такой картинки записана длина — и ковёр под ней занят почти весь. */
+const sprawls = (name) => typeof name === "string" && Object.hasOwn(HER_SPRITES, name) && kindOf(name) === "floor" && Number.isFinite(HER_SPRITES[name].half);
+/** Половина её длины на полу: спит в пледе — 92; лежит с книгой, вытянувшись, — записана в таблице (`half`, 0.65.0). */
+const lowHalf = (name) => (Number.isFinite(HER_SPRITES[name].half) ? HER_SPRITES[name].half : 92);
 /** Линия её ступней: общая, у спящей на полу — своя, у позы в глубине комнаты — записана в таблице (`feet`, 0.57.0). */
 const feetOf = (name) => (Number.isFinite(HER_SPRITES[name].feet) ? HER_SPRITES[name].feet : kindOf(name) === "floor" ? FEET_SIT : FEET);
 /** С пакетом корма она сидит у миски и с места не уходит (0.57.0): уступает Байт. */
@@ -2062,8 +2119,18 @@ const plaidWorn = (name) => /^(?:tired|sleep)/u.test(String(name).replace(/^[a-z
  */
 function spriteCovers(name, x) {
   const { tall, half = 58, legs = [-30, 30] } = HER_SPRITES[name], kind = kindOf(name);
+  // Лежит с книгой, вытянувшись (0.65.0): голова — слева, над книгой; тело и волосы — вправо; книга — у самого пола,
+  // левее головы; ступни подняты над правым краем. Левее головы над книгой пусто — там и садится Байт.
+  if (kind === "floor" && Number.isFinite(HER_SPRITES[name].half)) {
+    const low = HER_SPRITES[name].half, up = FEET_SIT - tall;
+    // Четыре части: голова; тело с волосами; книга; голени со ступнями и колени (правый нижний угол под коленями пуст —
+    // там подушка Байта, и он на ней виден).
+    return [[x - low * 0.62, up + 8, low * 0.56, tall * 0.5 - 8], [x - low * 0.62, up + tall * 0.4, low * 1.2, tall * 0.6], [x - low, up + tall * 0.84, low * 0.5, tall * 0.16], [x + low * 0.5, up, low * 0.5, tall * 0.8]];
+  }
   if (kind === "floor") return [[x - 60, FEET_SIT - tall + 8, 120, tall * 0.5 - 8], [x - 92, FEET_SIT - tall * 0.5, 184, tall * 0.5]];
   const top = feetOf(name) - tall;
+  // На подоконнике (0.66.0): вся она — один прямоугольник над линией подоконника.
+  if (kind === "sill") return [[x - half, top, half * 2, tall]];
   if (kind === "crouch") return [[x - 18, top, 54, tall * 0.34], [x - half + 4, top + tall * 0.3, half * 2 - 8, tall * 0.7]];
   if (kind === "seat") return [[x - 30, top, 60, tall * 0.2], [x - half + 2, top + tall * 0.2, half * 2 - 4, tall * 0.42], [x - 36, top + tall * 0.62, 72, tall * 0.38]];
   return [[x - half, top, half * 2, tall * 0.53], [x + legs[0], top + tall * 0.53, legs[1] - legs[0], tall * 0.47]];
@@ -2083,7 +2150,8 @@ function catAhead(place, shape, herX, name = "") {
   const arm = (side) => ({ x: chairAt(side * 49, 0)[0], y: chairAt(0, -35)[1], bare: true, only: shape === "curl" ? "curl" : "lie", mirror: side < 0, ...(kind === "seat" ? { layer: "front", depth: FEET + 1 } : { layer: "lap" }) });
   switch (place) {
     // Последнее место (0.49.0) — правее, у самой Колючки: свернувшись, он шире, а она с пледом закрывает середину.
-    case "sill": return [262, 294, 164, 148, 304].map(x => ({ x, y: 262, layer: "sill", shade: true }));
+    // Она сама сидит на подоконнике (0.66.0) — ему остаётся левый край, у неё за спиной.
+    case "sill": return (kind === "sill" ? [herX - 92, 148] : [262, 294, 164, 148, 304]).map(x => ({ x, y: 262, layer: "sill", shade: true }));
     case "chair": return shape === "claw" ? [{ x: chairAt(-60, 0)[0] - 13, y: CLAW_Y, layer: "front", mirror: true }, { x: chairAt(60, 0)[0] + 12, y: CLAW_Y, layer: "front" }]
       : kind === "seat" ? [arm(1), arm(-1)] : [lap(-22), lap(26), arm(-1), arm(1)];
     case "pillow": return [{ x: 300 + PILLOW_ASIDE, y: 485, layer: "front", bare: true }];
@@ -2095,6 +2163,8 @@ function catAhead(place, shape, herX, name = "") {
       // Байт сидит рядом и ждёт: перед ней, у её ног, сбоку от миски — миску он не закрывает (`waitSpot`).
       if (shape === "eat" && pours(name)) return [waitSpot(name, herX)];
       if (kind === "floor") return [{ x: 96, y: 456, layer: "front" }];
+      // Она на подоконнике — «рядом с ней» там же: на подоконнике, у неё за спиной.
+      if (kind === "sill") return [{ x: herX - 92, y: 262, layer: "sill", shade: true }];
       // Сколько места занимают у пола её ноги — столько и отступить: влево и вправо по-разному (нога отведена).
       const [from, to] = kind === "seat" ? [-40, 40] : kind === "crouch" ? [-64, 64] : (name && HER_SPRITES[name].legs) || [-30, 30];
       const left = herX + from - 38, right = herX + to + 38;
@@ -2139,7 +2209,7 @@ const YARN = CARE_ZONES.play[2];
  * она не уходит, уступает Байт.
  */
 function herStand(name, pose, pet) {
-  const kind = kindOf(name), fixed = kind === "seat" ? CHAIR.x : kind === "floor" ? SPRITE_AT.nap : pours(name) ? SPRITE_AT.feed : null;
+  const kind = kindOf(name), fixed = HER_SPRITES[name].spot ?? (kind === "seat" ? CHAIR.x : kind === "floor" ? SPRITE_AT.nap : pours(name) ? SPRITE_AT.feed : null);
   const first = fixed ?? SPRITE_AT[pose] ?? SPRITE_SPOTS[0];
   const spots = fixed == null ? [first, ...SPRITE_SPOTS.filter(x => x !== first)] : [first];
   if (!pet) return { x: first, spot: null };
@@ -2252,7 +2322,7 @@ function emoMarks(x, y) {
  * стояла в другом месте и есть картинка «идёт» (`walker`) — доходит до нового места шагом.
  */
 function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null, frame = null, face = "", turn = null) {
-  const place = spritePlace(name, sprite, x), { tall, kind, wide, feet, top, left } = place, low = kind === "floor";
+  const place = spritePlace(name, sprite, x), { tall, kind, wide, feet, top, left } = place, low = kind === "floor", perched = kind === "sill";
   // Веки — заплатка с закрытыми глазами: моргает; клюёт носом (`face: "drowsy"`) — моргает медленно (`.slow`).
   // Румянец (0.48.0) — два пятна под глазами, по месту той же заплатки; не виден, пока её не погладят или не нальют
   // ей чай (стили страницы: `.patted`, `.glad`). Ложится он только на кожу: маской служит сама картинка — мимо
@@ -2304,15 +2374,17 @@ function herPainted(g, c, f, part, name, sprite, x, ghost = null, walker = null,
   const down = kind === "stand" ? "" : " lower", up = ghost && !["stand", "walk"].includes(kindOf(ghost.name)) ? " rise" : "";
   const before = ghost ? spritePlace(ghost.name, ghost.sprite, ghost.x) : null;
   // Идёт, а не тает на месте: когда стояла (или сидела) в другой точке, сама не на полу и картинка «идёт» загружена.
-  const walk = ghost && walker && Math.abs(ghost.x - x) >= 12 && !low && kindOf(ghost.name) !== "floor" ? herWalking(g, part, walker, ghost.x, x, [FEET - feetOf(ghost.name), FEET - feet]) : null;
+  const walk = ghost && walker && Math.abs(ghost.x - x) >= 12 && !low && !perched && !["floor", "sill"].includes(kindOf(ghost.name)) ? herWalking(g, part, walker, ghost.x, x, [FEET - feetOf(ghost.name), FEET - feet]) : null;
   const reach = low ? 30 : kind === "stand" ? 22 : 25;
-  const shade = shadow(g, x + (low ? 0 : 2), feet - 2, low ? wide * 0.44 : kind === "stand" ? 36 : wide * 0.36, low ? 7 : 6, 0.34);
+  const shade = shadow(g, x + (low ? 0 : 2), feet - 2, low ? wide * 0.44 : kind === "stand" ? 36 : wide * 0.36, low ? 7 : perched ? 3 : 6, 0.34);
   const was = before ? `<g class="leave${up}">${spriteLit(part, ghost.name, before, g.id("herMaskWas"))}</g>` : "";
+  // На подоконнике (0.66.0) она — в слое подоконника (`sillSeat`): кресло, плед и Колючка рисуются поверх. Линии
+  // ступней на полу у неё нет (`y`): Байту её обходить не надо.
   return {
-    y: feet, painted: name, walk: walk?.seconds ?? 0, walkShape: walk?.shape ?? "", path: walk ? [ghost.x, x] : null,
+    ...(perched ? {} : { y: feet }), painted: name, walk: walk?.seconds ?? 0, walkShape: walk?.shape ?? "", path: walk ? [ghost.x, x] : null,
     // Как проявляется новая поза и тает ли прежняя: так же появляется и уходит вечерняя тень на ней (`airOnHerMoving`).
     enter: walk ? `<g class="arrive late${down}" style="--t:${walk.seconds}s">` : before ? `<g class="arrive${down}">` : "", left: Boolean(before),
-    front: walk
+    [perched ? "sillSeat" : "front"]: walk
       ? `${was}${walk.svg}<g class="arrive late${down}" style="--t:${walk.seconds}s">${shade}${body}</g>`
       : `${shade}${before ? `${was}<g class="arrive${down}">${body}</g>` : body}`,
     // Нажатие — по ней самой, а не по всей картинке: волосы и плед по краям не отнимают нажатий у вещей за ней.
@@ -2611,7 +2683,7 @@ export const catSeconds = (from, to, runs = false) => Math.round(Math.max(runs ?
  */
 function herFloor(name, x, y) {
   const kind = kindOf(name);
-  if (kind === "floor") return { x0: x - 92, x1: x + 92, y, low: true };
+  if (kind === "floor") return { x0: x - lowHalf(name), x1: x + lowHalf(name), y, low: true };
   const [from, to] = kind === "seat" ? [-40, 40] : kind === "crouch" ? [-64, 64] : HER_SPRITES[name].legs ?? [-30, 30];
   return { x0: x + from, x1: x + to, y, low: false };
 }
@@ -2763,7 +2835,9 @@ export function castOf(view = {}, options = {}) {
   return {
     her: sprite && stand ? { name, x: stand.x } : null,
     cat: spot ? { x: spot.x, y: spot.y, shape, mirror: Boolean(spot.mirror), k: spot.k ?? 1, ...(Number.isFinite(spot.depth) ? { depth: spot.depth } : {}) } : null,
-    fed: view?.fed === true,
+    // Она сыплет корм в миску — миска на этом рисунке наполняется (0.60.0): следующий рисунок, с полной миской,
+    // не станет сыпать в неё корм сверху второй раз.
+    fed: view?.fed === true || Boolean(sprite && pours(name)),
   };
 }
 
@@ -2806,7 +2880,7 @@ function insideOf(view = {}, options = {}) {
   const catWas = options?.catWas && typeof options.catWas === "object" ? options.catWas : null;
   const herAt = sprite && Number.isFinite(she.y) ? herFloor(name, stand.x, she.y) : null;
   const passing = she.path && she.walk > 0 ? { from: she.path[0], to: she.path[1], seconds: she.walk } : null;
-  const pet = view.cat ? cat(g, f, view.cat, pose, spot, catWas, { her: herAt, passing }) : null;
+  const pet = view.cat ? cat(g, catPal(part, f), view.cat, pose, spot, catWas, { her: herAt, passing }) : null;
   // Корм из пакета (0.56.0): от угла пакета — в миску (0.57.0): она сидит у миски, угол пакета над ней. Она ещё
   // идёт к месту — корм появится, когда она присядет.
   const pour = sprite && pours(name) ? HER_SPRITES[name].pour : null;
@@ -2876,8 +2950,8 @@ function insideOf(view = {}, options = {}) {
     she.sillSeat ?? "", on("sill"),
     fx.has("cactus") ? "" : pic && view.plant !== "dry" ? painted("plant") : cactus(g, c, PLANT.x, 262, view.plant !== "dry"),
     thing("кактус", () => (pic ? painted("кактус") : cactus(g, c, 368, 262, true, true))),
-    // Свет лампы на стене — под мебелью и фигурами.
-    lampLight(g, part, shade, dark), floorLight(g, part, shade, sky, dark, Boolean(pic)),
+    // Пол и ночной тон комнаты.
+    floorLight(g, part, shade, sky, dark, Boolean(pic)),
     // Ковёр — до кресла: большое кресло (0.44.0) стоит на его дальнем краю ножками, а не тонет за ним.
     pic ? "" : rug(g, c),
     // Кресла, плед, стол.
@@ -2914,6 +2988,8 @@ function insideOf(view = {}, options = {}) {
     thing("ёлка", () => tree(g, c, part)),
     fxShown("haze", () => haze(g, part)),
     airLight(g, part, dark), airOnHerMoving(g, part, dark, she), airOnWalker(g, part, dark, she.walkShape),
+    // Свет лампы — поверх ночного тона комнаты: иначе ночной оттенок покрывал тёплый свет лампы на стене и полу.
+    lampLight(g, part, shade, dark),
     she.note ?? "",
     `<rect class="frame" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" fill="none"/>`,
   ].map(piece => (typeof piece === "string" ? piece : ""));
@@ -2935,6 +3011,7 @@ function insideOf(view = {}, options = {}) {
     // Ковёр (0.47.0, идея 162): нажал на свободное место — позвал Байта. Первым в списке — дальше всех от пальца:
     // она, Байт, клубок и вещи, стоящие на ковре, лежат поверх.
     tap("call", "Ковёр: позвать Байта", RUG_ZONE, "rug"),
+    ...(sprawls(name) ? RUG_ENDS.map(box => tap("call", "Ковёр: позвать Байта", box)) : []),
     // Выключатель света (0.46.0): гирлянда над окном и сама лампа — нажал, и лампа гаснет или загорается.
     tap("lamp", "Гирлянда", GARLAND_ZONE, "garland"),
     // Полка с книгами (0.45.0): нажал — она берёт книгу и садится читать. Вещи на полках — поверх: они ниже в списке.

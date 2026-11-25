@@ -23,12 +23,12 @@ export const INTENTS = Object.freeze([
   "remember", "memories", "forget",
   "profile", "inventory", "relationship", "card",
   "play", "roll", "sister_play", "summon", "news", "sister_news",
-  "no_flirt", "yes_flirt", "no_jealous", "yes_jealous", "no_reactions", "no_night",
+  "no_flirt", "yes_flirt", "no_jealous", "yes_jealous", "no_reactions", "no_night", "no_voice", "yes_voice", "say_voice",
   "whyquiet", "not_mine",
   "help", "whoami", "version", "status",
   "teach", "lessons", "unlearn", "judge", "learned", "why_answer",
   "remind", "reminders", "unremind",
-  "brains_check",
+  "brains_check", "voice_check",
   "tell_owner",
 ]);
 
@@ -228,6 +228,8 @@ export function parseIntent(text) {
   if (/^(?:что\s+нового\s+у\s+(?:юи|сестры)|новости\s+(?:юи|сестры))$/u.test(value)) return sure("sister_news");
   if (/^(?:что\s+нового(?:\s+у\s+тебя)?(?:\s+в\s+(?:этой\s+|новой\s+)?(?:сборке|версии))?|какие\s+новости|что\s+(?:изменилось|поменялось|добавили|добавилось|обновилось)|что\s+в\s+тебе\s+нового|что\s+нового\s+в\s+тебе|что\s+(?:ты\s+)?теперь\s+умеешь|что\s+нового\s+(?:ты\s+)?умеешь|что\s+в\s+(?:этой\s+|новой\s+)?(?:сборке|версии)(?:\s+нового)?)$/u.test(value)) return sure("news");
   if (/^(?:статус|твой\s+статус|состояние|диагностика|самопроверка|проверь\s+себя|как\s+твое\s+здоровье)$/u.test(value)) return sure("status");
+  // Проба голоса (0.68.0, идея 216): хозяин проверяет, дойдёт ли до чата голосовое бесплатной озвучки.
+  if (/^(?:проба|проверь|испытай)\s+(?:свой\s+|твой\s+)?голос(?:а)?(?:\s+в\s+чате)?$/u.test(value)) return sure("voice_check");
   if (/^(?:проверь|проба|испытай)\s+(?:свои\s+)?(?:мозг(?:и|ов)|модел(?:и|ей)|провайдер(?:ы|ов|а)|запасн(?:ые|ых|ой)(?:\s+(?:мозги|модели))?|gigachat|гигачат)$/u.test(value)) return sure("brains_check");
 
   // ── границы ───────────────────────────────────────────────────────────
@@ -240,6 +242,12 @@ export function parseIntent(text) {
     return sure("no_reactions");
   }
   if (/^(?:не\s+пиши\s+(?:мне\s+)?ночью|не\s+беспокой(?:\s+меня)?\s+ночью)$/u.test(value)) return sure("no_night");
+  // Голосом — на голос (0.69.0, идея 74, правило 154): на голосовое она отвечает и голосовым; это можно выключить.
+  if (/^(?:не\s+отвечай\s+(?:мне\s+)?голосом|без\s+голосовых|не\s+(?:шли|присылай)\s+(?:мне\s+)?голосовые|отвечай\s+(?:мне\s+)?(?:только\s+)?текстом)$/u.test(value)) return sure("no_voice");
+  if (/^(?:отвечай\s+(?:мне\s+)?голосом|можешь\s+отвечать\s+(?:мне\s+)?голосом|можно\s+голосом|верни\s+голосовые)$/u.test(value)) return sure("yes_voice");
+  // «Скажи голосом» — одно голосовое по просьбе; со словами после — произносит их.
+  const aloud = /^(?:скажи|ответь|произнеси)\s+(?:это\s+|что\s+нибудь\s+|что-нибудь\s+)?голосом(?:[\s:,—–-]+(.+))?$/u.exec(value);
+  if (aloud) return sure("say_voice", (aloud[1] ?? "").trim());
 
   // ── почему молчала ────────────────────────────────────────────────────
   // «Чего молчишь?», «ты меня игнорируешь?» — тот же вопрос: ответ — настоящая причина из записи.

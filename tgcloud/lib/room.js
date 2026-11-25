@@ -224,6 +224,9 @@ const RULES = Object.freeze([
   ["wearhome", /^(?:переоденься|переоденешься|оденься)\s+в\s+(?:свитер|домашнее)$/u],
   ["wearjacket", /^(?:надень|одень|накинь|надевай)\s+(?:свою\s+)?(?:куртку|косуху)$/u],
   ["wearjacket", /^(?:переоденься|переоденешься|оденься)\s+в\s+куртку$/u],
+  // Пижама с облаками (0.70.0, идея 157): третий наряд — вечером и ночью.
+  ["wearpajama", /^(?:надень|одень|накинь|надевай)\s+(?:свою\s+)?(?:пижаму|пижамку)$/u],
+  ["wearpajama", /^(?:переоденься|переоденешься|оденься)\s+в\s+(?:пижаму|пижамку)$/u],
   ["wearswap", /^(?:переоденься|смени\s+наряд|надень\s+(?:что\s+нибудь\s+)?другое|оденься\s+по\s+другому)$/u],
 
   // Чай на выбор (идея 166, 0.47.0): «налью тебе улун», «заварю чай с мятой», «держи жасминовый» — выбрать и налить.
@@ -482,13 +485,14 @@ export function herKey(mood, hour = 12, { tea = 0, at = 0 } = {}) {
  *   key    — состояние: по нему берётся картинка (`SPRITE_FOR` в рисунке);
  *   pool   — запас реплик «+комната:<pool>»: каждая реплика — шаг, место — из её же слов (`herPose`);
  *   title  — как эпизод называется в её словах о плане («дальше — уборка»); слов-примет места в нём быть не должно;
- *   wear   — наряд: day — дневной, по погоде (`dressFor`); home — домашний;
+ *   wear   — наряд: day — дневной, по погоде (`dressFor`); home — домашний; pajama — пижама с облаками (0.70.0:
+ *            перед сном и во сне);
  *   story  — шаги идут по порядку и один раз (проснулась → покормила → смахнула пыль), а не по кругу;
  *   active — занятие требует сил: уставшая, она его откладывает;
  *   face   — мимика эпизода: drowsy — клюёт носом (моргает медленно).
  */
 export const EPISODES = Object.freeze({
-  "сон": { key: "сон", pool: "она:сон", title: "сон", wear: "home" },
+  "сон": { key: "сон", pool: "она:сон", title: "сон", wear: "pajama" },
   "подъём": { key: "дело", pool: "день:подъём", title: "подъём и завтрак Байта", wear: "day", story: true },
   "занятия": { key: "дело", pool: "день:занятия", title: "занятия", wear: "day", active: true },
   "чай": { key: "уют", pool: "день:чай", title: "чай", wear: "day" },
@@ -497,7 +501,7 @@ export const EPISODES = Object.freeze({
   "порядок": { key: "дело", pool: "день:порядок", title: "уборка", wear: "day", active: true },
   "вечер": { key: "уют", pool: "она:уют", title: "вечер с чаем", wear: "home" },
   "ждёт": { key: "уют", pool: "день:ждёт", title: "тихий вечер у лампы", wear: "home" },
-  "дрёма": { key: "уют", pool: "день:дрёма", title: "последняя страница", wear: "home", story: true, face: "drowsy" },
+  "дрёма": { key: "уют", pool: "день:дрёма", title: "последняя страница", wear: "pajama", story: true, face: "drowsy" },
 });
 /** Суббота и воскресенье: в выходной она встаёт позже. `day` — «2026-11-20». */
 const weekendOn = (day) => { const at = Date.parse(`${String(day).slice(0, 10)}T12:00:00Z`); return Number.isFinite(at) && [0, 6].includes(new Date(at).getUTCDay()); };
@@ -512,6 +516,8 @@ const weekendOn = (day) => { const at = Date.parse(`${String(day).slice(0, 10)}T
  * пределами прижимается к ближнему краю — иначе день не сложить.
  */
 export const WAKE_SPAN = Object.freeze([120, 660]);
+/** Когда она ложится, если час назван (0.63.0): от половины десятого вечера до без десяти полночь — день складывается в одни сутки. */
+export const BED_SPAN = Object.freeze([21 * 60 + 30, 23 * 60 + 50]);
 /** Её разбудили (0.58.0): двадцать минут после слова она не спит. Пишут дальше — отметка обновляется. */
 export const WOKE_MS = 20 * 60_000;
 /** Не спит ли она по этой записи: её разбудили меньше двадцати минут назад. */
@@ -520,14 +526,17 @@ export const wokeNow = (state, at) => Number(state?.woke) > 0 && at - Number(sta
  * План дня. `wake` (0.58.0, сообщение 69: «пусть она просыпается вместе с установленным временем в доброе утро») —
  * во сколько она встаёт, минуты от полуночи: час её «доброго утра» хозяину. Не назван — около семи, в выходной позже.
  */
-export function dayPlan(day = "", { wake: set = null } = {}) {
+export function dayPlan(day = "", { wake: set = null, bed = null } = {}) {
   const shift = (salt, span) => (hashOf(`day:${day}:${salt}`) % (span * 2 + 1)) - span;
   const wake = Number.isFinite(set) ? Math.max(WAKE_SPAN[0], Math.min(WAKE_SPAN[1], Math.round(set))) : 7 * 60 + shift("wake", 20) + (weekendOn(day) ? 50 : 0);
+  // Ложится в названную минуту (0.63.0, хвост 209): вечер сдвигается вместе с ней — «ждёт» (только раньше), «дрёма»,
+  // «сон». Не названа — как раньше, в одиннадцать.
+  const late = Number.isFinite(bed) ? Math.max(BED_SPAN[0], Math.min(BED_SPAN[1], Math.round(bed))) - 23 * 60 : 0;
   const rest = 12 * 60 + 45 + shift("rest", 15);
   const [one, two] = hashOf(`day:${day}:order`) % 2 ? ["игра", "чай"] : ["чай", "игра"];
   const marks = [
     ["сон", 0], ["подъём", wake], ["занятия", wake + 60], [one, rest], [two, rest + 50], ["дела", rest + 100],
-    ["порядок", 17 * 60 + shift("tidy", 15)], ["вечер", 18 * 60], ["ждёт", 21 * 60 + shift("wait", 15)], ["дрёма", 22 * 60 + 30], ["сон", 23 * 60],
+    ["порядок", 17 * 60 + shift("tidy", 15)], ["вечер", 18 * 60], ["ждёт", 21 * 60 + shift("wait", 15) + Math.min(0, late)], ["дрёма", 22 * 60 + 30 + late], ["сон", 23 * 60 + late],
   ];
   return marks.map(([name, from], index) => ({ name, from, to: marks[index + 1]?.[1] ?? 1440 }));
 }
@@ -559,6 +568,8 @@ export function stepAt({ count = 0, from = 0, to = 1440, at = 0, seed = 0, story
  * или снег — свитер, сухо — куртка. Вечером и ночью — домашнее, что бы ни было за окном.
  */
 export const dressFor = (sky) => (sky === "rain" || sky === "storm" || sky === "snow" ? "home" : "jacket");
+/** Сколько минут Байт ест то, что она насыпала утром (0.60.0, «наедается»): всё это время миска полна. */
+export const MEAL_MIN = 10;
 /** Сколько Байт остаётся на одном месте: семь минут — и следующая реплика его состояния (до 0.48.0 — полминуты). */
 export const CAT_STEP_MS = 7 * 60_000;
 /** Окно открыто час (0.48.0): «проветрила и закрыла»; нажали ещё раз — закрыла раньше. */
@@ -597,6 +608,8 @@ const HER_POSE = Object.freeze([
   ["map", /карту звёздного|кассиопе/u],
   // read — сидит в кресле с книгой (0.45.0): до этого «читаю» показывалось картинкой с кружкой.
   // «Считаю капли» — не «читаю»: слово берётся целиком, с начала.
+  // 0.65.0 (идея 168): «лежу на ковре с мангой» — она на ковре, а не в кресле; примета стоит раньше «с книгой».
+  ["lie", /лежу на ковре|на ковре с (?:книгой|мангой)/u],
   ["read", /(?<![а-яё])(?:читаю|перечитываю|дочитываю|листаю)|с книгой|с мангой/u],
   ["garland", /гирлянд/u],
   ["dance", /танцу/u],
@@ -764,7 +777,7 @@ export const MUSIC_MS = 3 * 60_000;
 export const musicNow = (state, at) => Number(state?.music) > 0 && at - Number(state.music) >= 0 && at - Number(state.music) < MUSIC_MS;
 
 /** Наряды, в которых она нарисована: выбирать можно из них (идея 157, 0.47.0). Те же слова, что `HER_WEARS` в рисунке. */
-export const WEARS = Object.freeze(["jacket", "home"]);
+export const WEARS = Object.freeze(["jacket", "home", "pajama"]);
 /** Наряд, надетый по просьбе, — пока не пришло время переодеваться самой (`until`, мс эпохи); иначе `null`. */
 export const wearNow = (state, at) => (WEARS.includes(state?.wear?.name) && at < Number(state.wear.until) ? state.wear.name : null);
 /** Чай на выбор (идея 166, 0.47.0): что ей наливают. Первый — её любимый: с него всё начинается. */
@@ -864,7 +877,9 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
       if (id && (ops.some(op => op[0] === id) || ids.includes(id))) { repeat = true; return null; }
       if (limit && ops.filter(op => at - Number(op[1]) < RUSH_MS).length >= RUSH_MAX) { slow = true; return null; }
       const next = change(state, at);
-      return next && (id || limit) ? { ...next, ops: [...ops, [id, at]].slice(-OPS_MAX), ...(lasting ? { ids: [...ids, id].slice(-IDS_MAX) } : {}) } : next;
+      // Событие очереди помнится в `ids` и в счёт частоты страницы (`ops`) не идёт (0.60.0): после пачки из двенадцати
+      // событий открытая страница двадцать секунд отвечала бы «не так быстро».
+      return next && (id || limit) ? { ...next, ops: lasting ? ops : [...ops, [id, at]].slice(-OPS_MAX), ...(lasting ? { ids: [...ids, id].slice(-IDS_MAX) } : {}) } : next;
     });
     return { ...done, repeat, slow };
   }
@@ -949,8 +964,17 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
    */
   async function word(userId, { day, id = "", limit = false, answer = "", wake = false } = {}) {
     // `wake` (0.58.0) — слово её разбудило: двадцать минут она не спит (`wokeNow`).
-    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, word: { id, a: String(answer).slice(0, 600) }, ...(wake ? { woke: at } : {}) }));
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, word: { id, a: String(answer).slice(0, 600), t: at }, ...(wake ? { woke: at } : {}) }));
     return { ok: true, answer: id && done.state?.word?.id === id ? String(done.state.word.a ?? "") : "", state: done.state, ...flags(done) };
+  }
+
+  /**
+   * Снимок в чат (0.62.0, идея 165): отметка «отправляю» под номером действия — тот же номер второй раз картинку не
+   * шлёт. `ok` ставит дверь комнаты, когда картинка ушла; не ушла — она же снимает и отметку, и номер.
+   */
+  async function shot(userId, { day, id = "", limit = false } = {}) {
+    const done = await act(userId, day, { id, limit }, (state, at) => ({ ...state, at: state.at || at, near: at, day, done: state.done, shot: { id, at, ok: false } }));
+    return { ok: true, state: done.state, ...flags(done) };
   }
 
   async function lamp(userId, { day, id = "", limit = false } = {}) {
@@ -1057,5 +1081,5 @@ export function createRoom({ store = null, now = () => Date.now() } = {}) {
   /** Заглянул, ничего не меняя («как там Байт»): отметить час, чтобы следующее «покормить» было понято. */
   async function look(userId) { return (await amend(userId, "", (state) => ({ ...state, at: state.at || now(), near: now() }))).saved; }
 
-  return { read, amend, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look, word };
+  return { read, amend, visit, care, book, lamp, music, call, wear, brew, quiet, air, choose, scare, near, look, word, shot };
 }

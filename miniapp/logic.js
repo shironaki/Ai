@@ -7,7 +7,7 @@
 import { PARTS, HER_POSES, CAT_SHAPES, CAT_PLACES, THINGS } from "./scene.js";
 
 /** Номер страницы: растёт, когда страница меняется. Виден внизу — по нему понятно, не открылась ли старая копия. */
-export const PAGE = "22";
+export const PAGE = "33";
 export const CARE = Object.freeze(["pet", "feed", "play", "tea", "water"]);
 /** Свет страницы под рисунок: утром и днём — светлая, вечером и ночью — тёмная. */
 export const LIGHTS = Object.freeze({ "утро": "day", "день": "day", "вечер": "evening", "ночь": "night" });
@@ -16,7 +16,7 @@ export const HEADERS = Object.freeze({ "утро": "#c9b5ab", "день": "#cbbe
 export const partOf = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
 
 /** Наряды, которые может назвать сердце (те же, что `HER_WEARS` в рисунке; из рисунка имя не берётся: рядом может лежать его прежняя копия). */
-const WEARS = Object.freeze(["jacket", "home"]);
+const WEARS = Object.freeze(["jacket", "home", "pajama"]);
 /**
  * Что за окном (те же слова, что `SKIES` в рисунке и в сердце): с 0.44.0 — погода города человека. Прежнее сердце
  * знает два слова, «rain» и «snow»; незнакомое слово — дождь, как было всегда.
@@ -49,7 +49,7 @@ const count = (value) => (Number.isFinite(Number(value)) && Number(value) > 0 ? 
 export function blank(hour = 12) {
   return {
     ready: false, demo: false, busy: "", tone: "", said: "Дверь открывается…", retry: false,
-    part: partOf(hour), light: "", glow: null, her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, tea: false,
+    part: partOf(hour), light: "", glow: null, her: null, cat: null, plant: "wet", things: [], lamp: "", fed: false, served: false, tea: false,
     lines: { her: "", window: "", cat: "", box: "", things: {} }, done: {}, scene: null, build: "", next: null,
     // Которая по счёту её поза (позы состояния идут по кругу) и гладили ли её сегодня; что за окном (`SKIES`).
     // Пока сердце не ответило, за окном — ровное серое небо: какая там погода, ещё неизвестно.
@@ -101,7 +101,7 @@ export function viewOf(state) {
     ...(state.cat.run === true && !teased && !pet ? { run: true } : {}),
   };
   return {
-    part: state.part, her, cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed, tea: state.tea,
+    part: state.part, her, cat, plant: state.plant, things: state.things, lamp: state.lamp, fed: state.fed || state.served === true, tea: state.tea,
     // Свет по солнцу назван, только когда он разошёлся с часами: иначе описание рисунка то же, что и было.
     ...(lightOf(state) !== state.part ? { light: lightOf(state) } : {}),
     ...(state.glow ? { glow: state.glow } : {}),
@@ -329,7 +329,8 @@ export function applyLook(state, result, at = 0) {
     kinds, offer, asking: offer && kinds.length > 1 ? "tea" : "", plan: text(result.her?.plan), told: "",
     cat: catOf(result.cat, null, { first: true }), plant: result.plant?.state === "dry" ? "dry" : "wet",
     things: things.map(item => item.key), lamp: /^#[0-9a-f]{6}$/iu.test(String(result.lamp ?? "")) ? result.lamp : "",
-    fed: done.feed > 0, tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
+    // `served` (0.60.0, «наедается»): корм в миску насыпала она — миска полна, пока Байт ест (`bowl` в ответе сердца).
+    fed: done.feed > 0, served: result.bowl === "full", tea: done.tea > 0, lines, done, scene: sceneOf(result.scene), build: text(result.build, 20),
     next: count(result.next?.days) || null, said: said || "Заходите.",
   };
 }
@@ -397,7 +398,8 @@ function changeIn(before, after) {
   if (!before.ready || !after.ready) return { kind: "same", state: after };
   const herLine = herBeat(after)?.line || after.lines.her, catLine = catBeat(after)?.line || after.lines.cat;
   const lines = { ...after.lines, her: herLine || after.lines.her };
-  const dressed = Boolean(before.her && after.her) && wearAt(before.part, before.her.wear) !== wearAt(after.part, after.her.wear);
+  // Уснула (0.70.0: спит она в пижаме) — сцены у шкафа нет: к шкафу ходит та, что не спит.
+  const dressed = Boolean(before.her && after.her) && after.her.key !== "сон" && wearAt(before.part, before.her.wear) !== wearAt(after.part, after.her.wear);
   const closet = () => ({ leave: after.wardrobe?.leave || "Пойду переоденусь — я быстро.", back: [after.wardrobe?.back || "Вот. Так лучше.", herLine].filter(Boolean).join("\n") });
   // Час тот же и свет тот же. Свет по солнцу (0.47.0) меняется и посреди часа: закат в пять вечера — тоже перемена.
   if (before.part === after.part && lightOf(before) === lightOf(after)) {
@@ -431,7 +433,7 @@ export function applyCare(state, op, result) {
     ...(moved ? { her, turn: 0 } : {}),
     // Чай выбрали у чайника (0.48.0): вопрос «какой налить» снят, а налитый чай запомнен.
     asking: "", ...(BREWS.includes(result.kind) ? { brew: result.kind } : {}),
-    done, fed: done.feed > 0, tea: done.tea > 0, lines, said: said || "Спасибо.",
+    done, fed: done.feed > 0, served: result.bowl === "full", tea: done.tea > 0, lines, said: said || "Спасибо.",
   };
 }
 
@@ -607,6 +609,8 @@ const DEMO_DAY = Object.freeze([
 ]);
 /** Байт на витрине при её занятии: она насыпает корм в миску — он ждёт рядом (0.57.0); она спит — он спит у неё под боком. */
 const DEMO_MEAL = Object.freeze({ shape: "eat", place: "near", key: "голоден", line: "Байт ждёт. Хвост ходит из стороны в сторону — это он торопит.", beats: [], still: true });
+/** На витрине он тоже наедается (0.60.0): шаг после корма — Байт ест из полной миски. */
+const DEMO_EATS = Object.freeze({ shape: "eat", place: "bowl", key: "сыт", line: "Байт ест: уткнулся в миску и хрустит на всю комнату.", beats: [], still: true });
 const DEMO_NIGHT = Object.freeze({ shape: "curl", place: "near", key: "спит", line: "Байт свернулся у меня под боком и сопит. Нас двое — не будите.", beats: [], still: true });
 const DEMO_OFFER = "Время чая. Что налить — жасмин, улун или мяту?";
 /** Чай на витрине — словами этого чая: как у сердца (запасы «+комната:чай:улун», «+комната:чай:мята»). */
@@ -674,6 +678,8 @@ export function demoLook(hour = 12, params = {}) {
   const sky = skyOf(params.sky), left = Number(params.left);
   // Позу назвали в адресе — она стоит в ней и распорядка нет: снимок должен быть таким, каким его попросили.
   const fixed = HER_POSES.includes(params.her);
+  // Утро на витрине: шаг после корма (метёлка) — Байт ест из миски, которую она наполнила.
+  const dines = steady && !params.cat && !fixed && !params.key && sky !== "storm" && block[0] === 7 && beats[0][0] === "dust";
   return {
     ok: true, do: "look", build: "", owner: true, kinds: [...BREWS], open: params.open === "1", ...(params.wind === "1" || params.wind === "2" ? { wind: Number(params.wind) } : {}),
     ...(timed ? { step: Math.max(3_000, Math.round((10 - (minute % 10)) * 60_000)) } : {}),
@@ -684,9 +690,10 @@ export function demoLook(hour = 12, params = {}) {
     // Гроза (0.46.0): Байт под пледом, наружу один хвост, — как у сердца (запас «+комната:байт:гроза»).
     cat: sky === "storm" && !params.cat ? { shape: "tail", place: "plaid", key: "шалит", line: "Гром — и Байта как не бывало: из-под пледа торчит один хвост и делает вид, что он ни при чём.", beats: [], still: true }
       : steady && !params.cat && !fixed && !params.key && beats[0][0] === "feed" ? { ...DEMO_MEAL }
+        : dines ? { ...DEMO_EATS }
         : steady && !params.cat && !fixed && !params.key && key === "сон" ? { ...DEMO_NIGHT }
           : { shape: params.cat ? shape : pets[0][0], place: params.cat ? place : pets[0][1], key: catKey, line: params.cat ? "" : pets[0][2], beats: params.cat ? [] : pets.map(([one, where, line]) => ({ shape: one, place: where, line })), still: Boolean(params.cat), ...(steady ? { steady: true } : {}) },
-    plant: { state: params.plant === "wet" ? "wet" : "dry" }, done: {}, cared: false,
+    plant: { state: params.plant === "wet" ? "wet" : "dry" }, done: {}, cared: false, ...(dines ? { bowl: "full" } : {}),
     things: listed.map(name => ({ key: name, title: name, line: DEMO_THINGS[name] ?? "" })), lamp: params.lamp ?? "", drawing: "", fresh: [], next: null,
     dark: params.dark === "1", music: params.music === "1" ? 180_000 : 0, brew: BREWS.includes(params.brew) ? params.brew : BREWS[0],
     box: { count: 2, line: "В коробке Байта — его трофеи: носок неизвестного происхождения и лампочка от гирлянды. Растёт с каждой сценкой." }, patted: false,
@@ -708,6 +715,8 @@ export function demoCare(state, op, kind = "") {
     ...(op === "tea" && (state.her?.key === "дело" || state.her?.key === "игра") ? { her: { key: "уют", pose: DEMO_HER["вечер"][1][0][0], line: DEMO_HER["вечер"][1][0][1], beats: DEMO_HER["вечер"][1].map(([pose, line]) => ({ pose, line })) } } : {}),
     plant: { state: op === "water" ? "wet" : state.plant }, done: { ...state.done, [op]: before + (early ? 0 : 1) }, cared: true,
     ...(poured ? { kind: poured, brew: poured } : {}),
+    // Байт ел её корм (0.60.0) — от заботы корм из миски не пропадает: как у сердца.
+    ...(state.served ? { bowl: "full" } : {}),
   };
 }
 /** Окно на витрине (0.48.0): открыла — закрыла; слова — из словаря. */
@@ -733,11 +742,21 @@ export function demoQuiet(state) {
     cat: { key: "спит", shape: "curl", place: "pillow", line: nap, beats: [], still: true },
   };
 }
-/** «Переодеться» на витрине: в другой наряд — не тот, что на ней; спит — не переодевается. Слова — из словаря. */
+/**
+ * Что предложит кнопка «Надеть …» (0.70.0, пижама с облаками): куртка → свитер → пижама → куртка. Пижама — вечером и
+ * ночью: днём после свитера идёт куртка. Имя наряда страница называет сердцу сама (`do: "wear", wear`).
+ */
+export const nextWear = (part, named = "") => {
+  const worn = wearAt(part, named);
+  return worn === "jacket" ? "home" : worn === "home" && (part === "вечер" || part === "ночь") ? "pajama" : "jacket";
+};
+export const WEAR_LABELS = Object.freeze({ home: "Надеть свитер", jacket: "Надеть куртку", pajama: "Надеть пижаму" });
+/** «Переодеться» на витрине: в следующий наряд (`nextWear`); спит — не переодевается. Слова — из словаря. */
 export function demoWear(state) {
   const worn = wearAt(state.part, state.her?.wear);
   if (state.her?.key === "сон") return { ok: true, do: "wear", build: "", line: "…Сплю. Переоденусь утром.", wear: worn, changed: false };
-  return worn === "home"
+  if (nextWear(state.part, state.her?.wear) === "pajama") return { ok: true, do: "wear", build: "", line: "Пижама так пижама: день можно считать законченным. Минуту.", back: "Вот. Пижама с облаками — самая мягкая вещь в шкафу.", wear: "pajama", changed: true };
+  return worn !== "jacket"
     ? { ok: true, do: "wear", build: "", line: "Куртка так куртка: вид деловой, характер прежний. Минуту.", back: "Вот. Куртка, чокер — и вид, будто у меня планы.", wear: "jacket", changed: true }
     : { ok: true, do: "wear", build: "", line: "Свитер так свитер: куртку — на вешалку. Минуту.", back: "Вот. Свитер, тёплые рукава — и никуда не тороплюсь.", wear: "home", changed: true };
 }
@@ -749,11 +768,13 @@ export function demoWear(state) {
 export const SAY_MAX = 200;
 export const wordsOf = (value) => String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, SAY_MAX);
 /** Её ответ на слово — под рисунком; отказ — как у остальных действий: слова отказа и, если дело в связи, «Попробовать ещё раз». */
+/** Она думала над словом дольше минуты (0.61.0): страница перестала ждать — говорит об этом её словами. */
+export const SAY_LATE = "Задумалась — и не успела ответить. Спросите ещё раз.";
 export function applySay(state, result) {
   if (!result || result.ok !== true) {
     // «Пусто» и «слишком длинно» — ответ по делу, а не обрыв связи: повторять нечего, пометки «нет связи» нет.
     const told = refused(state, result);
-    return /^(?:empty|long)$/u.test(String(result?.code ?? "")) ? { ...told, retry: false, down: false } : told;
+    return /^(?:empty|long|late)$/u.test(String(result?.code ?? "")) ? { ...told, retry: false, down: false } : told;
   }
   return { ...state, busy: "", tone: "", retry: false, said: text(result.line) || "…" };
 }
@@ -762,7 +783,7 @@ export function demoSay(state, words) {
   const said = wordsOf(words).toLowerCase();
   if (!said) return { ok: false, code: "empty", text: "Слов не вижу. Напишите — и я отвечу." };
   const known = /(?:^|[^а-яё])(?:привет|здравствуй|здравствуйте|добрый день|доброе утро|добрый вечер)(?:[^а-яё]|$)/u.test(said);
-  return { ok: true, do: "say", build: "", line: known ? "Привет. Заходите — только Байта не разбудите." : "Это вопрос не для комнаты: здесь я пока говорю коротко. В чате отвечу подробно.", known };
+  return { ok: true, do: "say", build: "", line: known ? "Привет. Заходите — я вам рада." : "Это вопрос не для комнаты: здесь я пока говорю коротко. В чате отвечу подробно.", known };
 }
 const DEMO_BREW = Object.freeze({
   "жасмин": "Возвращаемся к жасмину. Он пахнет так, будто всё уже хорошо.",
@@ -821,6 +842,19 @@ export function demoGift(state, kind) {
   return { ok: true, do: "gift", taken: true, days: 7, gifts: [...new Set([...(Array.isArray(state.gifts) ? state.gifts : []), kind])], line: `${words[kind]} ${DEMO_NOTE}` };
 }
 export const demoSnap = () => ({ ok: true, do: "snap", taken: true, line: "Запомнила этот момент. На витрине он проживёт, пока открыта страница." });
+/**
+ * Снимок в чат (0.62.0, идея 165). `applyPhoto` — её слова об этом под рисунком; отказ «по делу» (картинка не
+ * собралась, слишком тяжёлая, отправить нечем) — без пометки «нет связи» и без кнопки «ещё раз»; Telegram не принял —
+ * с кнопкой. На витрине снимок не уходит: слать некому.
+ */
+export const PHOTO_FAILED = "Снимок не получился: рисунок комнаты не собрался. Попробуйте ещё раз.";
+export const demoPhoto = () => ({ ok: true, do: "photo", sent: false, line: "На витрине снимок в чат не уходит. Откройте комнату кнопкой в чате со мной — и я пришлю." });
+export function applyPhoto(state, result) {
+  if (result?.ok === true) return { ...state, busy: "", tone: "", retry: false, down: false, said: typeof result.line === "string" && result.line ? result.line : state.said };
+  const told = refused({ ...state, busy: "" }, result);
+  const code = String(result?.code ?? "");
+  return /^(?:empty|big|bad_image|no_send|picture)$/u.test(code) ? { ...told, retry: false, down: false } : code === "send" ? { ...told, retry: true, down: false } : told;
+}
 export function demoPat(state) {
   return { ok: true, do: "pat", build: "", line: state.patted ? "Ещё? Я не против. Только Байту не говорите: он считает, что гладить положено его." : "…Так можно было? Ладно. Мне нравится.", again: state.patted === true, counted: false };
 }
@@ -830,4 +864,61 @@ export function demoPick(state, pick) {
     ok: true, do: "pick", build: "", line: DEMO_SCENE.outcomes[index], counted: false, scene: { ...state.scene, pick: index, outcome: DEMO_SCENE.outcomes[index], fx: [] },
     cat: { key: "шалит", ...DEMO_SCENE.cats[index], beats: [], still: true }, cared: true,
   };
+}
+
+/**
+ * Её голос (0.64.0, идея 211; сообщение 80: «Давай эту, вроде это лучший вариант»). Реплики записаны заранее голосом,
+ * который владелец подобрал на слух, и лежат модулями в папке `voice/` — по одной на файл (`{ text, ms, src }`);
+ * звучат только при включённом звуке. Здесь — какую сказать на событие комнаты, или «» — промолчать.
+ * `event`: `greet` — звук включили: здоровается по времени суток; `back` — вернулись на страницу после долгого
+ * отсутствия; `pat` — погладили её; `tea`, `gift`; `call` — Байт пришёл на зов; `cat` — позаботились о Байте;
+ * `plant` — полили цветок; `woke` — слово её разбудило; `dark` — погасили лампу ночью или когда она клюёт носом.
+ * `count` — которая по счёту реплика на такое событие: варианты идут по кругу. Спит, обижена, ревнует, вышла
+ * переодеться или идёт тихий час — молчит.
+ */
+export const VOICE_GAP_MS = 4000;
+/**
+ * Слова под рисунком (0.66.0, сообщение 82: «не совпадает голос с тем, что появляется в тексте»). Сказанное вслух
+ * стоит в тексте первым: «Спасибо за чай.» — и дальше её строка. Приставка живёт, пока под рисунком та строка, при
+ * которой она это сказала (`voiced.over`): строка сменилась — приставки нет. Строка и сама начинается с этих слов —
+ * они не повторяются; под рисунком служебная пометка («…», «*переодевается*») — приставки нет.
+ */
+/**
+ * Что под рисунком — то и вслух (0.68.0, идея 215). `linesToSay` — какие строки из слов под рисунком она произнесёт:
+ * записанные (`nameOf` — имя записи по тексту строки, пусто — записи нет), не сказанные только что (`lately`), без
+ * повторов и не больше `SAY_MOST`; возвращает имена записей по порядку. `maySay` — можно ли ей говорить: спит, вышла
+ * переодеться, идёт тихий час — молчит; обижена или ревнует — говорит: строки у этих состояний свои.
+ */
+export const SAY_MOST = 3, SAY_AGAIN_MS = 5 * 60_000;
+export function linesToSay(caption, nameOf, lately = () => false) {
+  const names = [];
+  for (const text of String(caption ?? "").split("\n")) {
+    // Строка о новой вещи стоит под рисунком с приставкой «Новое в комнате.» (0.69.0): запись ищется и без неё.
+    const line = text.trim(), name = line ? nameOf(line) || nameOf(line.replace(/^Новое в комнате\.\s*/u, "")) : "";
+    if (name && !names.includes(name) && !lately(name)) names.push(name);
+    if (names.length >= SAY_MOST) break;
+  }
+  return names;
+}
+export const maySay = (state) => Boolean(state && state.ready === true && state.her && !state.away && state.her.key !== "сон" && !(state.quiet > 0));
+export function captionOf(state) {
+  const said = typeof state?.said === "string" ? state.said : "", voiced = state?.voiced;
+  if (!voiced || typeof voiced.text !== "string" || !voiced.text || voiced.over !== said || /^[…*.]/u.test(said)) return said;
+  const bare = (text) => text.toLowerCase().replace(/[^a-zа-яё0-9]+/gu, " ").trim();
+  if (!said) return voiced.text;
+  return bare(said).startsWith(bare(voiced.text)) ? said : `${voiced.text} ${said}`;
+}
+const VOICE_GREET = Object.freeze({ "утро": "morning", "день": "day", "вечер": "evening", "ночь": "night" });
+const VOICE_FOR = Object.freeze({
+  pat: ["pleased", "thanks", "glad"], tea: ["tea", "tasty"], gift: ["pretty", "grateful"], call: ["come", "called"],
+  cat: ["catglad", "catthanks"], plant: ["plant"], back: ["back"],
+});
+export function voiceFor(event, state, count = 0) {
+  if (!state || state.ready !== true || !state.her || state.away) return "";
+  if (event === "woke") return "awake";
+  if (["сон", "обида", "ревность"].includes(state.her.key) || state.quiet > 0) return "";
+  if (event === "greet") return VOICE_GREET[state.part] ?? "";
+  if (event === "dark") return state.part === "ночь" || state.her.face === "drowsy" ? "goodnight" : "";
+  const list = Object.hasOwn(VOICE_FOR, event) ? VOICE_FOR[event] : null;
+  return list ? list[Math.abs(Math.trunc(Number(count) || 0)) % list.length] : "";
 }

@@ -526,9 +526,59 @@ test("0.58.0, она встаёт к своему «доброму утру», �
   assert.equal((await look()).key, "сон");
   now = at("2026-11-16T01:45:00Z"); // 04:45
   assert.equal((await look()).stage, "подъём");
+  // 0.60.0. Встала в 04:40 — и Байт уже не спит (до 0.60.0 до шести утра он «спал» и при этом ждал корм): ждёт, потом ест.
+  now = at("2026-11-16T02:05:00Z"); // 05:05 — второй шаг подъёма: корм
+  const early = await h.onRoom({ do: "look" }, door(OWNER));
+  assert.equal(early.her.pose, "feed");
+  assert.notEqual(early.cat.key, "спит");
+  now = at("2026-11-16T02:22:00Z"); // 05:22 — отошла с метёлкой: он ест из миски
+  const eating = await h.onRoom({ do: "look" }, door(OWNER));
+  assert.equal(eating.bowl, "full");
+  assert.notEqual(eating.cat.key, "спит");
   now = at("2026-11-16T09:00:00Z");
   await h.onMessage(own("не желай доброго утра"), KEY);
   now = at("2026-11-17T01:45:00Z"); // 04:45
   assert.equal((await look()).key, "сон", "привет выключен — встаёт как раньше");
+  assert.equal(chats().length, 0, "всё это — без модели");
+});
+
+test("0.63.0, ложится в час своего «спокойной ночи» (хвост 209): у хозяина вечер идёт по названному часу, у гостя — как раньше; уснула раньше одиннадцати — слово её будит", async () => {
+  reset();
+  moscow();
+  let now = at("2026-11-13T09:00:00Z");
+  const h = heart({ ...ON, SOURCES: true }, { now: () => now });
+  const door = (id) => ({ ...KEY, initData: { user: { id, first_name: "Тест" } } });
+  const look = async (id = OWNER) => (await h.onRoom({ do: "look" }, door(id))).her;
+  const WOKE = book.pool("+разбудили", { formal: true });
+  await h.onMessage(own("мой город — Москва"), KEY);
+  await look();
+  await look(5);
+  await h.onMessage(own("желай спокойной ночи в 22:15"), KEY);
+  assert.equal(greetSettings(JSON.parse(sdk().kv.get(GREET_KEY))).night, "22:15");
+  // 22:10 по Москве: ещё не спит. 22:20: у хозяина спит, у гостя — нет (его день прежний, сон с одиннадцати).
+  now = at("2026-11-13T19:10:00Z");
+  assert.notEqual((await look()).key, "сон");
+  now = at("2026-11-13T19:20:00Z");
+  assert.equal((await look()).key, "сон");
+  assert.notEqual((await look(5)).key, "сон");
+  // Хозяин пишет в 22:25 — она просыпается: до 0.63.0 раньше одиннадцати слово её не будило.
+  now = at("2026-11-13T19:25:00Z");
+  await h.onMessage(own("привет"), KEY);
+  const first = toOwner().at(-1).text;
+  assert.ok(WOKE.some(line => first.startsWith(`${line}\n\n`)), first);
+  assert.equal((await look()).key, "устала");
+  // Час вне вечера (половина первого ночи) — ложится как раньше, в одиннадцать.
+  now = at("2026-11-14T09:00:00Z");
+  await h.onMessage(own("желай спокойной ночи в 0:30"), KEY);
+  now = at("2026-11-14T19:40:00Z");
+  assert.notEqual((await look()).key, "сон", "22:40 — ещё не спит");
+  now = at("2026-11-14T20:10:00Z");
+  assert.equal((await look()).key, "сон", "23:10 — спит");
+  // Привет на ночь выключен — тоже в одиннадцать, даже если час был назван.
+  now = at("2026-11-15T09:00:00Z");
+  await h.onMessage(own("желай спокойной ночи в 22:15"), KEY);
+  await h.onMessage(own("не желай спокойной ночи"), KEY);
+  now = at("2026-11-15T19:40:00Z");
+  assert.notEqual((await look()).key, "сон");
   assert.equal(chats().length, 0, "всё это — без модели");
 });

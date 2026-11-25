@@ -459,3 +459,56 @@ test("проверь мозги: каждая модель каждого про
   assert.equal(body(1).reasoning_effort, "low");
   assert.equal(body(3).reasoning_effort, undefined);
 });
+
+// ── проба голоса (0.68.0, идея 216) ────────────────────────────────────────
+
+test("0.68.0: «проба голоса» — хозяину: фраза бесплатной озвучки уходит голосовым; отказ службы и отказ Telegram названы словами", async () => {
+  const { source, calls } = await import("./fixtures/kit.mjs");
+  const mp3 = new Uint8Array(4096); mp3[0] = 0xff; mp3[1] = 0xf3;
+  const audio = (bytes = mp3) => ({ ok: true, status: 200, text: async () => "", arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
+  // 1. Всё вышло: запрос — к озвучке переводчика, по-русски, с фразой; в чат — голосовое с записью mp3.
+  reset();
+  let h = heart();
+  source(/translate_tts/u, audio());
+  await h.onMessage(message("Проба голоса!", { id: OWNER }), KEY);
+  const asked = sdk().sourceFetches.at(-1).url;
+  assert.match(asked, /^https:\/\/translate\.google\.com\/translate_tts\?ie=UTF-8&client=tw-ob&tl=ru&q=/u);
+  assert.match(decodeURIComponent(asked), /Это проба голоса\. Если вы меня слышите, бесплатный путь работает\./u);
+  assert.equal(calls("sendVoice").length, 1);
+  const sent = calls("sendVoice")[0];
+  assert.deepEqual([String(sent.chat_id), sent.voice.name, sent.voice.type, sent.voice.bytes.length], [String(OWNER), "ai.mp3", "audio/mpeg", 4096]);
+  assert.match(last(OWNER), /^Проба голоса: получилось — голосовое выше \(4 КБ\)\. Голос готовый, не мой: бесплатная озвучка переводчика Google\. Годится — скажите в чате разработки/u);
+  // Другими словами — то же; для остальных это обычные слова.
+  for (const said of ["проверь голос", "испытай свой голос", "проба голоса в чате"]) { await h.onMessage(message(said, { id: OWNER }), KEY); }
+  assert.equal(calls("sendVoice").length, 4);
+  await h.onMessage(message("проба голоса", { id: 5 }), KEY);
+  assert.equal(calls("sendVoice").length, 4);
+  assert.equal(last(5), "ответ из стаба");
+
+  // 2. Telegram не принял голосовое — ушло звуковым файлом, и об этом сказано.
+  reset();
+  h = heart();
+  source(/translate_tts/u, audio());
+  sdk().failing.sendVoice = Object.assign(new Error("Bad Request: wrong file type"), { description: "Bad Request: wrong file type" });
+  await h.onMessage(message("проба голоса", { id: OWNER }), KEY);
+  assert.equal(calls("sendAudio").length, 1);
+  assert.match(last(OWNER), /получилось — звуковой файл выше \(4 КБ\)\..*Голосовым Telegram не принял: Bad Request: wrong file type\./u);
+  // Не принял ни так, ни так.
+  sdk().failing.sendAudio = new Error("Bad Request: file is too big");
+  await h.onMessage(message("проба голоса", { id: OWNER }), KEY);
+  assert.match(last(OWNER), /^Проба голоса: звук получен \(4 КБ\), но Telegram его не принял — Bad Request: file is too big\. Перешлите эту строку в чат разработки\.$/u);
+
+  // 3. Служба отказала, прислала не звук или до неё нет дороги — названо словами, в чат ничего не ушло.
+  for (const [reply, expected] of [
+    [{ ok: false, status: 429, text: async () => "" }, /^Проба голоса: служба озвучки отказала — ответ 429\. Этим путём голосовые не пойдут/u],
+    [audio(new TextEncoder().encode("<html>Sorry…</html>")), /^Проба голоса: служба озвучки прислала не звук \(\d+ байт\)\./u],
+    [Object.assign(new TypeError("fetch failed"), { name: "TypeError" }), /^Проба голоса: до службы озвучки не дотянулась — TypeError: fetch failed\./u],
+  ]) {
+    reset();
+    h = heart();
+    source(/translate_tts/u, reply);
+    await h.onMessage(message("проба голоса", { id: OWNER }), KEY);
+    assert.match(last(OWNER), expected);
+    assert.equal(calls("sendVoice").length + calls("sendAudio").length, 0);
+  }
+});

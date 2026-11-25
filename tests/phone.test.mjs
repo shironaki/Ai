@@ -978,3 +978,44 @@ test("публикация руками держит телефон бодрым
     assert.deepEqual(readFileSync(woke, "utf8").trim().split("\n"), ["termux-wake-lock", "termux-wake-unlock"]);
   } finally { box.clean(); }
 });
+
+test("0.67.0: схема базы — шаг повторяется; в вести владельцу — причина, а не одно «не применилась»", { skip }, () => {
+  const migrations = (box) => box.cli().filter(item => item.args[0] === "migrate").length;
+  // 1. Обрыв связи на шаге схемы дважды, третья попытка проходит: публикация чистая, владельцу — ни слова.
+  let box = sandbox();
+  try {
+    const done = box.run("once", { FAKE_FAIL_TIMES: "migrate:2", FAKE_SAYS: "Error: Could not reach the platform" });
+    assert.equal(done.code, 0, done.out);
+    assert.equal(migrations(box), 3);
+    assert.match(done.out, /✓ Сборка 1\.0\.0 опубликована/u);
+    assert.doesNotMatch(done.out, /схем/u);
+    assert.equal(toldOwner(box).length, 0);
+  } finally { box.clean(); }
+
+  // 2. Платформа отказывает словами: две попытки, в вести — её ответ. Схема в первой публикации — новая.
+  box = sandbox();
+  try {
+    const done = box.run("once", { FAKE_FAIL: "migrate", FAKE_SAYS: "Error: column kv_state.value cannot be altered" });
+    assert.equal(done.code, 0, done.out);
+    assert.equal(migrations(box), 2);
+    assert.match(done.out, /Сборка 1\.0\.0 опубликована, но схема базы не применилась \(ответ платформы: «Error: column kv_state\.value cannot be altered»\); перешлите эту строку в чат разработки\./u);
+    assert.equal(toldOwner(box).length, 1);
+    assert.match(toldOwner(box)[0], /text=⚠️ Телефон: сборка 1\.0\.0 опубликована, но схема базы не применилась \(ответ платформы: «Error: column kv_state\.value cannot be altered»\)/u);
+    assert.match(box.state("published"), /\n1\.0\.0\n/u);
+  } finally { box.clean(); }
+
+  // 3. Связи нет все три попытки, а схема та же, что в прежней публикации: слова спокойные — таблицы не менялись.
+  box = sandbox();
+  try {
+    assert.equal(box.run("once").code, 0);
+    assert.equal(toldOwner(box).length, 0);
+    box.commit("2.0.0");
+    const done = box.run("once", { FAKE_FAIL: "migrate", FAKE_SAYS: "Error: Could not reach the platform" });
+    assert.equal(done.code, 0, done.out);
+    assert.equal(migrations(box), 1 + 3);
+    assert.match(done.out, /Сборка 2\.0\.0 опубликована, но схему базы сверить не вышло \(нет связи с платформой, попыток: 3\); таблицы в этой сборке не менялись — бот работает на прежних, следующая публикация сверит снова\./u);
+    assert.doesNotMatch(done.out, /не применилась/u);
+    assert.equal(toldOwner(box).length, 1);
+    assert.match(box.state("published"), /\n2\.0\.0\n/u);
+  } finally { box.clean(); }
+});

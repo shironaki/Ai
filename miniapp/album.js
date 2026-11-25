@@ -18,7 +18,7 @@ export function listOf(result) {
 }
 
 /** Нарисовать альбом в `box`. Повторный вызов — перерисовать (после подарка или снимка). */
-export function show(box, result, { thumb = null, gift = null, snap = null, close = null } = {}) {
+export function show(box, result, { thumb = null, gift = null, snap = null, post = null, close = null } = {}) {
   if (!box) return;
   const items = listOf(result);
   box.textContent = "";
@@ -53,6 +53,8 @@ export function show(box, result, { thumb = null, gift = null, snap = null, clos
   }
   const tools = node("div", "choice");
   if (typeof snap === "function") tools.append(button("Сохранить этот момент", "main", { snap: "1" }));
+  // Снимок картинкой в чат (0.62.0, идея 165): комната этой минуты уходит в личку с её словами.
+  if (typeof post === "function") tools.append(button("Прислать в чат", "main", { post: "1" }));
   tools.append(button("Закрыть альбом", "main", { close: "1" }));
   box.append(tools);
   box.onclick = (event) => {
@@ -60,6 +62,7 @@ export function show(box, result, { thumb = null, gift = null, snap = null, clos
     if (!pressed) return;
     if (pressed.dataset.gift && typeof gift === "function") gift(pressed.dataset.gift);
     else if (pressed.dataset.snap && typeof snap === "function") snap();
+    else if (pressed.dataset.post && typeof post === "function") post();
     else if (pressed.dataset.close && typeof close === "function") close();
   };
 }

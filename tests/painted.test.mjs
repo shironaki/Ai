@@ -192,7 +192,8 @@ test("поворот головы: третий кадр позы лежит р�
     work2: ["work2c", "l"], "home-work2": ["home-work2c", "l"], tidy: ["tidyc", "l"], "home-tidy": ["home-tidyc", "l"],
   });
   // Каким рисунком страница приходит к этой позе: состояние и место.
-  const HOW = { work: ["дело", "desk"], tea: ["уют", "sill"], work3: ["дело", "chair"], tea3: ["уют", "chair"], read: ["уют", "read"], work2: ["дело", "sill"], tidy: ["дело", "dust"] };
+  // 0.66.0: с кружкой у окна она сидит на подоконнике (`tea4`); стоящая с кружкой (`tea`) — у карты звёздного неба.
+  const HOW = { work: ["дело", "desk"], tea: ["уют", "map"], work3: ["дело", "chair"], tea3: ["уют", "chair"], read: ["уют", "read"], work2: ["дело", "sill"], tidy: ["дело", "dust"] };
   assert.equal(scene.turnOf("work"), "workc");
   assert.equal(scene.turnOf("tea"), "teac");
   assert.equal(scene.turnOf("read"), "readc");
