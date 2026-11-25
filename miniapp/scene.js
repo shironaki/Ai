@@ -1038,9 +1038,11 @@ function lampLight(g, part, shade, off = false) {
   if (!lit(part)) return "";
   // Лампа погашена (0.46.0): светит одна гирлянда — её зарево над окном чуть ярче, тёплого круга у стола нет.
   if (off) return `<ellipse cx="256" cy="46" rx="176" ry="34" fill="${g.rad("garlandGlow", [[0, "#ffd58a", 0.3], [1, "#ffd58a", 0]])}"/>`;
-  const warm = mix(shade, "#ffd9a0", 0.4);
+  // Свет лампы — тёплый, как у настоящей лампы: цвет абажура лишь чуть его тинтит, а не задаёт (0.71.0):
+  // иначе яркий абажур заливал бы свет своими цветами, и лампа сливалась в одно пепелищное пятно.
+  const warm = mix(shade, "#ffd9a0", 0.55);
   return [
-    `<circle class="glow" cx="${LAMP.x}" cy="${LAMP.y + 2}" r="${part === "ночь" ? 128 : 112}" fill="${g.rad("lampGlow", [[0, warm, 0.62], [0.32, warm, 0.26], [1, warm, 0]])}"/>`,
+    `<circle class="glow" cx="${LAMP.x}" cy="${LAMP.y + 2}" r="${part === "ночь" ? 128 : 112}" fill="${g.rad("lampGlow", [[0, warm, 0.55], [0.32, warm, 0.24], [1, warm, 0]])}"/>`,
     `<ellipse cx="366" cy="319" rx="42" ry="4.6" fill="#ffe9b8" opacity="0.4"/>`,
     `<ellipse cx="256" cy="46" rx="176" ry="34" fill="${g.rad("garlandGlow", [[0, "#ffd58a", 0.2], [1, "#ffd58a", 0]])}"/>`,
   ].join("");
@@ -1101,9 +1103,10 @@ function floorLight(g, part, shade, sky = "rain", off = false, painted = false) 
   const warm = mix(shade, "#ffd9a0", 0.4);
   // Ясной ночью от окна на пол ложится лунный свет: чуть ярче обычной синевы.
   const blue = part === "ночь" ? (open(sky) ? 0.17 : 0.1) : 0.07;
+  // Ночной пол — под тёплым кругом лампы: иначе голубая заливка пола покрывала бы свет лампы на полу.
   return [
-    off ? "" : `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.2], [1, warm, 0]])}"/>`,
     `<path d="M132 372 H400 L352 520 H30 Z" fill="${g.lin("nightFloor", [[0, "#9fb4ff", blue], [1, "#9fb4ff", 0]])}"/>`,
+    off ? "" : `<ellipse cx="352" cy="404" rx="96" ry="26" fill="${g.rad("lampFloor", [[0, warm, 0.3], [1, warm, 0]])}"/>`,
   ].join("");
 }
 
@@ -1257,7 +1260,9 @@ function paintedShelves(g, c, room, has, part, music = false) {
  */
 function paintedLamp(g, room, part, shade, off = false, own = false) {
   const on = lit(part) && !off, picture = paintedThing(g, room, "lamp", part, { glow: on, air: false });
-  const cover = own ? `<path d="${PIC.shade}" fill="${on ? shade : tint(shade, part)}" opacity="0.6"/>` : "";
+  // Горящая лампа: абажур светится цветом абажура — и выбранным человеком, и янтарным по умолчанию (0.71.0):
+  // иначе на картинке комнаты абажур оставался тёмным, как погашенный, и свет лампы казался голубым от ночного ти́нта.
+  const cover = on ? `<path d="${PIC.shade}" fill="${shade}" opacity="0.66"/>` : (own ? `<path d="${PIC.shade}" fill="${tint(shade, part)}" opacity="0.6"/>` : "");
   const cut = g.raw("lampCut", id => `<clipPath id="${id}"><path d="${PIC.lamp}"/></clipPath>`);
   if (on) return `<g clip-path="${cut}">${picture}</g>${cover}`;
   // Верх абажура виден на фоне окна: вечерняя тень проёма ложится и на него — последним слоем, поверх тона ткани.
@@ -1355,6 +1360,15 @@ const partIn = (view) => (PARTS.includes(view?.part) ? view.part : "день");
 export const lightIn = (view) => (PARTS.includes(view?.light) ? view.light : partIn(view));
 /** Краски под час. `soft` — насколько слабее приглушать (для неё и Байта). */
 const palette = (part, soft = 0) => Object.fromEntries(Object.entries(DAY).map(([name, colour]) => [name, tint(colour, part, soft)]));
+
+/**
+ * Палитра Байта на ночь (0.71.0): шерсть и тело — тёмный силуэт, сливающийся с тёмной комнатой,
+ * а глаза, нос и внутренние ушки остаются дневными — чтобы кот в темноте был виден именно как кот.
+ * Днём и вечером — как palette(part, FIGURE_SOFT), без перекрашивания.
+ */
+const catPal = (part, f) => part === "ночь"
+  ? { ...f, cat: mix(f.cat, "#0c0f24", 0.7), catDark: mix(f.catDark, "#0c0f24", 0.7), catLight: mix(f.catLight, "#1a1f3d", 0.6), catEar: mix(f.catEar, "#0c0f24", 0.6), nose: mix(f.nose, "#0c0f24", 0.55) }
+  : f;
 
 /**
  * За окном: небо и город. Зависит от часа и погоды — страница рисует это один раз и при нажатиях не трогает.
@@ -2866,7 +2880,7 @@ function insideOf(view = {}, options = {}) {
   const catWas = options?.catWas && typeof options.catWas === "object" ? options.catWas : null;
   const herAt = sprite && Number.isFinite(she.y) ? herFloor(name, stand.x, she.y) : null;
   const passing = she.path && she.walk > 0 ? { from: she.path[0], to: she.path[1], seconds: she.walk } : null;
-  const pet = view.cat ? cat(g, f, view.cat, pose, spot, catWas, { her: herAt, passing }) : null;
+  const pet = view.cat ? cat(g, catPal(part, f), view.cat, pose, spot, catWas, { her: herAt, passing }) : null;
   // Корм из пакета (0.56.0): от угла пакета — в миску (0.57.0): она сидит у миски, угол пакета над ней. Она ещё
   // идёт к месту — корм появится, когда она присядет.
   const pour = sprite && pours(name) ? HER_SPRITES[name].pour : null;
@@ -2936,8 +2950,8 @@ function insideOf(view = {}, options = {}) {
     she.sillSeat ?? "", on("sill"),
     fx.has("cactus") ? "" : pic && view.plant !== "dry" ? painted("plant") : cactus(g, c, PLANT.x, 262, view.plant !== "dry"),
     thing("кактус", () => (pic ? painted("кактус") : cactus(g, c, 368, 262, true, true))),
-    // Свет лампы на стене — под мебелью и фигурами.
-    lampLight(g, part, shade, dark), floorLight(g, part, shade, sky, dark, Boolean(pic)),
+    // Пол и ночной тон комнаты.
+    floorLight(g, part, shade, sky, dark, Boolean(pic)),
     // Ковёр — до кресла: большое кресло (0.44.0) стоит на его дальнем краю ножками, а не тонет за ним.
     pic ? "" : rug(g, c),
     // Кресла, плед, стол.
@@ -2974,6 +2988,8 @@ function insideOf(view = {}, options = {}) {
     thing("ёлка", () => tree(g, c, part)),
     fxShown("haze", () => haze(g, part)),
     airLight(g, part, dark), airOnHerMoving(g, part, dark, she), airOnWalker(g, part, dark, she.walkShape),
+    // Свет лампы — поверх ночного тона комнаты: иначе ночной оттенок покрывал тёплый свет лампы на стене и полу.
+    lampLight(g, part, shade, dark),
     she.note ?? "",
     `<rect class="frame" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" fill="none"/>`,
   ].map(piece => (typeof piece === "string" ? piece : ""));
