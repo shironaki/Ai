@@ -507,7 +507,7 @@ test("словарь 0.43.0: слова сходятся с картинками
   const names = Object.keys(HER_SPRITES).filter(name => !strides.includes(name)), jackets = names.filter(name => !name.includes("-")), lidded = names.filter(name => SPRITES[name].blink);
   // Числа, которые она называет вслух, — из папки с картинками. Прибавилась картинка — тест напомнит перечитать
   // темы (их список — в шапке блока «СБОРКА 0.44.0» в PHRASES.txt) и назвать новое число здесь.
-  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u, 23: /двадцать три/u, 46: /[Сс]орок шесть/u, 34: /[Тт]ридцать четыре/u, 48: /[Сс]орок восемь/u, 56: /[Пп]ятьдесят шесть/u, 3: /три/u, 36: /[Тт]ридцать шесть/u };
+  const WORDS = { 2: /две/u, 10: /десят/u, 14: /четырнадцат/u, 15: /пятнадцат/u, 16: /шестнадцат/u, 18: /восемнадцат/u, 19: /девятнадцат/u, 20: /двадцат/u, 24: /двадцат[иь] четыр/u, 30: /[Тт]ридцат/u, 32: /[Тт]ридцать дв/u, 38: /[Тт]ридцать восемь/u, 22: /двадцать дв/u, 44: /[Сс]орок четыре/u, 23: /двадцать три/u, 46: /[Сс]орок шесть/u, 34: /[Тт]ридцать четыре/u, 48: /[Сс]орок восемь/u, 56: /[Пп]ятьдесят шесть/u, 3: /три/u, 36: /[Тт]ридцать шесть/u, 65: /[Шш]естьдесят/u, 4: /четыре/u };
   const word = (count, what) => { assert.ok(WORDS[count], `${what}: ${count} — этого числа словами здесь нет: перечитать темы о картинках и дописать`); return WORDS[count]; };
   for (const topic of ["сколько у тебя поз", "кто тебя рисует"]) {
     assert.match(said(topic), word(names.length, "картинок"), topic);
@@ -606,7 +606,7 @@ test("она картинкой: у каждого состояния своя �
     }
   }
   // Имя картинки: наряд (кроме куртки) — приставкой через дефис; наряд из списка.
-  assert.deepEqual([...HER_WEARS], ["jacket", "home", "pajama"]);
+  assert.deepEqual([...HER_WEARS], ["jacket", "home", "pajama", "hoodie"]);
   for (const name of Object.keys(HER_SPRITES)) assert.match(name, new RegExp(`^(?:(?:${HER_WEARS.filter(wear => wear !== "jacket").join("|")})-)?[a-z]+\\d?$`, "u"), name);
   // У каждого состояния — картинки, и каждая картинка кому-то нужна.
   assert.equal(spriteOf({}), null);
@@ -635,7 +635,7 @@ test("она картинкой: у каждого состояния своя �
   }
   // «Идёт» — не поза состояния: ею она переходит от места к месту (0.44.0). В списки поз она не попадает.
   const strides = Object.keys(HER_SPRITES).filter(name => HER_SPRITES[name].kind === "walk");
-  assert.deepEqual(strides.sort(), ["home-walk", "pajama-walk", "walk"]);
+  assert.deepEqual(strides.sort(), ["home-walk", "hoodie-walk", "pajama-walk", "walk"]);
   assert.deepEqual([...used].sort(), Object.keys(HER_SPRITES).filter(name => !strides.includes(name)).sort());
   assert.equal(first.size, Object.keys(MOODS).length, "у двух состояний одна первая картинка — их не отличить");
   // Наряд: вечером и ночью — домашний, но только там, где у него есть картинка этого состояния; названный
@@ -766,7 +766,7 @@ test("она картинкой: у каждого состояния своя �
   for (const part of PARTS) for (const name of Object.keys(HER_SPRITES).filter(item => HER_SPRITES[item].kind !== "walk")) {
     const key = Object.keys(MOODS).find(mood => [false, true].some(tea => HER_WEARS.some(wear => spritesOf({ part, her: { pose: "desk", key: mood, wear }, tea }).includes(name))));
     // Картинка только у реплики («читает»): её состояние и место — из таблицы реплик (`lookOf`).
-    const told = key ? null : Object.keys(MOODS).flatMap(mood => HER_POSES.map(pose => [mood, pose])).find(([mood, pose]) => scene.lookOf(mood, pose) === name.replace(/^(?:home|pajama)-/u, ""));
+    const told = key ? null : Object.keys(MOODS).flatMap(mood => HER_POSES.map(pose => [mood, pose])).find(([mood, pose]) => scene.lookOf(mood, pose) === name.replace(/^(?:home|pajama|hoodie)-/u, ""));
     assert.ok(key || told, name);
     const wear = name.includes("-") ? name.split("-")[0] : "jacket", tea = Boolean(key) && !spritesOf({ part, her: { pose: "desk", key, wear } }).includes(name);
     const list = key ? spritesOf({ part, her: { pose: "desk", key, wear }, tea }) : [name];

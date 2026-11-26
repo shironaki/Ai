@@ -2119,19 +2119,19 @@ test("0.47.0, наряд по просьбе: из нарисованных — 
   await chat.onMessage(message("переоденься в свитер"), KEY);
   assert.equal(roomOf(5).wear.name, "home");
   assert.equal((await chat.onRoom({ do: "look" }, from(5))).her.wear, "home", "переодел словами — в комнате она в том же");
-  for (const [said, op] of [["надень свитер", "wearhome"], ["надень куртку", "wearjacket"], ["переоденься в куртку", "wearjacket"], ["смени наряд", "wearswap"], ["надень что-нибудь другое", "wearswap"], ["надень пижаму", "wearpajama"], ["переоденься в пижаму", "wearpajama"]]) assert.equal(room.parseRoom(said)?.op, op, said);
+  for (const [said, op] of [["надень свитер", "wearhome"], ["надень куртку", "wearjacket"], ["переоденься в куртку", "wearjacket"], ["смени наряд", "wearswap"], ["надень что-нибудь другое", "wearswap"], ["надень пижаму", "wearpajama"], ["переоденься в пижаму", "wearpajama"], ["надень худи", "wearhoodie"], ["переоденься в худи", "wearhoodie"]]) assert.equal(room.parseRoom(said)?.op, op, said);
   // Того, чего не нарисовано, она не надевает: на это отвечает словарь.
-  for (const said of ["надень платье", "надень худи", "надень шляпу", "переоденься в платье"]) assert.equal(room.parseRoom(said), null, said);
+  for (const said of ["надень платье", "надень шляпу", "переоденься в платье"]) assert.equal(room.parseRoom(said), null, said);
   assert.deepEqual(book.match("надень платье"), ["переоденься"]);
   assert.doesNotMatch(book.pool("переоденься", { formal: true }).join(" "), /не умею|[Нн]аряд меняет время/u, "о наряде по просьбе она больше не говорит «не умею»");
 
   // Витрина: в другой наряд; спит — нет. Слова — из словаря.
   const demo = logic.demoWear({ part: "день", her: { key: "дело" } });
-  assert.deepEqual([demo.wear, demo.changed], ["home", true]);
-  assert.ok(pool("наряд:свитер").includes(demo.line) && pool("наряд:свитер:готово").includes(demo.back));
-  const other = logic.demoWear({ part: "день", her: { key: "дело", wear: "home" } });
-  assert.deepEqual([other.wear, other.changed], ["jacket", true]);
-  assert.ok(pool("наряд:куртка").includes(other.line) && pool("наряд:куртка:готово").includes(other.back));
+  assert.deepEqual([demo.wear, demo.changed], ["hoodie", true]);
+  assert.ok(pool("наряд:худи").includes(demo.line) && pool("наряд:худи:готово").includes(demo.back));
+  const other = logic.demoWear({ part: "день", her: { key: "дело", wear: "hoodie" } });
+  assert.deepEqual([other.wear, other.changed], ["home", true]);
+  assert.ok(pool("наряд:свитер").includes(other.line) && pool("наряд:свитер:готово").includes(other.back));
   assert.equal(logic.demoWear({ part: "ночь", her: { key: "сон" } }).changed, false);
   assert.equal(logic.applyWear(before, { ok: false, text: "нет связи" }).state.tone, "warn");
 });
@@ -2147,9 +2147,9 @@ test("0.70.0, пижама с облаками: вечером по просьб
   assert.ok(pool("наряд:пижама:рано").map(plain).includes(early.line), early.line);
   assert.equal(roomOf(5).wear, null);
   // Кнопка под рисунком называет следующий наряд по кругу; днём — без пижамы.
-  assert.deepEqual([logic.nextWear("день", "jacket"), logic.nextWear("день", "home"), logic.nextWear("день", "pajama"), logic.nextWear("день")], ["home", "jacket", "jacket", "home"]);
-  assert.deepEqual([logic.nextWear("вечер", "jacket"), logic.nextWear("вечер", "home"), logic.nextWear("вечер"), logic.nextWear("ночь", "pajama")], ["home", "pajama", "pajama", "jacket"]);
-  assert.deepEqual(Object.keys(logic.WEAR_LABELS).sort(), ["home", "jacket", "pajama"]);
+  assert.deepEqual([logic.nextWear("день", "jacket"), logic.nextWear("день", "hoodie"), logic.nextWear("день", "home"), logic.nextWear("день", "pajama"), logic.nextWear("день")], ["hoodie", "home", "jacket", "jacket", "hoodie"]);
+  assert.deepEqual([logic.nextWear("вечер", "jacket"), logic.nextWear("вечер", "hoodie"), logic.nextWear("вечер", "home"), logic.nextWear("вечер"), logic.nextWear("ночь", "pajama")], ["hoodie", "home", "pajama", "pajama", "jacket"]);
+  assert.deepEqual(Object.keys(logic.WEAR_LABELS).sort(), ["home", "hoodie", "jacket", "pajama"]);
   // Вечером — надевает: слова на пути к шкафу и по возвращении; второй раз — «уже».
   time.set(Date.parse("2026-11-18T15:30:00Z")); // 18:30
   const evening = await h.onRoom({ do: "look", again: true }, from(5));

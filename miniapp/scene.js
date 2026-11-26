@@ -1820,7 +1820,7 @@ function her(g, c, f, pose, key, view = {}) {
  * с кружкой и с книгой, у карты, под гирляндой), «устала», «сон» и шаг; позы, которой в пижаме нет, она показывает в
  * свитере (`wearOf`, `spritesOf`).
  */
-export const HER_WEARS = Object.freeze(["jacket", "home", "pajama"]);
+export const HER_WEARS = Object.freeze(["jacket", "home", "pajama", "hoodie"]);
 /**
  * Её картинки. Имя — файл в `her/`; наряд, кроме куртки, — приставкой через дефис (`home-tea`).
  *   tall — высота картинки на рисунке (стоя — 390: рост три четверти рисунка);
@@ -1916,6 +1916,17 @@ export const HER_SPRITES = Object.freeze({
   "pajama-tired3": { tall: 320, kind: "seat", half: 86, seat: 0.568, head: [0.48, 0.09] },
   "pajama-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
   "pajama-walk": { tall: 374, kind: "walk", faces: "left" },
+  // Худи (0.72.0, идея 157): тёплый худи вместо куртки днём; те же позы, что в куртке и свитере — те же числа.
+  "hoodie-tea": { tall: 390, mark: ["steam", 0.115, 0.228] },
+  "hoodie-read": { tall: 320, kind: "seat", half: 60, seat: 0.568, head: [0.49, 0.09] },
+  "hoodie-work": { tall: 390 },
+  "hoodie-sleep": { tall: 164, kind: "floor", head: [0.47, 0.3], mark: ["zzz", 0.6, 0.13] },
+  "hoodie-play": { tall: 390, legs: [-30, 72], head: [0.66, 0.075] },
+  "hoodie-tired": { tall: 390, half: 70 },
+  "hoodie-tidy": { tall: 390, head: [0.58, 0.09], blush: false },
+  "hoodie-books": { tall: 390, head: [0.54, 0.1], blush: false },
+  "hoodie-feed": { tall: 215, kind: "crouch", half: 66, head: [0.34, 0.15], pour: [0.103, 0.509], feet: 440, wait: [-52, 52], blush: false },
+  "hoodie-walk": { tall: 374, kind: "walk", faces: "left" },
 });
 /**
  * Кадры движения внутри позы (0.45.0, «больше кадров, чтоб казалась живой»): вторая картинка той же позы — та же
