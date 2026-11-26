@@ -141,18 +141,19 @@ export function rightsFrames(facts = null) {
  * С 0.21.0 сердце говорит о новой сборке само — первым же сообщением; с 0.22.0
  * — сразу после публикации, не дожидаясь, пока ей кто-нибудь напишет.
  */
-export const BUILD = "0.71.0";
+export const BUILD = "0.72.0";
 
 /** Что изменилось в этой сборке — словами для владельца, не списком коммитов. */
 export const RELEASE_NOTES = Object.freeze([
+  "0.72.0 — худи нарисован и надевается: тёплый день, девять поз и свой шаг по комнате. «надень худи» или кнопка — переоденусь; худи в круге нарядов, как куртка и свитер",
   "0.71.0 — ночь в комнате пересмотрена: лампа даёт тёплый свет, как настоящая (абажур лишь тинтит его), ночной пол держится под тёплым кругом лампы, а Байт в темноте — тёмный силуэт с светлыми глазами",
   "0.70.0 — пижама с облаками нарисована: голубая, в белых облаках. Надеваю её сама — в половине одиннадцатого, перед сном, — и сплю в ней",
   "вечером и ночью её можно попросить: «надень пижаму» или кнопкой под рисунком — куртка, свитер, пижама по кругу",
   "днём пижаму не надену: она вечерняя",
   "в пижаме я с кружкой и с книгой в кресле, у карты, под гирляндой, под пледом, сплю и хожу; остальное пока в свитере",
   "новые слова у шкафа записаны моим голосом",
-  "страница комнаты — 32",
-  "чего ещё нет: худи, летнего платья и праздничного наряда; в пижаме не нарисованы подоконник и ковёр; во ВКонтакте и в Макс меня нет",
+  "страница комнаты — 33",
+  "чего ещё нет: летнего платья и праздничного наряда; в пижаме не нарисованы подоконник и ковёр; во ВКонтакте и в Макс меня нет",
 ]);
 
 const DAY = 86_400_000;
@@ -1939,7 +1940,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
   const carePool = (op, done) => (done.peace ? "мириться"
     : `${op === "tea" && !done.again && !done.early && brewOf(done.state) !== BREWS[0] ? `чай:${brewOf(done.state)}` : ROOM_POOL[op]}${done.early ? ":рано" : done.again ? ":ещё" : ""}`);
   /** Наряд по просьбе (0.47.0): слово запаса — «+комната:наряд:свитер», «+комната:наряд:куртка». */
-  const WEAR_WORD = Object.freeze({ home: "свитер", jacket: "куртка", pajama: "пижама" });
+  const WEAR_WORD = Object.freeze({ home: "свитер", jacket: "куртка", pajama: "пижама", hoodie: "худи" });
   /** Минуты от полуночи по часам человека, с долей: по ним идёт её день (`dayPlan`, 0.48.0). */
   const minutesNow = (turn) => { const local = localParts(now(), zoneOf(turn)); return local.hh * 60 + local.mm + (now() % 60_000) / 60_000; };
   /** Эпизод её дня в эту минуту: план у всех один, часы — у каждого свои. */
@@ -2444,7 +2445,7 @@ export function createHeart({ db = null, api = null, fetchImpl = null, InputFile
     }
     // Наряд по просьбе (0.47.0): «надень свитер», «надень куртку», «переоденься».
     if (asked.op.startsWith("wear")) {
-      const done = await dressHer(turn, feel, today, { wearhome: "home", wearjacket: "jacket", wearpajama: "pajama" }[asked.op] ?? "");
+      const done = await dressHer(turn, feel, today, { wearhome: "home", wearjacket: "jacket", wearpajama: "pajama", wearhoodie: "hoodie" }[asked.op] ?? "");
       if (done.lost) return tell(ROOM_DOWN);
       if (done.early) return tell(roomLine(turn, "наряд:пижама:рано") || "Пижаму — вечером.");
       return tell(roomLine(turn, done.asleep ? "наряд:сон" : `наряд:${WEAR_WORD[done.name]}:${done.same ? "уже" : "готово"}`) || "Вот.");

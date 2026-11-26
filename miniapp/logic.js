@@ -16,7 +16,7 @@ export const HEADERS = Object.freeze({ "утро": "#c9b5ab", "день": "#cbbe
 export const partOf = (hour) => (hour < 5 ? "ночь" : hour < 12 ? "утро" : hour < 18 ? "день" : hour < 23 ? "вечер" : "ночь");
 
 /** Наряды, которые может назвать сердце (те же, что `HER_WEARS` в рисунке; из рисунка имя не берётся: рядом может лежать его прежняя копия). */
-const WEARS = Object.freeze(["jacket", "home", "pajama"]);
+const WEARS = Object.freeze(["jacket", "home", "pajama", "hoodie"]);
 /**
  * Что за окном (те же слова, что `SKIES` в рисунке и в сердце): с 0.44.0 — погода города человека. Прежнее сердце
  * знает два слова, «rain» и «snow»; незнакомое слово — дождь, как было всегда.
@@ -748,14 +748,16 @@ export function demoQuiet(state) {
  */
 export const nextWear = (part, named = "") => {
   const worn = wearAt(part, named);
-  return worn === "jacket" ? "home" : worn === "home" && (part === "вечер" || part === "ночь") ? "pajama" : "jacket";
+  return worn === "jacket" ? "hoodie" : worn === "hoodie" ? "home" : worn === "home" && (part === "вечер" || part === "ночь") ? "pajama" : "jacket";
 };
-export const WEAR_LABELS = Object.freeze({ home: "Надеть свитер", jacket: "Надеть куртку", pajama: "Надеть пижаму" });
+export const WEAR_LABELS = Object.freeze({ home: "Надеть свитер", jacket: "Надеть куртку", pajama: "Надеть пижаму", hoodie: "Надеть худи" });
 /** «Переодеться» на витрине: в следующий наряд (`nextWear`); спит — не переодевается. Слова — из словаря. */
 export function demoWear(state) {
   const worn = wearAt(state.part, state.her?.wear);
   if (state.her?.key === "сон") return { ok: true, do: "wear", build: "", line: "…Сплю. Переоденусь утром.", wear: worn, changed: false };
   if (nextWear(state.part, state.her?.wear) === "pajama") return { ok: true, do: "wear", build: "", line: "Пижама так пижама: день можно считать законченным. Минуту.", back: "Вот. Пижама с облаками — самая мягкая вещь в шкафу.", wear: "pajama", changed: true };
+  if (nextWear(state.part, state.her?.wear) === "hoodie") return { ok: true, do: "wear", build: "", line: "Худи — и сразу уютнее. Минуту.", back: "Вот. Худи, чокер — и вместо куртки тепло, без тяжести.", wear: "hoodie", changed: true };
+  if (nextWear(state.part, state.her?.wear) === "home" && worn === "hoodie") return { ok: true, do: "wear", build: "", line: "Свитер так свитер: куртку — на вешалку. Минуту.", back: "Вот. Свитер, тёплые рукава — и никуда не тороплюсь.", wear: "home", changed: true };
   return worn !== "jacket"
     ? { ok: true, do: "wear", build: "", line: "Куртка так куртка: вид деловой, характер прежний. Минуту.", back: "Вот. Куртка, чокер — и вид, будто у меня планы.", wear: "jacket", changed: true }
     : { ok: true, do: "wear", build: "", line: "Свитер так свитер: куртку — на вешалку. Минуту.", back: "Вот. Свитер, тёплые рукава — и никуда не тороплюсь.", wear: "home", changed: true };
