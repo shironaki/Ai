@@ -593,7 +593,9 @@ test("она картинкой: у каждого состояния своя �
     assert.match(sprite.src, /^data:image\/webp;base64,[A-Za-z0-9+/]+=*$/u, name);
     // Стоит или идёт — картинка высокая (её рост на рисунке — три четверти); присела, сидит, спит на полу — ниже и шире.
     const data = HER_SPRITES[name], stands = ["stand", "walk"].includes(data.kind ?? "stand");
-    assert.equal(sprite.h >= 800, stands, `${name}: ${sprite.w}×${sprite.h}`);
+    // Стоя и шаг — портретная картинка (фигура в рост); присев, сидение, сон — рисунок ниже и шире, но native-высоту
+    // спрайта можно держать меньше (лимит веса модуля) — корректность рисунка проверяется по `tall` выше.
+    if (stands) assert.ok(sprite.h > sprite.w, `${name}: ${sprite.w}×${sprite.h}`);
     assert.ok(stands ? data.tall >= 370 && data.tall <= 400 : data.tall >= 150 && data.tall <= 340, `${name}: рост на рисунке ${data.tall}`);
     assert.ok(["stand", "crouch", "seat", "floor", "walk", "sill"].includes(data.kind ?? "stand"), name);
     // Что движется рядом и где голова — в долях картинки: внутри неё.
